@@ -27,6 +27,12 @@ pub mod pb {
     pub mod querier {
         pub mod v1 {
             include!(concat!(env!("OUT_DIR"), "/querier.v1.rs"));
+            pub use super::super::types::v1::{
+                Exemplar, ExemplarType, GetProfileStatsRequest, GetProfileStatsResponse,
+                HeatmapSeries, HeatmapSlot, LabelNamesRequest, LabelNamesResponse, LabelPair,
+                LabelValuesRequest, LabelValuesResponse, Labels, Point, ProfileType,
+                Series as ProfileSeries, TimeSeriesAggregationType as SeriesAggregationType,
+            };
         }
     }
 
@@ -295,6 +301,7 @@ mod tests {
                 timestamp: 42,
                 profile_id: "profile-1".to_string(),
                 span_id: "span-1".to_string(),
+                trace_id: "trace-1".to_string(),
                 value: 7,
                 labels: vec![pb::types::v1::LabelPair {
                     name: "pod".to_string(),
@@ -340,10 +347,7 @@ mod tests {
             pb::querier::v1::ProfileFormat::Flamegraph.as_str_name(),
             "PROFILE_FORMAT_FLAMEGRAPH"
         );
-        assert_eq!(
-            pb::querier::v1::SeriesAggregationType::TimeSeriesAggregationTypeAverage as i32,
-            1
-        );
+        assert_eq!(pb::querier::v1::SeriesAggregationType::Average as i32, 1);
         assert_eq!(pb::querier::v1::ExemplarType::None as i32, 1);
         assert_eq!(
             pb::querier::v1::ExemplarType::Span.as_str_name(),
@@ -360,15 +364,14 @@ mod tests {
             end: 20,
             group_by: vec!["env".to_string()],
             step: 5.0,
-            aggregation: pb::querier::v1::SeriesAggregationType::TimeSeriesAggregationTypeSum
-                as i32,
+            aggregation: Some(pb::querier::v1::SeriesAggregationType::Sum as i32),
             stack_trace_selector: Some(pb::types::v1::StackTraceSelector {
                 call_site: vec![pb::types::v1::Location {
                     name: "main".to_string(),
                 }],
                 go_pgo: None,
             }),
-            limit: 10,
+            limit: Some(10),
             exemplar_type: pb::querier::v1::ExemplarType::Individual as i32,
         };
 
@@ -386,7 +389,7 @@ mod tests {
             label_selector: "{}".to_string(),
             start: 10,
             end: 20,
-            max_nodes: 30,
+            max_nodes: Some(30),
             stack_trace_selector: Some(pb::types::v1::StackTraceSelector {
                 call_site: vec![pb::types::v1::Location {
                     name: "main".to_string(),
@@ -394,6 +397,7 @@ mod tests {
                 go_pgo: None,
             }),
             profile_id_selector: vec!["profile-a".to_string()],
+            trace_id_selector: vec!["trace-a".to_string()],
         };
 
         let bytes = request.encode_to_vec();
@@ -411,7 +415,7 @@ mod tests {
             span_selector: vec!["9a517183f26a089d".to_string()],
             start: 10,
             end: 20,
-            max_nodes: 30,
+            max_nodes: Some(30),
             format: pb::querier::v1::ProfileFormat::Flamegraph as i32,
         };
 
@@ -450,7 +454,7 @@ mod tests {
             group_by: vec!["env".to_string()],
             query_type: pb::querier::v1::HeatmapQueryType::Individual as i32,
             exemplar_type: pb::querier::v1::ExemplarType::None as i32,
-            limit: 10,
+            limit: Some(10),
         };
         let response = pb::querier::v1::SelectHeatmapResponse {
             series: vec![pb::querier::v1::HeatmapSeries {

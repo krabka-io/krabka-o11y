@@ -43,6 +43,7 @@ futures = { workspace = true }
 regex = { workspace = true }
 bytes = { workspace = true }
 flate2 = { workspace = true }
+hex = { workspace = true }
 jfrs = { workspace = true }
 multer = { workspace = true }
 serde = { workspace = true }

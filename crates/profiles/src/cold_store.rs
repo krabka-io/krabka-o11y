@@ -14,8 +14,8 @@ use datafusion::{catalog::MemTable, prelude::SessionContext};
 use krabka_blockstore::{LabelMatcher, ProfileIndex, SeriesFingerprint};
 use krabka_pprof::{
     ChainedResolver, DebuginfodConfig, DebuginfodResolver, FileSystemResolver, Frame,
-    LazySymbolizer, NativeResolver, ProfileError, ProfileScan, ProfileStats, ProfileStore,
-    SymbolDb, SymbolSource, profile_samples_schema,
+    LazySymbolizer, NativeResolver, ProfileError, ProfileQueryStats, ProfileScan, ProfileStats,
+    ProfileStore, SymbolDb, SymbolSource, profile_samples_schema,
 };
 use object_store::{ObjectStore, ObjectStoreExt, path::Path};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -345,6 +345,12 @@ mod tests {
                     newest_profile_time: Some(5000),
                 }
         );
+
+        let query = cold.query_stats("t", PT, &[], 0, i64::MAX).await.unwrap();
+        check!(query.block_count == 2);
+        check!(query.fingerprints.len() == 2);
+        check!(query.profile_count == 2);
+        check!(query.sample_count == 2);
 
         // A tenant with no blocks reports no data without touching the store.
         let empty = stats_for_unknown_tenant(&cold).await;

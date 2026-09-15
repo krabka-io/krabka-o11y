@@ -145,6 +145,25 @@ impl ProfileIndex {
     }
 
     #[must_use]
+    pub fn candidate_block_metas_for_series(
+        &self,
+        tenant: &str,
+        fps: &BTreeSet<SeriesFingerprint>,
+        min_ts: i64,
+        max_ts: i64,
+    ) -> Vec<BlockMeta> {
+        let keys: BTreeSet<_> = self
+            .candidate_blocks_for_series(tenant, fps, min_ts, max_ts)
+            .into_iter()
+            .collect();
+        self.series
+            .all_blocks(tenant)
+            .into_iter()
+            .filter(|block| keys.contains(&block.object_key))
+            .collect()
+    }
+
+    #[must_use]
     pub fn block_time_bounds(&self, tenant: &str, min_ts: i64, max_ts: i64) -> Option<(i64, i64)> {
         self.series.block_time_bounds(tenant, min_ts, max_ts)
     }

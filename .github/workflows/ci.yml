@@ -37,7 +37,9 @@ jobs:
         with:
           aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
           bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}
+          # The shared cache expands past 25 GiB and leaves too little room for
+          # a clean Rust dependency rebuild.
+          disk-cache: false
           repository-cache: true
       # This job builds and tests every target, and it ran the runner out of
       # disk: the link died as `clang++: linker command failed due to signal`
@@ -373,7 +375,9 @@ jobs:
         with:
           aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
           bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}-coverage
+          # Coverage output plus the restored cache exceeds the 75 GiB freed
+          # below; keep only the output needed by this run.
+          disk-cache: false
           repository-cache: true
       # Instrumented binaries are far larger than a normal build, and this job
       # links every test target in the workspace. It ran the runner's disk to

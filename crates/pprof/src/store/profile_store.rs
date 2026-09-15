@@ -1,4 +1,4 @@
-use super::{LabelMatcher, ProfileError, ProfileScan, ProfileStats};
+use super::{LabelMatcher, ProfileError, ProfileQueryStats, ProfileScan, ProfileStats};
 
 /// Resolves profile matchers to a `DataFusion` samples table over a tenant's data.
 #[async_trait::async_trait]
@@ -11,6 +11,15 @@ pub trait ProfileStore: Send + Sync {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<ProfileScan, ProfileError>;
+
+    async fn query_stats(
+        &self,
+        tenant: &str,
+        profile_type: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<ProfileQueryStats, ProfileError>;
 
     async fn label_names(
         &self,

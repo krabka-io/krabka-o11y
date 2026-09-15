@@ -16,7 +16,7 @@ mod tests {
     use krabka_blockstore::LabelMatcher;
 
     use super::*;
-    use crate::SymbolDb;
+    use crate::{ProfileQueryStats, SymbolDb};
 
     struct Empty;
 
@@ -35,6 +35,17 @@ mod tests {
                 samples_table: "samples".to_string(),
                 symbols: Arc::new(SymbolDb::new()),
             })
+        }
+
+        async fn query_stats(
+            &self,
+            _tenant: &str,
+            _profile_type: &str,
+            _matchers: &[LabelMatcher],
+            _start_ms: i64,
+            _end_ms: i64,
+        ) -> Result<ProfileQueryStats, crate::ProfileError> {
+            Ok(ProfileQueryStats::default())
         }
 
         async fn label_names(
@@ -106,10 +117,12 @@ mod tests {
     }
 }
 
+mod profile_query_stats;
 mod profile_scan;
 mod profile_stats;
 mod profile_store;
 
+pub use profile_query_stats::ProfileQueryStats;
 pub use profile_scan::ProfileScan;
 pub use profile_stats::ProfileStats;
 pub use profile_store::ProfileStore;

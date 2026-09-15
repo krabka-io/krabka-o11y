@@ -1,8 +1,8 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Principal,
-    ProfileStore, QuerierState, authorize_tenant, connect_error, is_internal_label,
-    merge_profile_type_selector, parse_label_selector, parse_render_query, pb,
-    tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
+    ProfileStore, QuerierState, authorize_tenant, connect_error, merge_profile_type_selector,
+    parse_label_selector, parse_render_query, pb, tenant_connect_error,
+    tenant_denied_connect_error, tenant_from_headers,
 };
 
 pub(crate) async fn analyze_query_inner<S>(
@@ -24,26 +24,27 @@ where
     let (profile_type, selector) = parse_render_query(&req.query).map_err(connect_error)?;
     let selector = merge_profile_type_selector(&selector, &profile_type).map_err(connect_error)?;
     let matchers = parse_label_selector(&selector).map_err(connect_error)?;
-    let mut label_names = state
+    let query_stats = state
         .store
-        .label_names(tenant.as_str(), &matchers, req.start, req.end)
+        .query_stats(
+            tenant.as_str(),
+            &profile_type,
+            &matchers,
+            req.start,
+            req.end,
+        )
         .await
         .map_err(connect_error)?;
-    label_names.retain(|name| !is_internal_label(name));
-    let series_count = state
-        .store
-        .series(tenant.as_str(), &matchers, &label_names, req.start, req.end)
-        .await
-        .map_err(connect_error)?
-        .len() as u64;
+    let series_count = query_stats.fingerprints.len() as u64;
+    let has_data = query_stats.block_count > 0;
     let response = pb::querier::v1::AnalyzeQueryResponse {
         query_scopes: vec![pb::querier::v1::QueryScope {
             component_type: "Long term storage".to_string(),
-            component_count: u64::from(series_count > 0),
-            block_count: 0,
+            component_count: u64::from(has_data),
+            block_count: query_stats.block_count,
             series_count,
-            profile_count: 0,
-            sample_count: 0,
+            profile_count: query_stats.profile_count,
+            sample_count: query_stats.sample_count,
             index_bytes: 0,
             profile_bytes: 0,
             symbol_bytes: 0,

@@ -36,7 +36,11 @@ pub(crate) async fn ingest_handler(
             state.max_decompressed,
             state.legacy_decode_limits,
         )
-        .await?;
+        .await
+        .map_err(|err| match err {
+            ProfilesError::TooLarge { .. } => err,
+            err => ProfilesError::Unprocessable(err.to_string()),
+        })?;
         process_raw(&state, tenant, vec![raw]).await
     }
     .instrument(ingest_span)

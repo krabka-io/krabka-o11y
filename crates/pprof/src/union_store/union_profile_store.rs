@@ -61,6 +61,29 @@ where
         })
     }
 
+    async fn query_stats(
+        &self,
+        tenant: &str,
+        profile_type: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<crate::ProfileQueryStats, ProfileError> {
+        let mut hot = self
+            .hot
+            .query_stats(tenant, profile_type, matchers, start_ms, end_ms)
+            .await?;
+        let cold = self
+            .cold
+            .query_stats(tenant, profile_type, matchers, start_ms, end_ms)
+            .await?;
+        hot.block_count = hot.block_count.saturating_add(cold.block_count);
+        hot.fingerprints.extend(cold.fingerprints);
+        hot.profile_count = hot.profile_count.saturating_add(cold.profile_count);
+        hot.sample_count = hot.sample_count.saturating_add(cold.sample_count);
+        Ok(hot)
+    }
+
     async fn label_names(
         &self,
         tenant: &str,

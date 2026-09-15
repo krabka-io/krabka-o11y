@@ -18,9 +18,7 @@ where
         .map_err(|error| tenant_connect_error(&error))?;
     authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
     let req = req.0;
-    let agg = if req.aggregation
-        == pb::querier::v1::SeriesAggregationType::TimeSeriesAggregationTypeAverage as i32
-    {
+    let agg = if req.aggregation == Some(pb::querier::v1::SeriesAggregationType::Average as i32) {
         SeriesAgg::Average
     } else {
         SeriesAgg::Sum
@@ -53,7 +51,7 @@ where
             .map_err(connect_error)?,
         _ => BTreeMap::new(),
     };
-    let series = state
+    let mut series = state
         .select_series(
             (&tenant, &req.profile_type_id, &req.label_selector),
             &req.group_by,
@@ -63,7 +61,15 @@ where
             &stack_trace_call_sites,
         )
         .await
-        .map_err(connect_error)?
+        .map_err(connect_error)?;
+    series.sort_by(|left, right| {
+        let total =
+            |series: &krabka_pprof::Series| series.points.iter().map(|(_, v)| v).sum::<f64>();
+        total(right)
+            .total_cmp(&total(left))
+            .then_with(|| left.labels.cmp(&right.labels))
+    });
+    let series = series
         .into_iter()
         .take(limit(req.limit))
         .map(|series| {

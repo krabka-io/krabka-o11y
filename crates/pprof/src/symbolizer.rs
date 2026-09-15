@@ -14,7 +14,10 @@ use krabka_units::{
 };
 use refined_type::{Refined, rule::GreaterU64};
 
-use crate::{Frame, RawLocation, SymbolDb, SymbolSource};
+use crate::{
+    Frame, RawLocation, ResolvedFunction, ResolvedLine, ResolvedLocation, ResolvedMapping,
+    SymbolDb, SymbolSource,
+};
 
 #[cfg(test)]
 mod tests {

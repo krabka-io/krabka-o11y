@@ -3,7 +3,7 @@
 use std::{collections::BTreeMap, fmt::Write as _, future::Future, net::SocketAddr, sync::Arc};
 
 use arrow::{
-    array::{Array, AsArray},
+    array::{Array, AsArray, BinaryArray},
     datatypes::{Int64Type, UInt64Type},
 };
 use axum::{
@@ -24,8 +24,9 @@ use krabka_observability::server_security::{
 use krabka_pprof::{
     COL_FINGERPRINT, COL_TIMESTAMP, EngineOpts, FlameEngine, FlameGraph, InMemoryProfileStore,
     LabeledHeatmap, PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE,
-    PCOL_VALUE, ProfileError, ProfileStats, ProfileStore, ProfileType, Series, SeriesAgg,
-    bin_heatmap, parse_label_selector, step_bucket_ms, step_from_secs,
+    PCOL_TRACE_ID, PCOL_VALUE, ProfileError, ProfileStats, ProfileStore, ProfileType,
+    SampleSelector, Series, SeriesAgg, bin_heatmap, parse_label_selector, step_bucket_ms,
+    step_from_secs,
 };
 use krabka_units::{
     Time,
@@ -502,6 +503,7 @@ mod tests {
                 ("service_name".to_string(), "api".to_string()),
                 ("__name__".to_string(), "process_cpu".to_string()),
                 ("env".to_string(), "pprofdiff".to_string()),
+                ("service.name".to_string(), "api".to_string()),
                 ("__profile_type__".to_string(), PT.to_string()),
             ],
             (0, stacktrace),
@@ -599,6 +601,39 @@ mod tests {
                 (*value, *value),
                 10,
                 *span_id,
+            );
+        }
+        store
+    }
+
+    fn store_with_associated_leaf_frames(
+        frames: &[(&str, u64, [u8; 16], i64)],
+    ) -> InMemoryProfileStore {
+        let mut store = InMemoryProfileStore::new();
+        for (name, span_id, trace_id, value) in frames {
+            let name_ref = store.symbols_mut().intern_string(name);
+            let function_id = store.symbols_mut().intern_function(FunctionRec {
+                name: name_ref,
+                system_name: name_ref,
+                filename: 0,
+                start_line: 0,
+            });
+            let location_id = store.symbols_mut().intern_location(LocationRec {
+                address: 0,
+                mapping_id: 0,
+                lines: vec![LineRec {
+                    function_id,
+                    line: 1,
+                }],
+            });
+            let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location_id]);
+            store.push_sample_with_total_and_associations(
+                ("tenant-a", PT),
+                vec![("service_name".to_string(), "api".to_string())],
+                (0, stacktrace),
+                (*value, *value),
+                10,
+                (Some(*span_id), Some(trace_id.to_vec())),
             );
         }
         store
@@ -893,6 +928,56 @@ overrides:
     }
 
     #[tokio::test]
+    async fn select_series_limit_keeps_the_largest_series() {
+        let state = Arc::new(QuerierState::new(Arc::new(store_with_services(&[
+            ("small", "prod", 1),
+            ("large", "prod", 10),
+        ]))));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+        .unwrap();
+        let response: serde_json::Value = reqwest::Client::new()
+            .post(format!(
+                "http://{bound}/querier.v1.QuerierService/SelectSeries"
+            ))
+            .header("x-scope-orgid", "tenant-a")
+            .json(&json!({
+                "profileTypeID": PT,
+                "labelSelector": "{}",
+                "start": 0,
+                "end": 100,
+                "groupBy": ["service_name"],
+                "step": 1.0,
+                "limit": 1,
+            }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+
+        check!(
+            response
+                .pointer("/series/0/labels/0/value")
+                .and_then(serde_json::Value::as_str)
+                == Some("large"),
+            "{response}"
+        );
+        check!(response.pointer("/series/1").is_none(), "{response}");
+    }
+
+    #[tokio::test]
     async fn select_merge_stacktraces_clamps_requested_nodes_to_configured_max() {
         let state = QuerierState::new_with_limits(
             Arc::new(store_with_leaf_frames(&[
@@ -961,7 +1046,7 @@ overrides:
     }
 
     #[tokio::test]
-    async fn settings_service_get_returns_empty_and_set_echoes() {
+    async fn settings_service_matches_fresh_tenant_semantics() {
         // Regression: the Grafana Profiles Drilldown app calls
         // `settings.v1.SettingsService/Get` during init. A 404 aborts init — the
         // app never issues the per-panel SelectSeries queries and the landing
@@ -1021,6 +1106,21 @@ overrides:
         assert!(
             json.pointer("/setting/name").and_then(|v| v.as_str()) == Some("flamegraph.collapsed"),
             "Set must echo the setting, got {json}"
+        );
+
+        let resp = client
+            .post(format!("http://{bound}/settings.v1.SettingsService/Delete"))
+            .header("content-type", "application/json")
+            .header("connect-protocol-version", "1")
+            .header("x-scope-orgid", "tenant-a")
+            .body(r#"{"name":"flamegraph.collapsed"}"#)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            resp.status() == reqwest::StatusCode::OK,
+            "Delete must succeed, got {}",
+            resp.status()
         );
     }
 
@@ -1287,6 +1387,153 @@ overrides:
     }
 
     #[tokio::test]
+    async fn current_query_selectors_pprof_and_async_fields_are_honored() {
+        let state = Arc::new(QuerierState::new(Arc::new(
+            store_with_associated_leaf_frames(&[
+                ("hot.path", 0x2a, [0xaa; 16], 5),
+                ("cold.path", 0x2b, [0xbb; 16], 7),
+            ]),
+        )));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+        .unwrap();
+        let client = reqwest::Client::new();
+        let url = format!("http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces");
+        let request = |extra: serde_json::Value| {
+            let mut body = json!({
+                "profileTypeID": PT,
+                "labelSelector": r#"{service_name="api"}"#,
+                "start": 0,
+                "end": 100,
+            });
+            body.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            client
+                .post(&url)
+                .header("x-scope-orgid", "tenant-a")
+                .json(&body)
+        };
+
+        let span: serde_json::Value = request(json!({ "spanSelector": ["000000000000002a"] }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        check!(span.pointer("/flamegraph/total").and_then(json_i64) == Some(5));
+        check!(span.to_string().contains("hot.path"));
+        check!(!span.to_string().contains("cold.path"));
+
+        let pprof: serde_json::Value = request(json!({
+            "traceIdSelector": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+            "format": "PROFILE_FORMAT_PPROF",
+        }))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        check!(pprof.pointer("/pprof/profile").is_some(), "{pprof}");
+        check!(pprof.to_string().contains("cold.path"), "{pprof}");
+        check!(!pprof.to_string().contains("hot.path"), "{pprof}");
+
+        let profile: serde_json::Value = client
+            .post(format!(
+                "http://{bound}/querier.v1.QuerierService/SelectMergeProfile"
+            ))
+            .header("x-scope-orgid", "tenant-a")
+            .json(&json!({
+                "profileTypeID": PT,
+                "labelSelector": r#"{service_name="api"}"#,
+                "start": 0,
+                "end": 100,
+                "traceIdSelector": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+            }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let total: i64 = profile
+            .get("sample")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|sample| sample.get("value").and_then(serde_json::Value::as_array))
+            .flatten()
+            .filter_map(json_i64)
+            .sum();
+        check!(total == 5, "{profile}");
+
+        let diff: serde_json::Value = client
+            .post(format!("http://{bound}/querier.v1.QuerierService/Diff"))
+            .header("x-scope-orgid", "tenant-a")
+            .json(&json!({
+                "left": {
+                    "profileTypeID": PT,
+                    "labelSelector": r#"{service_name="api"}"#,
+                    "start": 0,
+                    "end": 100,
+                    "traceIdSelector": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+                },
+                "right": {
+                    "profileTypeID": PT,
+                    "labelSelector": r#"{service_name="api"}"#,
+                    "start": 0,
+                    "end": 100,
+                    "traceIdSelector": ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+                },
+            }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        check!(diff.pointer("/flamegraph/leftTicks").and_then(json_i64) == Some(5));
+        check!(diff.pointer("/flamegraph/rightTicks").and_then(json_i64) == Some(7));
+
+        for async_query in [
+            json!({ "type": "ASYNC_QUERY_TYPE_FORCE" }),
+            json!({ "requestId": "query-1" }),
+        ] {
+            let extra = json!({ "async": async_query });
+            let response = request(extra).send().await.unwrap();
+            let status = response.status();
+            let headers = response.headers().clone();
+            let body = response.text().await.unwrap();
+            check!(
+                status == reqwest::StatusCode::BAD_REQUEST,
+                "status={status} headers={headers:?} body={body}"
+            );
+            check!(
+                body.contains("async profile queries are not supported"),
+                "status={status} headers={headers:?} body={body}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn select_merge_span_profile_tree_format_returns_pyroscope_tree_bytes() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_span_frame(
             "main.work",
@@ -1311,7 +1558,7 @@ overrides:
             .json(&json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
-                "spanSelector": ["111"],
+                "spanSelector": ["000000000000006f"],
                 "start": 0,
                 "end": 100,
                 "format": "PROFILE_FORMAT_TREE",
@@ -1587,7 +1834,9 @@ overrides:
             .json(&json!({
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
-                "stackTraceSelector": r#"{"callSite":[{"name":"hot.path"}]}"#,
+                "stackTraceSelector": {
+                    "callSite": [{ "name": "hot.path" }]
+                },
                 "start": 0,
                 "end": 100,
             }))
@@ -1631,14 +1880,18 @@ overrides:
                 "left": {
                     "profileTypeID": PT,
                     "labelSelector": r#"{service_name="api"}"#,
-                    "stackTraceSelector": r#"{"callSite":[{"name":"hot.path"}]}"#,
+                    "stackTraceSelector": {
+                        "callSite": [{ "name": "hot.path" }]
+                    },
                     "start": 0,
                     "end": 100
                 },
                 "right": {
                     "profileTypeID": PT,
                     "labelSelector": r#"{service_name="api"}"#,
-                    "stackTraceSelector": r#"{"callSite":[{"name":"cold.path"}]}"#,
+                    "stackTraceSelector": {
+                        "callSite": [{ "name": "cold.path" }]
+                    },
                     "start": 0,
                     "end": 100
                 }
@@ -1828,13 +2081,20 @@ overrides:
         .await
         .unwrap();
 
-        let series_labels = |body: serde_json::Value| {
+        let series_labels = |body: serde_json::Value, allow_utf8: bool| {
             let url = format!("http://{bound}/querier.v1.QuerierService/Series");
             async move {
-                let response: serde_json::Value = reqwest::Client::new()
+                let mut request = reqwest::Client::new()
                     .post(url)
                     .header("x-scope-orgid", "tenant-a")
-                    .json(&body)
+                    .json(&body);
+                if allow_utf8 {
+                    request = request.header(
+                        axum::http::header::ACCEPT,
+                        "application/json; allow-utf8-labelnames=true",
+                    );
+                }
+                let response: serde_json::Value = request
                     .send()
                     .await
                     .unwrap()
@@ -1860,10 +2120,13 @@ overrides:
 
         // Projected onto the drilldown's exact label list, sent in NON-sorted
         // request order — the response must still be sorted by name.
-        let projected = series_labels(json!({
-            "matchers": [],
-            "labelNames": ["service_name", "__profile_type__"],
-        }))
+        let projected = series_labels(
+            json!({
+                "matchers": [],
+                "labelNames": ["service_name", "__profile_type__"],
+            }),
+            false,
+        )
         .await;
         assert!(
             projected == vec!["__profile_type__".to_string(), "service_name".to_string()],
@@ -1872,10 +2135,13 @@ overrides:
 
         // Full label set (`labelNames=[]`) — also sorted by name, not the order
         // the labels were ingested.
-        let full = series_labels(json!({
-            "matchers": [],
-            "labelNames": [],
-        }))
+        let full = series_labels(
+            json!({
+                "matchers": [],
+                "labelNames": [],
+            }),
+            false,
+        )
         .await;
         assert!(
             full == vec![
@@ -1886,14 +2152,23 @@ overrides:
             ],
             "{full:?}"
         );
+
+        let utf8 = series_labels(
+            json!({
+                "matchers": [],
+                "labelNames": [],
+            }),
+            true,
+        )
+        .await;
+        assert!(utf8.contains(&"service.name".to_string()), "{utf8:?}");
     }
 
     #[tokio::test]
     async fn select_series_span_exemplar_returns_span_metadata() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_span_frame(
-            "span.path",
-            0x2a,
-        ))));
+        let state = Arc::new(QuerierState::new(Arc::new(
+            store_with_associated_leaf_frames(&[("span.path", 0x2a, [0xab; 16], 7)]),
+        )));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let bound = serve(
             "127.0.0.1:0".parse().unwrap(),
@@ -1936,6 +2211,10 @@ overrides:
         check!(
             exemplar.get("spanId").and_then(serde_json::Value::as_str) == Some("000000000000002a"),
             "a span id is sixteen hex digits, the same string a trace carries"
+        );
+        check!(
+            exemplar.get("traceId").and_then(serde_json::Value::as_str)
+                == Some("abababababababababababababababab")
         );
         check!(exemplar.get("timestamp").and_then(json_i64) == Some(10));
         check!(exemplar.get("value").and_then(json_i64) == Some(7));
@@ -2410,6 +2689,15 @@ overrides:
                 == Some(1),
             "{response}"
         );
+        for (field, value) in [("blockCount", 1), ("profileCount", 1), ("sampleCount", 1)] {
+            check!(
+                response
+                    .pointer(&format!("/queryScopes/0/{field}"))
+                    .and_then(json_i64)
+                    == Some(value),
+                "{response}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -2530,8 +2818,8 @@ overrides:
 
     #[test]
     fn limit_zero_means_unlimited() {
-        assert!(limit(0) == usize::MAX);
-        assert!(limit(2) == 2);
+        assert!(limit(None) == usize::MAX);
+        assert!(limit(Some(2)) == 2);
     }
 
     #[test]
@@ -2793,16 +3081,30 @@ overrides:
     }
 
     #[test]
-    fn parse_span_selectors_accepts_decimal_and_hex() {
-        let spans =
-            parse_span_selectors(&["42".to_string(), "9a517183f26a089d".to_string()]).unwrap();
+    fn parse_span_selectors_requires_eight_hex_bytes() {
+        let spans = parse_span_selectors(&[
+            "000000000000002a".to_string(),
+            "9a517183f26a089d".to_string(),
+        ])
+        .unwrap();
 
         assert!(spans == vec![42, 0x9a51_7183_f26a_089d]);
+        assert!(parse_span_selectors(&["42".to_string()]).is_err());
     }
 
     #[test]
     fn parse_span_selectors_rejects_bad_span() {
         assert!(parse_span_selectors(&["not-a-span".to_string()]).is_err());
+    }
+
+    #[test]
+    fn parse_trace_selectors_requires_sixteen_hex_bytes() {
+        check!(
+            parse_trace_selectors(&["aAbBcCdDeEfF00112233445566778899".to_string()]).unwrap()
+                == vec![hex::decode("aabbccddeeff00112233445566778899").unwrap()]
+        );
+        check!(parse_trace_selectors(&["aa".to_string()]).is_err());
+        check!(parse_trace_selectors(&["zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz".to_string()]).is_err());
     }
 
     #[test]
@@ -2878,6 +3180,7 @@ mod connect_error;
 mod default_heatmap_time_buckets_max;
 mod default_heatmap_value_buckets;
 mod default_store;
+mod delete_settings_handler;
 mod deserialize_group_by;
 mod diff_handler;
 mod diff_inner;
@@ -2919,6 +3222,7 @@ mod parse_render_offset;
 mod parse_render_query;
 mod parse_render_time_param;
 mod parse_span_selectors;
+mod parse_trace_selectors;
 mod profile_error_response;
 mod profile_id_label;
 mod profile_types_handler;
@@ -2957,9 +3261,6 @@ mod span_exemplars_from_scan;
 mod span_exemplars_from_totals;
 mod span_heatmap_points_from_scan;
 mod stack_trace_call_sites;
-mod stack_trace_call_sites_from_json;
-mod stack_trace_location_json;
-mod stack_trace_selector_json;
 mod tenant_connect_error;
 mod tenant_denied_connect_error;
 mod tenant_error_response;
@@ -2967,6 +3268,7 @@ mod timed_query;
 mod timed_query_response;
 mod types_label_pairs;
 mod unix_now_ms;
+mod utf8_label_names;
 
 use analyze_query_handler::analyze_query_handler;
 use analyze_query_inner::analyze_query_inner;
@@ -2974,6 +3276,7 @@ use connect_error::connect_error;
 use default_heatmap_time_buckets_max::DEFAULT_HEATMAP_TIME_BUCKETS_MAX;
 use default_heatmap_value_buckets::DEFAULT_HEATMAP_VALUE_BUCKETS;
 pub use default_store::DefaultStore;
+use delete_settings_handler::delete_settings_handler;
 use deserialize_group_by::deserialize_group_by;
 use diff_handler::diff_handler;
 use diff_inner::diff_inner;
@@ -3012,6 +3315,7 @@ use parse_render_offset::parse_render_offset;
 use parse_render_query::parse_render_query;
 use parse_render_time_param::parse_render_time_param;
 use parse_span_selectors::parse_span_selectors;
+use parse_trace_selectors::parse_trace_selectors;
 use profile_error_response::profile_error_response;
 use profile_id_label::PROFILE_ID_LABEL;
 use profile_types_handler::profile_types_handler;
@@ -3050,9 +3354,6 @@ use span_exemplars_from_scan::span_exemplars_from_scan;
 use span_exemplars_from_totals::span_exemplars_from_totals;
 use span_heatmap_points_from_scan::span_heatmap_points_from_scan;
 use stack_trace_call_sites::stack_trace_call_sites;
-use stack_trace_call_sites_from_json::stack_trace_call_sites_from_json;
-use stack_trace_location_json::StackTraceLocationJson;
-use stack_trace_selector_json::StackTraceSelectorJson;
 use tenant_connect_error::tenant_connect_error;
 use tenant_denied_connect_error::tenant_denied_connect_error;
 use tenant_error_response::tenant_error_response;
@@ -3060,3 +3361,4 @@ use timed_query::timed_query;
 use timed_query_response::timed_query_response;
 use types_label_pairs::types_label_pairs;
 use unix_now_ms::unix_now_ms;
+use utf8_label_names::{client_allows_utf8_label_names, is_legacy_label_name};

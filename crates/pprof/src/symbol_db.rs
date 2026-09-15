@@ -11,7 +11,9 @@ use wincode::{Deserialize as WincodeDeserialize, Serialize as WincodeSerialize};
 
 use crate::{
     error::ProfileError,
-    frame::{Frame, SymbolSource},
+    frame::{
+        Frame, ResolvedFunction, ResolvedLine, ResolvedLocation, ResolvedMapping, SymbolSource,
+    },
     symbolizer::{NativeResolver, SymbolizeRequest},
 };
 
@@ -258,8 +260,13 @@ mod tests {
         let id = db.intern_stacktrace(0, &[location]);
 
         let frames = db.resolve(0, id);
+        let locations = db.resolve_locations(0, id);
 
         assert!(frames[0].function == "github.com/dgraph-io/ristretto/v2.(*Cache).processItems");
+        assert!(
+            locations[0].lines[0].function.name
+                == "github.com/dgraph-io/ristretto/v2.(*Cache).processItems"
+        );
     }
 
     #[test]

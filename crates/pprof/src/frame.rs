@@ -28,7 +28,9 @@ mod tests {
 }
 
 mod frame_type;
+mod resolved_location;
 mod symbol_source;
 
 pub use frame_type::Frame;
+pub use resolved_location::{ResolvedFunction, ResolvedLine, ResolvedLocation, ResolvedMapping};
 pub use symbol_source::SymbolSource;

@@ -1,7 +1,8 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, MetadataRange,
-    Principal, ProfileStore, QuerierState, authorize_tenant, connect_error, is_internal_label,
-    parse_matchers, pb, tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
+    Principal, ProfileStore, QuerierState, authorize_tenant, client_allows_utf8_label_names,
+    connect_error, is_internal_label, is_legacy_label_name, parse_matchers, pb,
+    tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
 };
 
 pub(crate) async fn label_names_inner<S>(
@@ -25,7 +26,8 @@ where
         .label_names(tenant.as_str(), &matchers, range.start_ms, range.end_ms)
         .await
         .map_err(connect_error)?;
-    names.retain(|name| !is_internal_label(name));
+    let allow_utf8 = client_allows_utf8_label_names(&headers);
+    names.retain(|name| !is_internal_label(name) && (allow_utf8 || is_legacy_label_name(name)));
     Ok(ConnectResponse::new(pb::querier::v1::LabelNamesResponse {
         names,
     }))

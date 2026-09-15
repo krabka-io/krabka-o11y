@@ -3,22 +3,30 @@
 use std::{collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Duration};
 
 use arrow::{
-    array::AsArray,
+    array::{Array, AsArray, BinaryArray},
     datatypes::{Int64Type, UInt64Type},
 };
 use krabka_blockstore::{LabelMatcher, MatchOp};
 use krabka_units::Time;
 
 use crate::{
-    FlameGraph, FlameGraphDiff, Frame, Heatmap, LabeledHeatmap, ProfileError, ProfileStore,
-    ProfileType, Series, SeriesAgg, Tree, bin_heatmap, diff_trees,
+    FlameGraph, FlameGraphDiff, Frame, Heatmap, LabeledHeatmap, PprofProfile, ProfileError,
+    ProfileStore, ProfileType, ResolvedLocation, Series, SeriesAgg, Tree, bin_heatmap, diff_trees,
+    raw_profile::resolved_to_pprof_with_max_nodes,
     samples::{
         COL_FINGERPRINT, COL_TIMESTAMP, PCOL_SPAN_ID, PCOL_STACKTRACE_ID,
-        PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_VALUE,
+        PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE,
     },
     series::{fold_bucket, step_bucket_ms, validated_step},
-    tree_to_pprof, tree_to_pprof_with_max_nodes,
 };
+
+#[derive(Clone, Copy, Debug, Default)]
+pub enum SampleSelector<'a> {
+    #[default]
+    None,
+    Span(&'a [u64]),
+    Trace(&'a [Vec<u8>]),
+}
 
 const FRONTEND_RESULT_CACHE_ENTRIES: usize = 256;
 const FRONTEND_RESULT_CACHE_TTL: Duration = Duration::from_secs(30);
@@ -31,7 +39,10 @@ mod tests {
     use krabka_units::secs;
 
     use super::*;
-    use crate::{FunctionRec, InMemoryProfileStore, LineRec, LocationRec, SeriesAgg};
+    use crate::{
+        FunctionRec, InMemoryProfileStore, LineRec, LocationRec, MappingRec, MappingSymbolization,
+        SeriesAgg,
+    };
 
     const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
 
@@ -109,6 +120,31 @@ mod tests {
             111,
         );
         FlameEngine::new(Arc::new(store), EngineOpts { default_max_nodes })
+    }
+
+    fn association_fixture() -> FlameEngine<InMemoryProfileStore> {
+        let mut store = InMemoryProfileStore::new();
+        let (wanted, other) = {
+            let db = store.symbols_mut();
+            (intern_location(db, "wanted"), intern_location(db, "other"))
+        };
+        let wanted = store.symbols_mut().intern_stacktrace(0, &[wanted]);
+        let other = store.symbols_mut().intern_stacktrace(0, &[other]);
+        let labels = vec![("service".to_string(), "api".to_string())];
+        for (stack, value, span, trace) in [
+            (wanted, 5, 11, vec![0xaa; 16]),
+            (other, 7, 22, vec![0xbb; 16]),
+        ] {
+            store.push_sample_with_total_and_associations(
+                ("tenant-a", PT),
+                labels.clone(),
+                (0, stack),
+                (value, value),
+                100,
+                (Some(span), Some(trace)),
+            );
+        }
+        FlameEngine::new(Arc::new(store), EngineOpts::default())
     }
 
     fn intern_location(db: &mut crate::SymbolDb, name: &str) -> u32 {
@@ -243,6 +279,112 @@ mod tests {
             .sum();
 
         assert!(total == 15);
+    }
+
+    #[tokio::test]
+    async fn select_merge_profile_preserves_distinct_source_locations() {
+        let mut store = InMemoryProfileStore::new();
+        let (first_stack, second_stack) = {
+            let db = store.symbols_mut();
+            let function_name = db.intern_string("same_name");
+            let first_file = db.intern_string("first.rs");
+            let second_file = db.intern_string("second.rs");
+            let first_mapping_file = db.intern_string("/bin/first");
+            let second_mapping_file = db.intern_string("/bin/second");
+            let first_build = db.intern_string("build-first");
+            let second_build = db.intern_string("build-second");
+            let first_mapping = db.intern_mapping(MappingRec {
+                memory_start: 0x1000,
+                memory_limit: 0x2000,
+                file_offset: 0x10,
+                filename: first_mapping_file,
+                build_id: first_build,
+                symbolization: MappingSymbolization::from_parts((true, true, true, false)),
+            });
+            let second_mapping = db.intern_mapping(MappingRec {
+                memory_start: 0x3000,
+                memory_limit: 0x4000,
+                file_offset: 0x20,
+                filename: second_mapping_file,
+                build_id: second_build,
+                symbolization: MappingSymbolization::from_parts((true, true, true, false)),
+            });
+            let first_function = db.intern_function(FunctionRec {
+                name: function_name,
+                system_name: function_name,
+                filename: first_file,
+                start_line: 10,
+            });
+            let second_function = db.intern_function(FunctionRec {
+                name: function_name,
+                system_name: function_name,
+                filename: second_file,
+                start_line: 20,
+            });
+            let first_location = db.intern_location(LocationRec {
+                address: 0x1010,
+                mapping_id: first_mapping,
+                lines: vec![LineRec {
+                    function_id: first_function,
+                    line: 11,
+                }],
+            });
+            let second_location = db.intern_location(LocationRec {
+                address: 0x3020,
+                mapping_id: second_mapping,
+                lines: vec![LineRec {
+                    function_id: second_function,
+                    line: 22,
+                }],
+            });
+            (
+                db.intern_stacktrace(0, &[first_location]),
+                db.intern_stacktrace(0, &[second_location]),
+            )
+        };
+        let labels = vec![("service".to_string(), "api".to_string())];
+        store.push_sample(("tenant-a", PT), labels.clone(), (0, first_stack), 5, 0);
+        store.push_sample(("tenant-a", PT), labels, (0, second_stack), 7, 0);
+
+        let bytes = FlameEngine::new(Arc::new(store), EngineOpts::default())
+            .select_merge_profile("tenant-a", PT, "{}", 0, 1)
+            .await
+            .unwrap();
+        let profile = crate::PprofProfile::decode(&bytes).unwrap();
+        let inner = profile.inner();
+
+        check!(inner.sample.len() == 2);
+        check!(
+            inner
+                .location
+                .iter()
+                .map(|location| location.address)
+                .collect::<Vec<_>>()
+                == vec![0x1010, 0x3020]
+        );
+        check!(
+            inner
+                .location
+                .iter()
+                .map(|location| location.line[0].line)
+                .collect::<Vec<_>>()
+                == vec![11, 22]
+        );
+        check!(inner.mapping.len() == 2);
+        check!(inner.string_table.iter().any(|value| value == "first.rs"));
+        check!(inner.string_table.iter().any(|value| value == "second.rs"));
+        check!(
+            inner
+                .string_table
+                .iter()
+                .any(|value| value == "build-first")
+        );
+        check!(
+            inner
+                .string_table
+                .iter()
+                .any(|value| value == "build-second")
+        );
     }
 
     #[tokio::test]
@@ -435,6 +577,39 @@ mod tests {
         check!(fg.total == 15);
         check!(fg.names.iter().any(|name| name == "work"));
         check!(!fg.names.iter().any(|name| name == "other"));
+    }
+
+    #[tokio::test]
+    async fn sample_selectors_filter_flamegraph_and_pprof() {
+        let engine = association_fixture();
+        let traces = [vec![0xaa; 16]];
+        let flamegraph = engine
+            .select_merge_stacktraces_with_selectors(
+                ("tenant-a", PT, "{}"),
+                (0, 200),
+                0,
+                &[],
+                SampleSelector::Trace(&traces),
+            )
+            .await
+            .unwrap();
+        check!(flamegraph.total == 5);
+        check!(has_name(&flamegraph, "wanted"));
+        check!(!has_name(&flamegraph, "other"));
+
+        let profile = engine
+            .select_merge_profile_with_selectors(
+                ("tenant-a", PT, "{}"),
+                (0, 200),
+                0,
+                &[],
+                SampleSelector::Span(&[22]),
+            )
+            .await
+            .unwrap();
+        check!(decoded_profile_total(&profile) == 7);
+        check!(decoded_profile_has_string(&profile, "other"));
+        check!(!decoded_profile_has_string(&profile, "wanted"));
     }
 
     #[tokio::test]
@@ -969,6 +1144,7 @@ mod engine_opts;
 mod flame_engine;
 mod group_frame_name;
 mod heatmap_points_from_totals;
+mod merge_scan_to_pprof;
 mod merge_scan_to_tree;
 mod merge_sql_to_tree;
 mod series_buckets_from_stacktrace_selector;
@@ -981,6 +1157,7 @@ pub use engine_opts::EngineOpts;
 pub use flame_engine::FlameEngine;
 use group_frame_name::group_frame_name;
 use heatmap_points_from_totals::heatmap_points_from_totals;
+use merge_scan_to_pprof::merge_scan_to_pprof;
 use merge_scan_to_tree::merge_scan_to_tree;
 use merge_sql_to_tree::merge_sql_to_tree;
 use series_buckets_from_stacktrace_selector::series_buckets_from_stacktrace_selector;

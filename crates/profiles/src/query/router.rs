@@ -1,9 +1,10 @@
 use super::{
-    Arc, Extension, ProfileStore, QuerierState, Router, analyze_query_handler, diff_handler, get,
-    get_profile_stats_handler, get_settings_handler, label_names_handler, label_values_handler, pb,
-    profile_types_handler, render_diff_handler, render_handler, select_heatmap_handler,
-    select_merge_profile_handler, select_merge_span_profile_handler,
-    select_merge_stacktraces_handler, select_series_handler, series_handler, set_settings_handler,
+    Arc, Extension, ProfileStore, QuerierState, Router, analyze_query_handler,
+    delete_settings_handler, diff_handler, get, get_profile_stats_handler, get_settings_handler,
+    label_names_handler, label_values_handler, pb, profile_types_handler, render_diff_handler,
+    render_handler, select_heatmap_handler, select_merge_profile_handler,
+    select_merge_span_profile_handler, select_merge_stacktraces_handler, select_series_handler,
+    series_handler, set_settings_handler,
 };
 
 pub fn router<S>(state: Arc<QuerierState<S>>) -> Router
@@ -37,6 +38,7 @@ where
     let settings = pb::settings::v1::settings_service_connect::SettingsServiceBuilder::<()>::new()
         .get(get_settings_handler)
         .set(set_settings_handler)
+        .delete(delete_settings_handler)
         .build_connect();
 
     Router::new()

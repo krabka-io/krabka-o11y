@@ -1,5 +1,6 @@
 use super::{
-    Arc, AsArray, Frame, Int64Type, ProfileError, Tree, UInt64Type, stack_matches_call_sites,
+    Arc, Array, AsArray, BinaryArray, Frame, Int64Type, ProfileError, Tree, UInt64Type,
+    stack_matches_call_sites,
 };
 
 pub(crate) async fn merge_sql_to_tree(
@@ -8,6 +9,7 @@ pub(crate) async fn merge_sql_to_tree(
     tree: &mut Tree,
     prefix_frames: &[Frame],
     call_sites: &[String],
+    trace_ids: Option<&[Vec<u8>]>,
 ) -> Result<(), ProfileError> {
     let batches = scan
         .ctx
@@ -21,8 +23,17 @@ pub(crate) async fn merge_sql_to_tree(
         let partitions = batch.column(0).as_primitive::<UInt64Type>();
         let stacktrace_ids = batch.column(1).as_primitive::<UInt64Type>();
         let values = batch.column(2).as_primitive::<Int64Type>();
+        let traces = trace_ids.map(|_| batch.column(3).as_binary::<i32>() as &BinaryArray);
         let mut rows = Vec::with_capacity(batch.num_rows());
         for row in 0..batch.num_rows() {
+            if let (Some(wanted), Some(traces)) = (trace_ids, traces)
+                && (traces.is_null(row)
+                    || !wanted
+                        .iter()
+                        .any(|trace| trace.as_slice() == traces.value(row)))
+            {
+                continue;
+            }
             let partition = partitions.value(row);
             let stacktrace_id = u32::try_from(stacktrace_ids.value(row)).map_err(|err| {
                 ProfileError::Symbolize(format!("stacktrace id does not fit u32: {err}"))

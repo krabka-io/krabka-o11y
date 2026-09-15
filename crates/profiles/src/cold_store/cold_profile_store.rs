@@ -5,8 +5,8 @@ use super::{
     DebuginfodConfig, DebuginfodResolver, ExternalPartition, FileSystemResolver, HashMap,
     Int64Type, LabelMatcher, LazySymbolizer, LocalPartition, MemTable, Mutex, NativeResolver,
     ObjectStore, ObjectStoreExt, ParquetRecordBatchReaderBuilder, Path, ProfileError, ProfileIndex,
-    ProfileScan, ProfileStats, ProfileStore, RecordBatch, RwLock, SeriesFingerprint,
-    SessionContext, SymbolDb, UInt64Type, VecDeque, batch_fingerprints_overlap,
+    ProfileQueryStats, ProfileScan, ProfileStats, ProfileStore, RecordBatch, RwLock,
+    SeriesFingerprint, SessionContext, SymbolDb, UInt64Type, VecDeque, batch_fingerprints_overlap,
     block_partition_map, filter_and_remap_batch, is_unbounded_metadata_range,
     local_native_resolver, profile_samples_schema,
 };
@@ -214,6 +214,36 @@ impl ProfileStore for ColdProfileStore {
             ctx,
             samples_table,
             symbols: Arc::new(symbols),
+        })
+    }
+
+    async fn query_stats(
+        &self,
+        tenant: &str,
+        profile_type: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<ProfileQueryStats, ProfileError> {
+        let index = self.current_index();
+        let fingerprints = index
+            .select_fingerprints(tenant, profile_type, matchers)
+            .map_err(|err| ProfileError::Store(err.to_string()))?;
+        let blocks =
+            index.candidate_block_metas_for_series(tenant, &fingerprints, start_ms, end_ms);
+        let active = blocks
+            .iter()
+            .flat_map(|block| block.fingerprints.iter().copied())
+            .filter(|fingerprint| fingerprints.contains(fingerprint))
+            .collect();
+        let rows = blocks.iter().fold(0_u64, |total, block| {
+            total.saturating_add(block.row_count as u64)
+        });
+        Ok(ProfileQueryStats {
+            block_count: blocks.len() as u64,
+            fingerprints: active,
+            profile_count: rows,
+            sample_count: rows,
         })
     }
 
