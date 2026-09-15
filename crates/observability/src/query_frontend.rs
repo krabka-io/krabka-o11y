@@ -162,20 +162,22 @@ fn logs_cache_key(
     bounds: FingerprintBounds,
     encoding: LokiStreamEncoding,
 ) -> CacheKey {
-    CacheKey::new(format!(
-        "logs\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+    CacheKey::new(
         tenant,
-        request.query,
-        range.start_ns,
-        range.end_ns,
-        request.step.unwrap_or_default(),
-        request.interval.unwrap_or_default(),
-        request.limit.unwrap_or_default(),
-        request.direction.as_deref().unwrap_or_default(),
-        bounds.min,
-        bounds.max,
-        encoding as u8,
-    ))
+        format!(
+            "logs\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+            request.query,
+            range.start_ns,
+            range.end_ns,
+            request.step.unwrap_or_default(),
+            request.interval.unwrap_or_default(),
+            request.limit.unwrap_or_default(),
+            request.direction.as_deref().unwrap_or_default(),
+            bounds.min,
+            bounds.max,
+            encoding as u8,
+        ),
+    )
 }
 
 fn logs_result_is_cacheable(result: &Value, delete_requests_configured: bool) -> bool {

@@ -155,8 +155,8 @@ where
 
 pub(super) fn range_cache_key(tenant: &str, query: &FrontendRangeQuery) -> CacheKey {
     CacheKey::new(
+        tenant,
         serde_json::to_vec(&(
-            tenant,
             &query.query,
             query.start_ms,
             query.end_ms,
