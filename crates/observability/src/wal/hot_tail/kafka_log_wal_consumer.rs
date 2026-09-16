@@ -145,6 +145,10 @@ impl LogWalConsumer for KafkaLogWalConsumer {
             .collect()
     }
 
+    async fn records_applied(&mut self) {
+        self.assignment.observe_applied(&self.consumer).await;
+    }
+
     #[cfg_attr(test, mutants::skip)]
     async fn commit_compacted(&mut self, _position: WalPosition) -> Result<(), WalConsumerError> {
         self.consumer.commit_sync().await?;

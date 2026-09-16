@@ -1,9 +1,10 @@
+use krabka_blockstore::ObjectStoreMetrics;
+use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
+
 use super::{
     Arc, ByteSize, ByteSizeExt, Counter, Family, Gauge, Histogram, Mutex, QueryTypeLabel, Registry,
     RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel, Time, TimeExt,
 };
-use krabka_blockstore::ObjectStoreMetrics;
-use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
 
 /// Bundle of metric handles that is cheap to clone. Build it one time with
 /// [`ServiceMetrics::new`]. Give a clone, one `Arc::clone` each, to every

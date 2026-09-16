@@ -10,5 +10,8 @@ pub trait LogWalConsumer: Send + 'static {
 
     async fn poll(&mut self, timeout: Time) -> Result<Vec<KafkaWalRecord>, WalConsumerError>;
 
+    /// Reports that the last polled batch was applied successfully.
+    async fn records_applied(&mut self) {}
+
     async fn commit_compacted(&mut self, position: WalPosition) -> Result<(), WalConsumerError>;
 }

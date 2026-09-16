@@ -210,18 +210,38 @@ query_corpus() {
     "{\"matchers\":[\"{service_name=\\\"${marker}\\\"}\"],\"labelNames\":[\"service_name\",\"__profile_type__\"]}"
 }
 
-assert_no_restarts() {
+snapshot_restarts() {
   local stage=$1
   kubectl -n "${namespace}" get pods --field-selector=status.phase!=Succeeded \
     -o jsonpath='{range .items[*]}{.metadata.name}{" "}{range .status.containerStatuses[*]}{.restartCount}{" "}{end}{"\n"}{end}' \
     >"${evidence_dir}/${stage}-restarts.txt"
-  awk '{ for (i = 2; i <= NF; i++) if ($i != 0) exit 1 }' \
-    "${evidence_dir}/${stage}-restarts.txt"
+}
+
+assert_no_new_restarts() {
+  local stage=$1
+  snapshot_restarts "${stage}"
+  awk '
+    NR == FNR {
+      for (i = 2; i <= NF; i++) baseline[$1] += $i
+      next
+    }
+    {
+      restarts = 0
+      for (i = 2; i <= NF; i++) restarts += $i
+      if (restarts > baseline[$1]) {
+        print $1 " gained a container restart" > "/dev/stderr"
+        failed = 1
+      }
+    }
+    END { exit failed }
+  ' "${evidence_dir}/old-restarts.txt" "${evidence_dir}/${stage}-restarts.txt"
 }
 
 send_corpus
 query_corpus old
-assert_no_restarts old
+# The old release did not deploy every role in this topology. Record its
+# stabilized pods as the baseline, then reject any additional restart.
+snapshot_restarts old
 
 # These roles carry no singleton WAL partition or local durable ownership.
 scalable=(metrics-distributor metrics-query-frontend logs-distributor \
@@ -231,6 +251,7 @@ for workload in "${scalable[@]}"; do
   run kubectl -n "${namespace}" rollout status "deployment/${workload}" --timeout=10m
   query_corpus "scaled-${workload}"
 done
+assert_no_new_restarts scaled
 
 # A singleton durability owner must block a normal node drain through its PDB.
 protected_pod=$(kubectl -n "${namespace}" get pod -l app.kubernetes.io/name=metrics-block-builder -o jsonpath='{.items[0].metadata.name}')
@@ -248,6 +269,7 @@ wait_deployments
 run kubectl -n "${namespace}" delete pod "${protected_pod}" --wait=false
 run kubectl -n "${namespace}" rollout status deployment/metrics-block-builder --timeout=10m
 query_corpus pod-delete
+assert_no_new_restarts pod-delete
 
 # Exercise the node-loss recovery path after proving the normal eviction path
 # is protected. Forced deletion is explicit here; the cold data remains on the
@@ -258,6 +280,7 @@ run kubectl -n "${namespace}" rollout status statefulset/broker --timeout=10m
 run kubectl -n "${namespace}" rollout status statefulset/minio --timeout=10m
 wait_deployments
 query_corpus node-drain
+assert_no_new_restarts node-drain
 
 # Rolling N-1 -> N and back, one role at a time, while the public corpus stays
 # queryable. The immutable images are both loaded into the kind node above.
@@ -269,7 +292,7 @@ for deployment in "${deployments[@]}"; do
   run kubectl -n "${namespace}" rollout status "${deployment}" --timeout=10m
   query_corpus "upgrade-${deployment##*/}"
 done
-assert_no_restarts upgraded
+assert_no_new_restarts upgraded
 for deployment in "${deployments[@]}"; do
   marker="${base_marker}-rollback-${deployment##*/}"
   send_corpus
@@ -277,7 +300,7 @@ for deployment in "${deployments[@]}"; do
   run kubectl -n "${namespace}" rollout status "${deployment}" --timeout=10m
   query_corpus "rollback-${deployment##*/}"
 done
-assert_no_restarts rolled-back
+assert_no_new_restarts rolled-back
 
 # Cold restart every Krabka role while the broker and object store retain their
 # PVCs, then prove the acknowledged corpus is still queryable.
@@ -289,7 +312,7 @@ for deployment in "${deployments[@]}"; do
 done
 wait_deployments
 query_corpus cold-restart
-assert_no_restarts cold-restart
+assert_no_new_restarts cold-restart
 
 kubectl -n "${namespace}" get all -o wide >"${evidence_dir}/objects.txt"
 docker image inspect "${new_image}" >"${evidence_dir}/new-image.json"
