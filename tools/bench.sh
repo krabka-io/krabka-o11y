@@ -34,6 +34,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 manifest="benches/Cargo.toml"
+started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+started_seconds=$SECONDS
+printf -v command '%q ' "$0" "$@"
 
 # The CI budget. Ten samples is Criterion's floor for the statistics it
 # reports, and every group in //benches already asks for `sample_size(10)`
@@ -112,3 +115,20 @@ echo "estimates under benches/target/criterion, report at"
 echo "  benches/target/criterion/report/index.html"
 echo
 echo "the verdict is tools/bench-ratchet.py, which reads those estimates"
+
+metadata="$criterion_dir/run.metadata.txt"
+{
+  printf 'commit=%s\n' "$(git rev-parse HEAD)"
+  printf 'started_at=%s\n' "$started_at"
+  printf 'duration_seconds=%d\n' "$((SECONDS - started_seconds))"
+  printf 'command=%s\n' "${command% }"
+  printf 'sample_size=%s\n' "$sample_size"
+  printf 'measurement_time_seconds=%s\n' "$measurement_time"
+  printf 'warm_up_time_seconds=%s\n' "$warm_up_time"
+  printf 'host=%s\n' "$(uname -a)"
+  printf 'cpu_count=%s\n' "$(nproc)"
+  printf 'memory_kib=%s\n' "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
+  printf 'rustc=%s\n' "$(rustc --version --verbose | tr '\n' ';')"
+} >"$metadata"
+find "$criterion_dir" -type f ! -name SHA256SUMS -print0 \
+  | sort -z | xargs -0 sha256sum >"$criterion_dir/SHA256SUMS"

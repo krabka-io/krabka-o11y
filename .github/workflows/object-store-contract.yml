@@ -1,0 +1,81 @@
+name: object-store contract
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: GitHub Environment holding the provider credentials
+        required: true
+        type: choice
+        options: [aws, gcs, azure]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: object-store-contract-${{ inputs.provider }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: object-store-${{ inputs.provider }}
+    env:
+      KRABKA_OBJECT_STORE_CONTRACT_URL: ${{ secrets.KRABKA_OBJECT_STORE_CONTRACT_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      AWS_CHECKSUM_ALGORITHM: sha256
+      GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+      AZURE_STORAGE_ACCOUNT_NAME: ${{ secrets.AZURE_STORAGE_ACCOUNT_NAME }}
+      AZURE_STORAGE_ACCOUNT_KEY: ${{ secrets.AZURE_STORAGE_ACCOUNT_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-${{ inputs.provider }}
+          repository-cache: true
+      - name: provider contract
+        run: |
+          bazel test //crates/blockstore:object_store_provider_contract_test \
+            --test_output=all \
+            --test_arg=--ignored \
+            --test_env=KRABKA_OBJECT_STORE_CONTRACT_URL \
+            --test_env=KRABKA_CONTRACT_COMMIT=${GITHUB_SHA} \
+            --test_env=AWS_ACCESS_KEY_ID \
+            --test_env=AWS_SECRET_ACCESS_KEY \
+            --test_env=AWS_REGION \
+            --test_env=AWS_CHECKSUM_ALGORITHM \
+            --test_env=GOOGLE_SERVICE_ACCOUNT_KEY \
+            --test_env=AZURE_STORAGE_ACCOUNT_NAME \
+            --test_env=AZURE_STORAGE_ACCOUNT_KEY
+      - name: evidence manifest
+        if: always()
+        run: |
+          evidence="${RUNNER_TEMP}/object-store-evidence"
+          mkdir -p "${evidence}"
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "provider=${{ inputs.provider }}"
+            echo "host=$(uname -a)"
+            echo "cpu_count=$(nproc)"
+            awk '/^MemTotal:/ {print "memory_kib=" $2}' /proc/meminfo
+            echo "command=bazel test //crates/blockstore:object_store_provider_contract_test"
+          } >"${evidence}/run.metadata.txt"
+          find bazel-testlogs/crates/blockstore/object_store_provider_contract_test \
+            -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum \
+            >"${evidence}/SHA256SUMS"
+          sha256sum "${evidence}/run.metadata.txt" >>"${evidence}/SHA256SUMS"
+      - name: evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: object-store-${{ inputs.provider }}-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/object-store-evidence/
+            bazel-testlogs/crates/blockstore/object_store_provider_contract_test/test.log
+            bazel-testlogs/crates/blockstore/object_store_provider_contract_test/test.outputs/**
+          if-no-files-found: error

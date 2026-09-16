@@ -75,3 +75,7 @@ IMAGES = {
 def image_tag_env(name):
     """The environment variable a suite reads image `name`'s tag from."""
     return "KRABKA_" + name.upper() + "_IMAGE_TAG"
+
+def image_ref_env(name):
+    """The environment variable carrying image `name`'s loaded reference."""
+    return "KRABKA_" + name.upper() + "_IMAGE_REF"

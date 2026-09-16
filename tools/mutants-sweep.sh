@@ -27,11 +27,18 @@ cd "$(dirname "$0")/.." || exit 1
 readonly TIMEOUT_SECONDS=36000
 
 # Bazel runs one test action per core by default, so a 32-shard sweep reaches
-# the link step 32 ways at once. Each `ld.lld` holds 1.5-2.0 GB, which demands
-# roughly 58 GB against this box's 31 GB and takes the whole VM down -- twice
-# now, both times looking like an unexplained restart rather than an OOM.
-# Shards still divide the work; only how many link at once is bounded.
-readonly CONCURRENT_SHARDS=8
+# the link step 32 ways at once. Each `ld.lld` holds 1.5-2.0 GB. Shards still
+# divide the work; only how many link at once is bounded. Eight suits the
+# dedicated runner; smaller hosted runners use their actual CPU count.
+detected_cores=$(nproc)
+if ((detected_cores > 8)); then
+  detected_cores=8
+fi
+readonly CONCURRENT_SHARDS="${KRABKA_MUTANTS_CONCURRENT_SHARDS:-$detected_cores}"
+if ! [[ "$CONCURRENT_SHARDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "KRABKA_MUTANTS_CONCURRENT_SHARDS must be a positive integer" >&2
+  exit 2
+fi
 
 # Test scratch is left where Bazel puts it: under its own output base, which is
 # on disk already. Pointing TMPDIR at a directory outside the sandbox instead
@@ -55,6 +62,8 @@ printf 'sweeping %d crate(s), logs in %s\n' "${#crates[@]}" "$LOG_DIR"
 
 for crate in "${crates[@]}"; do
   log="$LOG_DIR/$crate.log"
+  started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  started_seconds=$SECONDS
   bazel test "//crates/$crate:${crate}_mutants" \
     --nocache_test_results --test_output=all --test_timeout="$TIMEOUT_SECONDS" \
     --local_test_jobs="$CONCURRENT_SHARDS" \
@@ -88,4 +97,21 @@ for crate in "${crates[@]}"; do
           if (refused > 0) printf "  [%d shard(s) refused: a baseline suite fails inside the sandbox]", refused
           printf "\n"
         }'
+
+  metadata="$LOG_DIR/$crate.metadata.txt"
+  {
+    printf 'commit=%s\n' "$(git rev-parse HEAD)"
+    printf 'started_at=%s\n' "$started_at"
+    printf 'duration_seconds=%d\n' "$((SECONDS - started_seconds))"
+    printf 'command=bazel test //crates/%s:%s_mutants --nocache_test_results --test_output=all --test_timeout=%d --local_test_jobs=%d --local_resources=memory=HOST_RAM*.6\n' \
+      "$crate" "$crate" "$TIMEOUT_SECONDS" "$CONCURRENT_SHARDS"
+    printf 'host=%s\n' "$(uname -a)"
+    printf 'cpu_count=%s\n' "$(nproc)"
+    printf 'memory_kib=%s\n' "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
+    printf 'rustc=%s\n' "$(rustc --version --verbose | tr '\n' ';')"
+    printf 'bazel=%s\n' "$(bazel version 2>/dev/null | tr '\n' ';')"
+  } >"$metadata"
+  sha256sum "$log" "$metadata" >"$LOG_DIR/$crate.SHA256SUMS"
+  find "bazel-testlogs/crates/$crate/${crate}_mutants" -name test.log -type f -print0 \
+    2>/dev/null | sort -z | xargs -0 -r sha256sum >>"$LOG_DIR/$crate.SHA256SUMS"
 done

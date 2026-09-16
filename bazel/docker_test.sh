@@ -43,6 +43,15 @@ if [[ -n "${KRABKA_IMAGE_TARS:-}" ]]; then
     done <<<"${KRABKA_IMAGE_TARS}"
 fi
 
+# Record the content-addressed ID Docker assigned to every loaded reference.
+# Tests that emit qualification reports can then name the exact image bytes
+# they exercised without duplicating the registry digest from MODULE.bazel.
+while IFS='=' read -r variable reference; do
+    [[ -n "${variable}" ]] || continue
+    image_id="$(docker image inspect --format '{{.Id}}' "${reference}")"
+    export "${variable%_REF}_ID=${image_id}"
+done < <(env | grep -E '^KRABKA_[A-Z0-9_]+_IMAGE_REF=' || true)
+
 # `--ignored`: under Cargo these cases are `#[ignore]`d, because they need the
 # daemon this script just checked for. This is the target that runs them.
 #

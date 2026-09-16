@@ -43,6 +43,11 @@ num-traits = { workspace = true }
 xxhash-rust = { workspace = true }
 
 [dev-dependencies]
+object_store = { workspace = true, features = ["integration"] }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[[test]]
+name = "object_store_provider_contract"
+test = false

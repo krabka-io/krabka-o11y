@@ -71,7 +71,7 @@ krabka-pprof = { path = "../crates/pprof" }
 krabka-promql = { path = "../crates/promql" }
 krabka-traceql = { path = "../crates/traceql" }
 krabka-units = { version = "0.4.0" }
-object_store = { version = "0.13", features = ["aws", "gcp"] }
+object_store = { version = "0.13", features = ["aws", "azure", "gcp"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]

@@ -13,10 +13,10 @@
 # The structural checks in tools/mutants-ratchet.py still apply, so a crate
 # with no number is still unable to report a killed shard as a clean sweep.
 #
-# Every crate below reads `unseeded` because no full sweep has run since the
+# `unseeded` crates have not completed a trustworthy full sweep since the
 # ratchet was written. A sweep is a nightly job of several hours, and a number
-# written from anywhere else would be a guess. Do not guess one. Take the
-# count from the nightly run, which prints the line to check in:
+# written from a partial run would be a guess. Take a count only from a complete
+# run, which prints the line to check in:
 #
 #     tools/mutants-ratchet.py <crate> --record
 #
@@ -28,5 +28,6 @@ observability    unseeded
 pprof            unseeded
 profiles         unseeded
 promql           unseeded
+query-frontend   19
 traceql          unseeded
 traces           unseeded
