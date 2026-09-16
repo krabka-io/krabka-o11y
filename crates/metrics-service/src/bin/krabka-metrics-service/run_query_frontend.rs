@@ -103,6 +103,18 @@ pub(crate) async fn run_query_frontend(
         .with_cold_cache_ttl(cli.cold_cache_ttl)
         .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback),
     );
+    let query_cache = krabka_promql::ObjectStoreQueryFrontendCache::new(
+        Arc::clone(&store),
+        cli.query_frontend_cache_prefix.clone(),
+    )
+    .with_ttl(cli.query_frontend_cache_ttl)
+    .with_execution_options(krabka_query_frontend::ExecutionOptions {
+        max_parallelism: std::num::NonZeroUsize::new(cli.query_frontend_max_parallelism)
+            .expect("clap rejects zero query-frontend parallelism"),
+        max_retries: cli.query_frontend_max_retries,
+        max_cache_freshness: cli.query_frontend_max_cache_freshness.to_std(),
+    });
+    krabka_query_frontend::QueryCache::sweep(&query_cache).await?;
     let state = PrometheusApiState::new(Arc::clone(&metric_store), query_engine_opts(&cli))
         .with_erasure_store(Arc::clone(&store))
         .with_max_concurrent_queries(cli.max_concurrent_queries)
@@ -119,21 +131,7 @@ pub(crate) async fn run_query_frontend(
                 split_interval: cli.query_frontend_split,
                 shard_count: cli.query_frontend_shards,
             },
-            Arc::new(
-                krabka_promql::ObjectStoreQueryFrontendCache::new(
-                    Arc::clone(&store),
-                    cli.query_frontend_cache_prefix.clone(),
-                )
-                .with_ttl(cli.query_frontend_cache_ttl)
-                .with_execution_options(krabka_query_frontend::ExecutionOptions {
-                    max_parallelism: std::num::NonZeroUsize::new(
-                        cli.query_frontend_max_parallelism,
-                    )
-                    .expect("clap rejects zero query-frontend parallelism"),
-                    max_retries: cli.query_frontend_max_retries,
-                    max_cache_freshness: cli.query_frontend_max_cache_freshness.to_std(),
-                }),
-            ),
+            Arc::new(query_cache),
         );
     let state = if let Some((head, readiness)) = status_wal {
         state.with_wal_head_status(head, readiness)

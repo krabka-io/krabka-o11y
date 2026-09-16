@@ -12,6 +12,8 @@ use futures::TryStreamExt as _;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use serde::{Serialize, de::DeserializeOwned};
 
+const DEFAULT_OBJECT_STORE_CACHE_PREFIX: &str = "_krabka_query_frontend_cache";
+
 /// Tenant-scoped opaque identity of a planned subquery.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct CacheKey {
@@ -245,9 +247,14 @@ impl<V> ObjectStoreCache<V> {
     #[must_use]
     pub fn new(store: Arc<dyn ObjectStore>, prefix: impl Into<String>, ttl: Duration) -> Self {
         let prefix = prefix.into();
+        let prefix = prefix.trim_matches('/');
         Self {
             store,
-            prefix: prefix.trim_matches('/').to_owned(),
+            prefix: if prefix.is_empty() {
+                DEFAULT_OBJECT_STORE_CACHE_PREFIX.to_owned()
+            } else {
+                prefix.to_owned()
+            },
             ttl,
             clock: Arc::new(SystemClock),
             value: PhantomData,
@@ -273,11 +280,14 @@ impl<V> ObjectStoreCache<V> {
             hex(key.tenant.as_bytes())
         };
         let name = hex(&key.bytes);
-        if self.prefix.is_empty() {
-            Path::from(format!("{tenant}/{name}.json"))
-        } else {
-            Path::from(format!("{}/{tenant}/{name}.json", self.prefix))
-        }
+        Path::from(format!("{}/{tenant}/{name}.json", self.prefix))
+    }
+
+    fn is_legacy_path(&self, path: &Path) -> bool {
+        path.as_ref()
+            .strip_prefix(&self.prefix)
+            .and_then(|path| path.strip_prefix('/'))
+            .is_some_and(|path| !path.contains('/'))
     }
 }
 
@@ -323,15 +333,16 @@ where
     }
 
     async fn sweep(&self) -> Result<usize, Self::Error> {
-        let prefix = (!self.prefix.is_empty()).then(|| Path::from(self.prefix.clone()));
-        let objects = self
-            .store
-            .list(prefix.as_ref())
-            .try_collect::<Vec<_>>()
-            .await?;
+        let prefix = Path::from(self.prefix.clone());
+        let mut objects = self.store.list(Some(&prefix));
         let now_ms = self.clock.now_epoch_millis();
         let mut swept = 0;
-        for object in objects {
+        while let Some(object) = objects.try_next().await? {
+            if self.is_legacy_path(&object.location) {
+                self.store.delete(&object.location).await?;
+                swept += 1;
+                continue;
+            }
             let bytes = self.store.get(&object.location).await?.bytes().await?;
             let stored: StoredValue<serde_json::Value> =
                 serde_json::from_slice(&bytes).map_err(ObjectStoreCacheError::Decode)?;

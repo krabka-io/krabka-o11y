@@ -134,6 +134,10 @@ where
     ) -> Result<(), Self::Error> {
         self.inner.insert(key, result).await.map_err(cache_error)
     }
+
+    async fn sweep(&self) -> Result<usize, Self::Error> {
+        self.inner.sweep().await.map_err(cache_error)
+    }
 }
 
 /// A `PromQL` result cache that supplies shared fan-out policy.

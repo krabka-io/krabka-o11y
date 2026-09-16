@@ -9,6 +9,7 @@ use std::{
 
 use assert2::assert;
 use async_trait::async_trait;
+use object_store::{ObjectStoreExt as _, PutPayload, path::Path};
 
 use super::*;
 
@@ -294,4 +295,41 @@ async fn object_store_sweep_removes_only_expired_cache_objects() {
     assert!(QueryCache::sweep(&cache).await.unwrap() == 1);
     assert!(QueryCache::get(&cache, &stale).await.unwrap() == None);
     assert!(QueryCache::get(&cache, &live).await.unwrap() == Some(2));
+}
+
+#[tokio::test]
+async fn empty_object_store_prefix_stays_in_its_cache_namespace() {
+    let clock = Arc::new(ManualClock::default());
+    let store = Arc::new(object_store::memory::InMemory::new());
+    store
+        .put(&Path::from("unrelated"), PutPayload::from("keep"))
+        .await
+        .unwrap();
+    let cache = ObjectStoreCache::<usize>::new(store.clone(), "/", Duration::from_millis(10))
+        .with_clock(clock.clone());
+    QueryCache::insert(&cache, &CacheKey::new("tenant-a", b"stale"), &1)
+        .await
+        .unwrap();
+    clock.set(11);
+
+    assert!(QueryCache::sweep(&cache).await.unwrap() == 1);
+    assert!(store.get(&Path::from("unrelated")).await.is_ok());
+}
+
+#[tokio::test]
+async fn object_store_sweep_removes_the_pre_tenant_layout() {
+    let store = Arc::new(object_store::memory::InMemory::new());
+    let legacy = Path::from("query-cache/6b6579.json");
+    store
+        .put(&legacy, PutPayload::from("obsolete"))
+        .await
+        .unwrap();
+    let cache =
+        ObjectStoreCache::<usize>::new(store.clone(), "query-cache", Duration::from_millis(10));
+
+    assert!(QueryCache::sweep(&cache).await.unwrap() == 1);
+    assert!(matches!(
+        store.get(&legacy).await,
+        Err(object_store::Error::NotFound { .. })
+    ));
 }
