@@ -4,7 +4,8 @@ This guide covers the operating contracts that are easy to miss in a working dep
 
 See the [object-store contract](object_store_contract.md) and
 [operating envelope](operating_envelope.md) for provider qualification and
-capacity evidence.
+capacity evidence. See [disaster recovery](disaster_recovery.md) for the
+checksummed tenant backup, audit, and restore procedure.
 
 ## Configuration
 

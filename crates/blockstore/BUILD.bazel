@@ -1,4 +1,4 @@
-load("//bazel:defs.bzl", "crate_library", "crate_tests")
+load("//bazel:defs.bzl", "crate_binary", "crate_library", "crate_tests")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -6,6 +6,12 @@ package(default_visibility = ["//visibility:public"])
 exports_files(["Cargo.toml"])
 
 crate_library(name = "blockstore")
+
+crate_binary(
+    name = "krabka-storage-admin",
+    crate_root = "src/bin/krabka-storage-admin/main.rs",
+    lib = ":blockstore",
+)
 
 crate_tests(
     lib = "blockstore",
