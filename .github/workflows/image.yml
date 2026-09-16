@@ -189,7 +189,7 @@ jobs:
       - name: verify release platforms are pullable
         run: |
           mkdir -p release-assets
-          for platform in linux/amd64 linux/arm64; do
+          for platform in linux/arm64 linux/amd64; do
             docker pull --platform "${platform}" "${IMAGE}"
             printf '%s %s\n' "${platform}" "${IMAGE}" >> release-assets/platforms.txt
           done

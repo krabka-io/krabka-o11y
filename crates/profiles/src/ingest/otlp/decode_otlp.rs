@@ -28,7 +28,7 @@ pub fn decode_otlp(
                 let value = match attribute.value.as_ref()?.value.as_ref()? {
                     Value::StringValue(value) if !value.is_empty() => value.clone(),
                     Value::IntValue(value) => value.to_string(),
-                    _ => return None,
+                    Value::StringValue(_) => return None,
                 };
                 Some((attribute.key.clone(), value))
             })

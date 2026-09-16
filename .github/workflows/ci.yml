@@ -271,6 +271,7 @@ jobs:
       - run: tools/upstream-surface.py --check
       - run: tools/upstream-drift.py --self-test
       - run: tools/upstream-drift.py --check
+      - run: tools/otlp-contracts.py --self-test
       - run: tools/qualification-gate.py --self-test
       - run: tools/qualification-report.py --self-test
       - run: tools/qualification-report.py --check

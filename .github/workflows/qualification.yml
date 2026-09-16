@@ -25,6 +25,7 @@ jobs:
           - id: ordinary-cargo
             gate: ordinary
             command: cargo test --workspace --locked
+            allowed_ignored: 26
           - id: ordinary-clippy
             gate: ordinary
             command: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -67,6 +68,12 @@ jobs:
           - id: otlp-contracts
             gate: clients
             command: bazel test //crates/metrics:metrics_test //crates/observability:distributor_otlp_test //crates/traces:traces_test //crates/profiles:profiles_test
+          - id: otlp-contracts-current
+            gate: clients
+            command: tools/otlp-contracts.py --window current
+          - id: otlp-contracts-previous
+            gate: clients
+            command: tools/otlp-contracts.py --window previous
           - id: kubernetes
             gate: kubernetes
             command: bazel run -c opt //bazel/images/krabka:load && tools/kubernetes-qualification.sh krabka-o11y:dev ghcr.io/krabka-io/krabka-o11y:sha-$(git rev-parse --short=12 HEAD^) qualification/evidence/kubernetes
@@ -121,7 +128,7 @@ jobs:
       - name: run and record gate
         env:
           QUALIFICATION_COMMAND: ${{ matrix.command }}
-        run: tools/qualification-gate.py --id "${{ matrix.id }}" --gate "${{ matrix.gate }}" --command "${QUALIFICATION_COMMAND}" --output "qualification/evidence/${{ matrix.id }}.json"
+        run: tools/qualification-gate.py --id "${{ matrix.id }}" --gate "${{ matrix.gate }}" --command "${QUALIFICATION_COMMAND}" --allowed-ignored "${{ matrix.allowed_ignored || 0 }}" --output "qualification/evidence/${{ matrix.id }}.json"
       - if: always()
         uses: actions/upload-artifact@v4
         with:

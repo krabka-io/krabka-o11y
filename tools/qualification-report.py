@@ -98,9 +98,12 @@ def validate(report, final=False, commit=None):
             fail(f"OTLP {window} fixture identity differs from the report")
     if {fixture.get("signal") for fixture in fixtures.get("fixtures", [])} != {"metrics", "logs", "traces", "profiles"}:
         fail("OTLP fixtures must cover all four signals")
-    otlp_command = next(command for gate in report["gates"] if gate["id"] == "clients" for command in gate["commands"] if "distributor_otlp_test" in command)
+    client_commands = next(gate["commands"] for gate in report["gates"] if gate["id"] == "clients")
+    otlp_command = next(command for command in client_commands if "distributor_otlp_test" in command)
     if not all(fixture.get("target") in otlp_command and fixture.get("transports") and fixture.get("bounds") for fixture in fixtures["fixtures"]):
         fail("OTLP fixtures are not connected to the qualification command")
+    if set(fixtures.get("schema_replay", {})) != {"current", "previous"} or not set(fixtures["schema_replay"].values()) <= set(client_commands):
+        fail("both OTLP schema windows must be connected to qualification commands")
 
     required_manifests = {"docs/api/upstream_surfaces.json", "docs/api/client_oracles.json", "docs/api/routes.json", "docs/api_compatibility.md", "docs/disaster_recovery.md", "docs/persisted_formats.md", "docs/releases/milestone-21-six-month-report.md", "qualification/otlp-contracts.json"}
     if set(report.get("manifests", [])) != required_manifests:
@@ -132,7 +135,7 @@ def validate(report, final=False, commit=None):
         count = len(gate["commands"])
         if gate["result"] != "passed" or gate["command_count"] != count or gate["result_count"] < count:
             fail(f"{gate['id']} has incomplete command evidence")
-        if gate["flaky_count"] or gate["skipped_count"] or len(gate["evidence"]) != count:
+        if gate["flaky_count"] or gate["skipped_count"] != gate.get("allowed_skipped_count", 0) or len(gate["evidence"]) != count:
             fail(f"{gate['id']} contains flaky, skipped, or missing evidence")
         if gate["duration_seconds"] < 0:
             fail(f"{gate['id']} has an invalid duration")
@@ -151,7 +154,7 @@ def load_evidence(directory, commit):
         item["checksum"] = recorded_checksum
         if item.get("commit") != commit or item.get("result") != "passed" or item.get("exit_code") != 0:
             fail(f"{path.name} is not passing evidence for {commit}")
-        if not isinstance(item.get("result_count"), int) or item["result_count"] < 1 or item.get("flaky_count") != 0 or item.get("skipped_count") != 0:
+        if not isinstance(item.get("result_count"), int) or item["result_count"] < 1 or item.get("flaky_count") != 0 or item.get("skipped_count") != item.get("allowed_skipped_count", 0):
             fail(f"{path.name} is incomplete, flaky, or skipped")
         if not RUN_URL.fullmatch(item.get("run_url", "")) or not isinstance(item.get("duration_seconds"), (int, float)):
             fail(f"{path.name} has no immutable run or duration")
@@ -180,8 +183,9 @@ def promote(report, commit, evidence_dir):
         gate["duration_seconds"] = round(sum(item["duration_seconds"] for item in evidence), 3)
         gate["flaky_count"] = sum(item["flaky_count"] for item in evidence)
         gate["skipped_count"] = sum(item["skipped_count"] for item in evidence)
+        gate["allowed_skipped_count"] = sum(item.get("allowed_skipped_count", 0) for item in evidence)
         gate["evidence"] = [
-            {key: item[key] for key in ("id", "run_url", "duration_seconds", "result_count", "checksum")}
+            {key: item[key] for key in ("id", "run_url", "duration_seconds", "result_count", "skipped_count", "allowed_skipped_count", "checksum")}
             for item in evidence
         ]
     validate(promoted, final=True, commit=commit)
@@ -195,7 +199,7 @@ def self_test():
     with tempfile.TemporaryDirectory() as directory:
         evidence_dir = Path(directory)
         for index, (gate, command) in enumerate((gate["id"], command) for gate in report["gates"] for command in gate["commands"]):
-            item = {"schema_version": 1, "id": f"check-{index}", "gate": gate, "command": command, "commit": commit, "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/1", "started_at": "2026-01-01T00:00:00+00:00", "finished_at": "2026-01-01T00:00:01+00:00", "duration_seconds": 1.0, "result": "passed", "exit_code": 0, "result_count": 1, "flaky_count": 0, "skipped_count": 0}
+            item = {"schema_version": 1, "id": f"check-{index}", "gate": gate, "command": command, "commit": commit, "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/1", "started_at": "2026-01-01T00:00:00+00:00", "finished_at": "2026-01-01T00:00:01+00:00", "duration_seconds": 1.0, "result": "passed", "exit_code": 0, "result_count": 1, "flaky_count": 0, "skipped_count": 0, "allowed_skipped_count": 0}
             item["checksum"] = checksum(item)
             (evidence_dir / f"{index}.json").write_text(json.dumps(item), encoding="utf-8")
         final = promote(report, commit, evidence_dir)

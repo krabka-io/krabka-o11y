@@ -17,13 +17,13 @@ CLIENTS = ROOT / "docs/api/client_oracles.json"
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 PRODUCTS = {
-    "alloy": ("grafana/alloy", "/bin/alloy", ["version"], ["//crates/integration:alloy_client_docker_test"]),
-    "grafana": ("grafana/grafana", "/usr/share/grafana/bin/grafana", ["--version"], ["//crates/observability:grafana_e2e_docker_test"]),
-    "loki": ("grafana/loki", "/usr/bin/loki", ["-version"], ["//crates/observability:loki_differential_docker_test"]),
-    "mimir": ("grafana/mimir", "/bin/mimir", ["-version"], ["//crates/metrics-service:diff_mimir_docker_test"]),
-    "prometheus": ("prometheus/prometheus", "/bin/prometheus", ["--version"], ["//crates/metrics-service:diff_prometheus_docker_test"]),
-    "pyroscope": ("grafana/pyroscope", "/usr/bin/pyroscope", ["-version"], ["//crates/profiles:pyroscope_differential_docker_test"]),
-    "tempo": ("grafana/tempo", "/tempo", ["-version"], ["//crates/traces:tempo_differential_docker_test"]),
+    "alloy": ("grafana/alloy", "/bin/alloy", ["version"], True, ["//crates/integration:alloy_client_docker_test"]),
+    "grafana": ("grafana/grafana", "/usr/share/grafana/bin/grafana", ["--version"], False, ["//crates/observability:grafana_e2e_docker_test"]),
+    "loki": ("grafana/loki", "/usr/bin/loki", ["-version"], True, ["//crates/observability:loki_differential_docker_test"]),
+    "mimir": ("grafana/mimir", "/bin/mimir", ["-version"], True, ["//crates/metrics-service:diff_mimir_docker_test"]),
+    "prometheus": ("prometheus/prometheus", "/bin/prometheus", ["--version"], True, ["//crates/metrics-service:diff_prometheus_docker_test"]),
+    "pyroscope": ("grafana/pyroscope", "/usr/bin/pyroscope", ["-version"], True, ["//crates/profiles:pyroscope_differential_docker_test"]),
+    "tempo": ("grafana/tempo", "/tempo", ["-version"], True, ["//crates/traces:tempo_differential_docker_test"]),
 }
 SURFACE = re.compile(r"(?:http|grpc|connect|protocol|\.proto|route|Register)", re.IGNORECASE)
 
@@ -101,7 +101,15 @@ def release_image(baseline, tag):
     return f"{repository}:{image_tag}"
 
 
-def image_identity(image, binary, version_args, tag):
+def verify_reported_identity(image, reported, tag, revision, reports_revision):
+    wanted = re.search(r"\d+\.\d+(?:\.\d+)?", tag)
+    if not wanted or wanted.group() not in reported:
+        fail(f"{image} reports an unexpected version: {reported}")
+    if reports_revision and revision[:7] not in reported:
+        fail(f"{image} does not report source revision {revision}: {reported}")
+
+
+def image_identity(image, binary, version_args, tag, revision, reports_revision):
     raw = subprocess.run(
         ["docker", "buildx", "imagetools", "inspect", "--raw", image],
         check=True,
@@ -126,9 +134,7 @@ def image_identity(image, binary, version_args, tag):
         stderr=subprocess.STDOUT,
         text=True,
     ).stdout.strip()
-    wanted = re.search(r"\d+\.\d+(?:\.\d+)?", tag)
-    if not wanted or wanted.group() not in version:
-        fail(f"{image} reports an unexpected version: {version}")
+    verify_reported_identity(image, version, tag, revision, reports_revision)
     return digest, version
 
 
@@ -144,7 +150,7 @@ def changed_surfaces(repo, old, new):
             target = added if line.startswith("+") else removed if line.startswith("-") else None
             if target is not None and SURFACE.search(line[1:]):
                 target.append(f"{entry['filename']}: {line[1:].strip()}")
-    return sorted(set(added))[:50], sorted(set(removed))[:50], sorted(set(protobuf))
+    return sorted(set(added)), sorted(set(removed)), sorted(set(protobuf))
 
 
 def known_differences(classifications):
@@ -154,11 +160,11 @@ def known_differences(classifications):
 
 
 def proposal(name, baseline, release):
-    repo, binary, version_args, suites = PRODUCTS[name]
+    repo, binary, version_args, reports_revision, suites = PRODUCTS[name]
     tag = release["tag_name"]
     revision = tag_revision(repo, tag)
     image = release_image(baseline, tag)
-    digest, reported = image_identity(image, binary, version_args, tag)
+    digest, reported = image_identity(image, binary, version_args, tag, revision, reports_revision)
     added, removed, protobuf = changed_surfaces(repo, baseline["revision"], revision)
     divergences = known_differences(baseline.get("classifications", {}))
     line = re.search(r"\d+\.\d+", tag)
@@ -269,6 +275,7 @@ def self_test():
         fail("Mimir image tag translation failed")
     if known_differences({"known_differences": ["x"]}) != ["x"]:
         fail("client divergences were lost")
+    verify_reported_identity("image", "version 1.2.3 revision abcdef0", "v1.2.3", "abcdef0" + "0" * 33, True)
 
 
 def main():

@@ -12,6 +12,10 @@
       "sha256": "acba65fd2970f78d87f5681d13a30fd3430edc7cd77e0d3f136d66e1639f1e8f"
     }
   },
+  "schema_replay": {
+    "current": "tools/otlp-contracts.py --window current",
+    "previous": "tools/otlp-contracts.py --window previous"
+  },
   "fixtures": [
     {"signal": "metrics", "transports": ["http/protobuf", "grpc"], "bounds": ["request body", "partial success response"], "target": "//crates/metrics:metrics_test"},
     {"signal": "logs", "transports": ["http/json", "http/protobuf"], "bounds": ["request body", "malformed payload rejection"], "target": "//crates/observability:distributor_otlp_test"},
