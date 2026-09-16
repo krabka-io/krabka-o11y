@@ -47,11 +47,23 @@ CLIENTS = {
         revision = "becfd489a7bb459c0496893b555fb87a003296b1",
         version = "1.19.2",
     ),
+    "alloy_previous": struct(
+        binary = "/bin/alloy",
+        image = "mirror.gcr.io/grafana/alloy:v1.18.1",
+        revision = "6012ec4ac6a541ade720777ecec2f2b02b496def",
+        version = "1.18.1",
+    ),
     "grafana": struct(
         binary = "/usr/share/grafana/bin/grafana",
         image = "mirror.gcr.io/grafana/grafana:13.2.2",
         revision = "",
         version = "13.2.2",
+    ),
+    "grafana_previous": struct(
+        binary = "/usr/share/grafana/bin/grafana",
+        image = "mirror.gcr.io/grafana/grafana:13.1.6",
+        revision = "",
+        version = "13.1.6",
     ),
     "prometheus": struct(
         binary = "/bin/prometheus",
@@ -59,15 +71,24 @@ CLIENTS = {
         revision = "d7598b7141418fa35be2b5ec5d0fefb634199610",
         version = "3.14.0",
     ),
+    "prometheus_previous": struct(
+        binary = "/bin/prometheus",
+        image = "mirror.gcr.io/prom/prometheus:v3.13.3",
+        revision = "b273ae3adeb64ad630d65ef7f16440df95658410",
+        version = "3.13.3",
+    ),
 }
 
 IMAGES = {
     "alloy": CLIENTS["alloy"].image,
+    "alloy_previous": CLIENTS["alloy_previous"].image,
     "grafana": CLIENTS["grafana"].image,
+    "grafana_previous": CLIENTS["grafana_previous"].image,
     "loki": ORACLES["loki"].image,
     "mimir": ORACLES["mimir"].image,
     "minio": "mirror.gcr.io/minio/minio:RELEASE.2025-04-22T22-12-26Z",
     "prometheus": CLIENTS["prometheus"].image,
+    "prometheus_previous": CLIENTS["prometheus_previous"].image,
     "pyroscope": ORACLES["pyroscope"].image,
     "tempo": ORACLES["tempo"].image,
 }

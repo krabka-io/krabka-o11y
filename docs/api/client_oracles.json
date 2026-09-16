@@ -1,13 +1,8 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "support_window": "current and previous minor release",
   "products": {
     "alloy": {
-      "tag": "v1.19.2",
-      "image": "mirror.gcr.io/grafana/alloy:v1.19.2",
-      "platform": "linux/amd64",
-      "digest": "sha256:1eeba15ef3193438c72f66efd3d76f769c523a4c661db0fae6eddde906004bc8",
-      "revision": "becfd489a7bb459c0496893b555fb87a003296b1",
-      "source": "https://github.com/grafana/alloy/releases/tag/v1.19.2",
       "classifications": {
         "required": [
           "loki.source.api -> loki.write",
@@ -16,15 +11,27 @@
           "prometheus.remote_write v2",
           "pyroscope.scrape -> pyroscope.write"
         ]
+      },
+      "current": {
+        "tag": "v1.19.2",
+        "image": "mirror.gcr.io/grafana/alloy:v1.19.2",
+        "platform": "linux/amd64",
+        "digest": "sha256:1eeba15ef3193438c72f66efd3d76f769c523a4c661db0fae6eddde906004bc8",
+        "revision": "becfd489a7bb459c0496893b555fb87a003296b1",
+        "source": "https://github.com/grafana/alloy/releases/tag/v1.19.2",
+        "evidence": "//crates/integration:alloy_client_docker_test"
+      },
+      "previous": {
+        "tag": "v1.18.1",
+        "image": "mirror.gcr.io/grafana/alloy:v1.18.1",
+        "platform": "linux/amd64",
+        "digest": "sha256:754409730f1a4ed9781f8a2ea3b6a8c55750ee125a267ecf8fb449f9a25c109a",
+        "revision": "6012ec4ac6a541ade720777ecec2f2b02b496def",
+        "source": "https://github.com/grafana/alloy/releases/tag/v1.18.1",
+        "evidence": "//crates/integration:alloy_client_previous_docker_test"
       }
     },
     "grafana": {
-      "tag": "v13.2.2",
-      "image": "mirror.gcr.io/grafana/grafana:13.2.2",
-      "platform": "linux/amd64",
-      "digest": "sha256:9924c7fe0effe4a5fea08b3451905de54f09fde9d1589463a5f2d02d9ec158bc",
-      "revision": "3db12332b66497c31f8ad2a5fb0eb0fe0ca05a7e",
-      "source": "https://github.com/grafana/grafana/releases/tag/v13.2.2",
       "classifications": {
         "required": [
           "alerting",
@@ -37,15 +44,27 @@
         "known_differences": [
           "13.2 reports API health before the bundled Tempo plugin is query-ready"
         ]
+      },
+      "current": {
+        "tag": "v13.2.2",
+        "image": "mirror.gcr.io/grafana/grafana:13.2.2",
+        "platform": "linux/amd64",
+        "digest": "sha256:9924c7fe0effe4a5fea08b3451905de54f09fde9d1589463a5f2d02d9ec158bc",
+        "revision": "3db12332b66497c31f8ad2a5fb0eb0fe0ca05a7e",
+        "source": "https://github.com/grafana/grafana/releases/tag/v13.2.2",
+        "evidence": "//crates/observability:grafana_e2e_docker_test"
+      },
+      "previous": {
+        "tag": "v13.1.6",
+        "image": "mirror.gcr.io/grafana/grafana:13.1.6",
+        "platform": "linux/amd64",
+        "digest": "sha256:66611512245b182e0928918b71db91fef25cb8f13d94f71fd2fb6253c383bb64",
+        "revision": "25d4f6c5c796b3a1390163406484ade5bd150851",
+        "source": "https://github.com/grafana/grafana/releases/tag/v13.1.6",
+        "evidence": "//crates/observability:grafana_e2e_previous_docker_test"
       }
     },
     "prometheus": {
-      "tag": "v3.14.0",
-      "image": "mirror.gcr.io/prom/prometheus:v3.14.0",
-      "platform": "linux/amd64",
-      "digest": "sha256:e906cef998316bbe319f98711e1b4d8613ad37e14b08ff831d7036e77b7464f9",
-      "revision": "d7598b7141418fa35be2b5ec5d0fefb634199610",
-      "source": "https://github.com/prometheus/prometheus/releases/tag/v3.14.0",
       "classifications": {
         "required": [
           "HTTP query API behavior since 3.8",
@@ -57,7 +76,47 @@
           "3.14 changes the anchored boundary for changes and resets",
           "3.14 enriches four histogram monotonicity annotations while values agree"
         ]
+      },
+      "current": {
+        "tag": "v3.14.0",
+        "image": "mirror.gcr.io/prom/prometheus:v3.14.0",
+        "platform": "linux/amd64",
+        "digest": "sha256:e906cef998316bbe319f98711e1b4d8613ad37e14b08ff831d7036e77b7464f9",
+        "revision": "d7598b7141418fa35be2b5ec5d0fefb634199610",
+        "source": "https://github.com/prometheus/prometheus/releases/tag/v3.14.0",
+        "evidence": "//crates/integration:prometheus_client_docker_test"
+      },
+      "previous": {
+        "tag": "v3.13.3",
+        "image": "mirror.gcr.io/prom/prometheus:v3.13.3",
+        "platform": "linux/amd64",
+        "digest": "sha256:595c907995955f2d5fda19fae66392680921d9501cad0be5270b3fee959780b1",
+        "revision": "b273ae3adeb64ad630d65ef7f16440df95658410",
+        "source": "https://github.com/prometheus/prometheus/releases/tag/v3.13.3",
+        "evidence": "//crates/integration:prometheus_client_previous_docker_test"
       }
+    }
+  },
+  "protocols": {
+    "otlp": {
+      "current": {
+        "tag": "v1.11.0",
+        "revision": "790608c4d51e6ffc12210b541e8514cbed9e91a4",
+        "source": "https://github.com/open-telemetry/opentelemetry-proto/archive/790608c4d51e6ffc12210b541e8514cbed9e91a4.tar.gz",
+        "sha256": "b8331fd497a17008da3efdc2ccf25da19aa4653b62cfc49cf181f22373573bc8"
+      },
+      "previous": {
+        "tag": "v1.10.0",
+        "revision": "ca839c51f706f5d53bfb46f06c3e90c3af3a52c6",
+        "source": "https://github.com/open-telemetry/opentelemetry-proto/archive/ca839c51f706f5d53bfb46f06c3e90c3af3a52c6.tar.gz",
+        "sha256": "acba65fd2970f78d87f5681d13a30fd3430edc7cd77e0d3f136d66e1639f1e8f"
+      },
+      "evidence": [
+        "//crates/metrics:metrics_test",
+        "//crates/observability:distributor_otlp_test",
+        "//crates/traces:traces_test",
+        "//crates/profiles:profiles_test"
+      ]
     }
   }
 }

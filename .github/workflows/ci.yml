@@ -269,6 +269,9 @@ jobs:
       - run: tools/route-inventory.py --check
       - run: tools/upstream-surface.py --self-test
       - run: tools/upstream-surface.py --check
+      - run: tools/upstream-drift.py --self-test
+      - run: tools/upstream-drift.py --check
+      - run: tools/qualification-gate.py --self-test
       - run: tools/qualification-report.py --self-test
       - run: tools/qualification-report.py --check
       # //fuzz is a workspace of its own, so it repeats the sibling pins from

@@ -7,6 +7,10 @@ The pull request is the review record for the change.
 It records the tag, image, platform, digest, and upstream Git revision.
 Client baselines and their classified workflows live in
 [`docs/api/client_oracles.json`](api/client_oracles.json).
+The weekly [`upstream drift`](../.github/workflows/upstream-drift.yml) workflow
+opens or updates one review issue per upstream release line with immutable
+source and image identities, changed surfaces, protobuf changes, known
+divergences, and required differential suites. It never changes an oracle pin.
 
 ## Select the release
 
@@ -63,6 +67,10 @@ Include this evidence in the pull request:
 
 A reviewer checks that the six items identify the same upstream release and test result.
 Merge only after the surface check and the applicable differential jobs pass.
+
+The current and previous minor client releases stay qualified together.
+When the current version advances, move the old current entry to `previous`,
+remove the version that left the window, and run both evidence targets before review.
 
 ## Milestones 8 and 9
 

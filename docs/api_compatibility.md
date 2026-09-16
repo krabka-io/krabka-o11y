@@ -16,6 +16,24 @@ The generated [route inventory](api/routes.json) is the exhaustive method and pa
 The [upstream surface manifest](api/upstream_surfaces.json) classifies each tagged upstream surface.
 See the [upstream upgrade process](compatibility_upgrade_process.md) before a version change.
 
+## Supported client window
+
+Krabka qualifies the current and previous minor release of each public client contract.
+Every row links to the executable target used for that exact immutable image or source revision.
+
+| Contract | Current | Previous | Executable evidence |
+| --- | --- | --- | --- |
+| Grafana Alloy | 1.19.2 | 1.18.1 | [`alloy_client_docker_test`](../crates/integration/tests/alloy_client.rs) and its `previous` Bazel variant |
+| Grafana | 13.2.2 | 13.1.6 | The metrics, logs, traces, and profiles Grafana Docker suites and their `previous` variants |
+| Prometheus | 3.14.0 | 3.13.3 | [`prometheus_client_docker_test`](../crates/integration/tests/prometheus_client.rs), [`diff_prometheus_docker_test`](../crates/metrics-service/tests/diff_prometheus.rs), and their `previous` variants |
+| OTLP source schema | 1.11.0 | 1.10.0 | Metrics, logs, traces, and profiles cases in the executable [`otlp-contracts.json`](../qualification/otlp-contracts.json) matrix |
+
+The [client oracle manifest](api/client_oracles.json) pins every tag, source revision,
+`linux/amd64` image digest, and evidence target.
+Versions outside this window are unsupported.
+An unknown route or media type returns an HTTP 4xx response, and an unsupported gRPC method or
+wire payload returns `UNIMPLEMENTED` or `INVALID_ARGUMENT`; Krabka does not acknowledge and discard it.
+
 ## Metrics
 
 | Surface                                                        | Status           | Evidence                                                                                                                                                                                                                    |
@@ -77,7 +95,7 @@ See the [upstream upgrade process](compatibility_upgrade_process.md) before a ve
 | Debug-info upload, deletion, and offline symbolization               | Implemented  | [`pyroscope_differential::official_profilecli_uploads_elf_through_public_debuginfo_api`](../crates/profiles/tests/pyroscope_differential.rs), [`query::tests::grafana_tenant_services_cover_upload_diff_rules_and_debuginfo`](../crates/profiles/src/query.rs), and [`symbolizer::tests::offline_pass_reads_the_uploaded_elf_from_the_blocks_tenant`](../crates/profiles/src/symbolizer.rs) |
 | Profile recording-rule evaluation                                   | Implemented  | The compactor evaluates total-value rules for newly compacted blocks and sends tenant-isolated Prometheus remote-write samples when `--recording-rules-remote-write-url` is configured. |
 | GitHub VCS source integration                                        | Out of scope | It is optional upstream and excluded in the [upstream surface manifest](api/upstream_surfaces.json). |
-| OTLP profile export and render case                                  | Supported    | [`pyroscope_differential::real_pyroscope_otlp_export_matches_krabka`](../crates/profiles/tests/pyroscope_differential.rs)                                                                                                                                                                        |
+| OTLP profile export, process context, and render case                 | Supported    | [`pyroscope_differential::real_pyroscope_otlp_export_matches_krabka`](../crates/profiles/tests/pyroscope_differential.rs) and [`otlp_resolves_dictionary_into_rawprofile`](../crates/profiles/src/ingest/otlp.rs) preserve `process.*` resource attributes                                                                                                           |
 | Speedscope legacy ingest                                             | Known gap    | [`pyroscope_differential::real_pyroscope_legacy_ingest_formats_match_krabka`](../crates/profiles/tests/pyroscope_differential.rs) records that Pyroscope 2.3.1 stores no series, but Krabka stores data.                                                                                         |
 | JFR legacy ingest                                                    | Supported    | [`pyroscope_differential::real_pyroscope_legacy_ingest_formats_match_krabka`](../crates/profiles/tests/pyroscope_differential.rs) compares CPU and wall labels, profile types, symbols, stacks, and values against Pyroscope 2.3.1.                                                                   |
 | Legacy `/pyroscope/labels` and `/pyroscope/label-values`             | Out of scope | Grafana uses the Connect label methods                                                                                                                                                                                                                                                           |

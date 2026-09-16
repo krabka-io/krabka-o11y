@@ -423,7 +423,10 @@ mod tests {
     #[test]
     fn otlp_resolves_dictionary_into_rawprofile() {
         use pb::{
-            opentelemetry::proto::common::v1::{AnyValue, any_value::Value},
+            opentelemetry::proto::{
+                common::v1::{AnyValue, KeyValue, any_value::Value},
+                resource::v1::Resource,
+            },
             otlp_profiles::{
                 Function, KeyValueAndUnit, Line, Link, Location, Profile, ProfilesDictionary,
                 ResourceProfiles, Sample, ScopeProfiles, Stack, ValueType,
@@ -501,6 +504,23 @@ mod tests {
         };
         let req = pb::otlp_profiles::ExportProfilesServiceRequest {
             resource_profiles: vec![ResourceProfiles {
+                resource: Some(Resource {
+                    attributes: vec![
+                        KeyValue {
+                            key: "process.pid".into(),
+                            value: Some(AnyValue {
+                                value: Some(Value::IntValue(42)),
+                            }),
+                        },
+                        KeyValue {
+                            key: "process.executable.name".into(),
+                            value: Some(AnyValue {
+                                value: Some(Value::StringValue("worker".into())),
+                            }),
+                        },
+                    ],
+                    ..Default::default()
+                }),
                 scope_profiles: vec![ScopeProfiles {
                     profiles: vec![profile],
                     ..Default::default()
@@ -517,6 +537,8 @@ mod tests {
             ("__name__", "samples"),
             ("env", "prod"),
             ("__profile_id__", "abcd"),
+            ("process.pid", "42"),
+            ("process.executable.name", "worker"),
         ] {
             check!(out[0].labels.get(name) == Some(want));
         }

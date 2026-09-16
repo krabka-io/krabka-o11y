@@ -23,6 +23,7 @@ on:
       - deploy/**
       - docs/releases/**
       - qualification/**
+      - tools/qualification-gate.py
       - tools/qualification-report.py
       - tools/release-smoke.sh
       - Cargo.lock
@@ -59,16 +60,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          for issue in 242 243 244 245 246; do
+          for issue in 272 273 274; do
             test "$(gh issue view "${issue}" --json state --jq .state)" = CLOSED
           done
           run="$(gh run list --workflow qualification.yml --commit "${GITHUB_SHA}" \
             --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
           test -n "${run}"
           gh run download "${run}" \
-            --name "milestone-16-qualification-${GITHUB_SHA}" --dir qualified
+            --name "milestone-21-qualification-${GITHUB_SHA}" --dir qualified
           tools/qualification-report.py \
-            --report qualified/milestone-16-qualified.json \
+            --report qualified/milestone-21-qualified.json \
             --final --commit "${GITHUB_SHA}"
           echo "run=${run}" >> "${GITHUB_OUTPUT}"
 
@@ -185,6 +186,13 @@ jobs:
       IMAGE: ghcr.io/krabka-io/krabka-o11y@${{ needs.image.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
+      - name: verify release platforms are pullable
+        run: |
+          mkdir -p release-assets
+          for platform in linux/amd64 linux/arm64; do
+            docker pull --platform "${platform}" "${IMAGE}"
+            printf '%s %s\n' "${platform}" "${IMAGE}" >> release-assets/platforms.txt
+          done
       - name: clean four-signal install and query smoke
         run: tools/release-smoke.sh "${IMAGE}" "" release-assets/smoke
       - name: generate SPDX SBOM
@@ -218,7 +226,7 @@ jobs:
           tag="${GITHUB_REF#refs/tags/}"
           test -f "docs/releases/${tag}.md"
           gh run download "${QUALIFICATION_RUN}" \
-            --name "milestone-16-qualification-${GITHUB_SHA}" --dir release-assets
+            --name "milestone-21-qualification-${GITHUB_SHA}" --dir release-assets
           cp "${PROVENANCE_BUNDLE}" release-assets/provenance.jsonl
           cp "${SBOM_BUNDLE}" release-assets/sbom-attestation.jsonl
           printf '%s\n' "${IMAGE}" > release-assets/image.txt

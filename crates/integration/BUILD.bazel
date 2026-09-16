@@ -12,6 +12,10 @@ crate_tests(
         "alloy_client": ["alloy"],
         "prometheus_client": ["prometheus"],
     },
+    docker_variants = {
+        "alloy_client": {"previous": {"alloy": "alloy_previous"}},
+        "prometheus_client": {"previous": {"prometheus": "prometheus_previous"}},
+    },
     lib = "integration",
     # The library holds no code to mutate -- it is the `//!` doc that says why
     # this crate is allowed to depend on more than one signal. A sweep over it

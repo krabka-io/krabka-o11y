@@ -57,6 +57,10 @@ crate_tests(
         "diff_prometheus": ["prometheus"],
         "grafana_integration": ["grafana"],
     },
+    docker_variants = {
+        "diff_prometheus": {"previous": {"prometheus": "prometheus_previous"}},
+        "grafana_integration": {"previous": {"grafana": "grafana_previous"}},
+    },
     # The hand-written seed dataset lives with //crates/metrics and these suites
     # reach it with `#[path]`; naming it here puts it at that same relative
     # path inside the sandbox. The corpus-driven differential corpus is a
