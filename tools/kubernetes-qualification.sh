@@ -9,6 +9,7 @@ namespace=krabka-o11y
 tenant=release-smoke
 base_marker="kubernetes-${GITHUB_SHA:-local}-$(date +%s)"
 marker=${base_marker}
+metrics_query_time=
 mkdir -p "${evidence_dir}"
 commands="${evidence_dir}/commands.log"
 : >"${commands}"
@@ -136,6 +137,7 @@ send_corpus() {
   local now_ns now_ms trace_id span_id
   now_ns=$(date +%s%N)
   now_ms=$((now_ns / 1000000))
+  printf -v metrics_query_time '%d.%03d' "$((now_ms / 1000))" "$((now_ms % 1000))"
   trace_id=$(printf '%s' "${marker}" | sha256sum | cut -c 1-32)
   span_id=${trace_id:0:16}
   run curl -fsS http://127.0.0.1:19999/loki/api/v1/push \
@@ -193,14 +195,15 @@ query_corpus() {
   local stage=$1 now_s
   ensure_forwards
   now_s=$(( $(date +%s) + 60 ))
+  # Long lifecycle stages must not age the sample past Prometheus's lookback.
   wait_for "${stage}-metrics" \
-    "http://127.0.0.1:19090/api/v1/query?query=krabka_qualification%7Bmarker%3D%22${marker}%22%7D"
+    "http://127.0.0.1:19090/api/v1/query?query=krabka_qualification%7Bmarker%3D%22${marker}%22%7D&time=${metrics_query_time}"
   wait_for "${stage}-logs" "http://127.0.0.1:13101/loki/api/v1/query_range?query=%7Bjob%3D%22${marker}%22%7D"
   wait_for "${stage}-traces" "http://127.0.0.1:13201/api/search?q=%7Bresource.service.name%3D%22${marker}%22%7D&start=0&end=${now_s}"
   wait_for "${stage}-profiles" 'http://127.0.0.1:14042/querier.v1.QuerierService/Series' \
     "{\"matchers\":[\"{service_name=\\\"${marker}\\\"}\"],\"labelNames\":[\"service_name\",\"__profile_type__\"]}"
   assert_absent "${stage}-metrics-isolation" \
-    "http://127.0.0.1:19090/api/v1/query?query=krabka_qualification%7Bmarker%3D%22${marker}%22%7D" "${marker}"
+    "http://127.0.0.1:19090/api/v1/query?query=krabka_qualification%7Bmarker%3D%22${marker}%22%7D&time=${metrics_query_time}" "${marker}"
   assert_absent "${stage}-logs-isolation" \
     "http://127.0.0.1:13101/loki/api/v1/query_range?query=%7Bjob%3D%22${marker}%22%7D" "${marker}"
   assert_absent "${stage}-traces-isolation" \
