@@ -628,9 +628,9 @@ jobs:
   # //tools/mutants-ratchet.py is the verdict now. It reads the shard logs the
   # run leaves in `bazel-testlogs` and fails the job on a totals line that does
   # not add up, on a shard that reported nothing, and on a survivor count above
-  # the crate's line in //tools/mutants-baseline.txt. Every crate in that file
-  # reads `unseeded` today, so the survivor half is dormant until a nightly run
-  # produces a number to check in. The structural half gates from the first run.
+  # the crate's line in //tools/mutants-baseline.txt. An `unseeded` crate keeps
+  # the survivor half dormant until a complete run produces a number; the
+  # structural half gates every run.
   mutants-select:
     name: select mutants targets
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -649,14 +649,11 @@ jobs:
       - id: select
         run: |
           set -euo pipefail
-          # Every mutant rebuilds its crate, so the budget follows crate size.
-          # promql, observability and traces are 40k lines or more; the rest are
-          # a fraction of that.
           crates="$(
             bazel query 'kind("cargo_mutants_test rule", //crates/...)' |
               jq -R -s -c 'split("\n") | map(select(length > 0)) |
                 map({target: ., name: (. | split("/")[3] | split(":")[0])}) |
-                map(. as $crate | $crate + {minutes: (if (["promql","observability","traces"] | index($crate.name)) then 180 else 60 end)})'
+                map(. + {minutes: 360})'
           )"
           echo "crates=${crates}" >>"${GITHUB_OUTPUT}"
           echo "Selected: ${crates}"
@@ -679,13 +676,22 @@ jobs:
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-mutants
           repository-cache: true
-      # The sweep's exit code says "at least one mutant survived", which is not
-      # the question this job asks, so it is dropped and the shard logs are read
-      # instead. `|| true` hides a build failure as well, and the ratchet is
-      # what reports it: a run that failed before its first shard leaves no
-      # shard log, and the step below fails on that.
+      # The harness supplies the per-shard deadline and caps concurrent linkers
+      # to the runner's CPU count. It intentionally finishes after survivors;
+      # the ratchet below is the verdict.
       - name: sweep
-        run: bazel test ${{ matrix.crate.target }} || true
+        env:
+          KRABKA_MUTANTS_LOG_DIR: ${{ runner.temp }}/mutants
+        run: tools/mutants-sweep.sh ${{ matrix.crate.name }}
+      - name: evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-${{ matrix.crate.name }}
+          path: |
+            ${{ runner.temp }}/mutants/
+            bazel-testlogs/crates/${{ matrix.crate.name }}/${{ matrix.crate.name }}_mutants/**/test.log
+          if-no-files-found: warn
       # The verdict. `--test_output=errors` has already printed each surviving
       # mutant above, so what this adds is the count, the totals-line check and
       # the baseline comparison.
@@ -914,4 +920,32 @@ jobs:
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-scale
           repository-cache: true
-      - run: bazel test --config=scale ${{ matrix.suite.target }}
+      - run: |
+          bazel test --config=scale ${{ matrix.suite.target }} \
+            --test_env=KRABKA_SOAK_COMMIT=${GITHUB_SHA}
+      - name: evidence manifest
+        if: always()
+        run: |
+          evidence="${RUNNER_TEMP}/scale-evidence"
+          mkdir -p "${evidence}"
+          {
+            echo "commit=${GITHUB_SHA}"
+            echo "suite=${{ matrix.suite.name }}"
+            echo "host=$(uname -a)"
+            echo "cpu_count=$(nproc)"
+            awk '/^MemTotal:/ {print "memory_kib=" $2}' /proc/meminfo
+            echo "command=bazel test --config=scale ${{ matrix.suite.target }}"
+          } >"${evidence}/run.metadata.txt"
+          find -L bazel-testlogs -type f -print0 2>/dev/null | sort -z \
+            | xargs -0 -r sha256sum >"${evidence}/SHA256SUMS"
+          sha256sum "${evidence}/run.metadata.txt" >>"${evidence}/SHA256SUMS"
+      - name: evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scale-${{ matrix.suite.name }}-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/scale-evidence/
+            bazel-testlogs/**/test.log
+            bazel-testlogs/**/test.outputs/**
+          if-no-files-found: warn

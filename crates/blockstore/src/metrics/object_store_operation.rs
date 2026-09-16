@@ -11,7 +11,7 @@
 pub enum ObjectStoreOperation {
     /// A single-request upload.
     Put,
-    /// A multipart upload, counted when the upload starts.
+    /// A multipart request: open, part, complete, or abort.
     PutMultipart,
     /// A read, which covers `head`, `get_range` and `get_ranges`.
     Get,
@@ -28,8 +28,8 @@ pub enum ObjectStoreOperation {
     ///
     /// This is not a method on the
     /// [`ObjectStore`](object_store::ObjectStore) trait. Underneath it is one
-    /// `put`, or a `put_multipart` and its parts, and those are counted under
-    /// their own label as well. It has a label of its own because the block
+    /// `put`, or multipart requests, and those are counted under their own
+    /// labels as well. It has a label of its own because the block
     /// write is the unit the writer retries, so it is the unit a retry counter
     /// has to name.
     WriteBlock,

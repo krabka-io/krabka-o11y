@@ -102,7 +102,7 @@ object = { version = "0.40", default-features = false, features = ["read_core", 
 # 0.14, parquet/datafusion on 0.13) and fails to compile — exactly what the
 # auto-merged renovate bump #644 did to main. Move it only together with the
 # datafusion rev; the renovate rule below holds it to enforce that.
-object_store = { version = "0.13", features = ["aws", "gcp"] }
+object_store = { version = "0.13", features = ["aws", "azure", "gcp"] }
 # Slice 42: OTLP distributed tracing. opentelemetry-otlp 0.32 lines up with
 # the tonic 0.14 / prost 0.14 / reqwest 0.13 stack already in the dep graph.
 opentelemetry = { version = "0.32", default-features = false, features = ["trace", "logs"] }

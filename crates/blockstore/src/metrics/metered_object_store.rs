@@ -1,3 +1,6 @@
+use futures::FutureExt as _;
+use object_store::UploadPart;
+
 use super::{
     Arc, BoxStream, ByteSize, ByteSizeExt, CopyOptions, GetOptions, GetResult, Instant, ListResult,
     MeteredStream, MultipartUpload, ObjectMeta, ObjectStore, ObjectStoreMetrics,
@@ -93,13 +96,15 @@ impl ObjectStore for MeteredObjectStore {
         location: &Path,
         options: PutMultipartOptions,
     ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        // Only the handshake that opens the upload is timed. The parts that
-        // follow go to the `MultipartUpload` the caller now holds, which this
-        // decorator does not own, so their bytes are not counted here.
         let started = Instant::now();
         let outcome = self.inner.put_multipart_opts(location, options).await;
         self.record(ObjectStoreOperation::PutMultipart, started, &outcome);
-        outcome
+        outcome.map(|inner| {
+            Box::new(MeteredMultipartUpload {
+                inner,
+                metrics: self.metrics.clone(),
+            }) as Box<dyn MultipartUpload>
+        })
     }
 
     async fn get_opts(
@@ -161,5 +166,56 @@ impl ObjectStore for MeteredObjectStore {
             self.metrics.clone(),
             ObjectStoreOperation::DeleteStream,
         ))
+    }
+}
+
+#[derive(Debug)]
+struct MeteredMultipartUpload {
+    inner: Box<dyn MultipartUpload>,
+    metrics: ObjectStoreMetrics,
+}
+
+#[async_trait]
+impl MultipartUpload for MeteredMultipartUpload {
+    fn put_part(&mut self, data: PutPayload) -> UploadPart {
+        let size = ByteSize::from_bytes(data.content_length() as u64);
+        let part = self.inner.put_part(data);
+        let metrics = self.metrics.clone();
+        async move {
+            let started = Instant::now();
+            let outcome = part.await;
+            metrics.record_operation(
+                ObjectStoreOperation::PutMultipart,
+                outcome.is_ok(),
+                Time::from_std(started.elapsed()),
+            );
+            if outcome.is_ok() {
+                metrics.record_transferred(ObjectStoreOperation::PutMultipart, size);
+            }
+            outcome
+        }
+        .boxed()
+    }
+
+    async fn complete(&mut self) -> object_store::Result<PutResult> {
+        let started = Instant::now();
+        let outcome = self.inner.complete().await;
+        self.metrics.record_operation(
+            ObjectStoreOperation::PutMultipart,
+            outcome.is_ok(),
+            Time::from_std(started.elapsed()),
+        );
+        outcome
+    }
+
+    async fn abort(&mut self) -> object_store::Result<()> {
+        let started = Instant::now();
+        let outcome = self.inner.abort().await;
+        self.metrics.record_operation(
+            ObjectStoreOperation::PutMultipart,
+            outcome.is_ok(),
+            Time::from_std(started.elapsed()),
+        );
+        outcome
     }
 }

@@ -16,7 +16,7 @@ load("@rules_rs//rs:rust_test.bzl", "rust_test")
 load("@rules_rs_mutants//mutants:cargo_mutants_test.bzl", "cargo_mutants_test")
 load("@rules_rust//rust:defs.bzl", "rust_doc", "rust_doc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load("//bazel/images:images.bzl", "IMAGES", "image_tag_env")
+load("//bazel/images:images.bzl", "IMAGES", "image_ref_env", "image_tag_env")
 load("//tools/datatest:defs.bzl", "datatest_corpus")
 load("//tools/lint:linters.bzl", "clippy_test")
 
@@ -546,10 +546,15 @@ def crate_tests(
                     "$(rootpath %s)" % tar
                     for tar in image_tars
                 ]),
-                **{
-                    image_tag_env(image): IMAGES[image].rsplit(":", 1)[1]
-                    for image in docker[stem]
-                }
+                **dict(
+                    [
+                        (image_tag_env(image), IMAGES[image].rsplit(":", 1)[1])
+                        for image in docker[stem]
+                    ] + [
+                        (image_ref_env(image), IMAGES[image])
+                        for image in docker[stem]
+                    ],
+                )
             ),
             # `scale` on top of `docker` for a scale suite, so //.bazelrc can
             # select the two sets apart. A scale run is minutes of ingest before

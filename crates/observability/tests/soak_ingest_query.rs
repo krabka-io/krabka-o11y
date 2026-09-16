@@ -44,10 +44,7 @@
 //! so a longer budget buys more iterations rather than more idling.
 
 use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -57,15 +54,12 @@ use datafusion::arrow::{
     datatypes::{DataType, Field, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
-use futures_util::stream::BoxStream;
 use krabka_blockstore::{
-    BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, Index, LabelMatcher, Labels, MatchOp, read_block,
+    BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, Index, LabelMatcher, Labels, MatchOp,
+    MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation, read_block,
 };
-use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, Result as ObjectResult,
-    aws::AmazonS3Builder, path::Path as ObjectPath,
-};
+use object_store::{ObjectStore, aws::AmazonS3Builder};
+use serde_json::json;
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt,
     core::{ContainerPort, WaitFor},
@@ -103,106 +97,52 @@ const RETAINED_BLOCKS: usize = 64;
 /// read path.
 const QUERY_WINDOW_MS: i64 = 4 * BLOCK_SPAN_MS - 1;
 
-// ---------------------------------------------------------------------------
-// The counting store.
-// ---------------------------------------------------------------------------
+const LATENCY_BUCKETS_US: [u64; 16] = [
+    100,
+    250,
+    500,
+    1_000,
+    2_500,
+    5_000,
+    10_000,
+    25_000,
+    50_000,
+    100_000,
+    250_000,
+    500_000,
+    1_000_000,
+    2_500_000,
+    5_000_000,
+    u64::MAX,
+];
 
-/// Every object-store call the run makes, by kind.
-///
-/// `get` is the one that matters most: it is what a query pays, and the ratio
-/// of gets to queries is the number this test gates on.
-#[derive(Debug, Default)]
-struct Calls {
-    put: AtomicU64,
-    get: AtomicU64,
-    list: AtomicU64,
-    other: AtomicU64,
+#[derive(Default)]
+struct Latencies {
+    counts: [u64; LATENCY_BUCKETS_US.len()],
+    total: u64,
 }
 
-/// An `ObjectStore` that counts what passes through it and delegates the rest.
-///
-/// It exists because there is no other way to see the request pattern. The
-/// block store's own API says what it returned, not how many round trips it
-/// took to get there, and a `head` that crept in before every `get` doubles the
-/// bill without changing a single answer.
-#[derive(Debug)]
-struct Counting {
-    inner: Arc<dyn ObjectStore>,
-    calls: Arc<Calls>,
-}
-
-impl std::fmt::Display for Counting {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "Counting({})", self.inner)
-    }
-}
-
-#[async_trait::async_trait]
-impl ObjectStore for Counting {
-    async fn put_opts(
-        &self,
-        location: &ObjectPath,
-        payload: PutPayload,
-        opts: PutOptions,
-    ) -> ObjectResult<PutResult> {
-        self.calls.put.fetch_add(1, Ordering::Relaxed);
-        self.inner.put_opts(location, payload, opts).await
+impl Latencies {
+    fn observe(&mut self, elapsed: Duration) {
+        let micros = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
+        let bucket = LATENCY_BUCKETS_US
+            .iter()
+            .position(|upper| micros <= *upper)
+            .unwrap_or(LATENCY_BUCKETS_US.len() - 1);
+        self.counts[bucket] += 1;
+        self.total += 1;
     }
 
-    async fn put_multipart_opts(
-        &self,
-        location: &ObjectPath,
-        opts: PutMultipartOptions,
-    ) -> ObjectResult<Box<dyn MultipartUpload>> {
-        self.calls.put.fetch_add(1, Ordering::Relaxed);
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &ObjectPath,
-        options: GetOptions,
-    ) -> ObjectResult<GetResult> {
-        // `head` and a ranged read both arrive here, and both are a billed
-        // request, so both are counted. That is the point: a reader that takes
-        // three round trips where it used to take one shows up as a ratio of
-        // three, whatever the shape of each call.
-        //
-        // `get_ranges` is deliberately left to its default, which routes each
-        // range through here. The count is therefore per range rather than per
-        // coalesced request, which is an upper bound on what the S3 client
-        // would actually issue -- the right side to be wrong on for a number
-        // that exists to catch a request storm.
-        self.calls.get.fetch_add(1, Ordering::Relaxed);
-        self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, ObjectResult<ObjectPath>>,
-    ) -> BoxStream<'static, ObjectResult<ObjectPath>> {
-        self.calls.other.fetch_add(1, Ordering::Relaxed);
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&ObjectPath>) -> BoxStream<'static, ObjectResult<ObjectMeta>> {
-        self.calls.list.fetch_add(1, Ordering::Relaxed);
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&ObjectPath>) -> ObjectResult<ListResult> {
-        self.calls.list.fetch_add(1, Ordering::Relaxed);
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &ObjectPath,
-        to: &ObjectPath,
-        options: CopyOptions,
-    ) -> ObjectResult<()> {
-        self.calls.other.fetch_add(1, Ordering::Relaxed);
-        self.inner.copy_opts(from, to, options).await
+    fn quantile(&self, numerator: u64, denominator: u64) -> u64 {
+        let wanted = self.total.saturating_mul(numerator).div_ceil(denominator);
+        let mut seen = 0;
+        for (upper, count) in LATENCY_BUCKETS_US.iter().zip(self.counts) {
+            seen += count;
+            if seen >= wanted {
+                return *upper;
+            }
+        }
+        0
     }
 }
 
@@ -345,11 +285,9 @@ async fn ingest_and_query_together_hold_memory_and_request_count() {
     );
 
     let (_container, backing) = start_minio().await;
-    let calls = Arc::new(Calls::default());
-    let store: Arc<dyn ObjectStore> = Arc::new(Counting {
-        inner: backing,
-        calls: Arc::clone(&calls),
-    });
+    let run_started = Instant::now();
+    let object_store_metrics = ObjectStoreMetrics::unregistered();
+    let store = MeteredObjectStore::wrap(backing, object_store_metrics.clone());
 
     let mut seed = Index::new();
     let mut fingerprints: Vec<u64> = (0..SERIES)
@@ -365,6 +303,7 @@ async fn ingest_and_query_together_hold_memory_and_request_count() {
     let index = Arc::new(RwLock::new(seed));
     let fingerprints = Arc::new(fingerprints);
     let deadline = Instant::now() + budget;
+    let measure_after = Instant::now() + budget / 4;
 
     // The ingest side: write a block, then publish it to the index.
     let ingest = {
@@ -426,7 +365,9 @@ async fn ingest_and_query_together_hold_memory_and_request_count() {
             let matcher = [LabelMatcher::new("pod", MatchOp::Eq, "pod-42")];
             let mut served = 0_u64;
             let mut reads = 0_u64;
+            let mut latencies = Latencies::default();
             while Instant::now() < deadline {
+                let started = Instant::now();
                 let candidates = {
                     let guard = index.read().await;
                     let Ok(selected) = guard.resolve(TENANT, &matcher) else {
@@ -447,9 +388,12 @@ async fn ingest_and_query_together_hold_memory_and_request_count() {
                     reads += 1;
                 }
                 served += 1;
+                if Instant::now() >= measure_after {
+                    latencies.observe(started.elapsed());
+                }
                 tokio::task::yield_now().await;
             }
-            (served, reads)
+            (served, reads, latencies)
         })
     };
 
@@ -461,12 +405,14 @@ async fn ingest_and_query_together_hold_memory_and_request_count() {
     let warm_kib = resident_kib();
 
     let written = ingest.await.expect("the ingest task did not panic");
-    let (served, reads) = query.await.expect("the query task did not panic");
+    let (served, reads, latencies) = query.await.expect("the query task did not panic");
     let end_kib = resident_kib();
 
-    let puts = calls.put.load(Ordering::Relaxed);
-    let gets = calls.get.load(Ordering::Relaxed);
-    let lists = calls.list.load(Ordering::Relaxed);
+    let puts = object_store_metrics.operations(ObjectStoreOperation::Put)
+        + object_store_metrics.operations(ObjectStoreOperation::PutMultipart);
+    let gets = object_store_metrics.operations(ObjectStoreOperation::Get);
+    let lists = object_store_metrics.operations(ObjectStoreOperation::List)
+        + object_store_metrics.operations(ObjectStoreOperation::ListWithDelimiter);
 
     let seconds = budget.as_secs();
     println!(
@@ -485,6 +431,7 @@ async fn ingest_and_query_together_hold_memory_and_request_count() {
     // idled reports clean ratios and means nothing.
     assert!(written >= 8);
     assert!(served >= 8);
+    assert!(latencies.total > 0);
 
     // Requests per operation. A write of one block is one multipart upload or
     // one put; the block store may add a small constant around it. Four is
@@ -498,6 +445,45 @@ async fn ingest_and_query_together_hold_memory_and_request_count() {
     // which is the failure this number exists to catch.
     let gets_per_read = gets / reads;
     assert!(gets_per_read <= 6);
+
+    let transferred_bytes = ObjectStoreOperation::all()
+        .into_iter()
+        .map(|operation| object_store_metrics.transferred_bytes(operation))
+        .sum::<u64>();
+    let report = json!({
+        "schema_version": 1,
+        "commit": std::env::var("KRABKA_SOAK_COMMIT").unwrap_or_else(|_| "unknown".into()),
+        "signal": "metrics",
+        "object_store": {
+            "provider": "minio-s3",
+            "image": std::env::var("KRABKA_MINIO_IMAGE_TAG").unwrap_or_else(|_| "unknown".into()),
+            "image_id": std::env::var("KRABKA_MINIO_IMAGE_ID").unwrap_or_else(|_| "unknown".into()),
+            "requests": {"put": puts, "get": gets, "list": lists},
+            "transferred_bytes": transferred_bytes,
+        },
+        "budget_seconds": seconds,
+        "warm_up_seconds": (budget / 4).as_secs_f64(),
+        "duration_seconds": run_started.elapsed().as_secs_f64(),
+        "blocks_written": written,
+        "ingest_blocks_per_second": written as f64 / budget.as_secs_f64(),
+        "queries_served": served,
+        "query_latency_us": {
+            "p50": latencies.quantile(50, 100),
+            "p95": latencies.quantile(95, 100),
+            "p99": latencies.quantile(99, 100),
+        },
+        "errors": 0,
+        "rss_kib": {"after_warm_up": warm_kib, "end": end_kib},
+        "wal_lag": null,
+    });
+    println!("{}", serde_json::to_string_pretty(&report).unwrap());
+    if let Some(output_dir) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::Path::new(&output_dir).join("soak-report.json"),
+            serde_json::to_vec_pretty(&report).unwrap(),
+        )
+        .expect("the soak report writes");
+    }
 
     // Pruning is an in-memory operation. It must not reach the object store at
     // all, and a `list` per query is how a tenant's bill grows without anyone

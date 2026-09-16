@@ -9,6 +9,7 @@ crate_library(name = "blockstore")
 
 crate_tests(
     lib = "blockstore",
+    manual = ["object_store_provider_contract"],
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is
     # crate size times mutants-per-shard. At the default `long` (900s) every
     # shard here was killed mid-sweep -- and a killed shard reports nothing

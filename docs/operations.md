@@ -2,6 +2,10 @@
 
 This guide covers the operating contracts that are easy to miss in a working deployment.
 
+See the [object-store contract](object_store_contract.md) and
+[operating envelope](operating_envelope.md) for provider qualification and
+capacity evidence.
+
 ## Configuration
 
 Each binary accepts command-line flags, environment variables, and a YAML file.

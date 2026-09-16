@@ -361,6 +361,23 @@ fn object_store_cases() -> Vec<(ObjectStoreOperation, DriveOperation)> {
     ]
 }
 
+#[tokio::test]
+async fn multipart_metrics_include_parts_and_transferred_bytes() {
+    let metrics = ObjectStoreMetrics::unregistered();
+    let store = MeteredObjectStore::wrap(Arc::new(InMemory::new()), metrics.clone());
+    let mut upload = store
+        .put_multipart(&Path::from("blocks/multipart"))
+        .await
+        .unwrap();
+
+    upload.put_part(vec![1_u8; 7].into()).await.unwrap();
+    upload.put_part(vec![2_u8; 11].into()).await.unwrap();
+    upload.complete().await.unwrap();
+
+    check!(metrics.operations(ObjectStoreOperation::PutMultipart) == 4);
+    check!(metrics.transferred_bytes(ObjectStoreOperation::PutMultipart) == 18);
+}
+
 /// A decorator that renamed the store would make every `object_store` error
 /// and every log line name the wrapper rather than the backend behind it.
 #[tokio::test]

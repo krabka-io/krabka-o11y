@@ -53,6 +53,12 @@ blockstore_read/whole_block/1000000       unseeded
 blockstore_write/parquet/10000            unseeded
 blockstore_write/parquet/100000           unseeded
 blockstore_write/parquet/1000000          unseeded
+index_load/one_day/1                      unseeded
+index_load/one_day/30                     unseeded
+index_load/one_day/7                      unseeded
+index_load/whole_index/1                  unseeded
+index_load/whole_index/30                 unseeded
+index_load/whole_index/7                  unseeded
 index_prune/candidate_blocks/12           unseeded
 index_prune/candidate_blocks/360          unseeded
 index_prune/candidate_blocks/90           unseeded
