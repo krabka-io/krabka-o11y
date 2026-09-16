@@ -27,6 +27,7 @@ use std::{
     collections::BTreeMap,
     io::Write as _,
     process::{Child, Command},
+    sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -53,6 +54,7 @@ const CHILD_ADMIN: &str = "KRABKA_PROFILES_TEST_ALL_ADMIN";
 
 const INGEST_TEST: &str = "all_in_one::a_push_at_the_ingest_door_is_answered_at_the_query_door";
 const SIGTERM_TEST: &str = "all_in_one::a_sigterm_stops_every_role_and_the_process_exits_cleanly";
+static ALL_IN_ONE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 const TENANT: &str = "tenant-a";
 const PROFILE_NAME: &str = "process_cpu";
@@ -103,6 +105,9 @@ fn a_push_at_the_ingest_door_is_answered_at_the_query_door() {
         run_all_child(&bootstrap, INGEST_FLAGS);
         return;
     }
+    let _serial = ALL_IN_ONE_TEST_LOCK
+        .lock()
+        .expect("serialize all-in-one tests");
 
     let dir = tempfile::tempdir().expect("temporary directory");
     let runtime = parent_runtime();
@@ -169,6 +174,9 @@ fn a_sigterm_stops_every_role_and_the_process_exits_cleanly() {
         run_all_child(&bootstrap, &[]);
         return;
     }
+    let _serial = ALL_IN_ONE_TEST_LOCK
+        .lock()
+        .expect("serialize all-in-one tests");
 
     let dir = tempfile::tempdir().expect("temporary directory");
     let runtime = parent_runtime();
