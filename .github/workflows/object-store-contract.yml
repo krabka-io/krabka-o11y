@@ -41,6 +41,7 @@ jobs:
       - name: provider contract
         run: |
           bazel test //crates/blockstore:object_store_provider_contract_test \
+            --nocache_test_results \
             --test_output=all \
             --test_arg=--ignored \
             --test_env=KRABKA_OBJECT_STORE_CONTRACT_URL \

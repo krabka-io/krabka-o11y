@@ -179,10 +179,10 @@ struct MeteredMultipartUpload {
 impl MultipartUpload for MeteredMultipartUpload {
     fn put_part(&mut self, data: PutPayload) -> UploadPart {
         let size = ByteSize::from_bytes(data.content_length() as u64);
-        let started = Instant::now();
         let part = self.inner.put_part(data);
         let metrics = self.metrics.clone();
         async move {
+            let started = Instant::now();
             let outcome = part.await;
             metrics.record_operation(
                 ObjectStoreOperation::PutMultipart,

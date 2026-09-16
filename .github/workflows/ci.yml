@@ -936,7 +936,7 @@ jobs:
             awk '/^MemTotal:/ {print "memory_kib=" $2}' /proc/meminfo
             echo "command=bazel test --config=scale ${{ matrix.suite.target }}"
           } >"${evidence}/run.metadata.txt"
-          find bazel-testlogs -type f -print0 2>/dev/null | sort -z \
+          find -L bazel-testlogs -type f -print0 2>/dev/null | sort -z \
             | xargs -0 -r sha256sum >"${evidence}/SHA256SUMS"
           sha256sum "${evidence}/run.metadata.txt" >>"${evidence}/SHA256SUMS"
       - name: evidence

@@ -44,9 +44,9 @@ and restart above that boundary:
 | Signal | Lifecycle evidence |
 | --- | --- |
 | Metrics | `//crates/metrics:ingest_roundtrip_test`, `//crates/metrics:level_compaction_test` |
-| Logs | `//crates/observability:ingest_roundtrip_test`, `//crates/observability:compactor_test`, `//crates/observability:wal_live_broker_docker_test` |
+| Logs | `//crates/observability:ingest_roundtrip_test`, `//crates/observability:compactor_test`, `//crates/observability:wal_live_broker_test` |
 | Traces | `//crates/traces:blockbuilder_test`, `//crates/traces:compactor_test` |
-| Profiles | `//crates/profiles:block_builder_test`, `//crates/profiles:lifecycle_test` |
+| Profiles | `//crates/profiles:block_builder_drain_test`, `//crates/profiles:block_builder_object_store_retry_test`, `//crates/profiles:lifecycle_test` |
 
 Run a provider locally only with a disposable prefix:
 

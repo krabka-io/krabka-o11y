@@ -81,6 +81,9 @@ async fn supported_provider_satisfies_the_object_store_contract() {
     delete_all(&store).await;
     integration::put_opts(store.as_ref(), true).await;
     delete_all(&store).await;
+    integration::rename_and_copy(&store).await;
+    delete_all(&store).await;
+    // Covers multipart invisibility before completion, completion, and abort.
     integration::stream_get(&store).await;
     delete_all(&store).await;
     integration::list_uses_directories_correctly(&store).await;
@@ -113,6 +116,8 @@ async fn supported_provider_satisfies_the_object_store_contract() {
     let listing_attempts = wait_for_count(&store, OBJECTS_OVER_ONE_S3_PAGE).await;
     delete_all(&store).await;
     let deletion_attempts = wait_for_count(&store, 0).await;
+    assert!(metrics.operations(ObjectStoreOperation::Copy) > 0);
+    assert!(metrics.operations(ObjectStoreOperation::PutMultipart) > 0);
 
     let mut operations = BTreeMap::new();
     let mut transferred_bytes = BTreeMap::new();
