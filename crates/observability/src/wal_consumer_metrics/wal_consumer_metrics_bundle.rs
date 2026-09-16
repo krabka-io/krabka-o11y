@@ -1,7 +1,34 @@
+use std::{collections::BTreeMap, sync::Arc};
+
+use serde::Serialize;
+
 use super::{
     ConsumerRecord, Counter, Family, Gauge, Histogram, Registry, Time, TimeExt, WalPartitionLabel,
     WalPollOutcome, WalPollOutcomeLabel,
 };
+use crate::PanicSafeShared;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct WalPartitionRecoveryStatus {
+    pub topic: String,
+    pub partition: i32,
+    pub assigned: bool,
+    pub consumed_offset: Option<i64>,
+    pub committed_offset: Option<i64>,
+    pub lag: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct WalRecoveryStatus {
+    pub caught_up: bool,
+    pub partitions: Vec<WalPartitionRecoveryStatus>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct WalRecoveryState {
+    caught_up: bool,
+    partitions: BTreeMap<(String, i32), WalPartitionRecoveryStatus>,
+}
 
 /// Delay buckets for one WAL record, in seconds.
 ///
@@ -19,7 +46,7 @@ const RECEIVE_DELAY_BUCKETS: [f64; 12] = [
 ///
 /// Build one with [`WalConsumerMetrics::register`] inside a signal's
 /// `ServiceMetrics`, then call [`Self::record_poll`] at the poll site.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct WalConsumerMetrics {
     records: Family<WalPartitionLabel, Counter>,
     last_consumed_offset: Family<WalPartitionLabel, Gauge>,
@@ -27,6 +54,7 @@ pub struct WalConsumerMetrics {
     receive_delay: Histogram,
     partition_owned: Family<WalPartitionLabel, Gauge>,
     partition_revocations: Family<WalPartitionLabel, Counter>,
+    recovery: Arc<PanicSafeShared<WalRecoveryState>>,
 }
 
 impl WalConsumerMetrics {
@@ -102,6 +130,17 @@ impl WalConsumerMetrics {
             receive_delay: Histogram::new(RECEIVE_DELAY_BUCKETS),
             partition_owned: Family::default(),
             partition_revocations: Family::default(),
+            recovery: Arc::default(),
+        }
+    }
+
+    /// Shares the exported instruments while keeping independent recovery
+    /// state for another consumer in the same process.
+    #[must_use]
+    pub fn with_fresh_recovery(&self) -> Self {
+        Self {
+            recovery: Arc::default(),
+            ..self.clone()
         }
     }
 
@@ -133,6 +172,55 @@ impl WalConsumerMetrics {
         };
         self.partition_owned.get_or_create(&label).set(0);
         self.partition_revocations.get_or_create(&label).inc();
+    }
+
+    /// Records the live assignment and whether every assigned partition has
+    /// consumed through the broker's last observed end offset.
+    pub fn record_assignment(&self, assigned: &[(String, i32)], caught_up: bool) {
+        self.recovery.update(|state| {
+            state.caught_up = caught_up;
+            for status in state.partitions.values_mut() {
+                status.assigned = false;
+                status.lag = None;
+            }
+            for (topic, partition) in assigned {
+                let status = state
+                    .partitions
+                    .entry((topic.clone(), *partition))
+                    .or_insert_with(|| WalPartitionRecoveryStatus {
+                        topic: topic.clone(),
+                        partition: *partition,
+                        assigned: true,
+                        consumed_offset: None,
+                        committed_offset: None,
+                        lag: None,
+                    });
+                status.assigned = true;
+                status.lag = caught_up.then_some(0);
+            }
+        });
+    }
+
+    /// Marks the offsets consumed so far as durably committed.
+    pub fn record_commit(&self) {
+        self.recovery.update(|state| {
+            for status in state
+                .partitions
+                .values_mut()
+                .filter(|status| status.assigned)
+            {
+                status.committed_offset = status.consumed_offset.map(|offset| offset + 1);
+            }
+        });
+    }
+
+    /// Snapshot served from the role's recovery status endpoint.
+    #[must_use]
+    pub fn recovery_status(&self) -> WalRecoveryStatus {
+        self.recovery.read(|state| WalRecoveryStatus {
+            caught_up: state.caught_up,
+            partitions: state.partitions.values().cloned().collect(),
+        })
     }
 
     /// Records one poll that returned `records`, against the wall clock.
@@ -202,6 +290,22 @@ impl WalConsumerMetrics {
                 self.receive_delay
                     .observe(Time::from_millis(delay).secs_f64());
             }
+            self.recovery.update(|state| {
+                state.caught_up = false;
+                let status = state
+                    .partitions
+                    .entry((tally.topic.clone(), tally.partition))
+                    .or_insert_with(|| WalPartitionRecoveryStatus {
+                        topic: tally.topic.clone(),
+                        partition: tally.partition,
+                        assigned: true,
+                        consumed_offset: None,
+                        committed_offset: None,
+                        lag: None,
+                    });
+                status.consumed_offset = Some(tally.max_offset);
+                status.lag = None;
+            });
         }
     }
 

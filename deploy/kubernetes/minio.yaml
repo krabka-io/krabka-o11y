@@ -28,6 +28,9 @@ spec:
         app.kubernetes.io/name: minio
     spec:
       terminationGracePeriodSeconds: 30
+      securityContext:
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: minio
           image: quay.io/minio/minio@sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb

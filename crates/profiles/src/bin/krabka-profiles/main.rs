@@ -17,7 +17,7 @@ use krabka_client_core::{
 };
 use krabka_client_producer::Producer;
 use krabka_observability::{
-    ConfigFileArgs, argv_with_config_file,
+    ConfigFileArgs, ReadinessGate, argv_with_config_file,
     audit::{AuditArgs, AuditService, krabka_product},
     server_security::{
         ServerListener, ServerSecurity, ServerSecurityArgs, install_crypto_provider, serve_router,

@@ -1,0 +1,102 @@
+# One disruption policy per long-running workload. Stateless roles permit one
+# eviction at a time; singleton WAL/storage roles refuse voluntary eviction
+# until an operator supplies another replica or explicitly overrides the PDB.
+apiVersion: v1
+kind: List
+items:
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: broker}
+    spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: broker}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: minio}
+    spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: minio}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: metrics-block-builder}
+    spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: metrics-block-builder}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: logs-block-builder}
+    spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: logs-block-builder}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: traces-block-builder}
+    spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: traces-block-builder}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: profiles-block-builder}
+    spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: profiles-block-builder}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: traces-live-store}
+    spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: traces-live-store}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: traces-metrics-generator}
+    spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: traces-metrics-generator}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: metrics-distributor}
+    spec: {maxUnavailable: 1, selector: {matchLabels: {app.kubernetes.io/name: metrics-distributor}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: metrics-compactor}
+    spec: {maxUnavailable: 1, selector: {matchLabels: {app.kubernetes.io/name: metrics-compactor}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: metrics-querier}
+    spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: metrics-querier}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: metrics-query-frontend}
+    spec: {maxUnavailable: 1, selector: {matchLabels: {app.kubernetes.io/name: metrics-query-frontend}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: metrics-ruler}
+    spec: {maxUnavailable: 1, selector: {matchLabels: {app.kubernetes.io/name: metrics-ruler}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: logs-distributor}
+    spec: {maxUnavailable: 1, selector: {matchLabels: {app.kubernetes.io/name: logs-distributor}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: logs-querier}
+    spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: logs-querier}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: traces-distributor}
+    spec: {maxUnavailable: 1, selector: {matchLabels: {app.kubernetes.io/name: traces-distributor}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: traces-compactor}
+    spec: {maxUnavailable: 1, selector: {matchLabels: {app.kubernetes.io/name: traces-compactor}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: traces-querier}
+    spec: {maxUnavailable: 1, selector: {matchLabels: {app.kubernetes.io/name: traces-querier}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: traces-query-frontend}
+    spec: {maxUnavailable: 1, selector: {matchLabels: {app.kubernetes.io/name: traces-query-frontend}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: profiles-distributor}
+    spec: {maxUnavailable: 1, selector: {matchLabels: {app.kubernetes.io/name: profiles-distributor}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: profiles-compactor}
+    spec: {maxUnavailable: 1, selector: {matchLabels: {app.kubernetes.io/name: profiles-compactor}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: profiles-querier}
+    spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: profiles-querier}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: profiles-query-frontend}
+    spec: {minAvailable: 1, selector: {matchLabels: {app.kubernetes.io/name: profiles-query-frontend}}}
+  - apiVersion: policy/v1
+    kind: PodDisruptionBudget
+    metadata: {name: profiles-symbolizer}
+    spec: {maxUnavailable: 1, selector: {matchLabels: {app.kubernetes.io/name: profiles-symbolizer}}}

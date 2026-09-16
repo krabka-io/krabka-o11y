@@ -1,6 +1,6 @@
 use assert2::{assert, check};
 
-use super::{DRAINING_GATE, RoleKind, RoleReadiness};
+use super::{DRAINING_GATE, RoleKind, RoleReadiness, readiness_router};
 
 /// A role with nothing to wait for is ready from construction. That is the
 /// honest answer for a role whose whole startup runs before its listener
@@ -86,4 +86,40 @@ fn a_gate_that_loses_what_it_had_takes_the_role_out_of_rotation() {
 
     check!(!readiness.is_ready());
     check!(readiness.pending() == ["wal-consumer"]);
+}
+
+#[tokio::test]
+async fn recovery_status_exposes_readiness_wal_and_object_store_progress() {
+    use axum::{body::Body, http::Request};
+    use krabka_blockstore::{ObjectStoreMetrics, ObjectStoreOperation};
+    use tower::ServiceExt as _;
+
+    let readiness = RoleReadiness::new();
+    let gate = readiness.gate("wal-catch-up");
+    let wal = crate::wal_consumer_metrics::WalConsumerMetrics::unregistered();
+    wal.record_assignment(&[("wal".to_owned(), 0)], true);
+    readiness.track_wal_consumer(wal);
+    let object_store = ObjectStoreMetrics::unregistered();
+    object_store.record_operation(ObjectStoreOperation::Get, true, krabka_units::millis(1));
+    readiness.track_object_store(object_store);
+    gate.mark_ready();
+
+    let response = readiness_router(readiness)
+        .oneshot(
+            Request::builder()
+                .uri("/status/recovery")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("JSON");
+
+    check!(value["ready"] == true);
+    check!(value["wal_consumers"][0]["caught_up"] == true);
+    check!(value["wal_consumers"][0]["partitions"][0]["lag"] == 0);
+    check!(value["last_successful_object_store_operation_unix_millis"].is_number());
 }

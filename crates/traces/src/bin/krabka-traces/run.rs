@@ -54,6 +54,10 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send
         // stays a single answer and names the role whose gate is holding the
         // process back.
         let readiness = RoleReadiness::new();
+        if cli.target != Target::All {
+            readiness.track_wal_consumer(metrics.wal_consumer.clone());
+        }
+        readiness.track_object_store(metrics.object_store.clone());
         let admin = krabka_telemetry::profiling::spawn_admin_with_config(
             cli.admin_listen_addr,
             krabka_traces::metrics::metrics_router(metrics.registry.clone())
@@ -142,7 +146,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error + Send
                     run_compactor(cli, metrics, readiness, shutdown, &object_store).await?;
                 }
                 Target::MetricsGenerator => {
-                    run_metrics_generator(cli, readiness, shutdown, &security).await?;
+                    run_metrics_generator(cli, metrics, readiness, shutdown, &security).await?;
                 }
                 Target::All => {
                     run_all(cli, metrics, readiness, shutdown, security.clone()).await?;

@@ -1,4 +1,7 @@
-use super::{Arc, PanicSafeShared, ReadinessGate, RoleKind};
+use krabka_blockstore::ObjectStoreMetrics;
+
+use super::{Arc, PanicSafeShared, ReadinessGate, RoleKind, recovery_status::RecoveryStatus};
+use crate::wal_consumer_metrics::WalConsumerMetrics;
 
 /// The preconditions a role must meet before an orchestrator routes traffic
 /// to it.
@@ -34,6 +37,8 @@ use super::{Arc, PanicSafeShared, ReadinessGate, RoleKind};
 #[derive(Clone, Default)]
 pub struct RoleReadiness {
     gates: Arc<PanicSafeShared<Vec<ReadinessGate>>>,
+    wal_consumers: Arc<PanicSafeShared<Vec<WalConsumerMetrics>>>,
+    object_stores: Arc<PanicSafeShared<Vec<ObjectStoreMetrics>>>,
     role: Option<RoleKind>,
 }
 
@@ -64,8 +69,27 @@ impl RoleReadiness {
     pub fn for_role(&self, role: RoleKind) -> Self {
         Self {
             gates: Arc::clone(&self.gates),
+            wal_consumers: Arc::clone(&self.wal_consumers),
+            object_stores: Arc::clone(&self.object_stores),
             role: Some(role),
         }
+    }
+
+    /// Adds the WAL progress source shown by `/status/recovery`.
+    pub fn track_wal_consumer(&self, metrics: WalConsumerMetrics) {
+        self.wal_consumers.update(|sources| sources.push(metrics));
+    }
+
+    /// Adds the object-store source shown by `/status/recovery`.
+    pub fn track_object_store(&self, metrics: ObjectStoreMetrics) {
+        self.object_stores.update(|sources| sources.push(metrics));
+    }
+
+    pub(crate) fn recovery_status(&self) -> RecoveryStatus {
+        self.wal_consumers.read(|wal| {
+            self.object_stores
+                .read(|stores| RecoveryStatus::from_parts(self, wal, stores))
+        })
     }
 
     /// Registers a precondition, which starts unmet, and returns the handle

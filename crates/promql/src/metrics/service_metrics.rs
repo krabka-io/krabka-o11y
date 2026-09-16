@@ -1,3 +1,6 @@
+use krabka_blockstore::ObjectStoreMetrics;
+use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
+
 use super::{
     Arc, ByteSize, ByteSizeExt, Counter, Family, Gauge, Histogram, Mutex, QueryTypeLabel, Registry,
     RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel, Time, TimeExt,
@@ -9,6 +12,8 @@ use super::{
 #[derive(Clone)]
 pub struct ServiceMetrics {
     pub registry: SharedRegistry,
+    pub object_store: ObjectStoreMetrics,
+    pub wal_consumer: WalConsumerMetrics,
     // INGEST (distributor) role.
     pub ingest_requests: Family<StatusLabel, Counter>,
     pub ingest_bytes: Counter,
@@ -120,9 +125,13 @@ impl ServiceMetrics {
             "Wall time in seconds of the most recently completed ruler group.",
             rule_group_last_duration_seconds.clone(),
         );
+        let object_store = ObjectStoreMetrics::register(&mut registry);
+        let wal_consumer = WalConsumerMetrics::register(&mut registry);
 
         Self {
             registry: Arc::new(Mutex::new(registry)),
+            object_store,
+            wal_consumer,
             ingest_requests,
             ingest_bytes,
             ingest_items,

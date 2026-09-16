@@ -1,3 +1,5 @@
+use krabka_observability::ReadinessGate;
+
 use super::{Time, WalConsumerMetrics};
 
 /// How the hot WAL tail connects to the broker and what it records.
@@ -20,6 +22,8 @@ pub struct WalTailConfig {
     pub client_frame_max: krabka_client_core::ClientFrameMax,
     /// The instruments every poll is recorded into.
     pub metrics: WalConsumerMetrics,
+    /// The readiness condition that moves only after broker-observed catch-up.
+    pub catch_up: Option<ReadinessGate>,
     /// TLS and SASL for the consumer. `None` connects in plain text.
     ///
     /// The policy holds the SASL password, and `krabka-client-core` prints it

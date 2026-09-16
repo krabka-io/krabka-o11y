@@ -3,13 +3,14 @@ use super::{
     DeferredQueryAuthorizerConnect, DeferredWalConsumerConnect, HotTailDependency, LogHotTail,
     LogIngestLimiter, LogQueryAuthorizer, LogWalConsumer, LogWalSink, OverridesProvider,
     RoleReadiness, ServerSecurity, ServiceMetrics, SharedCompactionFrontier,
-    SharedLogDeleteRequests,
+    SharedLogDeleteRequests, WalConsumerMetrics,
 };
 
 #[derive(Clone, Default)]
 pub struct ServiceDependencies {
     pub(crate) wal_sink: Option<Arc<dyn LogWalSink>>,
     pub(crate) wal_consumer: Option<Arc<tokio::sync::Mutex<Box<dyn LogWalConsumer>>>>,
+    pub(crate) wal_recovery_metrics: Vec<WalConsumerMetrics>,
     pub(crate) ingest_limiter: Option<Arc<dyn LogIngestLimiter>>,
     pub(crate) query_authorizer: Option<Arc<dyn LogQueryAuthorizer>>,
     pub(crate) hot_tail: Option<HotTailDependency>,
@@ -97,6 +98,18 @@ impl ServiceDependencies {
     pub fn with_wal_consumer(mut self, consumer: impl LogWalConsumer) -> Self {
         self.wal_consumer = Some(Arc::new(tokio::sync::Mutex::new(Box::new(consumer))));
         self
+    }
+
+    #[must_use]
+    pub(crate) fn with_wal_recovery_metrics(mut self, metrics: WalConsumerMetrics) -> Self {
+        self.wal_recovery_metrics.push(metrics);
+        self
+    }
+
+    /// Recovery sources owned by this role composition.
+    #[must_use]
+    pub fn wal_recovery_metrics(&self) -> &[WalConsumerMetrics] {
+        &self.wal_recovery_metrics
     }
 
     /// The same dependencies with the WAL consumer taken out.

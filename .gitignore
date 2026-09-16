@@ -60,5 +60,8 @@ mutants.out.old
 /regress-parity.json
 /regress-parity.md
 
+# Local and CI qualification artifacts are uploaded, not committed.
+/qualification/evidence/
+
 # Python bytecode from local runs of scripts/tests
 __pycache__/

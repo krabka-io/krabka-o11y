@@ -19,5 +19,6 @@ pub(crate) async fn poll_log_hot_tail_once_with_frontier(
     if let Some(frontier) = frontier {
         let _ = hot_tail.prune_compacted(&frontier.snapshot());
     }
+    consumer.records_applied().await;
     Ok(decoded)
 }

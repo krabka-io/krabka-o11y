@@ -1,7 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# One role of each signal, a broker and an object store.
+# Every production role, a broker and an object store.
 #
 #     kubectl apply -k deploy
 #
@@ -9,8 +9,8 @@ kind: Kustomization
 # mounts, carried here as a generated ConfigMap. The generator appends a
 # content hash to the name, so editing a role's YAML rolls the Deployments
 # that mount it rather than leaving pods running against a file they no longer
-# have. The whole set rolls together: that is one ConfigMap for twelve roles,
-# and the cost of splitting it is twelve generators to keep in step.
+# have. The whole set rolls together: one ConfigMap keeps every role's command
+# contract in step.
 
 namespace: krabka-o11y
 
@@ -22,22 +22,181 @@ resources:
   - kubernetes/logs.yaml
   - kubernetes/traces.yaml
   - kubernetes/profiles.yaml
+  - kubernetes/additional-roles.yaml
+  - kubernetes/disruption-budgets.yaml
+
+# Uniform production defaults for role containers. The binaries keep durable
+# state in the broker/object store (the two logs exceptions mount PVCs below),
+# so requests reserve only replaceable working memory and CPU.
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: ^(metrics|logs|traces|profiles)-.*$
+    patch: |-
+      - op: add
+        path: /spec/template/spec/automountServiceAccountToken
+        value: false
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {cpu: "2", memory: 2Gi}
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: ^(metrics-(block-builder|compactor|querier|query-frontend|ruler)|logs-(block-builder|querier)|traces-(block-builder|compactor|querier)|profiles-(block-builder|compactor|querier|query-frontend|symbolizer))$
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: role
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: object-store-contract
+                image: quay.io/minio/minio@sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb
+                command: [/bin/sh, -ec]
+                args:
+                  - >-
+                    until mc alias set krabka "$AWS_ENDPOINT_URL" "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" && mc mb --ignore-existing krabka/krabka-metrics krabka/krabka-logs krabka/krabka-traces krabka/krabka-profiles; do sleep 2; done
+                envFrom:
+                  - secretRef: {name: krabka-object-store}
+                  - configMapRef: {name: krabka-object-store-endpoint}
+                env:
+                  - {name: MC_CONFIG_DIR, value: /tmp/.mc}
+                resources:
+                  requests: {cpu: 10m, memory: 16Mi}
+                  limits: {cpu: "1", memory: 256Mi}
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities: {drop: [ALL]}
+                volumeMounts:
+                  - {name: tmp, mountPath: /tmp}
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: ^(metrics-(distributor|block-builder|querier|ruler)|logs-(distributor|block-builder|querier)|traces-(distributor|block-builder|live-store|querier|metrics-generator)|profiles-(distributor|block-builder|querier|query-frontend))$
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: role
+      spec:
+        template:
+          spec:
+            initContainers:
+              - name: topic-contract
+                resources:
+                  requests: {cpu: 10m, memory: 16Mi}
+                  limits: {cpu: "1", memory: 256Mi}
+  # A surge pod cannot become ready while the old member still owns the only
+  # WAL partition. Stop one member before starting its replacement so the
+  # recovery-aware readiness gate can observe the ownership handoff.
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: ^(metrics-(block-builder|querier)|traces-(block-builder|live-store|metrics-generator)|profiles-(block-builder|querier|query-frontend))$
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: wal-consumer
+      spec:
+        strategy:
+          type: RollingUpdate
+          rollingUpdate:
+            maxSurge: 0
+            maxUnavailable: 1
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: ^(broker|minio)$
+    patch: |-
+      - op: add
+        path: /spec/template/spec/automountServiceAccountToken
+        value: false
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: "2", memory: 2Gi}
+      - op: add
+        path: /spec/template/spec/containers/0/securityContext
+        value:
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: ^broker$
+    patch: |-
+      - op: add
+        path: /spec/template/spec/initContainers/0/resources
+        value:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {cpu: "1", memory: 256Mi}
+      - op: add
+        path: /spec/template/spec/initContainers/0/securityContext
+        value:
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
+  - target:
+      group: batch
+      version: v1
+      kind: Job
+    patch: |-
+      - op: add
+        path: /spec/template/spec/automountServiceAccountToken
+        value: false
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          seccompProfile: {type: RuntimeDefault}
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {cpu: "1", memory: 256Mi}
+      - op: add
+        path: /spec/template/spec/containers/0/securityContext
+        value:
+          allowPrivilegeEscalation: false
+          capabilities: {drop: [ALL]}
 
 configMapGenerator:
   - name: krabka-roles
     files:
       - roles/metrics-distributor.yaml
       - roles/metrics-block-builder.yaml
+      - roles/metrics-compactor.yaml
       - roles/metrics-querier.yaml
+      - roles/metrics-query-frontend.yaml
+      - roles/metrics-ruler.yaml
       - roles/logs-distributor.yaml
       - roles/logs-block-builder.yaml
       - roles/logs-querier.yaml
       - roles/traces-distributor.yaml
       - roles/traces-block-builder.yaml
+      - roles/traces-live-store.yaml
       - roles/traces-querier.yaml
+      - roles/traces-query-frontend.yaml
+      - roles/traces-compactor.yaml
+      - roles/traces-metrics-generator.yaml
       - roles/profiles-distributor.yaml
       - roles/profiles-block-builder.yaml
       - roles/profiles-querier.yaml
+      - roles/profiles-query-frontend.yaml
+      - roles/profiles-compactor.yaml
+      - roles/profiles-symbolizer.yaml
   # `object_store` reads its S3 configuration from the process environment;
   # no flag names any of it, so it cannot live in a role's config file.
   - name: krabka-object-store-endpoint

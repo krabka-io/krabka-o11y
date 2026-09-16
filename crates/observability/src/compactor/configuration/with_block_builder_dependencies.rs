@@ -38,9 +38,10 @@ pub(crate) async fn with_block_builder_dependencies(
         security.cloned(),
     )
     .await?
-    .with_metrics(metrics);
+    .with_metrics(metrics.clone());
     Ok(dependencies
         .with_wal_consumer(consumer)
+        .with_wal_recovery_metrics(metrics)
         .with_deferred_query_authorizer_connect(DeferredQueryAuthorizerConnect {
             bootstrap: bootstrap.to_string(),
             topic: config.wal_topic.clone(),

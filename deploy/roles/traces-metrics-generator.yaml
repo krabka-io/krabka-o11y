@@ -1,0 +1,5 @@
+# krabka-traces --target=metrics-generator
+target: metrics-generator
+admin-listen-addr: 0.0.0.0:9404
+bootstrap: broker:9092
+remote-write-url: http://metrics-distributor:4041/api/v1/push

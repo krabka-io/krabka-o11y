@@ -20,6 +20,7 @@ pub(crate) async fn run_live_store(
     // read, and nothing in the answer says so. The gate is registered before
     // the connect and goes back down when the loop ends.
     let wal_consumer_gate = readiness.gate("wal-consumer");
+    let wal_catch_up_gate = readiness.gate("wal-catch-up");
     let consumer = wal_consumer(
         &cli,
         "krabka-traces-live-store",
@@ -33,7 +34,9 @@ pub(crate) async fn run_live_store(
     let live_shutdown = shutdown.clone();
     tasks.spawn("traces live-store consumer", async move {
         wal_consumer_gate.mark_ready();
-        if let Err(err) = livestore::run(consumer, store, metrics, live_shutdown).await {
+        if let Err(err) =
+            livestore::run(consumer, store, metrics, live_shutdown, wal_catch_up_gate).await
+        {
             tracing::error!(error = %err, "traces live-store consumer stopped");
         }
         wal_consumer_gate.mark_unready();

@@ -79,6 +79,10 @@ mod wal_poll_outcome;
 mod wal_poll_outcome_label;
 
 pub use self::{
-    wal_consumer_metrics_bundle::WalConsumerMetrics, wal_partition_label::WalPartitionLabel,
-    wal_poll_outcome::WalPollOutcome, wal_poll_outcome_label::WalPollOutcomeLabel,
+    wal_consumer_metrics_bundle::{
+        WalConsumerMetrics, WalPartitionRecoveryStatus, WalRecoveryStatus,
+    },
+    wal_partition_label::WalPartitionLabel,
+    wal_poll_outcome::WalPollOutcome,
+    wal_poll_outcome_label::WalPollOutcomeLabel,
 };

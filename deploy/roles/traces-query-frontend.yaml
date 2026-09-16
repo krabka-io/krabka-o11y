@@ -1,0 +1,6 @@
+# krabka-traces --target=query-frontend
+target: query-frontend
+listen: 0.0.0.0:3200
+admin-listen-addr: 0.0.0.0:9404
+object-store-url: s3://krabka-traces
+querier-url: http://traces-querier:3200

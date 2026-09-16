@@ -1,4 +1,6 @@
-use krabka_observability::persisted_format::validate_persisted_format;
+use krabka_observability::{
+    persisted_format::validate_persisted_format, wal_consumer_metrics::WalConsumerMetrics,
+};
 
 use super::{
     Time, WalHead, WalHeadConsumerCommit, WalHeadConsumerError, WalHeadConsumerPoll,
@@ -20,11 +22,15 @@ pub async fn poll_wal_head_consumer_once<C>(
     head: &WalHead,
     wal_topic: &str,
     timeout: Time,
+    metrics: Option<&WalConsumerMetrics>,
 ) -> Result<WalHeadReplayResult, WalHeadConsumerError>
 where
     C: WalHeadConsumerPoll + WalHeadConsumerCommit + ?Sized,
 {
     let records = consumer.poll(timeout).await?;
+    if let Some(metrics) = metrics {
+        metrics.record_poll(&records);
+    }
     for record in records.iter().filter(|record| record.topic == wal_topic) {
         validate_persisted_format(
             record
@@ -49,6 +55,9 @@ where
     span.record("replayed", result.replayed_records);
     if result.replayed_records > 0 {
         consumer.commit_sync().await?;
+        if let Some(metrics) = metrics {
+            metrics.record_commit();
+        }
     }
     Ok(result)
 }

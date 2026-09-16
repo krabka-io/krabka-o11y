@@ -16,6 +16,7 @@ mod draining_gate;
 mod readiness_gate;
 mod readiness_router;
 mod ready;
+mod recovery_status;
 mod role_readiness;
 #[cfg(test)]
 mod tests;

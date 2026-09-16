@@ -3,7 +3,7 @@ use super::{
     KafkaWalRecord, LogWalConsumer, Offset, PartitionIndex, Time, WalConsumerError,
     WalConsumerMetrics, WalPosition, async_trait,
 };
-use crate::wal_group_assignment::WalAssignmentWatch;
+use crate::{ReadinessGate, wal_group_assignment::WalAssignmentWatch};
 
 pub struct KafkaLogWalConsumer {
     pub(crate) consumer: Consumer,
@@ -80,6 +80,13 @@ impl KafkaLogWalConsumer {
         self
     }
 
+    /// Keeps readiness false until the broker reports this consumer caught up.
+    #[must_use]
+    pub fn with_catch_up(mut self, gate: ReadinessGate) -> Self {
+        self.assignment = WalAssignmentWatch::with_catch_up(self.metrics.clone(), gate);
+        self
+    }
+
     #[cfg_attr(test, mutants::skip)]
     pub(crate) async fn close(self) {
         let _ = self.consumer.close().await;
@@ -88,6 +95,10 @@ impl KafkaLogWalConsumer {
 
 #[async_trait]
 impl LogWalConsumer for KafkaLogWalConsumer {
+    fn set_catch_up_gate(&mut self, gate: ReadinessGate) {
+        self.assignment = WalAssignmentWatch::with_catch_up(self.metrics.clone(), gate);
+    }
+
     #[cfg_attr(test, mutants::skip)]
     async fn poll(&mut self, timeout: Time) -> Result<Vec<KafkaWalRecord>, WalConsumerError> {
         let records = self
@@ -102,7 +113,9 @@ impl LogWalConsumer for KafkaLogWalConsumer {
         // against. A revocation here says the group abandoned whatever the
         // compactor had buffered for the lost partitions. See
         // `krabka_observability::wal_group_assignment`.
-        self.assignment.observe_consumer(&self.consumer).await;
+        self.assignment
+            .observe_consumer(&self.consumer, !records.is_empty())
+            .await;
         records
             .into_iter()
             .map(|record| {
@@ -132,9 +145,15 @@ impl LogWalConsumer for KafkaLogWalConsumer {
             .collect()
     }
 
+    async fn records_applied(&mut self) {
+        self.assignment.observe_applied(&self.consumer).await;
+    }
+
     #[cfg_attr(test, mutants::skip)]
     async fn commit_compacted(&mut self, _position: WalPosition) -> Result<(), WalConsumerError> {
         self.consumer.commit_sync().await?;
+        self.metrics.record_commit();
+        self.assignment.observe_applied(&self.consumer).await;
         Ok(())
     }
 }

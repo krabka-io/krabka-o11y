@@ -45,7 +45,13 @@ pub(crate) async fn run_query_frontend(
     .await?;
     let Some(read) = read else { return Ok(()) };
     let mut tasks = SupervisedTasks::new(shutdown.clone());
-    for (name, handle) in read.spawn_background(&cli, &metrics, &shutdown, security.wal.as_ref()) {
+    for (name, handle) in read.spawn_background(
+        &cli,
+        &metrics,
+        &shutdown,
+        security.wal.as_ref(),
+        readiness.gate("wal-catch-up"),
+    ) {
         tasks.adopt(name, handle);
     }
     let state = Arc::new(

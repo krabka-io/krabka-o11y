@@ -1,0 +1,7 @@
+# krabka-profiles --target=query-frontend
+target: query-frontend
+listen: 0.0.0.0:4040
+admin-listen-addr: 0.0.0.0:9404
+bootstrap: broker:9092
+object-store-url: s3://krabka-profiles
+query-wal-tail-group-id: krabka-profiles-query-frontend

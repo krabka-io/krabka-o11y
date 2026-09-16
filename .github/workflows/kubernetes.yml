@@ -1,0 +1,62 @@
+name: kubernetes lifecycle
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/kubernetes.yml
+      - bazel/images/krabka/**
+      - crates/**
+      - deploy/**
+      - tools/kubernetes-qualification.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: kubernetes-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with: {fetch-depth: 0}
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
+          bazelisk-cache: true
+          disk-cache: kubernetes-lifecycle
+          repository-cache: true
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+      - name: install kind
+        run: |
+          curl -fsSLo kind https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
+          echo '517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  kind' | sha256sum -c -
+          sudo install kind /usr/local/bin/kind
+      - name: validate manifests and role commands
+        run: |
+          deploy/kubernetes_manifest_test.sh
+          bazel test //deploy:role_config_test
+      - name: build image
+        run: bazel run -c opt //bazel/images/krabka:load
+      - name: qualify
+        run: |
+          new="localhost/krabka-o11y:sha-${GITHUB_SHA::12}"
+          old="ghcr.io/${GITHUB_REPOSITORY}:sha-$(git rev-parse --short=12 origin/main)"
+          image_id=$(docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}' | awk '$1 ~ /krabka-o11y:dev$/ { print $2; exit }')
+          test -n "${image_id}"
+          docker tag "${image_id}" "${new}"
+          tools/kubernetes-qualification.sh "${new}" "${old}"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: milestone-17-kubernetes-${{ github.sha }}
+          path: qualification/evidence/kubernetes
+          if-no-files-found: error
