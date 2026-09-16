@@ -209,4 +209,23 @@ mod tests {
         assert!(require_apply(false, "restore").is_err());
         assert!(require_apply(true, "restore").is_ok());
     }
+
+    #[test]
+    fn stores_use_distinct_dedicated_prefixes() {
+        assert!(scoped_store("not a URL").is_err());
+        assert!(scoped_store("memory:///").is_err());
+        assert!(scoped_store("memory:///tenant-a").is_ok());
+        assert!(require_distinct("memory:///a", "memory:///a").is_err());
+        assert!(require_distinct("memory:///a", "memory:///b").is_ok());
+    }
+
+    #[test]
+    fn reports_can_be_written_to_a_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("report.json");
+
+        emit(&serde_json::json!({"clean": true}), Some(path.clone())).unwrap();
+
+        check!(std::fs::read_to_string(path).unwrap() == "{\n  \"clean\": true\n}\n");
+    }
 }
