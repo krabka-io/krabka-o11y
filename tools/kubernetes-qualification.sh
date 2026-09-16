@@ -131,6 +131,19 @@ ensure_forwards() {
     kill -0 "${pid}" 2>/dev/null || { start_forwards; return; }
   done
 }
+
+send_http() {
+  local name=$1
+  shift
+  for _ in $(seq 1 30); do
+    ensure_forwards
+    if run curl -fsS "$@"; then return 0; fi
+    sleep 2
+  done
+  echo "${name} did not accept the qualification corpus" >&2
+  return 1
+}
+
 start_forwards
 
 send_corpus() {
@@ -140,16 +153,16 @@ send_corpus() {
   printf -v metrics_query_time '%d.%03d' "$((now_ms / 1000))" "$((now_ms % 1000))"
   trace_id=$(printf '%s' "${marker}" | sha256sum | cut -c 1-32)
   span_id=${trace_id:0:16}
-  run curl -fsS http://127.0.0.1:19999/loki/api/v1/push \
+  send_http logs http://127.0.0.1:19999/loki/api/v1/push \
     -H 'Content-Type: application/json' \
     --data "{\"streams\":[{\"stream\":{\"job\":\"${marker}\"},\"values\":[[\"${now_ns}\",\"${marker}\"]]}]}"
-  run curl -fsS http://127.0.0.1:14318/v1/traces \
+  send_http traces http://127.0.0.1:14318/v1/traces \
     -H 'Content-Type: application/json' \
     --data "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"${marker}\"}}]},\"scopeSpans\":[{\"spans\":[{\"traceId\":\"${trace_id}\",\"spanId\":\"${span_id}\",\"name\":\"${marker}\",\"startTimeUnixNano\":\"${now_ns}\",\"endTimeUnixNano\":\"$((now_ns + 1000000))\"}]}]}]}"
-  run curl -fsS 'http://127.0.0.1:14041/api/v1/push/influx/write?precision=ms' \
+  send_http metrics 'http://127.0.0.1:14041/api/v1/push/influx/write?precision=ms' \
     -H "X-Scope-OrgID: ${tenant}" -H 'Content-Type: text/plain' \
     --data-binary "krabka_qualification,marker=${marker} value=1 ${now_ms}"
-  run curl -fsS \
+  send_http profiles \
     "http://127.0.0.1:14040/ingest?name=qualification%7Bservice_name%3D%22${marker}%22%7D&format=groups&units=samples&until=${now_ms}" \
     -H "X-Scope-OrgID: ${tenant}" -H 'Content-Type: text/plain' \
     --data-binary 'qualification;sample 1'
