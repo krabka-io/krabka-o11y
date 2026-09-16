@@ -257,6 +257,7 @@ def crate_tests(
         compile_data = None,
         cpu_heavy = [],
         docker = {},
+        docker_variants = {},
         env = {},
         extra_srcs = {},
         feature_variants = {},
@@ -279,6 +280,8 @@ def crate_tests(
         For a `no_harness` suite these are also the corpus staged for it.
       compile_data: files reachable from `include!`/`include_str!` at compile time.
       env: runtime environment for every test target in the package.
+      docker_variants: alternate pinned images for an existing Docker suite,
+        `{stem: {suffix: {logical_image: pinned_image}}}`.
       extra_srcs: per-stem sources from outside this package, for a suite that
         reaches one with `#[path]`. Bazel places a label at its own workspace
         path, which is the path such an include is written against.
@@ -333,6 +336,16 @@ def crate_tests(
                  "carrying the `scale` tag is emitted at all, and the suite is " +
                  "simply never run.") % stem,
             )
+
+    for stem, variants in docker_variants.items():
+        if stem not in docker:
+            fail("crate_tests: Docker variant stem `%s` has no Docker suite" % stem)
+        for suffix, images in variants.items():
+            if sorted(images.keys()) != sorted(docker[stem]):
+                fail("crate_tests: Docker variant `%s_%s` must replace every suite image" % (stem, suffix))
+            for pinned in images.values():
+                if pinned not in IMAGES:
+                    fail("crate_tests: Docker variant `%s_%s` names unknown image `%s`" % (stem, suffix, pinned))
 
     # `harness = false` is written in Cargo.toml and repeated here, and nothing
     # else connects the two. A stem in one and not the other builds under the
@@ -566,6 +579,37 @@ def crate_tests(
                 "no-sandbox",
             ] + (["scale"] if stem in scale else []),
         )
+
+        for suffix, images in docker_variants.get(stem, {}).items():
+            variant_tars = [
+                "//bazel/images:%s_tar" % image
+                for image in images.values()
+            ]
+            sh_test(
+                name = stem + "_" + suffix + "_docker_test",
+                size = "enormous",
+                flaky = True,
+                srcs = ["//bazel:docker_test.sh"],
+                args = ["$(rootpath :%s_docker_bin)" % stem],
+                data = [":%s_docker_bin" % stem] + variant_tars + (data or []),
+                env = dict(
+                    env,
+                    KRABKA_IMAGE_TARS = ":".join([
+                        "$(rootpath %s)" % tar
+                        for tar in variant_tars
+                    ]),
+                    **dict(
+                        [
+                            (image_tag_env(logical), IMAGES[pinned].rsplit(":", 1)[1])
+                            for logical, pinned in images.items()
+                        ] + [
+                            (image_ref_env(logical), IMAGES[pinned])
+                            for logical, pinned in images.items()
+                        ],
+                    )
+                ),
+                tags = ["docker", "external", "no-sandbox"],
+            )
 
     # The same tests again against each feature variant of the library. Building
     # a variant proves it compiles and nothing more; the code a feature switches

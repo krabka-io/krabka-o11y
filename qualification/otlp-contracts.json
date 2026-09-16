@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "windows": {
+    "current": {
+      "tag": "v1.11.0",
+      "revision": "790608c4d51e6ffc12210b541e8514cbed9e91a4",
+      "sha256": "b8331fd497a17008da3efdc2ccf25da19aa4653b62cfc49cf181f22373573bc8"
+    },
+    "previous": {
+      "tag": "v1.10.0",
+      "revision": "ca839c51f706f5d53bfb46f06c3e90c3af3a52c6",
+      "sha256": "acba65fd2970f78d87f5681d13a30fd3430edc7cd77e0d3f136d66e1639f1e8f"
+    }
+  },
+  "schema_replay": {
+    "current": "tools/otlp-contracts.py --window current",
+    "previous": "tools/otlp-contracts.py --window previous"
+  },
+  "fixtures": [
+    {"signal": "metrics", "transports": ["http/protobuf", "grpc"], "bounds": ["request body", "partial success response"], "target": "//crates/metrics:metrics_test"},
+    {"signal": "logs", "transports": ["http/json", "http/protobuf"], "bounds": ["request body", "malformed payload rejection"], "target": "//crates/observability:distributor_otlp_test"},
+    {"signal": "traces", "transports": ["http/json", "http/protobuf", "grpc"], "bounds": ["request body", "response status"], "target": "//crates/traces:traces_test"},
+    {"signal": "profiles", "transports": ["http/json", "http/protobuf", "grpc"], "bounds": ["compressed and uncompressed request body", "response status", "process.* resource context"], "target": "//crates/profiles:profiles_test"}
+  ]
+}

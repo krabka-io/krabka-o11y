@@ -16,7 +16,23 @@ pub fn decode_otlp(
     let mut out = Vec::new();
 
     for resource_profiles in &req.resource_profiles {
+        use pb::opentelemetry::proto::common::v1::any_value::Value;
+
         let service_name = resolve_service_name(resource_profiles);
+        let process_labels = resource_profiles
+            .resource
+            .iter()
+            .flat_map(|resource| &resource.attributes)
+            .filter(|attribute| attribute.key.starts_with("process."))
+            .filter_map(|attribute| {
+                let value = match attribute.value.as_ref()?.value.as_ref()? {
+                    Value::StringValue(value) if !value.is_empty() => value.clone(),
+                    Value::IntValue(value) => value.to_string(),
+                    Value::StringValue(_) => return None,
+                };
+                Some((attribute.key.clone(), value))
+            })
+            .collect::<Vec<_>>();
         for scope_profiles in &resource_profiles.scope_profiles {
             for profile in &scope_profiles.profiles {
                 let sample_timestamps_ns = otlp_sample_timestamps(profile)?;
@@ -31,6 +47,9 @@ pub fn decode_otlp(
                 // exposes the label like any other one.
                 // `grafana/pyroscope:2.2.1` returns it from `LabelNames`.
                 labels.insert("__otel__", "true");
+                for (name, value) in &process_labels {
+                    labels.insert(name.clone(), value.clone());
+                }
                 if let Some(profile_id) = profile_id {
                     labels.insert("__profile_id__", profile_id);
                 }

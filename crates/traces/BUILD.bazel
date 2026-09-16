@@ -35,6 +35,20 @@ crate_tests(
             "tempo",
         ],
     },
+    docker_variants = {
+        "grafana_e2e": {
+            "previous": {
+                "grafana": "grafana_previous",
+                "prometheus": "prometheus",
+            },
+        },
+        "tempo_differential": {
+            "previous": {
+                "grafana": "grafana_previous",
+                "tempo": "tempo",
+            },
+        },
+    },
     lib = "traces",
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is
     # crate size times mutants-per-shard. At the default `long` (900s) every

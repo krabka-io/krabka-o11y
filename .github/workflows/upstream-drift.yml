@@ -1,0 +1,41 @@
+name: upstream drift
+
+on:
+  schedule:
+    - cron: '17 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: resolve immutable releases
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: tools/upstream-drift.py --discover qualification/upstream-drift
+      - name: create or update review issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create upstream-drift --description "Automated upstream rebaseline proposal" --force
+          for proposal in qualification/upstream-drift/*.json; do
+            [ -e "${proposal}" ] || continue
+            title="$(jq -r .title "${proposal}")"
+            jq -r .body "${proposal}" > "${RUNNER_TEMP}/body.md"
+            mapfile -t issues < <(gh issue list --state open --label upstream-drift --limit 100 \
+              --json number,title | jq -r --arg title "${title}" '.[] | select(.title == $title) | .number')
+            if [ "${#issues[@]}" -eq 0 ]; then
+              gh issue create --label upstream-drift --title "${title}" --body-file "${RUNNER_TEMP}/body.md"
+              continue
+            fi
+            gh issue edit "${issues[0]}" --title "${title}" --body-file "${RUNNER_TEMP}/body.md"
+            for duplicate in "${issues[@]:1}"; do
+              gh issue close "${duplicate}" --comment "Superseded by #${issues[0]}."
+            done
+          done

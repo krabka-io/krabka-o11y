@@ -33,6 +33,14 @@ crate_tests(
             "pyroscope",
         ],
     },
+    docker_variants = {
+        "pyroscope_differential": {
+            "previous": {
+                "grafana": "grafana_previous",
+                "pyroscope": "pyroscope",
+            },
+        },
+    },
     lib = "profiles",
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is
     # crate size times mutants-per-shard. At the default `long` (900s) every

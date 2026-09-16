@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   gates:
@@ -19,42 +20,80 @@ jobs:
       matrix:
         include:
           - id: ordinary-bazel
+            gate: ordinary
             command: bazel test //...
           - id: ordinary-cargo
+            gate: ordinary
             command: cargo test --workspace --locked
+            allowed_ignored: 26
           - id: ordinary-clippy
+            gate: ordinary
             command: cargo clippy --workspace --all-targets --locked -- -D warnings
           - id: ordinary-format
+            gate: ordinary
             command: bazel run //tools/format && git diff --exit-code
           - id: oracle-versions
-            command: bazel test --config=docker --flaky_test_attempts=1 //bazel/images:alloy_version_test //bazel/images:grafana_version_test //bazel/images:loki_version_test //bazel/images:mimir_version_test //bazel/images:prometheus_version_test //bazel/images:pyroscope_version_test //bazel/images:tempo_version_test
+            gate: clients
+            command: bazel test --config=docker --flaky_test_attempts=1 //bazel/images:alloy_version_test //bazel/images:alloy_previous_version_test //bazel/images:grafana_version_test //bazel/images:grafana_previous_version_test //bazel/images:loki_version_test //bazel/images:mimir_version_test //bazel/images:prometheus_version_test //bazel/images:prometheus_previous_version_test //bazel/images:pyroscope_version_test //bazel/images:tempo_version_test
           - id: mimir-differential
-            command: bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:diff_mimir_docker_test //crates/metrics-service:diff_prometheus_docker_test
+            gate: differential
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:diff_mimir_docker_test //crates/metrics-service:diff_prometheus_docker_test //crates/metrics-service:diff_prometheus_previous_docker_test
           - id: mimir-grafana
-            command: bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:grafana_integration_docker_test
+            gate: clients
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:grafana_integration_docker_test //crates/metrics-service:grafana_integration_previous_docker_test
           - id: loki-differential
+            gate: differential
             command: bazel test --config=docker --flaky_test_attempts=1 //crates/observability:loki_differential_docker_test
           - id: loki-grafana
-            command: bazel test --config=docker --flaky_test_attempts=1 //crates/observability:grafana_e2e_docker_test //crates/observability:grafana_integration_docker_test
+            gate: clients
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/observability:grafana_e2e_docker_test //crates/observability:grafana_e2e_previous_docker_test //crates/observability:grafana_integration_docker_test //crates/observability:grafana_integration_previous_docker_test
           - id: tempo-differential
+            gate: differential
             command: bazel test --config=docker --flaky_test_attempts=1 //crates/traces:tempo_differential_docker_test
           - id: tempo-grafana
-            command: bazel test --config=docker --flaky_test_attempts=1 //crates/traces:grafana_e2e_docker_test
-          - id: pyroscope
+            gate: clients
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/traces:grafana_e2e_docker_test //crates/traces:grafana_e2e_previous_docker_test
+          - id: pyroscope-differential
+            gate: differential
             command: bazel test --config=docker --flaky_test_attempts=1 //crates/profiles:pyroscope_differential_docker_test
-          - id: clients-and-correlation
+          - id: pyroscope-grafana-previous
+            gate: clients
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/profiles:pyroscope_differential_previous_docker_test
+          - id: correlations
+            gate: clients
             command: bazel test //crates/integration:logs_to_traces_trace_id_test //crates/integration:traces_to_metrics_exemplars_test //crates/integration:traces_to_profiles_span_profiles_test
           - id: client-oracles
-            command: bazel test --config=docker --flaky_test_attempts=1 //crates/integration:alloy_client_docker_test //crates/integration:prometheus_client_docker_test
-          - id: persisted-upgrade
-            command: bazel run -c opt //bazel/images/krabka:load && tools/release-smoke.sh krabka-o11y:dev "ghcr.io/krabka-io/krabka-o11y:sha-$(git rev-parse --short=12 HEAD^)" qualification/evidence/persisted-upgrade
-          - id: lifecycle-and-failures
-            command: bazel test //crates/blockstore:lifecycle_test //crates/observability:compactor_test //crates/observability:deletes_test //crates/observability:wal_live_broker_test //crates/profiles:lifecycle_test //crates/traces:block_lifecycle_test //crates/traces:wal_group_rebalance_test
-          - id: security-and-limits
-            command: bazel test //crates/metrics:tenant_quota_isolation_test //crates/observability:audit_test //crates/observability:server_security_test //crates/observability:service_security_test //crates/profiles:tenant_resolution_test //crates/promql:tenant_isolation_test //crates/traces:tenant_isolation_test
+            gate: clients
+            command: bazel test --config=docker --flaky_test_attempts=1 //crates/integration:alloy_client_docker_test //crates/integration:alloy_client_previous_docker_test //crates/integration:prometheus_client_docker_test //crates/integration:prometheus_client_previous_docker_test
+          - id: otlp-contracts
+            gate: clients
+            command: bazel test //crates/metrics:metrics_test //crates/observability:distributor_otlp_test //crates/traces:traces_test //crates/profiles:profiles_test
+          - id: otlp-contracts-current
+            gate: clients
+            command: tools/otlp-contracts.py --window current
+          - id: otlp-contracts-previous
+            gate: clients
+            command: tools/otlp-contracts.py --window previous
+          - id: kubernetes
+            gate: kubernetes
+            command: bazel run -c opt //bazel/images/krabka:load && tools/kubernetes-qualification.sh krabka-o11y:dev ghcr.io/krabka-io/krabka-o11y:sha-$(git rev-parse --short=12 HEAD^) qualification/evidence/kubernetes
+          - id: ha
+            gate: ha
+            command: bazel test //crates/observability:sigterm_drain_test //crates/observability:wal_live_broker_test //crates/profiles:all_drain_order_test //crates/profiles:block_builder_drain_test //crates/traces:all_in_one_drain_order_test //crates/traces:wal_group_rebalance_test
+          - id: migration
+            gate: migration
+            command: bazel run -c opt //bazel/images/krabka:load && tools/release-smoke.sh krabka-o11y:dev ghcr.io/krabka-io/krabka-o11y:sha-$(git rev-parse --short=12 HEAD^) qualification/evidence/persisted-upgrade
+          - id: recovery
+            gate: recovery
+            command: bazel test //crates/blockstore:lifecycle_test //crates/blockstore:object_store_provider_contract_test //crates/blockstore:persistence_test //crates/observability:querier_object_store_test //crates/observability:wal_live_broker_test //crates/profiles:block_builder_object_store_retry_test //crates/profiles:lifecycle_test //crates/traces:block_lifecycle_test
+          - id: security
+            gate: security
+            command: bazel test //crates/metrics:tenant_quota_isolation_test //crates/metrics-service:server_security_test //crates/observability:audit_test //crates/observability:server_security_test //crates/observability:service_security_test //crates/observability:wal_client_security_test //crates/profiles:tenant_resolution_test //crates/promql:tenant_isolation_test //crates/traces:tenant_isolation_test
           - id: scale-object-store
+            gate: scale
             command: bazel test --config=scale --flaky_test_attempts=1 //crates/observability:scale_object_store_docker_test
           - id: scale-soak
+            gate: scale
             command: bazel test --config=scale --flaky_test_attempts=1 //crates/observability:soak_ingest_query_docker_test
     steps:
       - uses: actions/checkout@v7
@@ -80,13 +119,22 @@ jobs:
           sudo docker image prune --all --force >/dev/null 2>&1 || true
       - name: host container callback
         run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
-      - run: ${{ matrix.command }}
+      - name: install kind
+        if: matrix.gate == 'kubernetes'
+        run: |
+          curl -fsSLo kind https://github.com/kubernetes-sigs/kind/releases/download/v0.30.0/kind-linux-amd64
+          echo '517ab7fc89ddeed5fa65abf71530d90648d9638ef0c4cde22c2c11f8097b8889  kind' | sha256sum -c -
+          sudo install kind /usr/local/bin/kind
+      - name: run and record gate
+        env:
+          QUALIFICATION_COMMAND: ${{ matrix.command }}
+        run: tools/qualification-gate.py --id "${{ matrix.id }}" --gate "${{ matrix.gate }}" --command "${QUALIFICATION_COMMAND}" --allowed-ignored "${{ matrix.allowed_ignored || 0 }}" --output "qualification/evidence/${{ matrix.id }}.json"
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: milestone-16-${{ matrix.id }}-${{ github.sha }}
-          path: qualification/evidence/${{ matrix.id }}
-          if-no-files-found: ignore
+          name: milestone-21-gate-${{ matrix.id }}-${{ github.sha }}
+          path: qualification/evidence/${{ matrix.id }}.json
+          if-no-files-found: error
 
   report:
     name: immutable compatibility report
@@ -95,15 +143,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: milestone-21-gate-*-${{ github.sha }}
+          path: qualification/evidence
+          merge-multiple: true
       - name: promote and validate
-        env:
-          EVIDENCE: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          tools/qualification-report.py --report qualification/milestone-16.json \
-            --promote --commit "${GITHUB_SHA}" --evidence "${EVIDENCE}" \
-            --output qualification/milestone-16-qualified.json --final
+        run: tools/qualification-report.py --report qualification/milestone-21.json --promote --commit "${GITHUB_SHA}" --evidence-dir qualification/evidence --output qualification/milestone-21-qualified.json --final
       - uses: actions/upload-artifact@v4
         with:
-          name: milestone-16-qualification-${{ github.sha }}
-          path: qualification/milestone-16-qualified.json
+          name: milestone-21-qualification-${{ github.sha }}
+          path: qualification/milestone-21-qualified.json
           if-no-files-found: error

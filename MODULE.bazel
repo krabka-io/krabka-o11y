@@ -92,7 +92,9 @@ pull_image = use_repo_rule("@rules_img//img:pull.bzl", "pull")
         # exists to remove: a differential test that disagrees with a moving
         # target reports a difference nobody changed.
         ("alloy", "mirror.gcr.io", "grafana/alloy", "v1.19.2", "sha256:1eeba15ef3193438c72f66efd3d76f769c523a4c661db0fae6eddde906004bc8"),
+        ("alloy_previous", "mirror.gcr.io", "grafana/alloy", "v1.18.1", "sha256:754409730f1a4ed9781f8a2ea3b6a8c55750ee125a267ecf8fb449f9a25c109a"),
         ("grafana", "mirror.gcr.io", "grafana/grafana", "13.2.2", "sha256:9924c7fe0effe4a5fea08b3451905de54f09fde9d1589463a5f2d02d9ec158bc"),
+        ("grafana_previous", "mirror.gcr.io", "grafana/grafana", "13.1.6", "sha256:66611512245b182e0928918b71db91fef25cb8f13d94f71fd2fb6253c383bb64"),
         ("loki", "mirror.gcr.io", "grafana/loki", "3.7.7", "sha256:550d599ec4efacd8ebc0a5871766855057cba2bd0c669c0711d898c00d6d901f"),
         ("mimir", "mirror.gcr.io", "grafana/mimir", "3.2.1", "sha256:d42bfba7a8ef82a14b883a4cf235406324aeecae94c85eba000bdaa21aa2f289"),
         # The object store the `scale` suites run against. Not a differential
@@ -115,6 +117,7 @@ pull_image = use_repo_rule("@rules_img//img:pull.bzl", "pull")
         # registry that still serves them.
         ("minio", "quay.io", "minio/minio", "RELEASE.2025-04-22T22-12-26Z", "sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb"),
         ("prometheus", "mirror.gcr.io", "prom/prometheus", "v3.14.0", "sha256:e906cef998316bbe319f98711e1b4d8613ad37e14b08ff831d7036e77b7464f9"),
+        ("prometheus_previous", "mirror.gcr.io", "prom/prometheus", "v3.13.3", "sha256:595c907995955f2d5fda19fae66392680921d9501cad0be5270b3fee959780b1"),
         ("pyroscope", "mirror.gcr.io", "grafana/pyroscope", "2.3.1", "sha256:718b585ea168a616ca737018dbd1676992db9e5f1084ec4e9cd18f669326f334"),
         ("tempo", "mirror.gcr.io", "grafana/tempo", "3.0.3", "sha256:05321ebf1f191fde34282b3dc86e68f511d489133df7963cd1670a2e1e11b33c"),
     ]
