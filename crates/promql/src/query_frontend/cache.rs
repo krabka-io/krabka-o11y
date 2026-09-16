@@ -134,6 +134,10 @@ where
     ) -> Result<(), Self::Error> {
         self.inner.insert(key, result).await.map_err(cache_error)
     }
+
+    async fn sweep(&self) -> Result<usize, Self::Error> {
+        self.inner.sweep().await.map_err(cache_error)
+    }
 }
 
 /// A `PromQL` result cache that supplies shared fan-out policy.
@@ -155,8 +159,8 @@ where
 
 pub(super) fn range_cache_key(tenant: &str, query: &FrontendRangeQuery) -> CacheKey {
     CacheKey::new(
+        tenant,
         serde_json::to_vec(&(
-            tenant,
             &query.query,
             query.start_ms,
             query.end_ms,

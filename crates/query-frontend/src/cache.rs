@@ -8,17 +8,26 @@ use std::{
 };
 
 use async_trait::async_trait;
+use futures::TryStreamExt as _;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use serde::{Serialize, de::DeserializeOwned};
 
-/// Opaque identity of a planned subquery.
+const DEFAULT_OBJECT_STORE_CACHE_PREFIX: &str = "_krabka_query_frontend_cache";
+
+/// Tenant-scoped opaque identity of a planned subquery.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct CacheKey(Vec<u8>);
+pub struct CacheKey {
+    tenant: String,
+    bytes: Vec<u8>,
+}
 
 impl CacheKey {
     #[must_use]
-    pub fn new(bytes: impl Into<Vec<u8>>) -> Self {
-        Self(bytes.into())
+    pub fn new(tenant: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            tenant: tenant.into(),
+            bytes: bytes.into(),
+        }
     }
 }
 
@@ -44,6 +53,9 @@ pub trait QueryCache<V>: Send + Sync {
 
     async fn get(&self, key: &CacheKey) -> Result<Option<V>, Self::Error>;
     async fn insert(&self, key: &CacheKey, value: &V) -> Result<(), Self::Error>;
+    async fn sweep(&self) -> Result<usize, Self::Error> {
+        Ok(0)
+    }
 }
 
 /// Process-local TTL cache, primarily useful for tests and single-process deployments.
@@ -88,6 +100,26 @@ impl<V> InMemoryCache<V> {
     pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
         self.clock = clock;
         self
+    }
+
+    fn sweep_expired(&self) -> usize {
+        let Some(ttl) = self.ttl else {
+            return 0;
+        };
+        let now_ms = self.clock.now_epoch_millis();
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let before = entries.len();
+        entries.retain(|_, (stored_at_ms, _)| !is_expired(*stored_at_ms, now_ms, ttl));
+        if entries.len() != before {
+            self.order
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain(|key| entries.contains_key(key));
+        }
+        before - entries.len()
     }
 }
 
@@ -143,6 +175,10 @@ where
         entries.insert(key.clone(), (self.clock.now_epoch_millis(), value.clone()));
         Ok(())
     }
+
+    async fn sweep(&self) -> Result<usize, Self::Error> {
+        Ok(self.sweep_expired())
+    }
 }
 
 #[async_trait]
@@ -160,6 +196,10 @@ where
     async fn insert(&self, key: &CacheKey, value: &V) -> Result<(), Self::Error> {
         self.as_ref().insert(key, value).await
     }
+
+    async fn sweep(&self) -> Result<usize, Self::Error> {
+        self.as_ref().sweep().await
+    }
 }
 
 #[async_trait]
@@ -176,6 +216,10 @@ where
 
     async fn insert(&self, key: &CacheKey, value: &V) -> Result<(), Self::Error> {
         (*self).insert(key, value).await
+    }
+
+    async fn sweep(&self) -> Result<usize, Self::Error> {
+        (*self).sweep().await
     }
 }
 
@@ -203,9 +247,14 @@ impl<V> ObjectStoreCache<V> {
     #[must_use]
     pub fn new(store: Arc<dyn ObjectStore>, prefix: impl Into<String>, ttl: Duration) -> Self {
         let prefix = prefix.into();
+        let prefix = prefix.trim_matches('/');
         Self {
             store,
-            prefix: prefix.trim_matches('/').to_owned(),
+            prefix: if prefix.is_empty() {
+                DEFAULT_OBJECT_STORE_CACHE_PREFIX.to_owned()
+            } else {
+                prefix.to_owned()
+            },
             ttl,
             clock: Arc::new(SystemClock),
             value: PhantomData,
@@ -225,15 +274,20 @@ impl<V> ObjectStoreCache<V> {
     }
 
     fn path(&self, key: &CacheKey) -> Path {
-        let mut name = String::with_capacity(key.0.len() * 2);
-        for byte in &key.0 {
-            let _ = write!(name, "{byte:02x}");
-        }
-        if self.prefix.is_empty() {
-            Path::from(format!("{name}.json"))
+        let tenant = if key.tenant.is_empty() {
+            "_".to_string()
         } else {
-            Path::from(format!("{}/{name}.json", self.prefix))
-        }
+            hex(key.tenant.as_bytes())
+        };
+        let name = hex(&key.bytes);
+        Path::from(format!("{}/{tenant}/{name}.json", self.prefix))
+    }
+
+    fn is_legacy_path(&self, path: &Path) -> bool {
+        path.as_ref()
+            .strip_prefix(&self.prefix)
+            .and_then(|path| path.strip_prefix('/'))
+            .is_some_and(|path| !path.contains('/'))
     }
 }
 
@@ -277,6 +331,36 @@ where
             .await?;
         Ok(())
     }
+
+    async fn sweep(&self) -> Result<usize, Self::Error> {
+        let prefix = Path::from(self.prefix.clone());
+        let mut objects = self.store.list(Some(&prefix));
+        let now_ms = self.clock.now_epoch_millis();
+        let mut swept = 0;
+        while let Some(object) = objects.try_next().await? {
+            if self.is_legacy_path(&object.location) {
+                self.store.delete(&object.location).await?;
+                swept += 1;
+                continue;
+            }
+            let bytes = self.store.get(&object.location).await?.bytes().await?;
+            let stored: StoredValue<serde_json::Value> =
+                serde_json::from_slice(&bytes).map_err(ObjectStoreCacheError::Decode)?;
+            if is_expired(stored.stored_at_ms, now_ms, self.ttl) {
+                self.store.delete(&object.location).await?;
+                swept += 1;
+            }
+        }
+        Ok(swept)
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(encoded, "{byte:02x}");
+    }
+    encoded
 }
 
 fn is_expired(stored_at_ms: i64, now_ms: i64, ttl: Duration) -> bool {

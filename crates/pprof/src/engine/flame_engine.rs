@@ -1021,16 +1021,18 @@ impl<S: ProfileStore> QueryFrontendAdapter for TreeShardAdapter<'_, S> {
                 validate_range(range.0, range.1)?;
                 Ok(PlannedQuery {
                     query: range,
-                    cache_key: CacheKey::new(format!(
-                        "profiles-tree\0{}\0{}\0{}\0{}\0{}\0{:?}\0{:?}",
+                    cache_key: CacheKey::new(
                         self.tenant,
-                        self.profile_type,
-                        self.label_selector,
-                        range.0,
-                        range.1,
-                        self.sample_selector,
-                        self.call_sites,
-                    )),
+                        format!(
+                            "profiles-tree\0{}\0{}\0{}\0{}\0{:?}\0{:?}",
+                            self.profile_type,
+                            self.label_selector,
+                            range.0,
+                            range.1,
+                            self.sample_selector,
+                            self.call_sites,
+                        ),
+                    ),
                     end_epoch_millis: range.1,
                 })
             })
@@ -1089,18 +1091,20 @@ impl<S: ProfileStore> QueryFrontendAdapter for SeriesShardAdapter<'_, S> {
                 validate_range(range.0, range.1)?;
                 Ok(PlannedQuery {
                     query: range,
-                    cache_key: CacheKey::new(format!(
-                        "profiles-series\0{}\0{}\0{}\0{:?}\0{:?}\0{:?}\0{}\0{}\0{:?}",
+                    cache_key: CacheKey::new(
                         self.query.0,
-                        self.query.1,
-                        self.query.2,
-                        self.group_by,
-                        self.step,
-                        self.agg,
-                        range.0,
-                        range.1,
-                        self.call_sites,
-                    )),
+                        format!(
+                            "profiles-series\0{}\0{}\0{:?}\0{:?}\0{:?}\0{}\0{}\0{:?}",
+                            self.query.1,
+                            self.query.2,
+                            self.group_by,
+                            self.step,
+                            self.agg,
+                            range.0,
+                            range.1,
+                            self.call_sites,
+                        ),
+                    ),
                     end_epoch_millis: range.1,
                 })
             })
