@@ -2,6 +2,7 @@ use super::*;
 
 pub(crate) fn merge_limits(defaults: &Limits, partial: &PartialLimits) -> Limits {
     Limits {
+        query_admission: defaults.query_admission.merge(partial.query_admission),
         ingestion_rate: partial
             .ingestion_rate_spans_per_sec
             .map_or(defaults.ingestion_rate, Frequency::from_per_sec),

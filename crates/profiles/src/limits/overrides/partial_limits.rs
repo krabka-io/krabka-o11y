@@ -9,6 +9,8 @@ use super::*;
 #[serde(deny_unknown_fields)]
 pub(crate) struct PartialLimits {
     #[serde(default)]
+    pub(crate) query_admission: AdmissionLimitsOverride,
+    #[serde(default)]
     pub(crate) ingestion_rate_profiles_per_sec: Option<f64>,
     #[serde(default)]
     pub(crate) ingestion_burst_profiles: Option<u64>,
@@ -66,6 +68,7 @@ impl PartialLimits {
 
     pub(crate) fn merge_over(self, defaults: &Limits) -> Limits {
         Limits {
+            query_admission: defaults.query_admission.merge(self.query_admission),
             ingestion_rate: self
                 .ingestion_rate_profiles_per_sec
                 .map_or(defaults.ingestion_rate, Frequency::from_per_sec),

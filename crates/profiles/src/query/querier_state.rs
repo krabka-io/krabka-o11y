@@ -70,7 +70,13 @@ impl<S: ProfileStore> QuerierState<S> {
         execution: QueryExecution,
         overrides: OverridesProvider,
     ) -> Self {
-        let engine = FlameEngine::new(Arc::clone(&store), EngineOpts::default());
+        let admission_overrides = overrides.clone();
+        let engine = FlameEngine::new(Arc::clone(&store), EngineOpts::default())
+            .with_admission_limits(move |tenant| {
+                tenant.parse().ok().map_or_else(Default::default, |tenant| {
+                    admission_overrides.for_tenant(&tenant).query_admission
+                })
+            });
         Self {
             store,
             engine,
@@ -102,6 +108,11 @@ impl<S: ProfileStore> QuerierState<S> {
     /// the state.
     #[must_use]
     pub fn with_metrics(mut self, metrics: ServiceMetrics) -> Self {
+        if let Ok(mut registry) = metrics.registry.try_lock() {
+            self.engine.cache_metrics().register(&mut registry);
+        } else {
+            tracing::error!("query cache metrics registry is busy during setup");
+        }
         self.metrics = metrics;
         self
     }

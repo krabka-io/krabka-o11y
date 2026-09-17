@@ -1,3 +1,5 @@
+#![recursion_limit = "512"]
+
 //! Docker-backed differential probe against real Prometheus.
 //!
 //! The corpus is the vendored upstream `promql/promqltest` suite, replayed

@@ -29,7 +29,7 @@ pub type ObjectStoreQueryFrontendCache =
 impl Default for QueryFrontendCache {
     fn default() -> Self {
         Self {
-            inner: InMemoryCache::default(),
+            inner: InMemoryCache::default().with_weigher(result_bytes),
             execution_options: ExecutionOptions::default(),
         }
     }
@@ -39,7 +39,7 @@ impl QueryFrontendCache {
     #[must_use]
     pub fn with_ttl(ttl: Time) -> Self {
         Self {
-            inner: InMemoryCache::new(ttl.to_std()),
+            inner: InMemoryCache::new(ttl.to_std()).with_weigher(result_bytes),
             execution_options: ExecutionOptions::default(),
         }
     }
@@ -48,6 +48,17 @@ impl QueryFrontendCache {
     pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
         self.inner = self.inner.with_clock(clock);
         self
+    }
+
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: Arc<krabka_query_frontend::CacheMetrics>) -> Self {
+        self.inner = self.inner.with_metrics(metrics);
+        self
+    }
+
+    #[must_use]
+    pub fn metrics(&self) -> Arc<krabka_query_frontend::CacheMetrics> {
+        self.inner.metrics()
     }
 
     pub async fn get(
@@ -87,6 +98,17 @@ impl ObjectStoreQueryFrontendCache {
     pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
         self.inner = self.inner.with_clock(clock);
         self
+    }
+
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: Arc<krabka_query_frontend::CacheMetrics>) -> Self {
+        self.inner = self.inner.with_metrics(metrics);
+        self
+    }
+
+    #[must_use]
+    pub fn metrics(&self) -> Arc<krabka_query_frontend::CacheMetrics> {
+        self.inner.metrics()
     }
 
     pub async fn get(
@@ -138,6 +160,13 @@ where
     async fn sweep(&self) -> Result<usize, Self::Error> {
         self.inner.sweep().await.map_err(cache_error)
     }
+
+    async fn invalidate_tenant(&self, tenant: &str) -> Result<usize, Self::Error> {
+        self.inner
+            .invalidate_tenant(tenant)
+            .await
+            .map_err(cache_error)
+    }
 }
 
 /// A `PromQL` result cache that supplies shared fan-out policy.
@@ -173,4 +202,8 @@ pub(super) fn range_cache_key(tenant: &str, query: &FrontendRangeQuery) -> Cache
 
 fn cache_error(error: impl Display) -> PromqlError {
     PromqlError::Store(format!("query frontend cache failed: {error}"))
+}
+
+fn result_bytes(result: &AnnotatedQueryResult) -> usize {
+    serde_json::to_vec(result).map_or(0, |bytes| bytes.len())
 }

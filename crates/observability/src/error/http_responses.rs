@@ -36,6 +36,7 @@ impl IntoResponse for HttpQueryError {
             Self::QueryAuthorization(QueryAuthorizationError::Unauthorized { .. }) => {
                 StatusCode::FORBIDDEN
             }
+            Self::QueryOverloaded { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::ApproxTopKDisabled
             | Self::Arrow(_)
             | Self::QueryAuthorization(QueryAuthorizationError::Unavailable { .. })
@@ -69,6 +70,7 @@ impl IntoResponse for HttpQueryError {
         let error_type = match status {
             StatusCode::BAD_REQUEST => "bad_data",
             StatusCode::FORBIDDEN => "forbidden",
+            StatusCode::TOO_MANY_REQUESTS => "too_many_requests",
             _ => "server_error",
         };
         if matches!(

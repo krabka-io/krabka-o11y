@@ -1,3 +1,5 @@
+#![recursion_limit = "512"]
+
 //! The metrics write path, read path and ruler behind TLS and bearer tokens, on a real socket.
 //!
 //! Every test binds `127.0.0.1:0` with a certificate that `rcgen` makes for

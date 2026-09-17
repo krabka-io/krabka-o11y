@@ -51,9 +51,15 @@ async fn frontend_range_execution_retries_only_executor_classified_failures() {
         retryable: true,
     };
     let cache = QueryFrontendCache::default().with_execution_options(execution_options);
-    execute_planned_range_queries(&transient, &cache, &tenant_id("tenant-a"), planned.clone())
-        .await
-        .unwrap();
+    execute_planned_range_queries(
+        &transient,
+        &cache,
+        &tenant_id("tenant-a"),
+        planned.clone(),
+        krabka_query_frontend::AdmissionLimits::default(),
+    )
+    .await
+    .unwrap();
     assert2::assert!(transient.attempts.load(Ordering::SeqCst) == 3);
 
     let permanent = RetryProbeExecutor {
@@ -62,9 +68,15 @@ async fn frontend_range_execution_retries_only_executor_classified_failures() {
         retryable: false,
     };
     let cache = QueryFrontendCache::default().with_execution_options(execution_options);
-    let error = execute_planned_range_queries(&permanent, &cache, &tenant_id("tenant-a"), planned)
-        .await
-        .unwrap_err();
+    let error = execute_planned_range_queries(
+        &permanent,
+        &cache,
+        &tenant_id("tenant-a"),
+        planned,
+        krabka_query_frontend::AdmissionLimits::default(),
+    )
+    .await
+    .unwrap_err();
     assert2::assert!(matches!(error, PromqlError::Store(_)));
     assert2::assert!(permanent.attempts.load(Ordering::SeqCst) == 1);
 }

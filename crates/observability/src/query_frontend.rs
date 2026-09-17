@@ -3,7 +3,7 @@ use crate::{
     LokiDirection, LokiStreamEncoding, PlannedQuery, QuerierState, QueryFrontend,
     QueryFrontendAdapter, QueryFrontendError, QueryKind, QueryParams, SeriesFingerprint, TenantId,
     TimeRange, Value, apply_loki_stream_options, execute_http_query_for_tenant_inner, json,
-    loki_direction, merge_loki_query_stats, parse_query, plan_stream_query,
+    loki_direction, merge_loki_query_stats, parse_query, plan_stream_query, planned_block_bytes,
     populate_loki_query_execution_stats, transient_object_store_error, validate_loki_interval,
 };
 
@@ -70,6 +70,16 @@ pub(crate) async fn execute_logs_query_frontend(
         Ok(value) => Ok(value),
         Err(QueryFrontendError::Adapter(error)) => Err(error),
         Err(QueryFrontendError::Cache(never)) => match never {},
+        Err(QueryFrontendError::Admission(error)) => Err(HttpQueryError::QueryOverloaded {
+            retry_after_seconds: match error {
+                krabka_query_frontend::AdmissionError::QueueFull {
+                    retry_after_seconds,
+                }
+                | krabka_query_frontend::AdmissionError::RequestTooLarge {
+                    retry_after_seconds,
+                } => retry_after_seconds,
+            },
+        }),
     }
 }
 
@@ -90,6 +100,20 @@ impl QueryFrontendAdapter for LogsQueryFrontendAdapter<'_> {
                 let params = planned_query_params(request, range, partitioned);
                 let cache_key =
                     logs_cache_key(self.tenant.as_str(), request, range, *bounds, self.encoding);
+                let estimated_bytes = if let Ok(query) = parse_query(&params.query) {
+                    let bounded_state =
+                        state_for_bounds(&self.state, self.tenant.as_str(), *bounds);
+                    let plan = plan_stream_query(
+                        self.tenant.as_str(),
+                        range,
+                        query,
+                        &bounded_state.label_index,
+                        &bounded_state.block_index,
+                    )?;
+                    planned_block_bytes(&plan).bytes_usize()
+                } else {
+                    0
+                };
                 planned.push(PlannedQuery {
                     query: LogsPlannedQuery {
                         params,
@@ -98,6 +122,7 @@ impl QueryFrontendAdapter for LogsQueryFrontendAdapter<'_> {
                     },
                     cache_key,
                     end_epoch_millis: range.end_ns.div_euclid(1_000_000),
+                    estimated_bytes,
                 });
             }
         }
@@ -126,6 +151,13 @@ impl QueryFrontendAdapter for LogsQueryFrontendAdapter<'_> {
 
     fn should_cache(&self, result: &Self::Output) -> bool {
         logs_result_is_cacheable(result, self.state.delete_requests.is_some())
+    }
+
+    fn admission_limits(
+        &self,
+        _request: &Self::Request,
+    ) -> Option<krabka_query_frontend::AdmissionLimits> {
+        Some(self.state.limits.query_admission)
     }
 
     fn merge(

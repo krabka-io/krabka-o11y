@@ -1,4 +1,4 @@
-use super::{ByteSize, Deserialize, Frequency, Time, serde_units};
+use super::{AdmissionLimitsOverride, ByteSize, Deserialize, Frequency, Time, serde_units};
 
 /// A sparse override: every field an operator left out keeps the value it
 /// merges over.
@@ -11,6 +11,8 @@ use super::{ByteSize, Deserialize, Frequency, Time, serde_units};
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PartialLimits {
+    #[serde(default)]
+    pub(crate) query_admission: AdmissionLimitsOverride,
     #[serde(default, with = "serde_units::human::option_frequency")]
     pub(crate) ingestion_rate: Option<Frequency>,
     #[serde(default)]

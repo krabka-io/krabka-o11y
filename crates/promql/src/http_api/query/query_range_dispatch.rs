@@ -77,6 +77,10 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
                     end_ms,
                     step,
                     opts: frontend.opts,
+                    admission_limits: state
+                        .query_limits
+                        .for_tenant(tenant.as_str())
+                        .query_admission,
                 },
             )
             .await

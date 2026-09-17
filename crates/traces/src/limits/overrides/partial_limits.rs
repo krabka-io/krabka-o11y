@@ -1,4 +1,4 @@
-use super::{Deserialize, Serialize, Time};
+use super::{AdmissionLimitsOverride, Deserialize, Serialize, Time};
 
 // The Tempo-shaped runtime-overrides keys, in the units an operator writes them
 // (spans/sec, bytes, seconds). This is intentionally partial configuration, not
@@ -7,6 +7,7 @@ use super::{Deserialize, Serialize, Time};
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct PartialLimits {
+    pub(crate) query_admission: AdmissionLimitsOverride,
     pub(crate) ingestion_rate_spans_per_sec: Option<f64>,
     pub(crate) ingestion_burst_spans: Option<u64>,
     pub(crate) max_spans_per_request: Option<u64>,

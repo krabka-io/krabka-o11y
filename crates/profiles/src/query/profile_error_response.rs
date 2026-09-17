@@ -13,12 +13,16 @@ pub(crate) fn profile_error_response(err: ProfileError) -> Response {
         ProfileError::Decode(_) | ProfileError::Plan(_) | ProfileError::Unsupported(_) => {
             StatusCode::BAD_REQUEST
         }
+        ProfileError::Overloaded { .. } => StatusCode::TOO_MANY_REQUESTS,
         ProfileError::Exec(_) | ProfileError::Store(_) | ProfileError::Symbolize(_) => {
             tracing::error!(%err, "profiles querier internal error");
             StatusCode::INTERNAL_SERVER_ERROR
         }
     };
-    let message = if status == StatusCode::BAD_REQUEST {
+    let message = if matches!(
+        status,
+        StatusCode::BAD_REQUEST | StatusCode::TOO_MANY_REQUESTS
+    ) {
         err.to_string()
     } else {
         "internal error".to_string()

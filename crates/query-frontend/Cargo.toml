@@ -17,9 +17,11 @@ workspace = true
 async-trait = { workspace = true }
 futures = { workspace = true }
 object_store = { workspace = true }
+prometheus-client = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
 assert2 = { workspace = true }

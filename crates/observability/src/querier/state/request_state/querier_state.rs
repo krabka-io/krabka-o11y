@@ -19,7 +19,9 @@ impl QuerierState {
             overrides: Arc::new(OverridesProvider::new(Limits::default())),
             limits: Limits::default(),
             metrics: None,
-            query_frontend_cache: Arc::new(InMemoryCache::<Value>::new(days(7).to_std())),
+            query_frontend_cache: Arc::new(
+                InMemoryCache::<Value>::new(days(7).to_std()).with_weigher(json_value_bytes),
+            ),
             query_frontend_options: ExecutionOptions::default(),
             query_frontend_split_ns: hours(1).nanos_i64(),
             query_frontend_target_bytes: krabka_units::mebibytes(600).bytes_u64(),
@@ -32,6 +34,11 @@ impl QuerierState {
     /// routers.
     #[must_use]
     pub fn with_metrics(mut self, metrics: ServiceMetrics) -> Self {
+        if let Ok(mut registry) = metrics.registry.try_lock() {
+            self.query_frontend_cache.metrics().register(&mut registry);
+        } else {
+            tracing::error!("query cache metrics registry is busy during setup");
+        }
         self.metrics = Some(metrics);
         self
     }
@@ -149,9 +156,12 @@ impl QuerierState {
         self.dynamic_index_cache.shard_cache_ttl = config.querier_shard_index_cache_ttl;
         self.dynamic_index_cache.shard_fetch_concurrency = config.querier_shard_fetch_concurrency;
         self.cold_block_fetch_concurrency = config.querier_cold_block_fetch_concurrency;
-        self.query_frontend_cache = Arc::new(InMemoryCache::new(
-            config.querier_query_frontend_cache_ttl.to_std(),
-        ));
+        let cache_metrics = self.query_frontend_cache.metrics();
+        self.query_frontend_cache = Arc::new(
+            InMemoryCache::new(config.querier_query_frontend_cache_ttl.to_std())
+                .with_weigher(json_value_bytes)
+                .with_metrics(cache_metrics),
+        );
         self.query_frontend_options = ExecutionOptions {
             max_parallelism: config.querier_query_frontend_max_parallelism,
             max_retries: config.querier_query_frontend_max_retries,
@@ -420,4 +430,8 @@ impl QuerierState {
                 .await?;
         Ok(Self::new(root, label_index, block_index))
     }
+}
+
+fn json_value_bytes(value: &Value) -> usize {
+    serde_json::to_vec(value).map_or(0, |bytes| bytes.len())
 }

@@ -1,4 +1,4 @@
-use super::{ByteSize, Deserialize, OtlpConfig, Time};
+use super::{AdmissionLimitsOverride, ByteSize, Deserialize, OtlpConfig, Time};
 
 /// A sparse override: every field an operator left out keeps the value it
 /// merges over.
@@ -8,6 +8,8 @@ use super::{ByteSize, Deserialize, OtlpConfig, Time};
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PartialLimits {
+    #[serde(default)]
+    pub(crate) query_admission: AdmissionLimitsOverride,
     #[serde(
         default,
         deserialize_with = "super::option_non_negative_byte_size::deserialize"

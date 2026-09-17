@@ -20,6 +20,8 @@ krabka-storage-admin backup \
   --backup-url s3://backups/cut-2027-02-01/tenant-a \
   --tenant tenant-a \
   --cut-id cut-2027-02-01 \
+  --broker-snapshot-id broker-backup-2027-02-01 \
+  --broker-snapshot-sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --wal-offset krabka.metrics.wal:0:120 \
   --wal-offset krabka.logs.wal:0:84 \
   --wal-offset krabka.traces.wal:0:73 \
@@ -59,6 +61,28 @@ deletes an object; matching objects make retries resumable, while corrupt or
 unlisted target objects stop the operation before new bytes are copied. Keep
 the backup manifest, command output, broker snapshot identity, and post-restore
 query-equivalence results together as the recovery evidence bundle.
+
+## Offline repair
+
+Audit first and copy its `manifest_sha256` into the repair scope. Stop every
+writer for the tenant before passing `--offline`; repair refuses a missing or
+mismatched tenant, cut, or manifest identity before changing storage.
+
+```bash
+krabka-storage-admin repair \
+  --backup-url s3://backups/cut-2027-02-01/tenant-a \
+  --target-url s3://restore/tenant-a \
+  --tenant tenant-a \
+  --cut-id cut-2027-02-01 \
+  --manifest-sha256 "$MANIFEST_SHA256" \
+  --offline --replace-corrupt --delete-orphans --apply \
+  --report repair-report.json
+```
+
+Missing objects are created, corrupt objects are conditionally replaced, and
+orphans or contradictory completion markers are deleted only when explicitly
+enabled. The report records every mutation and the before/after audits; a retry
+against a clean target records no actions.
 
 Native Prometheus TSDB block import remains separate from backup restore. The
 Mimir upload endpoint continues to reject Prometheus index/chunk encodings until

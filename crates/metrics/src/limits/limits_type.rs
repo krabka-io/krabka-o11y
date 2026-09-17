@@ -1,6 +1,6 @@
 use super::{
-    ByteSize, Deserialize, Frequency, Serialize, Time, TimeExt, kibibytes, minutes,
-    non_negative_time, per_sec, serde_units,
+    AdmissionLimits, ByteSize, Deserialize, Frequency, Serialize, Time, TimeExt, kibibytes,
+    minutes, non_negative_time, per_sec, serde_units,
 };
 
 /// Mimir-style per-tenant limits used by metrics ingest and query paths.
@@ -10,6 +10,9 @@ use super::{
 /// verdicts on the same label.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Limits {
+    /// Shared cross-request query admission budgets.
+    #[serde(default)]
+    pub query_admission: AdmissionLimits,
     /// Accepted sample rate. A zero rate turns the ingestion rate limit off.
     #[serde(with = "serde_units::human::frequency")]
     pub ingestion_rate: Frequency,
@@ -83,6 +86,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            query_admission: AdmissionLimits::default(),
             // The rate, burst and label-length defaults are Mimir's. They are
             // stricter than a request-shape cap has to be, and that is the
             // point: a tenant with no override gets the same budget Mimir

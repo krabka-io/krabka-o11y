@@ -36,6 +36,14 @@ pub struct ServiceMetrics {
     pub rule_evaluation_failures: Counter,
     /// Wall time of the most recently completed ruler group.
     pub rule_group_last_duration_seconds: Gauge<f64, std::sync::atomic::AtomicU64>,
+    /// Whether this ruler currently owns its fenced lease.
+    pub ruler_fence_active: Gauge,
+    /// Current broker consumer-group generation used as the fence epoch.
+    pub ruler_fence_epoch: Gauge,
+    /// Cumulative lease renewal, assignment, or stale-epoch failures.
+    pub ruler_fence_renew_failures: Counter,
+    /// Duration of the most recently completed ruler failover.
+    pub ruler_fence_failover_duration_seconds: Gauge<f64, std::sync::atomic::AtomicU64>,
 }
 
 impl ServiceMetrics {
@@ -64,6 +72,10 @@ impl ServiceMetrics {
         let active_queries = Gauge::default();
         let rule_evaluation_failures = Counter::default();
         let rule_group_last_duration_seconds = Gauge::default();
+        let ruler_fence_active = Gauge::default();
+        let ruler_fence_epoch = Gauge::default();
+        let ruler_fence_renew_failures = Counter::default();
+        let ruler_fence_failover_duration_seconds = Gauge::default();
 
         registry.register(
             "ingest_requests",
@@ -125,6 +137,26 @@ impl ServiceMetrics {
             "Wall time in seconds of the most recently completed ruler group.",
             rule_group_last_duration_seconds.clone(),
         );
+        registry.register(
+            "ruler_fence_active",
+            "Whether this ruler currently owns its fenced lease.",
+            ruler_fence_active.clone(),
+        );
+        registry.register(
+            "ruler_fence_epoch",
+            "Current broker consumer-group generation used as the ruler fence epoch.",
+            ruler_fence_epoch.clone(),
+        );
+        registry.register(
+            "ruler_fence_renew_failures",
+            "Cumulative ruler lease renewal, assignment, and stale-epoch failures.",
+            ruler_fence_renew_failures.clone(),
+        );
+        registry.register(
+            "ruler_fence_failover_duration_seconds",
+            "Duration of the most recently completed ruler failover.",
+            ruler_fence_failover_duration_seconds.clone(),
+        );
         let object_store = ObjectStoreMetrics::register(&mut registry);
         let wal_consumer = WalConsumerMetrics::register(&mut registry);
 
@@ -144,6 +176,10 @@ impl ServiceMetrics {
             active_queries,
             rule_evaluation_failures,
             rule_group_last_duration_seconds,
+            ruler_fence_active,
+            ruler_fence_epoch,
+            ruler_fence_renew_failures,
+            ruler_fence_failover_duration_seconds,
         }
     }
 

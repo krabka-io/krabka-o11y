@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use krabka_query_frontend::{
-    PlannedQuery, QueryFrontend, QueryFrontendAdapter, QueryFrontendError,
+    AdmissionLimits, PlannedQuery, QueryFrontend, QueryFrontendAdapter, QueryFrontendError,
 };
 
 use super::{
@@ -11,6 +11,7 @@ use super::{
 struct PromqlRangeAdapter<'a, E> {
     executor: &'a E,
     tenant: &'a TenantId,
+    admission_limits: AdmissionLimits,
 }
 
 #[async_trait]
@@ -34,6 +35,7 @@ where
             .map(|query| PlannedQuery {
                 cache_key: range_cache_key(self.tenant.as_str(), &query),
                 end_epoch_millis: query.end_ms,
+                estimated_bytes: 0,
                 query,
             })
             .collect())
@@ -48,6 +50,10 @@ where
 
     fn is_retryable(&self, error: &PromqlError) -> bool {
         self.executor.is_transient_error(error)
+    }
+
+    fn admission_limits(&self, _queries: &[FrontendRangeQuery]) -> Option<AdmissionLimits> {
+        Some(self.admission_limits)
     }
 
     fn merge(
@@ -71,16 +77,31 @@ pub(crate) async fn execute_planned_range_queries<E, C>(
     cache: &C,
     tenant: &TenantId,
     planned: Vec<FrontendRangeQuery>,
+    admission_limits: AdmissionLimits,
 ) -> Result<(Vec<QueryResult>, Annotations), PromqlError>
 where
     E: RangeQueryExecutor,
     C: RangeQueryCache + ?Sized,
 {
-    let adapter = PromqlRangeAdapter { executor, tenant };
+    let adapter = PromqlRangeAdapter {
+        executor,
+        tenant,
+        admission_limits,
+    };
     QueryFrontend::new(cache, cache.execution_options())
         .execute(&adapter, planned.as_slice())
         .await
         .map_err(|error| match error {
             QueryFrontendError::Adapter(error) | QueryFrontendError::Cache(error) => error,
+            QueryFrontendError::Admission(error) => PromqlError::Overloaded {
+                retry_after_seconds: match error {
+                    krabka_query_frontend::AdmissionError::QueueFull {
+                        retry_after_seconds,
+                    }
+                    | krabka_query_frontend::AdmissionError::RequestTooLarge {
+                        retry_after_seconds,
+                    } => retry_after_seconds,
+                },
+            },
         })
 }

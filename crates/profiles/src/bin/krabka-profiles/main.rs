@@ -855,6 +855,7 @@ overrides:
         assert!(
             *overrides.for_tenant(&"tenant-a".parse().unwrap())
                 == krabka_profiles::limits::Limits {
+                    query_admission: krabka_query_frontend::AdmissionLimits::default(),
                     ingestion_rate: per_sec(10_000),
                     ingestion_burst_profiles: 10_000,
                     max_series: 0,
@@ -873,6 +874,7 @@ overrides:
         assert!(
             *overrides.for_tenant(&"tenant-b".parse().unwrap())
                 == krabka_profiles::limits::Limits {
+                    query_admission: krabka_query_frontend::AdmissionLimits::default(),
                     ingestion_rate: per_sec(10_000),
                     ingestion_burst_profiles: 10_000,
                     max_series: 0,

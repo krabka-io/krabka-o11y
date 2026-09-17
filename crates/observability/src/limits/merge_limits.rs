@@ -9,6 +9,7 @@ use super::{Limits, PartialLimits};
 /// runtime-overrides rule: an operator-supplied override is authoritative.
 pub(crate) fn merge_limits(base: &Limits, partial: &PartialLimits) -> Limits {
     Limits {
+        query_admission: base.query_admission.merge(partial.query_admission),
         max_line_size: partial.max_line_size.unwrap_or(base.max_line_size),
         max_line_size_truncate: partial
             .max_line_size_truncate

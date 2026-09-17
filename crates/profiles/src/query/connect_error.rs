@@ -5,6 +5,7 @@ pub(crate) fn connect_error(err: ProfileError) -> ConnectError {
         ProfileError::Decode(_) | ProfileError::Plan(_) | ProfileError::Unsupported(_) => {
             Code::InvalidArgument
         }
+        ProfileError::Overloaded { .. } => Code::ResourceExhausted,
         ProfileError::Exec(_) | ProfileError::Store(_) | ProfileError::Symbolize(_) => {
             Code::Internal
         }

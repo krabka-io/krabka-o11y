@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use krabka_blockstore::RetentionWindows;
+use krabka_query_frontend::AdmissionLimitsOverride;
 use krabka_units::{prelude::*, serde_units};
 use serde::Deserialize;
 use thiserror::Error;
@@ -86,6 +87,26 @@ overrides:
         check!(a.ingestion_rate == per_sec(500));
         check!(a.max_global_series_per_user == 1000);
         check!(a.max_label_name_length == Limits::default().max_label_name_length);
+    }
+
+    #[test]
+    fn query_admission_is_resolved_per_tenant() {
+        let provider = OverridesProvider::from_yaml(
+            "overrides:\n  tenant-a:\n    query_admission:\n      max_concurrent_requests_per_tenant: 3\n",
+        )
+        .unwrap();
+
+        check!(
+            provider
+                .for_tenant("tenant-a")
+                .query_admission
+                .max_concurrent_requests_per_tenant
+                == 3
+        );
+        check!(
+            provider.for_tenant("tenant-b").query_admission
+                == krabka_query_frontend::AdmissionLimits::default()
+        );
     }
 
     #[test]

@@ -302,6 +302,11 @@ pub mod testkit {
             PromqlError::Limit(limit_error) => {
                 PromqlError::Exec(format!("{kind} eval `{expr}`: {limit_error}"))
             }
+            PromqlError::Overloaded {
+                retry_after_seconds,
+            } => PromqlError::Overloaded {
+                retry_after_seconds,
+            },
         }
     }
 

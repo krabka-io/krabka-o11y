@@ -32,6 +32,7 @@ pub(crate) async fn frontend_range_execution_uses_cache_and_merges_subquery_resu
             start_ms: 0,
             end_ms: 180_000,
             step: millis(60_000),
+            admission_limits: krabka_query_frontend::AdmissionLimits::default(),
             opts: QueryFrontendOptions {
                 split_interval: millis(120_000),
                 shard_count: 1,

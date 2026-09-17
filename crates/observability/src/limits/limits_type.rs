@@ -1,6 +1,6 @@
 use super::{
-    ByteSize, ByteSizeExt, Deserialize, OtlpConfig, Serialize, Time, TimeExt, bytes, days, minutes,
-    secs,
+    AdmissionLimits, ByteSize, ByteSizeExt, Deserialize, OtlpConfig, Serialize, Time, TimeExt,
+    bytes, days, minutes, secs,
 };
 
 /// One tenant's complete limit set.
@@ -14,6 +14,9 @@ use super::{
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
+    /// Shared cross-request query admission budgets.
+    #[serde(default)]
+    pub query_admission: AdmissionLimits,
     /// Largest accepted log line. `Loki` default: `256KB`.
     #[serde(
         serialize_with = "krabka_units::serde_units::human::byte_size::serialize",
@@ -160,6 +163,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            query_admission: AdmissionLimits::default(),
             // `_ = l.MaxLineSize.Set("256KB")`, and `KB` is 1000 bytes there.
             max_line_size: bytes(256_000),
             max_line_size_truncate: false,
@@ -212,6 +216,7 @@ impl Limits {
     #[must_use]
     pub fn unenforced() -> Self {
         Self {
+            query_admission: AdmissionLimits::default(),
             max_line_size: ByteSize::ZERO,
             max_line_size_truncate: false,
             max_structured_metadata_size: ByteSize::ZERO,

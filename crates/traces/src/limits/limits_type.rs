@@ -1,7 +1,13 @@
-use super::{ByteSize, Deserialize, Frequency, Serialize, Time, TimeExt, bytes, hours, per_sec};
+use super::{
+    AdmissionLimits, ByteSize, Deserialize, Frequency, Serialize, Time, TimeExt, bytes, hours,
+    per_sec,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Limits {
+    /// Shared cross-request query admission budgets.
+    #[serde(default)]
+    pub query_admission: AdmissionLimits,
     /// Tempo `ingestion_rate_limit_bytes` analog, counted as spans/sec. Zero is
     /// unlimited.
     #[serde(with = "krabka_units::serde_units::human::frequency")]
@@ -42,6 +48,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            query_admission: AdmissionLimits::default(),
             ingestion_rate: per_sec(100_000),
             ingestion_burst_spans: 100_000,
             max_spans_per_request: 10_000,

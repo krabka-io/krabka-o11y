@@ -2,8 +2,8 @@ use std::{path::PathBuf, sync::Arc};
 
 use clap::{Parser, Subcommand};
 use krabka_blockstore::{
-    TenantId, WalOffset, audit_backup, audit_recovery_target, create_backup, load_backup_manifest,
-    restore_backup,
+    BrokerSnapshot, RepairScope, TenantId, WalOffset, audit_backup, audit_recovery_target,
+    create_backup, load_backup_manifest, repair_from_backup, restore_backup,
 };
 use object_store::{ObjectStore, parse_url_opts, prefix::PrefixStore};
 use serde::Serialize;
@@ -37,6 +37,10 @@ enum Command {
         tenant: TenantId,
         #[arg(long)]
         cut_id: String,
+        #[arg(long)]
+        broker_snapshot_id: String,
+        #[arg(long)]
+        broker_snapshot_sha256: String,
         #[arg(long = "wal-offset", value_parser = parse_wal_offset, required = true)]
         wal_offsets: Vec<WalOffset>,
         #[arg(long)]
@@ -50,6 +54,29 @@ enum Command {
         backup_url: String,
         #[arg(long)]
         target_url: String,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long)]
+        report: Option<PathBuf>,
+    },
+    /// Repair a target from one exact backup cut while all writers are offline.
+    Repair {
+        #[arg(long)]
+        backup_url: String,
+        #[arg(long)]
+        target_url: String,
+        #[arg(long)]
+        tenant: TenantId,
+        #[arg(long)]
+        cut_id: String,
+        #[arg(long)]
+        manifest_sha256: String,
+        #[arg(long)]
+        offline: bool,
+        #[arg(long)]
+        replace_corrupt: bool,
+        #[arg(long)]
+        delete_orphans: bool,
         #[arg(long)]
         apply: bool,
         #[arg(long)]
@@ -93,6 +120,8 @@ async fn run(cli: Cli) -> Result<(), String> {
             backup_url,
             tenant,
             cut_id,
+            broker_snapshot_id,
+            broker_snapshot_sha256,
             wal_offsets,
             apply,
             report,
@@ -104,6 +133,10 @@ async fn run(cli: Cli) -> Result<(), String> {
                 scoped_store(&backup_url)?,
                 tenant,
                 cut_id,
+                BrokerSnapshot {
+                    id: broker_snapshot_id,
+                    sha256: broker_snapshot_sha256,
+                },
                 wal_offsets,
             )
             .await
@@ -121,6 +154,36 @@ async fn run(cli: Cli) -> Result<(), String> {
             let result = restore_backup(scoped_store(&backup_url)?, scoped_store(&target_url)?)
                 .await
                 .map_err(|error| error.to_string())?;
+            emit(&result, report)?;
+        }
+        Command::Repair {
+            backup_url,
+            target_url,
+            tenant,
+            cut_id,
+            manifest_sha256,
+            offline,
+            replace_corrupt,
+            delete_orphans,
+            apply,
+            report,
+        } => {
+            require_apply(apply, "repair")?;
+            require_distinct(&backup_url, &target_url)?;
+            let result = repair_from_backup(
+                scoped_store(&backup_url)?,
+                scoped_store(&target_url)?,
+                RepairScope {
+                    tenant,
+                    cut_id,
+                    manifest_sha256,
+                    offline,
+                    replace_corrupt,
+                    delete_orphans,
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
             emit(&result, report)?;
         }
     }

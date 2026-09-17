@@ -1,3 +1,5 @@
+use krabka_query_frontend::AdmissionLimits;
+
 use super::{QueryFrontendOptions, TenantId, Time};
 
 /// One user range query that enters the query-frontend.
@@ -9,4 +11,5 @@ pub struct FrontendRangeRequest {
     pub end_ms: i64,
     pub step: Time,
     pub opts: QueryFrontendOptions,
+    pub admission_limits: AdmissionLimits,
 }

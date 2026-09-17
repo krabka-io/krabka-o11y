@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::RwLock};
 
 use krabka_blockstore::RetentionWindows;
+use krabka_query_frontend::AdmissionLimitsOverride;
 use krabka_units::{
     ByteSize, Frequency, Time,
     convert::{ByteSizeExt as _, FrequencyExt as _, TimeExt},
@@ -84,6 +85,7 @@ overrides:
         assert2::assert!(
             tenant_a
                 == Limits {
+                    query_admission: krabka_query_frontend::AdmissionLimits::default(),
                     ingestion_rate: per_sec(500),
                     ingestion_burst_spans: 100_000,
                     max_spans_per_request: 10_000,
@@ -93,6 +95,26 @@ overrides:
                     max_search_duration: <Time as TimeExt>::ZERO,
                     block_retention: Limits::default().block_retention,
                 }
+        );
+    }
+
+    #[test]
+    fn query_admission_is_resolved_per_tenant() {
+        let provider = OverridesProvider::from_yaml(
+            "overrides:\n  tenant-a:\n    query_admission:\n      max_concurrent_subqueries_per_tenant: 7\n",
+        )
+        .unwrap();
+
+        assert2::check!(
+            provider
+                .for_tenant("tenant-a")
+                .query_admission
+                .max_concurrent_subqueries_per_tenant
+                == 7
+        );
+        assert2::check!(
+            provider.for_tenant("tenant-b").query_admission
+                == krabka_query_frontend::AdmissionLimits::default()
         );
     }
 

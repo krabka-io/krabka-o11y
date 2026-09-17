@@ -38,12 +38,30 @@ where
         request.step,
         request.opts,
     )?;
-    let (sum_results, mut annotations) =
-        execute_planned_range_queries(executor, cache, &request.tenant, sum_plan).await?;
-    let (count_results, count_annotations) =
-        execute_planned_range_queries(executor, cache, &request.tenant, count_plan).await?;
-    let (sum_squares_results, sum_squares_annotations) =
-        execute_planned_range_queries(executor, cache, &request.tenant, sum_squares_plan).await?;
+    let (sum_results, mut annotations) = execute_planned_range_queries(
+        executor,
+        cache,
+        &request.tenant,
+        sum_plan,
+        request.admission_limits,
+    )
+    .await?;
+    let (count_results, count_annotations) = execute_planned_range_queries(
+        executor,
+        cache,
+        &request.tenant,
+        count_plan,
+        request.admission_limits,
+    )
+    .await?;
+    let (sum_squares_results, sum_squares_annotations) = execute_planned_range_queries(
+        executor,
+        cache,
+        &request.tenant,
+        sum_squares_plan,
+        request.admission_limits,
+    )
+    .await?;
     annotations.extend(&count_annotations);
     annotations.extend(&sum_squares_annotations);
     let sums = merge_range_query_results_with_reducer(sum_results, QueryShardReducer::Sum)?;

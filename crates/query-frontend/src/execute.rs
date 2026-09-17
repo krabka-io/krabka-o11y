@@ -3,7 +3,9 @@ use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use futures::{StreamExt as _, TryStreamExt as _, stream};
 
-use crate::{CacheKey, Clock, QueryCache, SystemClock};
+use crate::{
+    AdmissionController, AdmissionError, AdmissionLimits, CacheKey, Clock, QueryCache, SystemClock,
+};
 
 /// One independently executable query produced by a signal adapter.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -11,6 +13,8 @@ pub struct PlannedQuery<Q> {
     pub query: Q,
     pub cache_key: CacheKey,
     pub end_epoch_millis: i64,
+    /// Conservative backend bytes reserved while this subquery runs.
+    pub estimated_bytes: usize,
 }
 
 /// Shared fan-out and result-cache policy.
@@ -54,6 +58,11 @@ pub trait QueryFrontendAdapter: Sync {
         true
     }
 
+    /// The tenant override resolved for this request.
+    fn admission_limits(&self, _request: &Self::Request) -> Option<AdmissionLimits> {
+        None
+    }
+
     /// # Errors
     /// Returns a signal-specific result merge error.
     fn merge(
@@ -69,6 +78,8 @@ pub enum QueryFrontendError<AdapterError, CacheError> {
     Adapter(AdapterError),
     #[error("query cache failed: {0}")]
     Cache(CacheError),
+    #[error("query admission failed: {0}")]
+    Admission(AdmissionError),
 }
 
 /// The single shared query-frontend pipeline used by signal adapters.
@@ -76,6 +87,7 @@ pub struct QueryFrontend<C> {
     cache: C,
     options: ExecutionOptions,
     clock: Arc<dyn Clock>,
+    admission: Arc<AdmissionController>,
 }
 
 impl<C> QueryFrontend<C> {
@@ -85,12 +97,19 @@ impl<C> QueryFrontend<C> {
             cache,
             options,
             clock: Arc::new(SystemClock),
+            admission: AdmissionController::global(),
         }
     }
 
     #[must_use]
     pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
         self.clock = clock;
+        self
+    }
+
+    #[must_use]
+    pub fn with_admission(mut self, admission: Arc<AdmissionController>) -> Self {
+        self.admission = admission;
         self
     }
 
@@ -112,6 +131,32 @@ impl<C> QueryFrontend<C> {
         C: QueryCache<A::Output>,
     {
         let planned = adapter.plan(request).map_err(QueryFrontendError::Adapter)?;
+        let _permit = if let Some(first) = planned.first() {
+            let tenant = first.cache_key.tenant().to_owned();
+            let limits = adapter.admission_limits(request);
+            let fallback_bytes = limits.map_or(1, |limits| limits.estimated_bytes_per_subquery);
+            let estimated_bytes = planned
+                .iter()
+                .map(|query| query.estimated_bytes.max(fallback_bytes))
+                .fold(0_usize, usize::saturating_add);
+            Some(
+                match limits {
+                    Some(limits) => {
+                        self.admission
+                            .acquire_with_limits(tenant, planned.len(), estimated_bytes, limits)
+                            .await
+                    }
+                    None => {
+                        self.admission
+                            .acquire(tenant, planned.len(), estimated_bytes)
+                            .await
+                    }
+                }
+                .map_err(QueryFrontendError::Admission)?,
+            )
+        } else {
+            None
+        };
         let results = stream::iter(
             planned
                 .into_iter()
