@@ -1,16 +1,15 @@
 use krabka_blockstore::MeteredObjectStore;
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
-use krabka_units::convert::TimeExt as _;
 
 use super::{
-    Arc, AuditHandle, AutoOffsetReset, Cli, ClientSecurity, Consumer, FencedRulerSink,
-    KafkaRecordingRuleWalSink, KafkaRulerStateSink, ObjectStore, Producer, PrometheusApiState,
-    PrometheusRulerStateSink, RoleReadiness, RulerAlertmanagerSink, RulerFence, RulerShard,
-    RulerStateFanoutSink, ServerSecurity, Shutdown, WalHead, install_bundled_rule_groups,
-    load_runtime_overrides, mimir_alertmanager_router, mimir_ruler_prometheus_router,
-    mimir_ruler_router, poll_ruler_state_consumer_once, query_engine_opts, readiness_router,
-    run_ruler_evaluation_loop, run_ruler_fence_loop, run_ruler_state_consumer_loop,
-    serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
+    Arc, AuditHandle, AutoOffsetReset, Cli, ClientSecurity, Consumer, KafkaRecordingRuleWalSink,
+    KafkaRulerStateSink, ObjectStore, Producer, PrometheusApiState, PrometheusRulerStateSink,
+    RoleReadiness, RulerAlertmanagerSink, RulerShard, RulerStateFanoutSink, ServerSecurity,
+    Shutdown, WalHead, install_bundled_rule_groups, load_runtime_overrides,
+    mimir_alertmanager_router, mimir_ruler_prometheus_router, mimir_ruler_router,
+    poll_ruler_state_consumer_once, query_engine_opts, readiness_router, run_ruler_evaluation_loop,
+    run_ruler_state_consumer_loop, serve_prometheus_router_joinable,
+    spawn_shutdown_signal_listener,
 };
 
 #[tracing::instrument(
@@ -20,7 +19,6 @@ use super::{
     fields(listen = %cli.listen, tenant = %cli.ruler_tenant, shard_index = cli.ruler_shard_index, shard_total = cli.ruler_shard_total),
     err
 )]
-#[allow(clippy::too_many_lines)]
 pub(crate) async fn run_ruler(
     cli: Cli,
     metrics: krabka_promql::metrics::ServiceMetrics,
@@ -29,10 +27,6 @@ pub(crate) async fn run_ruler(
     wal_security: Option<ClientSecurity>,
     audit: AuditHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let fence = Arc::new(
-        RulerFence::new(cli.ruler_eval_interval.to_std().saturating_mul(3))
-            .with_metrics(metrics.clone()),
-    );
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
     let (store, prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
     let store: Arc<dyn ObjectStore> =
@@ -86,17 +80,7 @@ pub(crate) async fn run_ruler(
     let router = mimir_ruler_prometheus_router(Arc::clone(&state))
         .merge(mimir_ruler_router(Arc::clone(&state)))
         .merge(mimir_alertmanager_router(Arc::clone(&state)))
-        .merge(readiness_router(readiness))
-        .route(
-            "/api/v1/status/ruler-fence",
-            axum::routing::get({
-                let fence = Arc::clone(&fence);
-                move || {
-                    let fence = Arc::clone(&fence);
-                    async move { axum::Json(fence.status()) }
-                }
-            }),
-        );
+        .merge(readiness_router(readiness));
     // Installed before the first broker connect, and raced against it: the
     // clients retry an unreachable bootstrap rather than reporting it, so a
     // ruler that starts against a broker that is down would otherwise sit in
@@ -152,32 +136,15 @@ pub(crate) async fn run_ruler(
             biased;
             () = shutdown.signalled() => return Ok(None),
             built = Producer::builder()
-                .bootstrap(bootstrap.clone())
-                .maybe_security(wal_security.clone())
-                .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
-                .frame_max(cli.client_frame_max)
-                .build() => built?,
-        };
-        let fence_consumer = tokio::select! {
-            biased;
-            () = shutdown.signalled() => return Ok(None),
-            built = Consumer::builder()
                 .bootstrap(bootstrap)
                 .maybe_security(wal_security)
                 .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
                 .frame_max(cli.client_frame_max)
-                .group_id(format!(
-                    "{}-ruler-fence-{}-{}",
-                    cli.wal_group_id, shard.index, shard.total,
-                ))
-                .client_id(format!("{}-ruler-fence", cli.wal_client_id))
-                .auto_offset_reset(AutoOffsetReset::Latest)
-                .subscribe([cli.ruler_state_topic.clone()])
                 .build() => built?,
         };
-        Ok::<_, Box<dyn std::error::Error>>(Some((state_consumer, fence_consumer, producer)))
+        Ok::<_, Box<dyn std::error::Error>>(Some((state_consumer, producer)))
     };
-    let (mut state_consumer, fence_consumer, producer) = match startup.await {
+    let (mut state_consumer, producer) = match startup.await {
         Ok(Some(clients)) => clients,
         Ok(None) => {
             server.await?;
@@ -212,16 +179,10 @@ pub(crate) async fn run_ruler(
     }
     ruler_state_replay.mark_ready();
     let producer = Arc::new(producer);
-    let wal_sink = FencedRulerSink::new(
-        KafkaRecordingRuleWalSink::new(Arc::clone(&producer), cli.wal_topic.clone()),
-        Arc::clone(&fence),
-    );
-    let state_sink = FencedRulerSink::new(
-        RulerStateFanoutSink::new(
-            PrometheusRulerStateSink::new(Arc::clone(&state)),
-            KafkaRulerStateSink::new(producer, cli.ruler_state_topic.clone()),
-        ),
-        Arc::clone(&fence),
+    let wal_sink = KafkaRecordingRuleWalSink::new(Arc::clone(&producer), cli.wal_topic.clone());
+    let state_sink = RulerStateFanoutSink::new(
+        PrometheusRulerStateSink::new(Arc::clone(&state)),
+        KafkaRulerStateSink::new(producer, cli.ruler_state_topic.clone()),
     );
     let interval = cli.ruler_eval_interval;
     let state_for_replay = Arc::clone(&state);
@@ -251,21 +212,7 @@ pub(crate) async fn run_ruler(
         }
     });
     let eval_shutdown = shutdown.clone();
-    let eval_alert_sink = FencedRulerSink::new(alert_sink.clone(), Arc::clone(&fence));
-    let fence_shutdown = shutdown.clone();
-    let fence_topic = cli.ruler_state_topic.clone();
-    let fence_partition = i32::try_from(shard.index - 1)?;
-    tasks.spawn("metrics ruler fence", async move {
-        run_ruler_fence_loop(
-            fence_consumer,
-            fence,
-            fence_topic,
-            fence_partition,
-            poll_timeout,
-            fence_shutdown.signalled(),
-        )
-        .await;
-    });
+    let eval_alert_sink = alert_sink.clone();
     tasks.spawn("metrics ruler evaluation", async move {
         let result = run_ruler_evaluation_loop(
             state,

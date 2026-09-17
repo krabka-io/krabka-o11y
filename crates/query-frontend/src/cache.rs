@@ -344,8 +344,10 @@ where
                 .policy
                 .max_objects
                 .map_or(usize::MAX, NonZeroUsize::get)
-            || usize::try_from(self.metrics.bytes.get())
-                .unwrap_or(0)
+            || entries
+                .values()
+                .map(|(_, bytes, _)| bytes)
+                .sum::<usize>()
                 .saturating_add(bytes)
                 > self.policy.max_bytes.map_or(usize::MAX, NonZeroUsize::get)
         {

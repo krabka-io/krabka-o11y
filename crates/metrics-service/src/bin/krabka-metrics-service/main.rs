@@ -20,12 +20,11 @@ use krabka_client_core::{
 use krabka_client_producer::Producer;
 use krabka_metrics::{Limits, OverridesProvider, WAL_TOPIC};
 use krabka_metrics_service::{
-    FencedRulerSink, KafkaRecordingRuleWalSink, KafkaRulerStateSink, MimirTenantAdminState,
-    PrometheusRulerStateSink, RULER_STATE_TOPIC, RulerAlertmanagerSink, RulerFence,
-    RulerStateFanoutSink, WalHeadConsumerCommit, WalHeadConsumerPoll, install_bundled_rule_groups,
+    KafkaRecordingRuleWalSink, KafkaRulerStateSink, MimirTenantAdminState,
+    PrometheusRulerStateSink, RULER_STATE_TOPIC, RulerAlertmanagerSink, RulerStateFanoutSink,
+    WalHeadConsumerCommit, WalHeadConsumerPoll, install_bundled_rule_groups,
     mimir_tenant_admin_router, poll_ruler_state_consumer_once, run_ruler_evaluation_loop,
-    run_ruler_fence_loop, run_ruler_state_consumer_loop, run_wal_head_consumer_loop,
-    serve_prometheus_router_joinable,
+    run_ruler_state_consumer_loop, run_wal_head_consumer_loop, serve_prometheus_router_joinable,
 };
 use krabka_observability::{
     CancellationToken, ConfigFileArgs, CriticalTaskError, ReadinessGate, RoleReadiness,

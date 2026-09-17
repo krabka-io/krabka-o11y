@@ -158,6 +158,39 @@ async fn fan_out_is_bounded_and_preserves_plan_order() {
 }
 
 #[tokio::test]
+async fn admission_reserves_only_the_active_batch() {
+    let limits = AdmissionLimits {
+        max_concurrent_subqueries: 2,
+        max_concurrent_subqueries_per_tenant: 2,
+        ..AdmissionLimits::default()
+    };
+    let mut adapter = TestAdapter::new(vec![0, 1, 2, 3], vec![0; 4]);
+    adapter.admission_limits = Some(limits);
+    let frontend = QueryFrontend::new(InMemoryCache::new(Duration::from_mins(1)), options(2, 0, 0));
+
+    assert!(frontend.execute(&adapter, &()).await.unwrap() == vec![0, 1, 2, 3]);
+    assert!(adapter.max_active.load(Ordering::SeqCst) == 2);
+}
+
+#[tokio::test]
+async fn a_cached_request_bypasses_admission() {
+    let cache = Arc::new(InMemoryCache::new(Duration::from_mins(1)));
+    QueryCache::insert(&cache, &CacheKey::new("test", 0_usize.to_le_bytes()), &0)
+        .await
+        .unwrap();
+    let limits = AdmissionLimits {
+        max_concurrent_requests: 0,
+        ..AdmissionLimits::default()
+    };
+    let mut adapter = TestAdapter::new(vec![0], vec![0]);
+    adapter.admission_limits = Some(limits);
+    let frontend = QueryFrontend::new(cache, options(1, 0, 0));
+
+    assert!(frontend.execute(&adapter, &()).await.unwrap() == vec![0]);
+    assert!(adapter.attempts.lock().unwrap()[0] == 0);
+}
+
+#[tokio::test]
 async fn canceling_a_request_stops_backend_work_and_releases_admission() {
     let limits = AdmissionLimits {
         max_concurrent_requests: 1,
@@ -295,6 +328,39 @@ async fn in_memory_cache_enforces_per_tenant_bytes_and_exports_metrics() {
     ] {
         assert!(encoded.contains(name), "missing {name}: {encoded}");
     }
+}
+
+#[tokio::test]
+async fn shared_metrics_do_not_mix_cache_eviction_budgets() {
+    let metrics = Arc::new(CacheMetrics::default());
+    let policy = CachePolicy {
+        max_objects: NonZeroUsize::new(10),
+        max_bytes: NonZeroUsize::new(5),
+        max_objects_per_tenant: NonZeroUsize::new(10),
+        max_bytes_per_tenant: NonZeroUsize::new(5),
+    };
+    let first = InMemoryCache::new(Duration::from_mins(1))
+        .with_policy(policy)
+        .with_weigher(Vec::len)
+        .with_metrics(Arc::clone(&metrics));
+    let second = InMemoryCache::new(Duration::from_mins(1))
+        .with_policy(policy)
+        .with_weigher(Vec::len)
+        .with_metrics(metrics);
+    QueryCache::insert(&first, &CacheKey::new("a", b"one"), &vec![0; 5])
+        .await
+        .unwrap();
+    let left = CacheKey::new("b", b"left");
+    let right = CacheKey::new("b", b"right");
+    QueryCache::insert(&second, &left, &vec![0; 2])
+        .await
+        .unwrap();
+    QueryCache::insert(&second, &right, &vec![0; 2])
+        .await
+        .unwrap();
+
+    assert!(QueryCache::<Vec<u8>>::get(&second, &left).await == Ok(Some(vec![0; 2])));
+    assert!(QueryCache::<Vec<u8>>::get(&second, &right).await == Ok(Some(vec![0; 2])));
 }
 
 #[tokio::test]

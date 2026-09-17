@@ -196,34 +196,18 @@ impl AdmissionController {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let retry_after_seconds = tenant_limits.retry_after_seconds.max(1);
-            if state
-                .limits
-                .max_concurrent_requests
-                .min(tenant_limits.max_concurrent_requests)
-                == 0
+            if tenant_limits.max_concurrent_requests == 0
                 || tenant_limits.max_concurrent_requests_per_tenant == 0
-                || subqueries
-                    > state
-                        .limits
-                        .max_concurrent_subqueries
-                        .min(tenant_limits.max_concurrent_subqueries)
+                || subqueries > tenant_limits.max_concurrent_subqueries
                 || subqueries > tenant_limits.max_concurrent_subqueries_per_tenant
-                || estimated_bytes
-                    > state
-                        .limits
-                        .max_estimated_bytes
-                        .min(tenant_limits.max_estimated_bytes)
+                || estimated_bytes > tenant_limits.max_estimated_bytes
                 || estimated_bytes > tenant_limits.max_estimated_bytes_per_tenant
             {
                 return Err(AdmissionError::RequestTooLarge {
                     retry_after_seconds,
                 });
             }
-            if state.queue.len()
-                >= state
-                    .limits
-                    .max_queued_requests
-                    .min(tenant_limits.max_queued_requests)
+            if state.queue.len() >= tenant_limits.max_queued_requests
                 || state
                     .queue
                     .iter()
@@ -314,27 +298,17 @@ impl AdmissionController {
 
 fn fits(state: &State, work: &Waiting) -> bool {
     let tenant = state.tenants.get(&work.tenant).copied().unwrap_or_default();
-    state.active.requests
-        < state
-            .limits
-            .max_concurrent_requests
-            .min(work.tenant_limits.max_concurrent_requests)
+    state.active.requests < work.tenant_limits.max_concurrent_requests
         && tenant.requests < work.tenant_limits.max_concurrent_requests_per_tenant
         && state.active.subqueries.saturating_add(work.subqueries)
-            <= state
-                .limits
-                .max_concurrent_subqueries
-                .min(work.tenant_limits.max_concurrent_subqueries)
+            <= work.tenant_limits.max_concurrent_subqueries
         && tenant.subqueries.saturating_add(work.subqueries)
             <= work.tenant_limits.max_concurrent_subqueries_per_tenant
         && state
             .active
             .estimated_bytes
             .saturating_add(work.estimated_bytes)
-            <= state
-                .limits
-                .max_estimated_bytes
-                .min(work.tenant_limits.max_estimated_bytes)
+            <= work.tenant_limits.max_estimated_bytes
         && tenant.estimated_bytes.saturating_add(work.estimated_bytes)
             <= work.tenant_limits.max_estimated_bytes_per_tenant
 }
@@ -515,5 +489,21 @@ mod tests {
             })
         ));
         assert!(controller.acquire("default".into(), 2, 10).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_runtime_override_can_raise_the_global_budget() {
+        let defaults = AdmissionLimits {
+            max_concurrent_subqueries: 1,
+            ..limits()
+        };
+        let controller = AdmissionController::new(defaults);
+
+        assert!(
+            controller
+                .acquire_with_limits("raised".into(), 2, 10, limits())
+                .await
+                .is_ok()
+        );
     }
 }

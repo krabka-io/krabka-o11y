@@ -22,14 +22,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-mod fenced_ruler_sink;
 mod ids;
-mod ruler_fence;
-mod run_ruler_fence_loop;
-
-pub use fenced_ruler_sink::FencedRulerSink;
-pub use ruler_fence::{RulerFence, RulerFenceStatus};
-pub use run_ruler_fence_loop::run_ruler_fence_loop;
 
 use axum::{
     Router,

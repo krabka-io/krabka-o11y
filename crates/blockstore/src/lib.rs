@@ -120,9 +120,9 @@ pub use reader::{
     read_block_with_max_bytes, read_row_group_metadata, read_row_group_metadata_with_max_bytes,
 };
 pub use recovery::{
-    AuditFinding, AuditReport, BACKUP_MANIFEST_PATH, BackupManifest, BackupObject, BrokerSnapshot,
-    RecoveryError, RepairAction, RepairReport, RepairScope, RestoreReport, WalOffset, audit_backup,
-    audit_recovery_target, create_backup, load_backup_manifest, repair_from_backup, restore_backup,
+    AuditFinding, AuditReport, BACKUP_MANIFEST_PATH, BackupManifest, BackupObject, RecoveryError,
+    RestoreReport, WalOffset, audit_backup, audit_recovery_target, create_backup,
+    load_backup_manifest, restore_backup,
 };
 pub use retry::{
     ObjectStoreRetryPolicy, RetryingObjectStore, is_transient_object_store_error,

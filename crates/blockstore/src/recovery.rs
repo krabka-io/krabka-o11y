@@ -4,8 +4,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use futures::TryStreamExt as _;
 use object_store::{
-    ObjectStore, ObjectStoreExt as _, PutMode, PutOptions, PutPayload, UpdateVersion,
-    path::Path as ObjectPath,
+    ObjectStore, ObjectStoreExt as _, PutMode, PutOptions, PutPayload, path::Path as ObjectPath,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -15,7 +14,7 @@ use crate::TenantId;
 
 /// Completion marker written last in every backup set.
 pub const BACKUP_MANIFEST_PATH: &str = ".krabka-recovery/manifest.json";
-const BACKUP_SCHEMA_VERSION: u32 = 2;
+const BACKUP_SCHEMA_VERSION: u32 = 1;
 
 /// The next offset to consume for one WAL partition at the backup cut.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -23,13 +22,6 @@ pub struct WalOffset {
     pub topic: String,
     pub partition: i32,
     pub next_offset: i64,
-}
-
-/// Immutable broker snapshot that contains the WAL offsets in this cut.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct BrokerSnapshot {
-    pub id: String,
-    pub sha256: String,
 }
 
 /// One immutable object in a backup set.
@@ -46,7 +38,6 @@ pub struct BackupManifest {
     pub schema_version: u32,
     pub tenant: TenantId,
     pub cut_id: String,
-    pub broker_snapshot: BrokerSnapshot,
     pub wal_offsets: Vec<WalOffset>,
     pub objects: Vec<BackupObject>,
 }
@@ -69,18 +60,6 @@ pub enum AuditFinding {
         path: String,
         actual_size: u64,
         actual_sha256: String,
-    },
-    Stale {
-        path: String,
-        expected_cut_id: String,
-        actual_cut_id: String,
-    },
-    SplitBrain {
-        path: String,
-        expected_tenant: String,
-        actual_tenant: String,
-        expected_cut_id: String,
-        actual_cut_id: String,
     },
 }
 
@@ -109,33 +88,6 @@ pub struct RestoreReport {
     pub created: usize,
     pub already_present: usize,
     pub audit: AuditReport,
-}
-
-/// Exact offline scope required before repairing a recovery target.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct RepairScope {
-    pub tenant: TenantId,
-    pub cut_id: String,
-    pub manifest_sha256: String,
-    pub offline: bool,
-    pub replace_corrupt: bool,
-    pub delete_orphans: bool,
-}
-
-/// One stable, audit-logged repair mutation.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct RepairAction {
-    pub operation: String,
-    pub path: String,
-}
-
-/// Result of an explicitly scoped repair pass.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct RepairReport {
-    pub scope: RepairScope,
-    pub before: AuditReport,
-    pub actions: Vec<RepairAction>,
-    pub after: AuditReport,
 }
 
 /// Backup, audit, or restore failure.
@@ -168,7 +120,6 @@ pub async fn create_backup(
     backup: Arc<dyn ObjectStore>,
     tenant: TenantId,
     cut_id: String,
-    broker_snapshot: BrokerSnapshot,
     mut wal_offsets: Vec<WalOffset>,
 ) -> Result<RestoreReport, RecoveryError> {
     wal_offsets.sort();
@@ -176,7 +127,6 @@ pub async fn create_backup(
         schema_version: BACKUP_SCHEMA_VERSION,
         tenant,
         cut_id,
-        broker_snapshot,
         wal_offsets,
         objects: inventory(source.as_ref(), true).await?,
     };
@@ -254,7 +204,7 @@ async fn audit(
     ignore_completion_marker: bool,
 ) -> Result<AuditReport, RecoveryError> {
     validate_manifest(manifest)?;
-    let actual = inventory(store, true).await?;
+    let actual = inventory(store, ignore_completion_marker).await?;
     let expected = manifest
         .objects
         .iter()
@@ -265,42 +215,6 @@ async fn audit(
         .map(|object| (object.path.as_str(), object))
         .collect::<BTreeMap<_, _>>();
     let mut findings = Vec::new();
-
-    if !ignore_completion_marker {
-        match store.get(&ObjectPath::from(BACKUP_MANIFEST_PATH)).await {
-            Ok(result) => {
-                let bytes = result.bytes().await?;
-                match serde_json::from_slice::<BackupManifest>(&bytes) {
-                    Ok(found) if found == *manifest => {}
-                    Ok(found)
-                        if found.tenant == manifest.tenant && found.cut_id != manifest.cut_id =>
-                    {
-                        findings.push(AuditFinding::Stale {
-                            path: BACKUP_MANIFEST_PATH.into(),
-                            expected_cut_id: manifest.cut_id.clone(),
-                            actual_cut_id: found.cut_id,
-                        });
-                    }
-                    Ok(found) => findings.push(AuditFinding::SplitBrain {
-                        path: BACKUP_MANIFEST_PATH.into(),
-                        expected_tenant: manifest.tenant.to_string(),
-                        actual_tenant: found.tenant.to_string(),
-                        expected_cut_id: manifest.cut_id.clone(),
-                        actual_cut_id: found.cut_id,
-                    }),
-                    Err(_) => findings.push(AuditFinding::SplitBrain {
-                        path: BACKUP_MANIFEST_PATH.into(),
-                        expected_tenant: manifest.tenant.to_string(),
-                        actual_tenant: "<invalid>".into(),
-                        expected_cut_id: manifest.cut_id.clone(),
-                        actual_cut_id: "<invalid>".into(),
-                    }),
-                }
-            }
-            Err(object_store::Error::NotFound { .. }) => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
 
     for object in &manifest.objects {
         match actual.get(object.path.as_str()) {
@@ -365,130 +279,6 @@ pub async fn restore_backup(
         already_present,
         audit,
     })
-}
-
-/// Repair a target from a completed backup under an exact, offline scope.
-///
-/// Missing objects use create-if-absent writes. Corrupt objects use conditional
-/// replacement against the version audited by this pass. Orphans are deleted
-/// only when the caller explicitly enables deletion and attests that writers
-/// are offline.
-///
-/// # Errors
-///
-/// Returns an error before mutation when the scope does not exactly match the
-/// backup or does not authorize every reported damage class.
-pub async fn repair_from_backup(
-    backup: Arc<dyn ObjectStore>,
-    target: Arc<dyn ObjectStore>,
-    scope: RepairScope,
-) -> Result<RepairReport, RecoveryError> {
-    let manifest = load_backup_manifest(backup.as_ref()).await?;
-    let expected_digest = digest(&manifest_bytes(&manifest)?);
-    if !scope.offline
-        || scope.tenant != manifest.tenant
-        || scope.cut_id != manifest.cut_id
-        || scope.manifest_sha256 != expected_digest
-    {
-        return Err(RecoveryError::InvalidManifest(
-            "repair scope must attest offline writers and exactly match tenant, cut, and manifest"
-                .into(),
-        ));
-    }
-    let source_audit = audit_backup(backup.as_ref(), &manifest).await?;
-    refuse_unsafe("repair source", &source_audit, false)?;
-    let before = audit_recovery_target(target.as_ref(), &manifest).await?;
-    let unauthorized = before.findings.iter().any(|finding| match finding {
-        AuditFinding::Missing { .. } => false,
-        AuditFinding::Corrupt { .. } => !scope.replace_corrupt,
-        AuditFinding::Orphan { .. }
-        | AuditFinding::Stale { .. }
-        | AuditFinding::SplitBrain { .. } => !scope.delete_orphans,
-    });
-    if unauthorized {
-        return Err(RecoveryError::UnsafeTarget {
-            operation: "repair",
-            report: Box::new(before),
-        });
-    }
-
-    let mut actions = Vec::new();
-    for finding in &before.findings {
-        let (operation, path) = match finding {
-            AuditFinding::Missing { path } => {
-                let object = manifest_object(&manifest, path)?;
-                let bytes = checked_source_object(backup.as_ref(), object).await?;
-                put_create_or_equal(target.as_ref(), &ObjectPath::from(path.clone()), &bytes)
-                    .await?;
-                ("create", path)
-            }
-            AuditFinding::Corrupt { path, .. } => {
-                let object = manifest_object(&manifest, path)?;
-                let bytes = checked_source_object(backup.as_ref(), object).await?;
-                let object_path = ObjectPath::from(path.clone());
-                let found = target.head(&object_path).await?;
-                target
-                    .put_opts(
-                        &object_path,
-                        PutPayload::from(bytes),
-                        PutOptions::from(PutMode::Update(UpdateVersion {
-                            e_tag: found.e_tag,
-                            version: found.version,
-                        })),
-                    )
-                    .await?;
-                ("replace", path)
-            }
-            AuditFinding::Orphan { path, .. }
-            | AuditFinding::Stale { path, .. }
-            | AuditFinding::SplitBrain { path, .. } => {
-                target.delete(&ObjectPath::from(path.clone())).await?;
-                ("delete", path)
-            }
-        };
-        actions.push(RepairAction {
-            operation: operation.into(),
-            path: path.clone(),
-        });
-    }
-    let after = audit_recovery_target(target.as_ref(), &manifest).await?;
-    refuse_unsafe("repair target", &after, false)?;
-    Ok(RepairReport {
-        scope,
-        before,
-        actions,
-        after,
-    })
-}
-
-fn manifest_object<'a>(
-    manifest: &'a BackupManifest,
-    path: &str,
-) -> Result<&'a BackupObject, RecoveryError> {
-    manifest
-        .objects
-        .iter()
-        .find(|object| object.path == path)
-        .ok_or_else(|| RecoveryError::InvalidManifest(format!("manifest has no object `{path}`")))
-}
-
-async fn checked_source_object(
-    source: &dyn ObjectStore,
-    object: &BackupObject,
-) -> Result<Vec<u8>, RecoveryError> {
-    let bytes = source
-        .get(&ObjectPath::from(object.path.clone()))
-        .await?
-        .bytes()
-        .await?
-        .to_vec();
-    if u64::try_from(bytes.len()).ok() != Some(object.size) || digest(&bytes) != object.sha256 {
-        return Err(RecoveryError::InvalidManifest(format!(
-            "source object `{}` changed after the cut was recorded",
-            object.path
-        )));
-    }
-    Ok(bytes)
 }
 
 async fn load_backup_manifest_optional(
@@ -613,18 +403,6 @@ fn validate_manifest(manifest: &BackupManifest) -> Result<(), RecoveryError> {
     if manifest.cut_id.trim().is_empty() {
         return Err(RecoveryError::InvalidManifest("cut_id is empty".into()));
     }
-    if manifest.broker_snapshot.id.trim().is_empty()
-        || manifest.broker_snapshot.sha256.len() != 64
-        || !manifest
-            .broker_snapshot
-            .sha256
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(RecoveryError::InvalidManifest(
-            "broker snapshot identity must include an id and SHA-256".into(),
-        ));
-    }
     if manifest.wal_offsets.is_empty() {
         return Err(RecoveryError::InvalidManifest(
             "the consistent cut records no WAL offsets".into(),
@@ -687,13 +465,6 @@ mod tests {
         }]
     }
 
-    fn snapshot() -> BrokerSnapshot {
-        BrokerSnapshot {
-            id: "broker-snapshot-1".into(),
-            sha256: "a".repeat(64),
-        }
-    }
-
     async fn put(store: &Arc<dyn ObjectStore>, path: &str, bytes: &[u8]) {
         store
             .put(&ObjectPath::from(path), bytes.to_vec().into())
@@ -716,7 +487,6 @@ mod tests {
             backup.clone(),
             tenant(),
             "cut-1".into(),
-            snapshot(),
             offsets(),
         )
         .await
@@ -724,16 +494,9 @@ mod tests {
         check!(first.created == 4);
         assert!(first.audit.is_clean());
 
-        let repeated = create_backup(
-            source,
-            backup.clone(),
-            tenant(),
-            "cut-1".into(),
-            snapshot(),
-            offsets(),
-        )
-        .await
-        .unwrap();
+        let repeated = create_backup(source, backup.clone(), tenant(), "cut-1".into(), offsets())
+            .await
+            .unwrap();
         check!(repeated.created == 0);
         check!(repeated.already_present == 4);
 
@@ -753,16 +516,9 @@ mod tests {
         let backup: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         put(&source, "a", b"one").await;
         put(&source, "b", b"two").await;
-        create_backup(
-            source,
-            backup.clone(),
-            tenant(),
-            "cut-1".into(),
-            snapshot(),
-            offsets(),
-        )
-        .await
-        .unwrap();
+        create_backup(source, backup.clone(), tenant(), "cut-1".into(), offsets())
+            .await
+            .unwrap();
         let manifest = load_backup_manifest(backup.as_ref()).await.unwrap();
         backup.delete(&ObjectPath::from("a")).await.unwrap();
         put(&backup, "b", b"changed").await;
@@ -777,8 +533,6 @@ mod tests {
                     AuditFinding::Missing { path } => ("missing", path.as_str()),
                     AuditFinding::Corrupt { path, .. } => ("corrupt", path.as_str()),
                     AuditFinding::Orphan { path, .. } => ("orphan", path.as_str()),
-                    AuditFinding::Stale { path, .. } => ("stale", path.as_str()),
-                    AuditFinding::SplitBrain { path, .. } => ("split_brain", path.as_str()),
                 })
                 .collect::<Vec<_>>()
                 == [("missing", "a"), ("corrupt", "b"), ("orphan", "c")]
@@ -792,115 +546,13 @@ mod tests {
         let backup: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let target: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         put(&source, "a", b"one").await;
-        create_backup(
-            source,
-            backup.clone(),
-            tenant(),
-            "cut-1".into(),
-            snapshot(),
-            offsets(),
-        )
-        .await
-        .unwrap();
+        create_backup(source, backup.clone(), tenant(), "cut-1".into(), offsets())
+            .await
+            .unwrap();
         put(&target, "unexpected", b"live").await;
 
         let error = restore_backup(backup, target.clone()).await.unwrap_err();
         assert!(matches!(error, RecoveryError::UnsafeTarget { .. }));
         assert!(target.get(&ObjectPath::from("a")).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn scoped_repair_handles_every_damage_class_and_is_resumable() {
-        let source: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let backup: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let target: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        put(&source, "a", b"one").await;
-        put(&source, "b", b"two").await;
-        create_backup(
-            source,
-            backup.clone(),
-            tenant(),
-            "cut-1".into(),
-            snapshot(),
-            offsets(),
-        )
-        .await
-        .unwrap();
-        put(&target, "b", b"corrupt").await;
-        put(&target, "orphan", b"old").await;
-
-        let manifest = load_backup_manifest(backup.as_ref()).await.unwrap();
-        let mut stale = manifest.clone();
-        stale.cut_id = "cut-0".into();
-        put(
-            &target,
-            BACKUP_MANIFEST_PATH,
-            &manifest_bytes(&stale).unwrap(),
-        )
-        .await;
-        let before = audit_recovery_target(target.as_ref(), &manifest)
-            .await
-            .unwrap();
-        check!(
-            before
-                .findings
-                .iter()
-                .any(|finding| matches!(finding, AuditFinding::Missing { .. }))
-        );
-        check!(
-            before
-                .findings
-                .iter()
-                .any(|finding| matches!(finding, AuditFinding::Corrupt { .. }))
-        );
-        check!(
-            before
-                .findings
-                .iter()
-                .any(|finding| matches!(finding, AuditFinding::Orphan { .. }))
-        );
-        check!(
-            before
-                .findings
-                .iter()
-                .any(|finding| matches!(finding, AuditFinding::Stale { .. }))
-        );
-
-        let scope = RepairScope {
-            tenant: tenant(),
-            cut_id: manifest.cut_id.clone(),
-            manifest_sha256: before.manifest_sha256.clone(),
-            offline: true,
-            replace_corrupt: true,
-            delete_orphans: true,
-        };
-        let repaired = repair_from_backup(backup.clone(), target.clone(), scope.clone())
-            .await
-            .unwrap();
-        assert!(repaired.after.is_clean());
-        check!(repaired.actions.len() == 4);
-        let repeated = repair_from_backup(backup.clone(), target, scope)
-            .await
-            .unwrap();
-        check!(repeated.actions.is_empty());
-
-        let split_target: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let mut split = manifest.clone();
-        split.tenant = TenantId::new("tenant-b").unwrap();
-        put(
-            &split_target,
-            BACKUP_MANIFEST_PATH,
-            &manifest_bytes(&split).unwrap(),
-        )
-        .await;
-        let split_report = audit_recovery_target(split_target.as_ref(), &manifest)
-            .await
-            .unwrap();
-        assert!(
-            split_report
-                .findings
-                .iter()
-                .any(|finding| matches!(finding, AuditFinding::SplitBrain { .. }))
-        );
     }
 }
