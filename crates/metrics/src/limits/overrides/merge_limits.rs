@@ -13,6 +13,7 @@ use super::{Limits, PartialLimits};
 /// override is authoritative and `0` means "unlimited".
 pub(crate) fn merge_limits(base: &Limits, partial: &PartialLimits) -> Limits {
     Limits {
+        query_admission: base.query_admission.merge(partial.query_admission),
         ingestion_rate: partial.ingestion_rate.unwrap_or(base.ingestion_rate),
         ingestion_burst_size: partial
             .ingestion_burst_size

@@ -1,4 +1,6 @@
 use futures::StreamExt as _;
+use krabka_query_frontend::{AdmissionController, AdmissionError, AdmissionPermit};
+use krabka_units::convert::ByteSizeExt as _;
 use tokio::sync::mpsc;
 
 use super::{
@@ -30,6 +32,7 @@ pub struct QueryFrontend<B: QuerierBackend, C: BlockCatalog> {
     pub(crate) catalog: Arc<C>,
     pub(crate) cfg: FrontendConfig,
     pub(crate) membership: MembershipView,
+    admission: Arc<AdmissionController>,
 }
 
 impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C> {
@@ -45,7 +48,39 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
             catalog,
             cfg,
             membership,
+            admission: AdmissionController::global(),
         }
+    }
+
+    async fn admit(&self, tenant: &TenantId, jobs: usize) -> Result<AdmissionPermit, BackendError> {
+        let limits = self
+            .cfg
+            .overrides
+            .for_tenant(tenant.as_str())
+            .query_admission;
+        let bytes_per_job = self
+            .cfg
+            .target_per_job
+            .bytes_usize()
+            .max(limits.estimated_bytes_per_subquery);
+        self.admission
+            .acquire_with_limits(
+                tenant.as_str().to_owned(),
+                jobs,
+                jobs.saturating_mul(bytes_per_job),
+                limits,
+            )
+            .await
+            .map_err(|error| BackendError::Overloaded {
+                retry_after_seconds: match error {
+                    AdmissionError::QueueFull {
+                        retry_after_seconds,
+                    }
+                    | AdmissionError::RequestTooLarge {
+                        retry_after_seconds,
+                    } => retry_after_seconds,
+                },
+            })
     }
 
     /// Test and inspection accessor for the backend, such as
@@ -176,6 +211,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
             .plan_and_assign(tenant, start_ns, end_ns, &snapshot)
             .await?;
         let total_jobs = assigned.len() as u64;
+        let _permit = self.admit(tenant, assigned.len()).await?;
 
         let backend = Arc::clone(&self.backend);
         let tenant = tenant.clone();
@@ -225,6 +261,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
             .plan_and_assign(tenant, start_ns, end_ns, &snapshot)
             .await?;
         let total_jobs = assigned.len() as u64;
+        let permit = self.admit(tenant, assigned.len()).await?;
         let backend = Arc::clone(&self.backend);
         let tenant = tenant.clone();
         let query = query.to_string();
@@ -233,6 +270,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         let generation_warning = self.generation_warning(&snapshot, planned_live);
         let (tx, rx) = mpsc::channel(concurrency);
         tokio::spawn(async move {
+            let _permit = permit;
             let mut jobs = futures::stream::iter(assigned)
                 .map(|job| {
                     let backend = Arc::clone(&backend);
@@ -308,6 +346,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
             .map(ToString::to_string)
             .collect();
         let total_jobs = targets.len() as u64;
+        let _permit = self.admit(tenant, targets.len()).await?;
 
         let backend = Arc::clone(&self.backend);
         let tenant = tenant.clone();
@@ -380,6 +419,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
             .plan_and_assign(tenant, start_ns, end_ns, &snapshot)
             .await?;
         let total_jobs = assigned.len() as u64;
+        let _permit = self.admit(tenant, assigned.len()).await?;
 
         let backend = Arc::clone(&self.backend);
         let tenant = tenant.clone();
@@ -423,6 +463,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
             .plan_and_assign(tenant, start_ns, end_ns, &snapshot)
             .await?;
         let total_jobs = assigned.len() as u64;
+        let _permit = self.admit(tenant, assigned.len()).await?;
 
         let backend = Arc::clone(&self.backend);
         let tenant = tenant.clone();
@@ -484,6 +525,7 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         let querier = pick_querier(&snapshot.ready_addrs(), query)
             .ok_or_else(|| BackendError::Transport("no ready querier".to_string()))?
             .to_string();
+        let _permit = self.admit(tenant, 1).await?;
         let (start_ns, end_ns, step_ns) = window;
         let req = MetricsJobRequest {
             tenant: tenant.clone(),

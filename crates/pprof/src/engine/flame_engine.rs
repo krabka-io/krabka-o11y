@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use krabka_query_frontend::{
-    CacheKey, ExecutionOptions, InMemoryCache, PlannedQuery, QueryFrontend, QueryFrontendAdapter,
-    QueryFrontendError,
+    AdmissionLimits, CacheKey, CacheMetrics, ExecutionOptions, InMemoryCache, PlannedQuery,
+    QueryFrontend, QueryFrontendAdapter, QueryFrontendError,
 };
 
 use super::{
@@ -20,6 +20,8 @@ pub struct FlameEngine<S: ProfileStore> {
     pub(crate) opts: EngineOpts,
     tree_frontend: QueryFrontend<InMemoryCache<Tree>>,
     series_frontend: QueryFrontend<InMemoryCache<Vec<Series>>>,
+    admission_limits: Arc<dyn Fn(&str) -> AdmissionLimits + Send + Sync>,
+    cache_metrics: Arc<CacheMetrics>,
 }
 
 fn frontend_options() -> ExecutionOptions {
@@ -33,6 +35,7 @@ fn frontend_options() -> ExecutionOptions {
 impl<S: ProfileStore> FlameEngine<S> {
     #[must_use]
     pub fn new(store: Arc<S>, opts: EngineOpts) -> Self {
+        let cache_metrics = Arc::new(CacheMetrics::default());
         Self {
             store,
             opts,
@@ -40,17 +43,37 @@ impl<S: ProfileStore> FlameEngine<S> {
                 InMemoryCache::new_bounded(
                     FRONTEND_RESULT_CACHE_TTL,
                     NonZeroUsize::new(FRONTEND_RESULT_CACHE_ENTRIES).unwrap_or(NonZeroUsize::MIN),
-                ),
+                )
+                .with_weigher(Tree::estimated_bytes)
+                .with_metrics(Arc::clone(&cache_metrics)),
                 frontend_options(),
             ),
             series_frontend: QueryFrontend::new(
                 InMemoryCache::new_bounded(
                     FRONTEND_RESULT_CACHE_TTL,
                     NonZeroUsize::new(FRONTEND_RESULT_CACHE_ENTRIES).unwrap_or(NonZeroUsize::MIN),
-                ),
+                )
+                .with_weigher(series_bytes)
+                .with_metrics(Arc::clone(&cache_metrics)),
                 frontend_options(),
             ),
+            admission_limits: Arc::new(|_| AdmissionLimits::default()),
+            cache_metrics,
         }
+    }
+
+    #[must_use]
+    pub fn cache_metrics(&self) -> Arc<CacheMetrics> {
+        Arc::clone(&self.cache_metrics)
+    }
+
+    #[must_use]
+    pub fn with_admission_limits(
+        mut self,
+        resolve: impl Fn(&str) -> AdmissionLimits + Send + Sync + 'static,
+    ) -> Self {
+        self.admission_limits = Arc::new(resolve);
+        self
     }
 
     /// # Errors
@@ -397,6 +420,7 @@ impl<S: ProfileStore> FlameEngine<S> {
             ranges,
             sample_selector,
             call_sites,
+            admission_limits: (self.admission_limits)(tenant),
         };
         self.tree_frontend
             .execute(&adapter, &())
@@ -619,6 +643,7 @@ impl<S: ProfileStore> FlameEngine<S> {
             agg,
             ranges,
             call_sites,
+            admission_limits: (self.admission_limits)(query.0),
         };
         self.series_frontend
             .execute(&adapter, &())
@@ -995,6 +1020,23 @@ impl<S: ProfileStore> FlameEngine<S> {
     }
 }
 
+fn series_bytes(series: &Vec<Series>) -> usize {
+    std::mem::size_of::<Vec<Series>>()
+        + series.capacity() * std::mem::size_of::<Series>()
+        + series
+            .iter()
+            .map(|series| {
+                series.points.capacity() * std::mem::size_of::<(i64, f64)>()
+                    + series.labels.capacity() * std::mem::size_of::<(String, String)>()
+                    + series
+                        .labels
+                        .iter()
+                        .map(|(name, value)| name.capacity() + value.capacity())
+                        .sum::<usize>()
+            })
+            .sum::<usize>()
+}
+
 struct TreeShardAdapter<'a, S: ProfileStore> {
     engine: &'a FlameEngine<S>,
     tenant: &'a str,
@@ -1003,6 +1045,7 @@ struct TreeShardAdapter<'a, S: ProfileStore> {
     ranges: &'a [(i64, i64)],
     sample_selector: SampleSelector<'a>,
     call_sites: &'a [String],
+    admission_limits: AdmissionLimits,
 }
 
 #[async_trait]
@@ -1034,6 +1077,7 @@ impl<S: ProfileStore> QueryFrontendAdapter for TreeShardAdapter<'_, S> {
                         ),
                     ),
                     end_epoch_millis: range.1,
+                    estimated_bytes: 0,
                 })
             })
             .collect()
@@ -1056,6 +1100,10 @@ impl<S: ProfileStore> QueryFrontendAdapter for TreeShardAdapter<'_, S> {
         false
     }
 
+    fn admission_limits(&self, (): &()) -> Option<AdmissionLimits> {
+        Some(self.admission_limits)
+    }
+
     fn merge(&self, (): &(), results: Vec<Self::Output>) -> Result<Self::Response, Self::Error> {
         let mut merged = Tree::new();
         for tree in results {
@@ -1073,6 +1121,7 @@ struct SeriesShardAdapter<'a, S: ProfileStore> {
     agg: SeriesAgg,
     ranges: &'a [(i64, i64)],
     call_sites: &'a [String],
+    admission_limits: AdmissionLimits,
 }
 
 #[async_trait]
@@ -1106,6 +1155,7 @@ impl<S: ProfileStore> QueryFrontendAdapter for SeriesShardAdapter<'_, S> {
                         ),
                     ),
                     end_epoch_millis: range.1,
+                    estimated_bytes: 0,
                 })
             })
             .collect()
@@ -1126,6 +1176,10 @@ impl<S: ProfileStore> QueryFrontendAdapter for SeriesShardAdapter<'_, S> {
 
     fn is_retryable(&self, _error: &Self::Error) -> bool {
         false
+    }
+
+    fn admission_limits(&self, (): &()) -> Option<AdmissionLimits> {
+        Some(self.admission_limits)
     }
 
     fn merge(&self, (): &(), results: Vec<Self::Output>) -> Result<Self::Response, Self::Error> {
@@ -1154,5 +1208,15 @@ fn frontend_error(
     match error {
         QueryFrontendError::Adapter(error) => error,
         QueryFrontendError::Cache(never) => match never {},
+        QueryFrontendError::Admission(error) => ProfileError::Overloaded {
+            retry_after_seconds: match error {
+                krabka_query_frontend::AdmissionError::QueueFull {
+                    retry_after_seconds,
+                }
+                | krabka_query_frontend::AdmissionError::RequestTooLarge {
+                    retry_after_seconds,
+                } => retry_after_seconds,
+            },
+        },
     }
 }

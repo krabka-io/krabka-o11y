@@ -35,6 +35,7 @@
 
 use std::{collections::HashMap, path::Path as FsPath, sync::Arc};
 
+use krabka_query_frontend::{AdmissionLimits, AdmissionLimitsOverride};
 use krabka_units::{bytes, days, minutes, secs, serde_units};
 
 use crate::{

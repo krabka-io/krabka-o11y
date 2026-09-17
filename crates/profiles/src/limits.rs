@@ -1,5 +1,6 @@
 //! Pyroscope-shaped per-tenant limits for profiles ingest and query paths.
 
+use krabka_query_frontend::AdmissionLimits;
 use krabka_units::{ByteSize, Frequency, Time, bytes, convert::TimeExt, hours, per_sec};
 use num_traits::ToPrimitive as _;
 use serde::{Deserialize, Serialize};
@@ -24,6 +25,7 @@ mod tests {
         assert!(
             limits
                 == Limits {
+                    query_admission: AdmissionLimits::default(),
                     ingestion_rate: per_sec(10_000),
                     ingestion_burst_profiles: 10_000,
                     max_series: 0,

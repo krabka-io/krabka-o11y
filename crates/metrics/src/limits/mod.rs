@@ -1,3 +1,4 @@
+use krabka_query_frontend::AdmissionLimits;
 use krabka_units::{prelude::*, serde_units};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

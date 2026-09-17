@@ -8,6 +8,7 @@ pub(crate) async fn a_cached_range_query_reports_the_annotations_of_the_miss() {
         start_ms: 0,
         end_ms: 360_000,
         step: millis(60_000),
+        admission_limits: krabka_query_frontend::AdmissionLimits::default(),
         opts: QueryFrontendOptions {
             split_interval: millis(120_000),
             shard_count: 1,

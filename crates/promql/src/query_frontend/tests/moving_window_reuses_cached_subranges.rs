@@ -19,6 +19,7 @@ pub(crate) async fn moving_window_reuses_cached_subranges() {
             start_ms: 0,
             end_ms: 360_000,
             step: millis(60_000),
+            admission_limits: krabka_query_frontend::AdmissionLimits::default(),
             opts,
         },
     )
@@ -47,6 +48,7 @@ pub(crate) async fn moving_window_reuses_cached_subranges() {
             start_ms: 60_000,
             end_ms: 420_000,
             step: millis(60_000),
+            admission_limits: krabka_query_frontend::AdmissionLimits::default(),
             opts,
         },
     )

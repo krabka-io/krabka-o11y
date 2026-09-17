@@ -23,7 +23,13 @@ pub(crate) async fn frontend_range_execution_dispatches_subqueries_concurrently(
 
     let (results, annotations) = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        execute_planned_range_queries(&executor, &cache, &tenant_id("tenant-a"), planned.clone()),
+        execute_planned_range_queries(
+            &executor,
+            &cache,
+            &tenant_id("tenant-a"),
+            planned.clone(),
+            krabka_query_frontend::AdmissionLimits::default(),
+        ),
     )
     .await
     .expect("parallel fan-out must not block on the per-subquery barrier")

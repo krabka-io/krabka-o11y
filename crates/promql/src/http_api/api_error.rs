@@ -83,6 +83,7 @@ impl From<PromqlError> for ApiError {
                 (StatusCode::UNPROCESSABLE_ENTITY, "execution")
             }
             PromqlError::Limit(limit_error) => return Self::from(limit_error.clone()),
+            PromqlError::Overloaded { .. } => (StatusCode::TOO_MANY_REQUESTS, "too_many_requests"),
             PromqlError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, "execution"),
         };
         Self {

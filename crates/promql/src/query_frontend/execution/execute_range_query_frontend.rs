@@ -82,8 +82,14 @@ where
         request.step,
         request.opts,
     )?;
-    let (results, annotations) =
-        execute_planned_range_queries(executor, cache, &request.tenant, planned).await?;
+    let (results, annotations) = execute_planned_range_queries(
+        executor,
+        cache,
+        &request.tenant,
+        planned,
+        request.admission_limits,
+    )
+    .await?;
 
     let QueryShardExecution::Merge(reducer) = execution else {
         if let Some((k, kind, modifier)) = rank {

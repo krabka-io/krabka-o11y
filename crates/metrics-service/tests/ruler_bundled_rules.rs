@@ -1,3 +1,5 @@
+#![recursion_limit = "512"]
+
 //! The startup loader that installs a bundled rule file into the ruler.
 //!
 //! A rule file an operator names and the ruler cannot install is an alerting

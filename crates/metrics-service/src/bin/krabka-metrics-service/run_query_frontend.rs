@@ -114,6 +114,10 @@ pub(crate) async fn run_query_frontend(
         max_retries: cli.query_frontend_max_retries,
         max_cache_freshness: cli.query_frontend_max_cache_freshness.to_std(),
     });
+    {
+        let mut registry = metrics.registry.lock().await;
+        query_cache.metrics().register(&mut registry);
+    }
     krabka_query_frontend::QueryCache::sweep(&query_cache).await?;
     let state = PrometheusApiState::new(Arc::clone(&metric_store), query_engine_opts(&cli))
         .with_erasure_store(Arc::clone(&store))

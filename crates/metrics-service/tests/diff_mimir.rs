@@ -15,6 +15,8 @@
 //!
 //! `cargo test -p krabka-metrics-service --test diff_mimir -- --ignored --nocapture`
 
+#![recursion_limit = "512"]
+
 use std::{
     net::SocketAddr,
     sync::Arc,

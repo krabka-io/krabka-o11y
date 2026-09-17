@@ -1,3 +1,5 @@
+#![recursion_limit = "512"]
+
 //! Docker-backed Grafana end-to-end coverage.
 //!
 //! The test runs a real Grafana with a provisioned Prometheus-type datasource

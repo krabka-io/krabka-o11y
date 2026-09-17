@@ -12,6 +12,7 @@ use crate::{OtlpAttributeAction, OtlpAttributesConfig, OtlpConfig, OtlpResourceA
 #[test]
 pub(crate) fn the_overrides_file_round_trips_through_the_limit_set() {
     let limits = Limits {
+        query_admission: krabka_query_frontend::AdmissionLimits::default(),
         max_line_size: bytes(4096),
         max_line_size_truncate: true,
         max_structured_metadata_size: bytes(3072),

@@ -1707,6 +1707,7 @@ mod tests {
         check!(
             limits_from_cli(&cli)
                 == Limits {
+                    query_admission: krabka_query_frontend::AdmissionLimits::default(),
                     ingestion_rate: krabka_units::per_sec(11),
                     ingestion_burst_spans: 22,
                     max_spans_per_request: 33,
@@ -1803,6 +1804,7 @@ overrides:
         check!(
             overrides.for_tenant("tenant-a")
                 == Limits {
+                    query_admission: krabka_query_frontend::AdmissionLimits::default(),
                     ingestion_rate: <Frequency as FrequencyExt>::ZERO,
                     ingestion_burst_spans: 0,
                     max_spans_per_request: 4,

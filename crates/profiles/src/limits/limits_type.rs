@@ -3,6 +3,9 @@ use super::*;
 /// Per-tenant profile limits.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Limits {
+    /// Shared cross-request query admission budgets.
+    #[serde(default)]
+    pub query_admission: AdmissionLimits,
     /// Pyroscope `ingestion_rate_mb` analog, counted in profiles per second.
     /// Zero means unlimited.
     #[serde(with = "krabka_units::serde_units::human::frequency")]
@@ -41,6 +44,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            query_admission: AdmissionLimits::default(),
             ingestion_rate: per_sec(10_000),
             ingestion_burst_profiles: 10_000,
             max_series: 0,

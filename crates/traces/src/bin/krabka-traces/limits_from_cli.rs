@@ -17,5 +17,6 @@ pub(crate) fn limits_from_cli(cli: &Cli) -> Limits {
         max_attribute: cli.max_attr_value_len,
         max_search_duration: cli.max_search_duration,
         block_retention: cli.block_retention,
+        ..Limits::default()
     }
 }

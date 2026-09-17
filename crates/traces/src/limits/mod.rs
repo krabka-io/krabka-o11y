@@ -1,3 +1,4 @@
+use krabka_query_frontend::AdmissionLimits;
 use krabka_units::{ByteSize, Frequency, Time, bytes, convert::TimeExt, hours, per_sec};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -22,6 +23,7 @@ mod tests {
         assert2::assert!(
             Limits::default()
                 == Limits {
+                    query_admission: AdmissionLimits::default(),
                     ingestion_rate: per_sec(100_000),
                     ingestion_burst_spans: 100_000,
                     max_spans_per_request: 10_000,

@@ -7,6 +7,8 @@ pub enum BackendError {
     Transport(String),
     #[error("backend returned error ({status}): {message}")]
     Backend { status: String, message: String },
+    #[error("query frontend overloaded; retry after {retry_after_seconds}s")]
+    Overloaded { retry_after_seconds: u64 },
 }
 
 impl BackendError {
@@ -24,6 +26,12 @@ impl BackendError {
             BackendError::Backend { status, message } => {
                 (status.parse::<u16>().unwrap_or(502), message.clone())
             }
+            BackendError::Overloaded {
+                retry_after_seconds,
+            } => (
+                429,
+                format!("query frontend overloaded; retry after {retry_after_seconds}s"),
+            ),
         }
     }
 }

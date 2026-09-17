@@ -76,6 +76,8 @@ pub(crate) enum HttpQueryError {
     MaxEntriesLimitPerQuery { limit: u64, max: u64 },
     #[error("query matched {series} series, exceeding configured limit {max_series}")]
     QuerySeriesTooLarge { series: usize, max_series: usize },
+    #[error("query frontend overloaded; retry after {retry_after_seconds}s")]
+    QueryOverloaded { retry_after_seconds: u64 },
     #[error("approx_topk is not enabled. See -limits.shard_aggregations")]
     ApproxTopKDisabled,
     #[error("parse error at line 1, col 1: syntax error: unexpected IDENTIFIER")]

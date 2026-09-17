@@ -107,3 +107,32 @@ impl RetentionWindows for OverridesProvider {
             .retention_period
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use assert2::assert;
+
+    use super::*;
+
+    #[test]
+    fn query_admission_is_resolved_per_tenant() {
+        let provider = OverridesProvider::from_yaml(
+            "overrides:\n  tenant-a:\n    query_admission:\n      max_queued_requests: 9\n",
+        )
+        .unwrap();
+
+        assert!(
+            provider
+                .for_tenant(&TenantId::new("tenant-a").unwrap())
+                .query_admission
+                .max_queued_requests
+                == 9
+        );
+        assert!(
+            provider
+                .for_tenant(&TenantId::new("tenant-b").unwrap())
+                .query_admission
+                == krabka_query_frontend::AdmissionLimits::default()
+        );
+    }
+}

@@ -15,6 +15,26 @@ pub struct Tree {
 
 impl Tree {
     #[must_use]
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.nodes.capacity() * std::mem::size_of::<Node>()
+            + self
+                .nodes
+                .iter()
+                .map(|node| {
+                    node.name.capacity()
+                        + node.children.capacity() * std::mem::size_of::<usize>()
+                        + node.child_by_name.capacity() * std::mem::size_of::<(String, usize)>()
+                        + node
+                            .child_by_name
+                            .keys()
+                            .map(String::capacity)
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+    }
+
+    #[must_use]
     pub fn new() -> Self {
         Self {
             nodes: vec![Node {

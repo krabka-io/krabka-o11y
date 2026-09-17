@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use krabka_blockstore::TenantId;
+use krabka_query_frontend::AdmissionLimitsOverride;
 use krabka_units::{
     ByteSize, Frequency, Time,
     convert::{ByteSizeExt as _, FrequencyExt, TimeExt as _},
@@ -34,6 +35,7 @@ overrides:
         assert!(
             *tenant_a
                 == Limits {
+                    query_admission: krabka_query_frontend::AdmissionLimits::default(),
                     ingestion_rate: per_sec(500),
                     ingestion_burst_profiles: 10_000,
                     max_series: 1000,
@@ -56,6 +58,28 @@ overrides:
 
         assert!(tenant_b.max_label_value == bytes(64));
         assert!(tenant_b.ingestion_rate == Limits::default().ingestion_rate);
+    }
+
+    #[test]
+    fn query_admission_is_resolved_per_tenant() {
+        let provider = OverridesProvider::from_yaml(
+            "overrides:\n  tenant-a:\n    query_admission:\n      max_estimated_bytes_per_tenant: 42\n",
+        )
+        .unwrap();
+
+        assert!(
+            provider
+                .for_tenant(&"tenant-a".parse().unwrap())
+                .query_admission
+                .max_estimated_bytes_per_tenant
+                == 42
+        );
+        assert!(
+            provider
+                .for_tenant(&"tenant-b".parse().unwrap())
+                .query_admission
+                == krabka_query_frontend::AdmissionLimits::default()
+        );
     }
 
     #[test]
@@ -276,6 +300,7 @@ overrides:
         assert!(
             *tenant_a
                 == Limits {
+                    query_admission: krabka_query_frontend::AdmissionLimits::default(),
                     ingestion_rate: <Frequency as FrequencyExt>::ZERO,
                     ingestion_burst_profiles: 10_000,
                     max_series: 0,

@@ -33,6 +33,7 @@ pub(crate) async fn frontend_range_execution_runs_against_promql_engine() {
             start_ms: 0,
             end_ms: 120_000,
             step: millis(60_000),
+            admission_limits: krabka_query_frontend::AdmissionLimits::default(),
             opts: QueryFrontendOptions {
                 split_interval: millis(60_000),
                 shard_count: 1,

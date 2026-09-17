@@ -13,6 +13,9 @@ pub enum PromqlError {
     #[error("store error: {0}")]
     Store(String),
 
+    #[error("query frontend overloaded; retry after {retry_after_seconds}s")]
+    Overloaded { retry_after_seconds: u64 },
+
     #[error("unsupported: {0}")]
     Unsupported(String),
 

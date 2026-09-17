@@ -62,6 +62,7 @@ krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
 krabka-metrics = { path = "../metrics", version = "0.4.0" }
 krabka-observability = { path = "../observability", version = "0.4.0" }
 krabka-pprof = { path = "../pprof", version = "0.4.0" }
+krabka-query-frontend = { path = "../query-frontend", version = "0.4.0" }
 krabka-telemetry = { version = "0.4.0" }
 krabka-client-producer = { version = "0.4.0" }
 krabka-client-consumer = { version = "0.4.0" }
