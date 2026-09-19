@@ -1,3 +1,5 @@
+use krabka_o11y_verified::compaction_run_ends;
+
 use super::{
     BTreeMap, BlockLevel, CompactionCandidate, CompactionJob, CompactionPolicy, job_from_run,
 };
@@ -53,18 +55,22 @@ pub fn plan_compactions(
                 .then_with(|| left.max_ts.cmp(&right.max_ts))
                 .then_with(|| left.object_key.cmp(&right.object_key))
         });
-        let mut run: Vec<&CompactionCandidate> = Vec::new();
-        let mut rows = 0_usize;
-        for block in blocks {
-            run.push(block);
-            rows = rows.saturating_add(block.row_count);
-            if run.len() >= policy.max_blocks_per_job() || rows >= policy.target_rows_per_block() {
-                jobs.extend(job_from_run(tenant, level, &run, rows));
-                run.clear();
-                rows = 0;
-            }
+        let row_counts = blocks
+            .iter()
+            .map(|candidate| candidate.row_count)
+            .collect::<Vec<_>>();
+        let mut start = 0;
+        for end in compaction_run_ends(
+            &row_counts,
+            policy.max_blocks_per_job(),
+            policy.target_rows_per_block(),
+        ) {
+            let rows = row_counts[start..end]
+                .iter()
+                .fold(0_usize, |sum, rows| sum.saturating_add(*rows));
+            jobs.extend(job_from_run(tenant, level, &blocks[start..end], rows));
+            start = end;
         }
-        jobs.extend(job_from_run(tenant, level, &run, rows));
     }
     jobs
 }
