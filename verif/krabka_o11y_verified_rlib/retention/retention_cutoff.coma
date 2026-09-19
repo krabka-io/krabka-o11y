@@ -1,0 +1,77 @@
+use creusot.int.Int64
+use creusot.prelude.Any
+use int.Int
+
+type t_Option_i64 = None | Some Int64.t
+
+predicate ge_log_Int [@inline:trivial] (self: int) (other: int) = other <= self
+
+meta "rewrite_def" predicate ge_log_Int
+
+constant const_MIN: Int64.t = (-9223372036854775808: Int64.t)
+
+constant const_MAX: Int64.t = (9223372036854775807: Int64.t)
+
+predicate gt_log_Int [@inline:trivial] (self: int) (other: int) = other < self
+
+meta "rewrite_def" predicate gt_log_Int
+
+let saturating_sub (self_: Int64.t) (rhs: Int64.t) (return (x: Int64.t)) = any
+  [ return (result: Int64.t) ->
+  {[@stop_split] [@expl:saturating_sub ensures] ([@stop_split] [@expl:saturating_sub ensures #0] ge_log_Int (Int64.to_int self_
+          - Int64.to_int rhs) (Int64.to_int const_MIN)
+        /\ Int64.to_int self_ - Int64.to_int rhs <= Int64.to_int const_MAX
+      -> Int64.to_int result = Int64.to_int self_ - Int64.to_int rhs)
+    /\ ([@stop_split] [@expl:saturating_sub ensures #1] Int64.to_int self_ - Int64.to_int rhs < Int64.to_int const_MIN
+      -> Int64.to_int result = Int64.to_int const_MIN)
+    /\ ([@stop_split] [@expl:saturating_sub ensures #2] gt_log_Int (Int64.to_int self_
+      - Int64.to_int rhs) (Int64.to_int const_MAX) -> Int64.to_int result = Int64.to_int const_MAX)}
+    (! return {result}) ]
+
+type t_Option_Int = None'0 | Some'0 int
+
+function deep_model_i64 [@inline:trivial] (self: Int64.t) : int = Int64.to_int self
+
+meta "rewrite_def" function deep_model_i64
+
+function deep_model_Option_i64 [@inline:trivial] (self: t_Option_i64) : t_Option_Int = match self with
+    | Some t -> Some'0 (deep_model_i64 t)
+    | None -> None'0
+    end
+
+meta "rewrite_def" function deep_model_Option_i64
+
+function retention_cutoff_model (now_ts: Int64.t) (retention_ticks: Int64.t) : t_Option_Int =
+  if Int64.to_int retention_ticks <= 0 then
+    None'0
+  else
+    if Int64.to_int now_ts - Int64.to_int retention_ticks < - 9223372036854775807 - 1 then
+      Some'0 (- 9223372036854775807 - 1)
+    else
+      Some'0 (Int64.to_int now_ts - Int64.to_int retention_ticks)
+
+
+
+meta "compute_max_steps" 1000000
+
+meta "select_lsinst" "all"
+
+let retention_cutoff (now_ts: Int64.t) (retention_ticks: Int64.t) (return (x: t_Option_i64)) = (! bb0
+  [ bb0 = s0
+    [ s0 = [ &_8 <- Int64.le retention_ticks (0: Int64.t) ] s1
+    | s1 = any [ br0 -> {_8 = false} (! bb2) | br1 -> {_8} (! bb1) ] ]
+  | bb1 = s0 [ s0 = [ &_ret <- None ] s1 | s1 = return {_ret} ]
+  | bb2 = s0
+    [ s0 = saturating_sub {now_ts} {retention_ticks} (fun (_x: Int64.t) -> [ &_10 <- _x ] s1)
+    | s1 = [ &_ret <- Some _10 ] s2
+    | s2 = return {_ret} ] ]
+  [ & _ret: t_Option_i64 = Any.any_l ()
+  | & now_ts: Int64.t = now_ts
+  | & retention_ticks: Int64.t = retention_ticks
+  | & _8: bool = Any.any_l ()
+  | & _10: Int64.t = Any.any_l () ])
+  [ return (result: t_Option_i64) ->
+  {[@stop_split] [@expl:retention_cutoff ensures] ([@stop_split] [@expl:retention_cutoff ensures #0] deep_model_Option_i64 result
+      = retention_cutoff_model now_ts retention_ticks)
+    /\ ([@stop_split] [@expl:retention_cutoff ensures #1] (result = None) = (Int64.to_int retention_ticks <= 0))}
+    (! return {result}) ]

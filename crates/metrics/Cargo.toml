@@ -75,6 +75,7 @@ krabka-client-admin = { version = "0.4.0" }
 mutants = { workspace = true }
 proptest = { workspace = true }
 reqwest = { workspace = true }
+stateright = { workspace = true }
 temp-env = "0.3"
 tempfile = { workspace = true }
 tower = { workspace = true, features = ["util"] }

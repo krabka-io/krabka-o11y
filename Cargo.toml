@@ -156,6 +156,7 @@ serde_yaml = "0.9"
 # Token digests in the server credentials file.
 sha2 = "0.10"
 snap = "1"
+stateright = "=0.31.0"
 # Constant-time comparison of credential digests.
 subtle = "2"
 tempfile = "3"

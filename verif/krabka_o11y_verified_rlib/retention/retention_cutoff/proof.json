@@ -1,0 +1,9 @@
+{
+  "profile": [],
+  "proofs": {
+    "Coma": {
+      "vc_retention_cutoff": { "prover": "alt-ergo", "time": 0.012 },
+      "vc_saturating_sub": { "prover": "alt-ergo", "time": 0.005 }
+    }
+  }
+}
