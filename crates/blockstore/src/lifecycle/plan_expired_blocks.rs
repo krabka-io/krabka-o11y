@@ -1,3 +1,5 @@
+use krabka_o11y_verified::retention_cutoff;
+
 use super::{BTreeMap, BlockTimestampUnit, CompactionCandidate, ExpiredBlock, RetentionWindows};
 
 /// Names the blocks that end before their tenant's retention cutoff.
@@ -32,8 +34,7 @@ pub fn plan_expired_blocks(
         .filter(|candidate| {
             let cutoff = *cutoffs.entry(candidate.tenant.as_str()).or_insert_with(|| {
                 let ticks = unit.ticks(windows.block_retention(&candidate.tenant));
-                // No window is "keep forever", and so no cutoff at all.
-                (ticks > 0).then(|| now_ts.saturating_sub(ticks))
+                retention_cutoff(now_ts, ticks)
             });
             cutoff.is_some_and(|cutoff| candidate.max_ts < cutoff)
         })

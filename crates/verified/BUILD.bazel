@@ -1,0 +1,9 @@
+load("//bazel:defs.bzl", "crate_library", "crate_tests")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Cargo.toml"])
+
+crate_library(name = "verified")
+
+crate_tests(lib = "verified")
