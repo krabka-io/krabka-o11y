@@ -30,6 +30,7 @@ clap = { workspace = true, features = ["env"] }
 krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
 krabka-ids = { version = "0.4.0" }
 krabka-client-consumer = { version = "0.4.0" }
+krabka-client-coordination = { version = "0.4.0" }
 krabka-client-core = { version = "0.4.0" }
 krabka-client-producer = { version = "0.4.0" }
 krabka-metrics = { path = "../metrics", version = "0.4.0" }
@@ -57,6 +58,8 @@ url = { workspace = true }
 tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
 
 [dev-dependencies]
+krabka-broker = { version = "0.4.0" }
+krabka-client-admin = { version = "0.4.0" }
 opentelemetry-proto = { workspace = true }
 prost = { workspace = true }
 rcgen = { workspace = true }

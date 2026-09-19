@@ -3973,6 +3973,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "krabka-client-coordination"
+version = "0.4.0"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=e17ec6b52b244027fe76b60370ba7ab526b9f2aa#e17ec6b52b244027fe76b60370ba7ab526b9f2aa"
+dependencies = [
+ "assert2",
+ "async-trait",
+ "bon",
+ "bytes",
+ "krabka-client-admin",
+ "krabka-client-core",
+ "krabka-client-producer",
+ "krabka-protocol",
+ "krabka-units",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "krabka-client-core"
 version = "0.4.0"
 source = "git+https://github.com/krabka-io/krabka-client-rs?rev=e17ec6b52b244027fe76b60370ba7ab526b9f2aa#e17ec6b52b244027fe76b60370ba7ab526b9f2aa"
@@ -4221,7 +4240,10 @@ dependencies = [
  "clap",
  "futures",
  "krabka-blockstore",
+ "krabka-broker",
+ "krabka-client-admin",
  "krabka-client-consumer",
+ "krabka-client-coordination",
  "krabka-client-core",
  "krabka-client-producer",
  "krabka-ids",
@@ -8078,7 +8100,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

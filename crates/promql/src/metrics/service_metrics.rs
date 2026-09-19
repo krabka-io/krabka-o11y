@@ -36,6 +36,15 @@ pub struct ServiceMetrics {
     pub rule_evaluation_failures: Counter,
     /// Wall time of the most recently completed ruler group.
     pub rule_group_last_duration_seconds: Gauge<f64, std::sync::atomic::AtomicU64>,
+    /// Whether this process currently owns its configured ruler shard.
+    pub ruler_owner: Gauge,
+    /// Producer id and epoch of the broker-enforced ruler fence.
+    pub ruler_producer_id: Gauge,
+    pub ruler_producer_epoch: Gauge,
+    /// Cumulative lease advance and renewal failures.
+    pub ruler_lease_renew_failures: Counter,
+    /// Time between losing and reacquiring ruler ownership.
+    pub ruler_failover_duration_seconds: Gauge<f64, std::sync::atomic::AtomicU64>,
 }
 
 impl ServiceMetrics {
@@ -64,6 +73,11 @@ impl ServiceMetrics {
         let active_queries = Gauge::default();
         let rule_evaluation_failures = Counter::default();
         let rule_group_last_duration_seconds = Gauge::default();
+        let ruler_owner = Gauge::default();
+        let ruler_producer_id = Gauge::default();
+        let ruler_producer_epoch = Gauge::default();
+        let ruler_lease_renew_failures = Counter::default();
+        let ruler_failover_duration_seconds = Gauge::default();
 
         registry.register(
             "ingest_requests",
@@ -125,6 +139,31 @@ impl ServiceMetrics {
             "Wall time in seconds of the most recently completed ruler group.",
             rule_group_last_duration_seconds.clone(),
         );
+        registry.register(
+            "ruler_owner",
+            "Whether this process currently owns its configured ruler shard.",
+            ruler_owner.clone(),
+        );
+        registry.register(
+            "ruler_producer_id",
+            "Producer id of the broker-enforced ruler fencing token.",
+            ruler_producer_id.clone(),
+        );
+        registry.register(
+            "ruler_producer_epoch",
+            "Producer epoch of the broker-enforced ruler fencing token.",
+            ruler_producer_epoch.clone(),
+        );
+        registry.register(
+            "ruler_lease_renew_failures",
+            "Cumulative ruler lease advance and renewal failures.",
+            ruler_lease_renew_failures.clone(),
+        );
+        registry.register(
+            "ruler_failover_duration_seconds",
+            "Time between losing and reacquiring ruler ownership.",
+            ruler_failover_duration_seconds.clone(),
+        );
         let object_store = ObjectStoreMetrics::register(&mut registry);
         let wal_consumer = WalConsumerMetrics::register(&mut registry);
 
@@ -144,6 +183,11 @@ impl ServiceMetrics {
             active_queries,
             rule_evaluation_failures,
             rule_group_last_duration_seconds,
+            ruler_owner,
+            ruler_producer_id,
+            ruler_producer_epoch,
+            ruler_lease_renew_failures,
+            ruler_failover_duration_seconds,
         }
     }
 

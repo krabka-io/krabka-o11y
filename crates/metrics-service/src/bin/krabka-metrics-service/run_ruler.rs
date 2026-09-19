@@ -2,14 +2,13 @@ use krabka_blockstore::MeteredObjectStore;
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
-    Arc, AuditHandle, AutoOffsetReset, Cli, ClientSecurity, Consumer, KafkaRecordingRuleWalSink,
-    KafkaRulerStateSink, ObjectStore, Producer, PrometheusApiState, PrometheusRulerStateSink,
-    RoleReadiness, RulerAlertmanagerSink, RulerShard, RulerStateFanoutSink, ServerSecurity,
-    Shutdown, WalHead, install_bundled_rule_groups, load_runtime_overrides,
-    mimir_alertmanager_router, mimir_ruler_prometheus_router, mimir_ruler_router,
-    poll_ruler_state_consumer_once, query_engine_opts, readiness_router, run_ruler_evaluation_loop,
-    run_ruler_state_consumer_loop, serve_prometheus_router_joinable,
-    spawn_shutdown_signal_listener,
+    Arc, AuditHandle, AutoOffsetReset, BrokerTransport, Cli, ClientSecurity, Consumer, LeaseConfig,
+    MemberId, ObjectStore, PrometheusApiState, Role, RoleReadiness, RulerAlertmanagerSink,
+    RulerShard, ServerSecurity, Shutdown, WalHead, install_bundled_rule_groups,
+    load_runtime_overrides, mimir_alertmanager_router, mimir_ruler_prometheus_router,
+    mimir_ruler_router, poll_ruler_state_consumer_once, query_engine_opts, readiness_router,
+    run_fenced_ruler_evaluation_loop, run_ruler_state_consumer_loop,
+    serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
 };
 
 #[tracing::instrument(
@@ -27,6 +26,7 @@ pub(crate) async fn run_ruler(
     wal_security: Option<ClientSecurity>,
     audit: AuditHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let ruler_metrics = metrics.clone();
     let object_store_url = url::Url::parse(&cli.object_store_url)?;
     let (store, prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
     let store: Arc<dyn ObjectStore> =
@@ -132,19 +132,20 @@ pub(crate) async fn run_ruler(
                 .subscribe([cli.ruler_state_topic.clone()])
                 .build() => built?,
         };
-        let producer = tokio::select! {
+        let coordination = tokio::select! {
             biased;
             () = shutdown.signalled() => return Ok(None),
-            built = Producer::builder()
+            built = BrokerTransport::builder()
                 .bootstrap(bootstrap)
+                .client_id(format!("{}-ruler-coordination", cli.wal_client_id))
+                .lease_duration(cli.ruler_lease_duration)
+                .topic_replication(cli.ruler_coordination_replication)
                 .maybe_security(wal_security)
-                .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
-                .frame_max(cli.client_frame_max)
                 .build() => built?,
         };
-        Ok::<_, Box<dyn std::error::Error>>(Some((state_consumer, producer)))
+        Ok::<_, Box<dyn std::error::Error>>(Some((state_consumer, coordination)))
     };
-    let (mut state_consumer, producer) = match startup.await {
+    let (mut state_consumer, coordination) = match startup.await {
         Ok(Some(clients)) => clients,
         Ok(None) => {
             server.await?;
@@ -178,18 +179,14 @@ pub(crate) async fn run_ruler(
         }
     }
     ruler_state_replay.mark_ready();
-    let producer = Arc::new(producer);
-    let wal_sink = KafkaRecordingRuleWalSink::new(Arc::clone(&producer), cli.wal_topic.clone());
-    let state_sink = RulerStateFanoutSink::new(
-        PrometheusRulerStateSink::new(Arc::clone(&state)),
-        KafkaRulerStateSink::new(producer, cli.ruler_state_topic.clone()),
-    );
     let interval = cli.ruler_eval_interval;
     let state_for_replay = Arc::clone(&state);
     let state_topic = cli.ruler_state_topic.clone();
     let poll_timeout = cli.wal_poll_timeout;
 
     let alert_sink = ruler_alert_sink(&cli);
+    let (role, member, lease_config) = ruler_coordination_identity(&cli)?;
+    let coordination = Arc::new(coordination);
 
     // The ruler state consumer and evaluation loop are critical: both feed
     // ruler correctness, and neither loop returns voluntarily. Supervising
@@ -214,11 +211,17 @@ pub(crate) async fn run_ruler(
     let eval_shutdown = shutdown.clone();
     let eval_alert_sink = alert_sink.clone();
     tasks.spawn("metrics ruler evaluation", async move {
-        let result = run_ruler_evaluation_loop(
+        let result = run_fenced_ruler_evaluation_loop(
             state,
-            (wal_sink, eval_alert_sink, state_sink),
+            eval_alert_sink,
+            coordination,
+            role,
+            member,
             shard,
+            (cli.wal_topic.clone(), cli.ruler_state_topic.clone()),
             interval,
+            lease_config,
+            ruler_metrics,
             eval_shutdown.signalled(),
         )
         .await;
@@ -241,6 +244,31 @@ pub(crate) async fn run_ruler(
     outcome?;
     drain_result?;
     Ok(())
+}
+
+fn ruler_coordination_identity(
+    cli: &Cli,
+) -> Result<(Role, MemberId, LeaseConfig), Box<dyn std::error::Error>> {
+    let role_name = format!(
+        "krabka-metrics-ruler-{}-of-{}",
+        cli.ruler_shard_index, cli.ruler_shard_total
+    );
+    let replica = cli.ruler_replica_id.clone().unwrap_or_else(|| {
+        format!(
+            "{}-{}",
+            std::env::var("HOSTNAME").unwrap_or_else(|_| cli.wal_client_id.clone()),
+            std::process::id()
+        )
+    });
+    Ok((
+        Role::new(&role_name)?,
+        MemberId::new(&replica)?,
+        LeaseConfig::new(
+            cli.ruler_lease_duration,
+            cli.ruler_lease_renew_interval,
+            cli.ruler_lease_challenge_stagger,
+        )?,
+    ))
 }
 
 fn ruler_alert_sink(cli: &Cli) -> RulerAlertmanagerSink {

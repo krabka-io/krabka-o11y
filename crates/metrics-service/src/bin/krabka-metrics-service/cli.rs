@@ -178,6 +178,38 @@ pub(crate) struct Cli {
     pub(crate) ruler_shard_index: usize,
     #[arg(long, env = "KRABKA_METRICS_RULER_SHARD_TOTAL", default_value_t = 1)]
     pub(crate) ruler_shard_total: usize,
+    /// Stable identity of this ruler replica. Defaults to `HOSTNAME` plus the process id.
+    #[arg(long, env = "KRABKA_METRICS_RULER_REPLICA_ID")]
+    pub(crate) ruler_replica_id: Option<String>,
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_RULER_LEASE_DURATION",
+        default_value = "30s",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) ruler_lease_duration: Time,
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_RULER_LEASE_RENEW_INTERVAL",
+        default_value = "10s",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) ruler_lease_renew_interval: Time,
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_RULER_LEASE_CHALLENGE_STAGGER",
+        default_value = "5s",
+        value_parser = parse::positive_time
+    )]
+    pub(crate) ruler_lease_challenge_stagger: Time,
+    /// Replication factor for the compacted ruler coordination topic.
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_RULER_COORDINATION_REPLICATION",
+        default_value_t = 3,
+        value_parser = clap::value_parser!(i32).range(1..)
+    )]
+    pub(crate) ruler_coordination_replication: i32,
     #[arg(
         long,
         env = "KRABKA_METRICS_RULER_ALERTMANAGER_URL",

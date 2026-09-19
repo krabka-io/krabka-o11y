@@ -222,6 +222,7 @@ krabka-verified = { git = "https://github.com/krabka-io/krabka-broker", rev = "3
 krabka-schema-serde = { git = "https://github.com/krabka-io/krabka-schema-registry", rev = "ee9c3933fb1d71735846e7e5e33ea6ab3a694dc5" }
 krabka-client-admin = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "e17ec6b52b244027fe76b60370ba7ab526b9f2aa" }
 krabka-client-consumer = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "e17ec6b52b244027fe76b60370ba7ab526b9f2aa" }
+krabka-client-coordination = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "e17ec6b52b244027fe76b60370ba7ab526b9f2aa" }
 krabka-client-core = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "e17ec6b52b244027fe76b60370ba7ab526b9f2aa" }
 krabka-client-producer = { git = "https://github.com/krabka-io/krabka-client-rs", rev = "e17ec6b52b244027fe76b60370ba7ab526b9f2aa" }
 krabka-compression = { git = "https://github.com/krabka-io/krabka-protocol", rev = "dea9f7613cf078d1b4be421562e3cbaefb5346c2" }

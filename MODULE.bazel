@@ -257,6 +257,7 @@ SIBLING_MEMBERS = {
     "krabka-broker": "crates/broker",
     "krabka-client-admin": "crates/client-admin",
     "krabka-client-consumer": "crates/client-consumer",
+    "krabka-client-coordination": "crates/client-coordination",
     "krabka-client-core": "crates/client-core",
     "krabka-client-producer": "crates/client-producer",
     "krabka-compression": "crates/compression",

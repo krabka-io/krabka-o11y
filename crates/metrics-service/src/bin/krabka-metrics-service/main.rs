@@ -13,17 +13,16 @@ use std::{
 use clap::{Parser, ValueEnum};
 use krabka_blockstore::TenantId;
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
+use krabka_client_coordination::{BrokerTransport, LeaseConfig, MemberId, Role};
 use krabka_client_core::{
     ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity,
     DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
 };
-use krabka_client_producer::Producer;
 use krabka_metrics::{Limits, OverridesProvider, WAL_TOPIC};
 use krabka_metrics_service::{
-    KafkaRecordingRuleWalSink, KafkaRulerStateSink, MimirTenantAdminState,
-    PrometheusRulerStateSink, RULER_STATE_TOPIC, RulerAlertmanagerSink, RulerStateFanoutSink,
-    WalHeadConsumerCommit, WalHeadConsumerPoll, install_bundled_rule_groups,
-    mimir_tenant_admin_router, poll_ruler_state_consumer_once, run_ruler_evaluation_loop,
+    MimirTenantAdminState, RULER_STATE_TOPIC, RulerAlertmanagerSink, WalHeadConsumerCommit,
+    WalHeadConsumerPoll, install_bundled_rule_groups, mimir_tenant_admin_router,
+    poll_ruler_state_consumer_once, run_fenced_ruler_evaluation_loop,
     run_ruler_state_consumer_loop, run_wal_head_consumer_loop, serve_prometheus_router_joinable,
 };
 use krabka_observability::{
@@ -156,6 +155,16 @@ mod tests {
             "2",
             "--ruler-shard-total",
             "4",
+            "--ruler-replica-id",
+            "ruler-a",
+            "--ruler-lease-duration",
+            "45s",
+            "--ruler-lease-renew-interval",
+            "12s",
+            "--ruler-lease-challenge-stagger",
+            "3s",
+            "--ruler-coordination-replication",
+            "2",
             "--ruler-alertmanager-url",
             "http://alertmanager.example/api/v2/alerts",
             "--ruler-state-topic",
@@ -170,6 +179,11 @@ mod tests {
         assert2::assert!(cli.ruler_eval_interval == secs(15));
         assert2::assert!(cli.ruler_shard_index == 2);
         assert2::assert!(cli.ruler_shard_total == 4);
+        assert2::assert!(cli.ruler_replica_id.as_deref() == Some("ruler-a"));
+        assert2::assert!(cli.ruler_lease_duration == secs(45));
+        assert2::assert!(cli.ruler_lease_renew_interval == secs(12));
+        assert2::assert!(cli.ruler_lease_challenge_stagger == secs(3));
+        assert2::assert!(cli.ruler_coordination_replication == 2);
         assert2::assert!(
             cli.ruler_alertmanager_url == ["http://alertmanager.example/api/v2/alerts".to_string()]
         );
