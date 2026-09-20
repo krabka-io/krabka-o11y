@@ -66,6 +66,20 @@
       "artifact_id": 10605829551,
       "artifact_sha256": "dcee8c3ffe29f1c482f880ebb2fb70e3643aa88a981ab9bdf06c577f48d78953",
       "contents_manifest_sha256": "f83f2f9f1c4fd449f9ae711a8e5e2de1a8a45a5c1a777728679b25138f969454"
+    },
+    "verified": {
+      "started_at": "2026-09-20T22:20:38Z",
+      "command": "aspect mutants verified 0 1",
+      "duration_seconds": 22,
+      "shards": 8,
+      "total": 23,
+      "caught": 21,
+      "survived": 2,
+      "unviable": 0,
+      "artifact_url": "gs://robot-head-krabka-o11y-contract/qualification/milestone-19/mutants/a12b8722/verified.tar.zst",
+      "artifact_generation": "1789942908968317",
+      "artifact_sha256": "143a9755f16bcc8c7cabfeaef72bbc4edc15aa509f09bd570bd8d34e56086e62",
+      "contents_manifest_sha256": "0978c63823775addae3ca833d73e98dac4757045d49236d43443cb8927f4563e"
     }
   },
   "unseeded": [

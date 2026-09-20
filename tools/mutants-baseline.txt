@@ -34,3 +34,4 @@ promql           unseeded
 query-frontend   64
 traceql          1
 traces           unseeded
+verified         2
