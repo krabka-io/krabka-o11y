@@ -91,4 +91,11 @@ crate_tests(
     mutants_jobs = 1,
     mutants_shards = 8,
     mutants_timeout = "eternal",
+    # The SIGTERM integration test launches a child querier and must complete
+    # its startup and shutdown handshake within a wall-clock budget. Reserve
+    # four CPUs so the child is not starved by the other workspace tests.
+    unit_tags = [
+        "cpu:4",
+        "timing-sensitive",
+    ],
 )
