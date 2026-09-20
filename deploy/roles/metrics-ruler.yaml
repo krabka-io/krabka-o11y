@@ -6,4 +6,3 @@ object-store-url: s3://krabka-metrics
 manifest-prefix: metrics
 wal-bootstrap: broker:9092
 wal-client-id: krabka-metrics-ruler
-ruler-replica-id: metrics-ruler

@@ -996,7 +996,6 @@ fn assert_same_options_apart_from_security(
         request_timeout,
         dispatch_queue_capacity,
         frame_max,
-        security: _,
         ..
     } = actual;
     assert!(*client_id == expected.client_id);

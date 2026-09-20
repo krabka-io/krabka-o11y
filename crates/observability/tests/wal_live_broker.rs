@@ -12,6 +12,8 @@
 //! Every case here runs the broker in this process, so these are ordinary
 //! `bazel test` targets and need no container.
 
+#![allow(clippy::large_futures)]
+
 mod support;
 
 use std::{

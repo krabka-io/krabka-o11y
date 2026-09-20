@@ -45,7 +45,7 @@ pub(crate) async fn run_symbolizer(
                     tracing::info!(updated, "profiles offline symbolization pass complete");
                 }
                 Err(error) => {
-                    tracing::warn!(%error, "profiles symbolization pass failed; retrying")
+                    tracing::warn!(%error, "profiles symbolization pass failed; retrying");
                 }
             },
             Err(error) => tracing::warn!(%error, "profile index load failed; retrying"),
