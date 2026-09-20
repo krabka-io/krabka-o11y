@@ -1,3 +1,5 @@
+use krabka_o11y_verified::bounded_shard_slots;
+
 use super::{
     IndexShardRange, MAX_SHARD_SLOTS_PER_RECORD, UNBOUNDED_SHARD_RANGE, shard_range_of_slot,
 };
@@ -24,10 +26,12 @@ pub(crate) fn shard_ranges_for_span(min_ts: i64, max_ts: i64, width: i64) -> Vec
     };
     let first = min_ts.div_euclid(width);
     let last = max_ts.div_euclid(width);
-    if last.saturating_sub(first) >= MAX_SHARD_SLOTS_PER_RECORD {
+    let slots = bounded_shard_slots(first, last, MAX_SHARD_SLOTS_PER_RECORD);
+    if slots.is_empty() {
         return vec![UNBOUNDED_SHARD_RANGE];
     }
-    (first..=last)
+    slots
+        .into_iter()
         .map(|slot| shard_range_of_slot(slot, width))
         .collect()
 }

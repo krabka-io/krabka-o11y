@@ -1,0 +1,145 @@
+use creusot.int.UInt64
+use creusot.slice.Slice64
+use creusot.int.Int64
+use seq.Seq
+use creusot.prelude.Any
+use int.Int
+
+let len_i64 (self_: Slice64.slice Int64.t) (return (x: UInt64.t)) = any
+  [ return (result: UInt64.t) -> {[@stop_split] [@expl:len ensures] Seq.length (Slice64.view self_)
+    = UInt64.t'int result}
+    (! return {result}) ]
+
+predicate ge_log_Int [@inline:trivial] (self: int) (other: int) = other <= self
+
+meta "rewrite_def" predicate ge_log_Int
+
+predicate gt_log_Int [@inline:trivial] (self: int) (other: int) = other < self
+
+meta "rewrite_def" predicate gt_log_Int
+
+predicate well_founded_relation_Int [@inline:trivial] (self: int) (other: int) =
+  ge_log_Int self 0 /\ gt_log_Int self other
+
+meta "rewrite_def" predicate well_founded_relation_Int
+
+type tup2_usize_usize = { f0: UInt64.t; f1: UInt64.t }
+
+meta "compute_max_steps" 1000000
+
+meta "select_lsinst" "all"
+
+let overlap_window (starts: Slice64.slice Int64.t) (prefix_ends: Slice64.slice Int64.t) (min_ts: Int64.t)
+  (max_ts: Int64.t) (return (x: tup2_usize_usize)) =
+{[@stop_split] [@expl:overlap_window requires] ([@stop_split] [@expl:overlap_window requires #0] Seq.length (Slice64.view starts)
+    = Seq.length (Slice64.view prefix_ends))
+  /\ ([@stop_split] [@expl:overlap_window requires #1] forall i: int, j: int. 0 <= i
+        /\ i < j /\ j < Seq.length (Slice64.view starts)
+      -> Int64.to_int (Seq.get (Slice64.view starts) i) <= Int64.to_int (Seq.get (Slice64.view starts) j))
+  /\ ([@stop_split] [@expl:overlap_window requires #2] forall i: int, j: int. 0 <= i
+      /\ i < j /\ j < Seq.length (Slice64.view prefix_ends)
+    -> Int64.to_int (Seq.get (Slice64.view prefix_ends) i) <= Int64.to_int (Seq.get (Slice64.view prefix_ends) j))}
+  (! bb0
+  [ bb0 = s0
+    [ s0 = [ &lower <- (0: UInt64.t) ] s1
+    | s1 = len_i64 {starts} (fun (_x: UInt64.t) -> [ &upper <- _x ] s2)
+    | s2 = bb2 ]
+  | bb2 = bb2invariant
+    [ bb2 = {[@expl:loop variant] well_founded_relation_Int variant_old_bb2 (UInt64.t'int upper - UInt64.t'int lower)}
+      bb2invariant
+    | bb2invariant = {[@expl:loop invariant #0] UInt64.t'int lower <= UInt64.t'int upper
+      /\ UInt64.t'int upper <= Seq.length (Slice64.view starts)}
+      {[@expl:loop invariant #1] forall i: int. 0 <= i /\ i < UInt64.t'int lower
+        -> Int64.to_int (Seq.get (Slice64.view starts) i) <= Int64.to_int max_ts}
+      {[@expl:loop invariant #2] forall i: int. UInt64.t'int upper <= i /\ i < Seq.length (Slice64.view starts)
+        -> gt_log_Int (Int64.to_int (Seq.get (Slice64.view starts) i)) (Int64.to_int max_ts)}
+      (! [ &variant_old_bb2 <- UInt64.t'int upper - UInt64.t'int lower ] s0)
+      [ s0 = [ &_47 <- UInt64.lt lower upper ] s1 | s1 = any [ br0 -> {_47 = false} (! bb10) | br1 -> {_47} (! bb4) ] ]
+      [ bb4 = s0
+        [ s0 = UInt64.sub {upper} {lower} (fun (_x: UInt64.t) -> [ &_53 <- _x ] s1)
+        | s1 = [ &_56 <- (2: UInt64.t) = (0: UInt64.t) ] s2
+        | s2 = {[@expl:division by zero] not _56} s3
+        | s3 = UInt64.div {_53} {(2: UInt64.t)} (fun (_x: UInt64.t) -> [ &_52 <- _x ] s4)
+        | s4 = UInt64.add {lower} {_52} (fun (_x: UInt64.t) -> [ &middle <- _x ] s5)
+        | s5 = [ &_59 <- middle ] s6
+        | s6 = [ &_60 <- Slice64.length starts ] s7
+        | s7 = [ &_61 <- UInt64.lt _59 _60 ] s8
+        | s8 = {[@expl:index in bounds] _61} s9
+        | s9 = Slice64.get <Int64.t> {starts} {_59} (fun (r: Int64.t) -> [ &_58 <- r ] s10)
+        | s10 = [ &_57 <- Int64.le _58 max_ts ] s11
+        | s11 = any [ br0 -> {_57 = false} (! bb8) | br1 -> {_57} (! bb7) ] ]
+      | bb7 = s0 [ s0 = UInt64.add {middle} {(1: UInt64.t)} (fun (_x: UInt64.t) -> [ &lower <- _x ] s1) | s1 = bb2 ]
+      | bb8 = s0 [ s0 = [ &upper <- middle ] s1 | s1 = bb2 ] ] ]
+  | bb10 = s0 [ s0 = [ &hi <- lower ] s1 | s1 = [ &lower <- (0: UInt64.t) ] s2 | s2 = [ &upper <- hi ] s3 | s3 = bb11 ]
+  | bb11 = bb11invariant
+    [ bb11 = {[@expl:loop variant] well_founded_relation_Int variant_old_bb11 (UInt64.t'int upper - UInt64.t'int lower)}
+      bb11invariant
+    | bb11invariant = {[@expl:loop invariant #0] UInt64.t'int lower <= UInt64.t'int upper
+      /\ UInt64.t'int upper <= UInt64.t'int hi}
+      {[@expl:loop invariant #1] UInt64.t'int hi <= Seq.length (Slice64.view prefix_ends)}
+      {[@expl:loop invariant #2] forall i: int. 0 <= i /\ i < UInt64.t'int lower
+        -> Int64.to_int (Seq.get (Slice64.view prefix_ends) i) < Int64.to_int min_ts}
+      {[@expl:loop invariant #3] forall i: int. UInt64.t'int upper <= i /\ i < UInt64.t'int hi
+        -> ge_log_Int (Int64.to_int (Seq.get (Slice64.view prefix_ends) i)) (Int64.to_int min_ts)}
+      (! [ &variant_old_bb11 <- UInt64.t'int upper - UInt64.t'int lower ] s0)
+      [ s0 = [ &_89 <- UInt64.lt lower upper ] s1 | s1 = any [ br0 -> {_89 = false} (! bb19) | br1 -> {_89} (! bb13) ] ]
+      [ bb13 = s0
+        [ s0 = UInt64.sub {upper} {lower} (fun (_x: UInt64.t) -> [ &_95 <- _x ] s1)
+        | s1 = [ &_98 <- (2: UInt64.t) = (0: UInt64.t) ] s2
+        | s2 = {[@expl:division by zero] not _98} s3
+        | s3 = UInt64.div {_95} {(2: UInt64.t)} (fun (_x: UInt64.t) -> [ &_94 <- _x ] s4)
+        | s4 = UInt64.add {lower} {_94} (fun (_x: UInt64.t) -> [ &middle'0 <- _x ] s5)
+        | s5 = [ &_101 <- middle'0 ] s6
+        | s6 = [ &_102 <- Slice64.length prefix_ends ] s7
+        | s7 = [ &_103 <- UInt64.lt _101 _102 ] s8
+        | s8 = {[@expl:index in bounds] _103} s9
+        | s9 = Slice64.get <Int64.t> {prefix_ends} {_101} (fun (r: Int64.t) -> [ &_100 <- r ] s10)
+        | s10 = [ &_99 <- Int64.lt _100 min_ts ] s11
+        | s11 = any [ br0 -> {_99 = false} (! bb17) | br1 -> {_99} (! bb16) ] ]
+      | bb16 = s0 [ s0 = UInt64.add {middle'0} {(1: UInt64.t)} (fun (_x: UInt64.t) -> [ &lower <- _x ] s1) | s1 = bb11 ]
+      | bb17 = s0 [ s0 = [ &upper <- middle'0 ] s1 | s1 = bb11 ] ] ]
+  | bb19 = s0 [ s0 = [ &_ret <- { f0 = lower; f1 = hi } ] s1 | s1 = return {_ret} ] ]
+  [ & _ret: tup2_usize_usize = Any.any_l ()
+  | & starts: Slice64.slice Int64.t = starts
+  | & prefix_ends: Slice64.slice Int64.t = prefix_ends
+  | & min_ts: Int64.t = min_ts
+  | & max_ts: Int64.t = max_ts
+  | & lower: UInt64.t = Any.any_l ()
+  | & upper: UInt64.t = Any.any_l ()
+  | & _47: bool = Any.any_l ()
+  | & middle: UInt64.t = Any.any_l ()
+  | & _52: UInt64.t = Any.any_l ()
+  | & _53: UInt64.t = Any.any_l ()
+  | & _56: bool = Any.any_l ()
+  | & _57: bool = Any.any_l ()
+  | & _58: Int64.t = Any.any_l ()
+  | & _59: UInt64.t = Any.any_l ()
+  | & _60: UInt64.t = Any.any_l ()
+  | & _61: bool = Any.any_l ()
+  | & hi: UInt64.t = Any.any_l ()
+  | & _89: bool = Any.any_l ()
+  | & middle'0: UInt64.t = Any.any_l ()
+  | & _94: UInt64.t = Any.any_l ()
+  | & _95: UInt64.t = Any.any_l ()
+  | & _98: bool = Any.any_l ()
+  | & _99: bool = Any.any_l ()
+  | & _100: Int64.t = Any.any_l ()
+  | & _101: UInt64.t = Any.any_l ()
+  | & _102: UInt64.t = Any.any_l ()
+  | & _103: bool = Any.any_l ()
+  | & variant_old_bb2: int = Any.any_l ()
+  | & variant_old_bb11: int = Any.any_l () ])
+  [ return (result: tup2_usize_usize) ->
+  {[@stop_split] [@expl:overlap_window ensures] ([@stop_split] [@expl:overlap_window ensures #0] UInt64.t'int result.f0
+      <= UInt64.t'int result.f1)
+    /\ ([@stop_split] [@expl:overlap_window ensures #1] UInt64.t'int result.f1 <= Seq.length (Slice64.view starts))
+    /\ ([@stop_split] [@expl:overlap_window ensures #2] forall i: int. 0 <= i /\ i < UInt64.t'int result.f0
+        -> Int64.to_int (Seq.get (Slice64.view prefix_ends) i) < Int64.to_int min_ts)
+    /\ ([@stop_split] [@expl:overlap_window ensures #3] forall i: int. UInt64.t'int result.f0 <= i
+          /\ i < UInt64.t'int result.f1
+        -> ge_log_Int (Int64.to_int (Seq.get (Slice64.view prefix_ends) i)) (Int64.to_int min_ts)
+        /\ Int64.to_int (Seq.get (Slice64.view starts) i) <= Int64.to_int max_ts)
+    /\ ([@stop_split] [@expl:overlap_window ensures #4] forall i: int. UInt64.t'int result.f1 <= i
+        /\ i < Seq.length (Slice64.view starts)
+      -> gt_log_Int (Int64.to_int (Seq.get (Slice64.view starts) i)) (Int64.to_int max_ts))}
+    (! return {result}) ]

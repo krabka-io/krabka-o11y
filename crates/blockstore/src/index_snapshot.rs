@@ -11,7 +11,8 @@ use bytes::Bytes;
 use futures::StreamExt as _;
 use krabka_units::{ByteSize, convert::ByteSizeExt, mebibytes};
 use object_store::{
-    ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload, path::Path,
+    ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload, UpdateVersion,
+    path::Path,
 };
 use refined_type::rule::GreaterUsize;
 use serde::{Deserialize, Serialize};
@@ -218,8 +219,8 @@ mod tests {
             .await
             .unwrap();
 
-            check!(payload_keys(&store).await == vec![live.clone()]);
-            check!(store.head(&Path::from(superseded)).await.is_err());
+            check!(payload_keys(&store).await.len() == 2);
+            check!(store.head(&Path::from(superseded)).await.unwrap().size == 0);
             check!(store.head(&Path::from(live)).await.is_ok());
         }
 
@@ -249,6 +250,22 @@ mod tests {
             .unwrap();
 
             check!(store.head(&Path::from(in_flight)).await.is_ok());
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn a_publication_attempt_expires_before_its_payload_can_age() {
+            let error = put_manifest_snapshot(
+                &store(),
+                KEY,
+                crate::IndexSnapshotRetain::new(1).unwrap(),
+                crate::DEFAULT_INDEX_SNAPSHOT_MAX,
+                LABEL,
+                |_| std::future::pending::<crate::Result<SnapshotManifest>>(),
+            )
+            .await
+            .unwrap_err();
+
+            check!(error.to_string().contains("publication exceeded"));
         }
 
         /// The prefix belongs to the index, but a bucket is shared, and being
@@ -401,7 +418,9 @@ pub(crate) use read_shard_payload::read_shard_payload;
 pub(crate) use shard_payload_content_hash::shard_payload_content_hash;
 pub(crate) use shard_payload_object_key::shard_payload_object_key;
 pub(crate) use shard_payload_prefix_for_key::shard_payload_prefix_for_key;
-pub(crate) use shard_payload_sweep_grace::SHARD_PAYLOAD_SWEEP_GRACE;
+pub(crate) use shard_payload_sweep_grace::{
+    SHARD_PAYLOAD_PUBLISH_TIMEOUT, SHARD_PAYLOAD_SWEEP_GRACE,
+};
 pub(crate) use shard_range_of_slot::shard_range_of_slot;
 pub(crate) use shard_ranges_for_span::shard_ranges_for_span;
 use snapshot_generation_from_path::snapshot_generation_from_path;

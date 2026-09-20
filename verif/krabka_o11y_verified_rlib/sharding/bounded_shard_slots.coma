@@ -1,0 +1,117 @@
+use creusot.int.Int64
+use seq.Seq
+use creusot.int.UInt64
+use creusot.prelude.MutBorrow
+use creusot.prelude.Any
+use int.Int
+
+predicate ge_log_Int [@inline:trivial] (self: int) (other: int) = other <= self
+
+meta "rewrite_def" predicate ge_log_Int
+
+constant const_MIN: Int64.t = (-9223372036854775808: Int64.t)
+
+constant const_MAX: Int64.t = (9223372036854775807: Int64.t)
+
+predicate gt_log_Int [@inline:trivial] (self: int) (other: int) = other < self
+
+meta "rewrite_def" predicate gt_log_Int
+
+let saturating_sub (self_: Int64.t) (rhs: Int64.t) (return (x: Int64.t)) = any
+  [ return (result: Int64.t) ->
+  {[@stop_split] [@expl:saturating_sub ensures] ([@stop_split] [@expl:saturating_sub ensures #0] ge_log_Int (Int64.to_int self_
+          - Int64.to_int rhs) (Int64.to_int const_MIN)
+        /\ Int64.to_int self_ - Int64.to_int rhs <= Int64.to_int const_MAX
+      -> Int64.to_int result = Int64.to_int self_ - Int64.to_int rhs)
+    /\ ([@stop_split] [@expl:saturating_sub ensures #1] Int64.to_int self_ - Int64.to_int rhs < Int64.to_int const_MIN
+      -> Int64.to_int result = Int64.to_int const_MIN)
+    /\ ([@stop_split] [@expl:saturating_sub ensures #2] gt_log_Int (Int64.to_int self_
+      - Int64.to_int rhs) (Int64.to_int const_MAX) -> Int64.to_int result = Int64.to_int const_MAX)}
+    (! return {result}) ]
+
+type t_Vec_i64_Global
+
+constant const_MAX'0: UInt64.t = (18446744073709551615: UInt64.t)
+
+function view_Vec_i64_Global (self: t_Vec_i64_Global) : Seq.seq Int64.t
+
+axiom view_Vec_i64_Global_spec:
+  forall self: t_Vec_i64_Global [view_Vec_i64_Global self]. Seq.length (view_Vec_i64_Global self)
+    <= UInt64.t'int const_MAX'0
+
+let new_i64 (return (x: t_Vec_i64_Global)) = any
+  [ return (result: t_Vec_i64_Global) -> {[@stop_split] [@expl:new ensures] Seq.length (view_Vec_i64_Global result) = 0}
+    (! return {result}) ]
+
+predicate well_founded_relation_Int [@inline:trivial] (self: int) (other: int) =
+  ge_log_Int self 0 /\ gt_log_Int self other
+
+meta "rewrite_def" predicate well_founded_relation_Int
+
+let push_i64 (self_: MutBorrow.t t_Vec_i64_Global) (v: Int64.t) (return (x: ())) = any
+  [ return (result: ()) -> {[@stop_split] [@expl:push ensures] view_Vec_i64_Global self_.final
+    = Seq.snoc (view_Vec_i64_Global self_.current) v}
+    (! return {result}) ]
+
+meta "compute_max_steps" 1000000
+
+meta "select_lsinst" "all"
+
+let bounded_shard_slots (first: Int64.t) (last: Int64.t) (max_slots: Int64.t) (return (x: t_Vec_i64_Global)) =
+{[@stop_split] [@expl:bounded_shard_slots requires] ([@stop_split] [@expl:bounded_shard_slots requires #0] Int64.to_int first
+    <= Int64.to_int last)
+  /\ ([@stop_split] [@expl:bounded_shard_slots requires #1] gt_log_Int (Int64.to_int max_slots) 0)}
+  (! bb0
+  [ bb0 = s0
+    [ s0 = saturating_sub {last} {first} (fun (_x: Int64.t) -> [ &_20 <- _x ] s1)
+    | s1 = [ &_19 <- Int64.ge _20 max_slots ] s2
+    | s2 = any [ br0 -> {_19 = false} (! bb3) | br1 -> {_19} (! bb2) ] ]
+  | bb2 = s0 [ s0 = new_i64 (fun (_x: t_Vec_i64_Global) -> [ &_ret <- _x ] s1) | s1 = return {_ret} ]
+  | bb3 = s0
+    [ s0 = new_i64 (fun (_x: t_Vec_i64_Global) -> [ &slots <- _x ] s1) | s1 = [ &slot <- first ] s2 | s2 = bb5 ]
+  | bb5 = bb5invariant
+    [ bb5 = {[@expl:loop variant] well_founded_relation_Int variant_old_bb5 (Int64.to_int last - Int64.to_int slot)}
+      bb5invariant
+    | bb5invariant = {[@expl:loop invariant #0] Int64.to_int first <= Int64.to_int slot
+      /\ Int64.to_int slot <= Int64.to_int last}
+      {[@expl:loop invariant #1] Seq.length (view_Vec_i64_Global slots) = Int64.to_int slot - Int64.to_int first}
+      {[@expl:loop invariant #2] forall i: int. 0 <= i /\ i < Seq.length (view_Vec_i64_Global slots)
+        -> Int64.to_int (Seq.get (view_Vec_i64_Global slots) i) = Int64.to_int first + i}
+      (! [ &variant_old_bb5 <- Int64.to_int last - Int64.to_int slot ] s0)
+      [ s0 = [ &_44 <- Int64.lt slot last ] s1 | s1 = any [ br0 -> {_44 = false} (! bb9) | br1 -> {_44} (! bb7) ] ]
+      [ bb7 = s0
+        [ s0 = MutBorrow.borrow_mut <t_Vec_i64_Global> {slots}
+            (fun (_bor: MutBorrow.t t_Vec_i64_Global) -> [ &_48 <- _bor ] [ &slots <- _bor.final ] s1)
+        | s1 = push_i64 {_48} {slot} (fun (_x: ()) -> [ &_47 <- _x ] s2)
+        | s2 = Int64.add {slot} {(1: Int64.t)} (fun (_x: Int64.t) -> [ &slot <- _x ] s3)
+        | s3 = bb5 ] ] ]
+  | bb9 = s0
+    [ s0 = MutBorrow.borrow_mut <t_Vec_i64_Global> {slots}
+        (fun (_bor: MutBorrow.t t_Vec_i64_Global) -> [ &_52 <- _bor ] [ &slots <- _bor.final ] s1)
+    | s1 = push_i64 {_52} {last} (fun (_x: ()) -> [ &_51 <- _x ] s2)
+    | s2 = [ &_ret <- slots ] s3
+    | s3 = return {_ret} ] ]
+  [ & _ret: t_Vec_i64_Global = Any.any_l ()
+  | & first: Int64.t = first
+  | & last: Int64.t = last
+  | & max_slots: Int64.t = max_slots
+  | & _19: bool = Any.any_l ()
+  | & _20: Int64.t = Any.any_l ()
+  | & slots: t_Vec_i64_Global = Any.any_l ()
+  | & slot: Int64.t = Any.any_l ()
+  | & _44: bool = Any.any_l ()
+  | & _47: () = Any.any_l ()
+  | & _48: MutBorrow.t t_Vec_i64_Global = Any.any_l ()
+  | & _51: () = Any.any_l ()
+  | & _52: MutBorrow.t t_Vec_i64_Global = Any.any_l ()
+  | & variant_old_bb5: int = Any.any_l () ])
+  [ return (result: t_Vec_i64_Global) ->
+  {[@stop_split] [@expl:bounded_shard_slots ensures] ([@stop_split] [@expl:bounded_shard_slots ensures #0] (Seq.length (view_Vec_i64_Global result)
+        = 0)
+      = ge_log_Int (Int64.to_int last - Int64.to_int first) (Int64.to_int max_slots))
+    /\ ([@stop_split] [@expl:bounded_shard_slots ensures #1] gt_log_Int (Seq.length (view_Vec_i64_Global result)) 0
+      -> Seq.length (view_Vec_i64_Global result) = Int64.to_int last - Int64.to_int first + 1)
+    /\ ([@stop_split] [@expl:bounded_shard_slots ensures #2] forall i: int. 0 <= i
+        /\ i < Seq.length (view_Vec_i64_Global result)
+      -> Int64.to_int (Seq.get (view_Vec_i64_Global result) i) = Int64.to_int first + i)}
+    (! return {result}) ]

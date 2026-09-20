@@ -1,30 +1,58 @@
 use futures::StreamExt as _;
 
 use super::{
-    Arc, BTreeSet, ByteSize, Duration, IndexSnapshotBytes, ObjectStore, ObjectStoreExt as _, Path,
-    Result, SnapshotManifest, SystemTime, UNIX_EPOCH, instrument, is_shard_payload_location,
-    list_index_snapshot_objects, read_index_snapshot_bytes, shard_payload_prefix_for_key,
+    Arc, BTreeSet, ByteSize, Duration, IndexSnapshotBytes, ObjectMeta, ObjectStore, Path, PutMode,
+    PutOptions, PutPayload, Result, SnapshotManifest, SystemTime, UNIX_EPOCH, UpdateVersion,
+    instrument, is_shard_payload_location, list_index_snapshot_objects, read_index_snapshot_bytes,
+    shard_payload_prefix_for_key,
 };
 
-/// Deletes the shard payloads of `key` that no retained manifest names.
+async fn reclaim_if_unchanged(store: &Arc<dyn ObjectStore>, meta: ObjectMeta) -> Result<bool> {
+    // ponytail: tombstones retain listing entries; use unique manifest payload
+    // IDs before deleting keys if empty-object accumulation becomes material.
+    let version = UpdateVersion {
+        e_tag: meta.e_tag,
+        version: meta.version,
+    };
+    match store
+        .put_opts(
+            &meta.location,
+            PutPayload::from_static(b""),
+            PutOptions::from(PutMode::Update(version)),
+        )
+        .await
+    {
+        Ok(_) => Ok(true),
+        Err(object_store::Error::Precondition { .. } | object_store::Error::NotFound { .. }) => {
+            Ok(false)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Reclaims the shard payloads of `key` that no retained manifest names.
 ///
 /// Payloads are immutable and content-addressed, so a shard that changes
 /// leaves its previous payload behind, still named by the generations that
 /// published it. Once those generations are pruned the payload is unreachable,
-/// and this is what reclaims it.
+/// and this is what reclaims its bytes.
+///
+/// Reclamation conditionally replaces the listed object version with an empty
+/// tombstone. If a writer has restored that key since the listing, the version
+/// precondition fails and the writer's bytes survive.
 ///
 /// `grace` is what keeps the sweep from racing a writer: a payload that has
 /// been written more recently than this is left alone, because a writer that
 /// has put its payloads and not yet swapped its manifest is indistinguishable
 /// from one that never will. A payload the sweep cannot date is kept.
 ///
-/// The sweep deletes only objects that spell a payload key of this index, and
+/// The sweep reclaims only objects that spell a payload key of this index, and
 /// leaves anything else under the prefix where it is: the prefix belongs to the
 /// index, but a bucket is shared.
 #[instrument(
     level = "debug",
     skip_all,
-    fields(key = %key, listed = tracing::field::Empty, deleted = tracing::field::Empty),
+    fields(key = %key, listed = tracing::field::Empty, reclaimed = tracing::field::Empty),
     err
 )]
 pub(crate) async fn sweep_orphan_shard_payloads(
@@ -65,18 +93,45 @@ pub(crate) async fn sweep_orphan_shard_payloads(
         // At or before the cutoff, not strictly before it: object timestamps
         // are whole seconds, and a zero grace has to mean "sweep everything"
         // rather than "sweep everything written in a previous second".
-        if cutoff.is_some_and(|cutoff| meta.last_modified.timestamp() <= cutoff) {
-            stale.push(meta.location);
+        if meta.size > 0 && cutoff.is_some_and(|cutoff| meta.last_modified.timestamp() <= cutoff) {
+            stale.push(meta);
         }
     }
 
     tracing::Span::current().record("listed", listed);
-    tracing::Span::current().record("deleted", stale.len());
-    for location in stale {
-        match store.delete(&location).await {
-            Ok(()) | Err(object_store::Error::NotFound { .. }) => {}
-            Err(error) => return Err(error.into()),
+    let mut reclaimed = 0_usize;
+    for meta in stale {
+        // A writer may have replaced this content-addressed key after the
+        // listing. The stale version, not merely its path, is the candidate.
+        if reclaim_if_unchanged(store, meta).await? {
+            reclaimed += 1;
         }
     }
+    tracing::Span::current().record("reclaimed", reclaimed);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use object_store::{ObjectStoreExt as _, memory::InMemory};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_rewrite_invalidates_a_stale_sweep_selection() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let location = Path::from("payload.kbs");
+        store
+            .put(&location, PutPayload::from_static(b"old"))
+            .await
+            .unwrap();
+        let selected = store.head(&location).await.unwrap();
+        store
+            .put(&location, PutPayload::from_static(b"new"))
+            .await
+            .unwrap();
+
+        assert2::check!(!reclaim_if_unchanged(&store, selected).await.unwrap());
+        assert2::check!(store.get(&location).await.unwrap().bytes().await.unwrap() == b"new"[..]);
+    }
 }

@@ -1,0 +1,11 @@
+{
+  "profile": [],
+  "proofs": {
+    "Coma": {
+      "vc_bounded_shard_slots": { "prover": "alt-ergo", "time": 0.034 },
+      "vc_new_i64": { "prover": "alt-ergo", "time": 0.007 },
+      "vc_push_i64": { "prover": "alt-ergo", "time": 0.009 },
+      "vc_saturating_sub": { "prover": "alt-ergo", "time": 0.008 }
+    }
+  }
+}

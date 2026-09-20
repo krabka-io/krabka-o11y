@@ -1,8 +1,8 @@
 use super::{
     Arc, BlockStoreError, ByteSize, Future, IndexSnapshotRetain, ObjectStore, Path, PutMode,
-    PutOptions, PutPayload, Result, SHARD_PAYLOAD_SWEEP_GRACE, SNAPSHOT_SWEEP_INTERVAL,
-    SnapshotManifest, instrument, prune_old_index_snapshots, read_manifest_snapshot_base,
-    snapshot_key_for_generation, sweep_orphan_shard_payloads,
+    PutOptions, PutPayload, Result, SHARD_PAYLOAD_PUBLISH_TIMEOUT, SHARD_PAYLOAD_SWEEP_GRACE,
+    SNAPSHOT_SWEEP_INTERVAL, SnapshotManifest, instrument, prune_old_index_snapshots,
+    read_manifest_snapshot_base, snapshot_key_for_generation, sweep_orphan_shard_payloads,
 };
 
 /// Bound on optimistic retries within one snapshot write.
@@ -51,16 +51,26 @@ where
         };
         let generation = base.next_generation;
         let snapshot_key = snapshot_key_for_generation(key, generation);
-        let bytes = merge(base.manifest).await?.to_bytes()?;
-        let len = bytes.len();
-        match store
-            .put_opts(
-                &Path::from(snapshot_key.clone()),
-                PutPayload::from(bytes),
-                PutOptions::from(PutMode::Create),
-            )
-            .await
-        {
+        let publication = tokio::time::timeout(SHARD_PAYLOAD_PUBLISH_TIMEOUT, async {
+            let bytes = merge(base.manifest).await?.to_bytes()?;
+            let len = bytes.len();
+            let put = store
+                .put_opts(
+                    &Path::from(snapshot_key.clone()),
+                    PutPayload::from(bytes),
+                    PutOptions::from(PutMode::Create),
+                )
+                .await;
+            Ok::<_, BlockStoreError>((len, put))
+        })
+        .await
+        .map_err(|_| {
+            BlockStoreError::ObjectStore(format!(
+                "index snapshot `{key}` publication exceeded {SHARD_PAYLOAD_PUBLISH_TIMEOUT:?}"
+            ))
+        })??;
+        let (len, put) = publication;
+        match put {
             Ok(_) => {
                 tracing::Span::current().record("attempts", attempt);
                 tracing::Span::current().record("len", len);
