@@ -266,6 +266,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
+          bazelisk-cache: true
+          repository-cache: true
+      - run: aspect mutants --self-test
       - run: tools/mutants-ratchet.py --self-test
       # //tools/bench-ratchet.py reads a Criterion run and decides whether the
       # benchmarks may pass. Its `--self-test` drives those checks against
@@ -634,9 +640,10 @@ jobs:
   # A mutation sweep rebuilds and re-runs a crate's unit tests once per mutant,
   # so it is far too slow to gate a pull request.
   #
-  # One job per crate, so each is bounded on its own and reports its own
-  # result, and the wall clock is the slowest crate rather than the sum. Two
-  # things this shape protects against, both learned the hard way in
+  # One job per ordinary crate, while the five crates that exceed a hosted
+  # runner's six-hour ceiling are split across two jobs. Their aggregate
+  # ratchet still requires every declared shard. Two things this shape
+  # protects against, both learned the hard way in
   # krabka-broker: a sweep that overruns inside one shared job says nothing
   # about which crate was responsible, and a shard that overruns reports
   # nothing at all rather than reporting a failure -- the totals line
@@ -677,6 +684,8 @@ jobs:
             bazel query 'kind("cargo_mutants_test rule", //crates/...)' |
               jq -R -s -c 'split("\n") | map(select(length > 0)) |
                 map({target: ., name: (. | split("/")[3] | split(":")[0])}) |
+                map(select(.name != "blockstore" and .name != "observability" and
+                  .name != "profiles" and .name != "promql" and .name != "traces")) |
                 map(. + {minutes: 360})'
           )"
           echo "crates=${crates}" >>"${GITHUB_OUTPUT}"
@@ -721,6 +730,60 @@ jobs:
       # the baseline comparison.
       - name: ratchet
         run: tools/mutants-ratchet.py ${{ matrix.crate.name }}
+  mutants-slow:
+    name: mutants · ${{ matrix.crate }} · part ${{ matrix.part }}
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        crate: [blockstore, observability, profiles, promql, traces]
+        part: [0, 1]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          aspect-api-token: ${{ secrets.ASPECT_API_TOKEN }}
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-mutants
+          repository-cache: true
+      - name: sweep
+        env:
+          KRABKA_MUTANTS_LOG_DIR: ${{ runner.temp }}/mutants
+        run: aspect mutants ${{ matrix.crate }} ${{ matrix.part }} 2
+      - name: evidence
+        if: always()
+        run: |
+          mkdir -p "${{ runner.temp }}/evidence/bazel-testlogs/crates/${{ matrix.crate }}"
+          cp -R "bazel-testlogs/crates/${{ matrix.crate }}/${{ matrix.crate }}_mutants" \
+            "${{ runner.temp }}/evidence/bazel-testlogs/crates/${{ matrix.crate }}/"
+          cp -R "${{ runner.temp }}/mutants" "${{ runner.temp }}/evidence/"
+      - name: upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-${{ matrix.crate }}-part-${{ matrix.part }}
+          path: ${{ runner.temp }}/evidence/
+          if-no-files-found: warn
+  mutants-slow-ratchet:
+    name: mutants · slow crate ratchets
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: mutants-slow
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: mutants-*-part-*
+          path: .
+          merge-multiple: true
+      - name: ratchet
+        run: |
+          for crate in blockstore observability profiles promql traces; do
+            tools/mutants-ratchet.py "${crate}"
+          done
   # The fuzz targets, run. Scheduled rather than a gate on a pull request, for
   # the same reason as the mutation sweep above: the work is unbounded, and
   # what a pull request can afford is the compile check the `fuzz-build` job

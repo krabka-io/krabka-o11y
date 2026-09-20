@@ -1,0 +1,31 @@
+"""Mutation sweep task."""
+
+def _impl(ctx: TaskContext) -> int:
+    values = ctx.args.parameters
+    if ctx.args.self_test:
+        if len(values) != 0:
+            ctx.std.process.exit(2, "--self-test does not take positional arguments")
+        values = ["--self-test"]
+    elif len(values) != 3:
+        ctx.std.process.exit(2, "usage: aspect mutants <crate> <part> <part-count>")
+
+    script = ctx.std.env.bazel_root_dir() + "/tools/mutants-part-sweep.sh"
+    return ctx.std.process.command(script).args(values).current_dir(
+        ctx.std.env.bazel_root_dir(),
+    ).spawn().wait().code
+
+mutants = task(
+    summary = "Run a bounded part of a mutation sweep.",
+    implementation = _impl,
+    args = {
+        "parameters": args.positional(
+            minimum = 0,
+            maximum = 3,
+            description = "Crate, zero-based part, and total part count; or --self-test.",
+        ),
+        "self_test": args.boolean(
+            default = False,
+            description = "Validate the shard partitioning without running a sweep.",
+        ),
+    },
+)
