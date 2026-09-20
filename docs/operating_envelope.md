@@ -9,7 +9,9 @@ limits are safety controls, not performance claims.
 The candidate deployment is the checked-in Kubernetes topology: one replica
 per role, one broker, one object store, one partition per WAL/state topic,
 replication factor one, 15-minute WAL retention, and the CPU/memory requests
-and limits in `deploy/kustomization.yaml`. A report is comparable only when it
+and limits in `deploy/kustomization.yaml`. The HA phase renders two WAL
+partitions so two block builders and two queriers per signal can own work; it
+leaves state topics and replication at one. A report is comparable only when it
 names the exact Krabka and broker commits, container digests, Kubernetes
 version, node CPU and memory, object-store provider, retention, replication,
 dataset seed, warm-up, measurement duration, and command.
@@ -41,4 +43,3 @@ reviewed.
 Until the stable-runner report covers every workload and all four signals,
 the supported numeric envelope remains unpublished. Raw shared-runner results
 are diagnostic evidence, not a capacity promise.
-

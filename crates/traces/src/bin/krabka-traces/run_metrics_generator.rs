@@ -33,6 +33,7 @@ pub(crate) async fn run_metrics_generator(
         "krabka-traces-metrics-generator",
         None,
         security.wal.as_ref(),
+        None,
     )
     .await?;
     wal_consumer_gate.mark_ready();

@@ -71,7 +71,7 @@ const QUERIES: &[(&str, &str)] = &[
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_querier_serves_queries_after_its_authorizer_connects() {
-    let stack = Stack::boot().await;
+    let stack = Box::pin(Stack::boot()).await;
 
     for (kind, query) in QUERIES {
         let deadline = Instant::now() + CONNECT_DEADLINE;

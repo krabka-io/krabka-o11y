@@ -1,14 +1,20 @@
+use krabka_client_consumer::IsolationLevel;
+
 use super::{
     AutoOffsetReset, ClientResourcePolicy, ClientSecurity, Consumer, ConsumerError, KafkaWalHeader,
     KafkaWalRecord, LogWalConsumer, Offset, PartitionIndex, Time, WalConsumerError,
     WalConsumerMetrics, WalPosition, async_trait,
 };
-use crate::{ReadinessGate, wal_group_assignment::WalAssignmentWatch};
+use crate::{
+    ReadinessGate,
+    wal_group_assignment::{WalAssignmentWatch, WalRebalanceListener},
+};
 
 pub struct KafkaLogWalConsumer {
     pub(crate) consumer: Consumer,
     metrics: WalConsumerMetrics,
     assignment: WalAssignmentWatch,
+    rebalance: WalRebalanceListener,
 }
 
 impl KafkaLogWalConsumer {
@@ -47,6 +53,7 @@ impl KafkaLogWalConsumer {
         security: Option<ClientSecurity>,
     ) -> Result<Self, ConsumerError> {
         let topic = topic.into();
+        let rebalance = WalRebalanceListener::new(topic.clone());
         let consumer = Consumer::builder()
             .bootstrap(bootstrap)
             .client_id("krabka-observability-block-builder")
@@ -55,13 +62,17 @@ impl KafkaLogWalConsumer {
             .maybe_security(security)
             .group_id(group_id)
             .auto_offset_reset(AutoOffsetReset::Earliest)
+            .isolation_level(IsolationLevel::ReadCommitted)
             .subscribe(vec![topic])
+            .rebalance_listener(Box::new(rebalance.clone()))
+            .enable_auto_commit(false)
             .build()
             .await?;
         let metrics = WalConsumerMetrics::unregistered();
         Ok(Self {
             consumer,
             assignment: WalAssignmentWatch::new(metrics.clone()),
+            rebalance,
             metrics,
         })
     }
@@ -95,6 +106,10 @@ impl KafkaLogWalConsumer {
 
 #[async_trait]
 impl LogWalConsumer for KafkaLogWalConsumer {
+    fn take_revoked_partitions(&mut self) -> std::collections::BTreeSet<i32> {
+        self.rebalance.take_revoked_partitions()
+    }
+
     fn set_catch_up_gate(&mut self, gate: ReadinessGate) {
         self.assignment = WalAssignmentWatch::with_catch_up(self.metrics.clone(), gate);
     }
@@ -110,8 +125,8 @@ impl LogWalConsumer for KafkaLogWalConsumer {
         // even when a record in it turns out to carry no value.
         self.metrics.record_poll(&records);
         // Read after the poll, so the snapshot is the one the fetch was served
-        // against. A revocation here says the group abandoned whatever the
-        // compactor had buffered for the lost partitions. See
+        // against. A revocation here says the group fenced whatever the
+        // compactor had buffered for replay by the new owner. See
         // `krabka_observability::wal_group_assignment`.
         self.assignment
             .observe_consumer(&self.consumer, !records.is_empty())

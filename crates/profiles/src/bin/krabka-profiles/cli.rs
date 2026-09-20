@@ -77,11 +77,8 @@ pub(crate) struct Cli {
     pub(crate) wal_topic: String,
     /// The Kafka consumer group the profiles block builder joins.
     ///
-    /// This names the group. It does not scale the write path. The block
-    /// builder buffers WAL records across polls, and the group abandons that
-    /// buffer for every partition it moves, so the group's membership should
-    /// not change while it runs. Set --wal-topic's partition count to shard the
-    /// write path. See `krabka_observability::wal_group_assignment`.
+    /// Members divide the WAL topic's partitions. Revoked, uncommitted buffers
+    /// are replayed by their new owner.
     #[arg(
         long,
         env = "KRABKA_PROFILES_BLOCK_BUILDER_GROUP_ID",

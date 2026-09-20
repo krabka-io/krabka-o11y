@@ -34,6 +34,7 @@ pub(crate) async fn run_distributor(
         .client_id(cli.ha_tracker_client_id.clone())
         .auto_offset_reset(AutoOffsetReset::Earliest)
         .subscribe([cli.ha_tracker_topic.clone()])
+        .enable_auto_commit(false)
         .build()
         .await?;
     wal_broker.mark_ready();

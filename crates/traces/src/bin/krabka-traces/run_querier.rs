@@ -106,6 +106,7 @@ pub(crate) async fn run_querier(
             "krabka-traces-querier-live-store",
             None,
             security.wal.as_ref(),
+            None,
         )
         .await?;
         let live_shutdown = shutdown.clone();

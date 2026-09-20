@@ -9,17 +9,10 @@ use super::*;
 ///
 /// # Consumer group rebalances
 ///
-/// The loop commits only the offsets its durable writes produced, so a restart
-/// replays at most the buffer it had not written. That holds while this member
-/// keeps its partitions. It does not hold across a rebalance: the buffer spans
-/// polls, and the consumer group releases a partition from a background task
-/// without calling anything in this process, so the buffered records for that
-/// partition are abandoned.
-///
-/// [`WalAssignmentConsumer`] reports each such revocation on
-/// `wal_consumer_partition_revocations` and in the log. It does not repair it.
-/// See [`krabka_observability::wal_group_assignment`] for why, and for what the
-/// group id does and does not do.
+/// The loop commits only the offsets its durable writes produced. On rebalance,
+/// [`WalAssignmentConsumer`] reports revoked partitions before this loop merges
+/// the new poll; their uncommitted buffers are removed and replayed by the new
+/// owner.
 ///
 /// # Errors
 /// Returns an error when metric input is malformed, a limit is exceeded, or the backing WAL, block store, or remote endpoint fails.
@@ -44,6 +37,7 @@ where
             .poll(config.poll_timeout)
             .await
             .inspect_err(|_| context.metrics.wal_consumer.record_poll_failure())?;
+        buffer.remove_partitions(&consumer.take_revoked_partitions());
         context.metrics.wal_consumer.record_poll(&records);
         let polled_records = records.len();
         let wal_records =

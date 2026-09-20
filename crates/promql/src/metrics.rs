@@ -54,6 +54,11 @@ mod tests {
         m.query_finished();
         m.record_ruler_rule(false);
         m.record_ruler_group(0.25);
+        m.ruler_owner.set(1);
+        m.ruler_producer_id.set(42);
+        m.ruler_producer_epoch.set(3);
+        m.ruler_lease_renew_failures.inc();
+        m.ruler_failover_duration_seconds.set(1.5);
         m.object_store
             .record_retry(krabka_blockstore::ObjectStoreOperation::Get);
         m.wal_consumer.record_partition_assigned("metrics", 0);
@@ -74,6 +79,11 @@ mod tests {
             "krabka_metrics_active_queries",
             "krabka_metrics_rule_evaluation_failures_total",
             "krabka_metrics_rule_group_last_duration_seconds 0.25",
+            "krabka_metrics_ruler_owner 1",
+            "krabka_metrics_ruler_producer_id 42",
+            "krabka_metrics_ruler_producer_epoch 3",
+            "krabka_metrics_ruler_lease_renew_failures_total 1",
+            "krabka_metrics_ruler_failover_duration_seconds 1.5",
             "krabka_metrics_objstore_operation_retries_total",
             "krabka_metrics_wal_consumer_partition_owned",
             "route=\"query\"",

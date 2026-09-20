@@ -29,8 +29,42 @@ where
     A: AlertmanagerSink,
     R: RulerStateSink,
 {
-    let (wal_sink, alert_sink, state_sink) = sinks;
     state.set_ruler_evaluation_time_ms(eval_time_ms);
+    let report = evaluate_ruler_once_deferred(
+        state,
+        sinks,
+        alert_state,
+        group_state,
+        tenant,
+        shard,
+        eval_time_ms,
+    )
+    .await?;
+    state.apply_ruler_evaluation_report(&report);
+    Ok(report.evaluation)
+}
+
+/// Evaluates one tenant without publishing its status. A fenced ruler uses
+/// this form and publishes only after its epoch-bound Kafka transaction commits.
+///
+/// # Errors
+/// Returns the evaluation or sink error without publishing the report.
+pub async fn evaluate_ruler_once_deferred<S, W, A, R>(
+    state: &Arc<PrometheusApiState<S>>,
+    sinks: (&W, &A, &R),
+    alert_state: &mut RulerAlertState,
+    group_state: &mut RulerGroupState,
+    tenant: &TenantId,
+    shard: RulerShard,
+    eval_time_ms: i64,
+) -> Result<krabka_promql::RulerEvaluationReport, krabka_promql::PromqlError>
+where
+    S: MetricStore,
+    W: RecordingRuleWalSink,
+    A: AlertmanagerSink,
+    R: RulerStateSink,
+{
+    let (wal_sink, alert_sink, state_sink) = sinks;
     let rules = state.ruler_rule_set(tenant);
     let engine = state.engine_for_tenant(tenant);
     let report = evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report(
@@ -42,6 +76,5 @@ where
         (group_state, shard, eval_time_ms),
     )
     .await?;
-    state.apply_ruler_evaluation_report(&report);
-    Ok(report.evaluation)
+    Ok(report)
 }

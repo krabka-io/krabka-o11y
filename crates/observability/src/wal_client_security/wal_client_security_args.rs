@@ -1,7 +1,7 @@
 use super::{
-    Args, ClientSecurity, NonEmptyStringValueParser, PathBuf, SaslCredentials, TlsConnectorConfig,
-    WalClientSecurityError, WalSaslMechanism, WalSecurityProtocol, check_readable,
-    read_password_file,
+    Args, ClientSecurity, KeyStore, NonEmptyStringValueParser, PathBuf, SaslCredentials,
+    TlsConnectorConfig, TrustStore, WalClientSecurityError, WalSaslMechanism, WalSecurityProtocol,
+    check_readable, read_password_file,
 };
 
 /// The write-ahead log security flags that every Krabka service binary
@@ -191,11 +191,16 @@ impl WalClientSecurityArgs {
             check_readable("--wal-tls-cert-path", cert_path)?;
             check_readable("--wal-tls-key-path", key_path)?;
         }
-        Ok(Some(TlsConnectorConfig {
-            trust_roots_pem: Some(ca_path),
-            server_name,
-            client_identity,
-        }))
+        let mut tls = TlsConnectorConfig::default();
+        tls.trust_store = TrustStore::PemFile(ca_path);
+        tls.server_name = server_name;
+        tls.key_store =
+            client_identity.map(|(certificate_chain, private_key)| KeyStore::PemFiles {
+                certificate_chain,
+                private_key,
+                key_password: None,
+            });
+        Ok(Some(tls))
     }
 
     /// The SASL half of the policy, or `None` for a protocol without SASL.

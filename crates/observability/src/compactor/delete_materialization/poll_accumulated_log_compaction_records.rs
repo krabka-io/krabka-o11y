@@ -11,6 +11,9 @@ pub(crate) async fn poll_accumulated_log_compaction_records(
     max_records_per_batch: NonZeroUsize,
 ) -> Result<Vec<KafkaWalRecord>, WalConsumerError> {
     let mut records = consumer.poll(initial_timeout).await?;
+    // This call has no older buffer to fence, but it must drain revocations
+    // observed by the poll so they cannot discard a later batch.
+    consumer.take_revoked_partitions();
     if records.is_empty() || records.len() >= max_records_per_batch.get() {
         return Ok(records);
     }
@@ -26,6 +29,8 @@ pub(crate) async fn poll_accumulated_log_compaction_records(
         // `std::cmp::min`.
         let poll_timeout = remaining.min(accumulation_poll_timeout);
         let next = consumer.poll(poll_timeout).await?;
+        let revoked = consumer.take_revoked_partitions();
+        records.retain(|record| !revoked.contains(&record.partition.0));
         if next.is_empty() {
             break;
         }

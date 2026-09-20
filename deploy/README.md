@@ -259,12 +259,15 @@ The recovery endpoint therefore reports `lag: null`, not a fabricated number,
 until the broker proves the consumer is at the end. The consumed and committed
 offsets show whether work is still being made durable.
 
-**Singleton WAL owners do not scale by replica count.** The base protects the
+**The base keeps WAL owners singleton.** The base protects the
 four block builders, traces live-store, traces metrics-generator, and the
 logs, metrics, and profiles read paths with `minAvailable: 1` disruption
-budgets. Scale the WAL topic partitions and add query fan-out before adding
-those consumers. Qualification scales the four distributors, the metrics
-query-frontend, and the traces querier and query-frontend.
+budgets. Scale the WAL topic partitions before adding those consumers. The
+Kubernetes qualification renders two WAL partitions and scales only the
+reconstructible block builders to two replicas. Querier hot tails retain a
+complete recent-data view only while each signal's querier remains singleton;
+fan-out is required before scaling a querier. Logs block-builder and querier
+also share single-writer PVCs and remain singleton.
 
 Their rolling strategies do not surge: the old member stops before its
 replacement waits for the single partition and catches up. The two logs roles

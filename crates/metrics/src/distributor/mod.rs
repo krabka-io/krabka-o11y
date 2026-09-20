@@ -1579,6 +1579,7 @@ overrides:
             offset,
             leader_epoch: -1,
             timestamp: 0,
+            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: value.map(Bytes::from),
             headers: Vec::new(),

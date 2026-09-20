@@ -8,7 +8,7 @@ use super::BTreeSet;
 pub struct WalAssignmentChange {
     /// Partitions the group took away from this member since the last poll.
     ///
-    /// Each one abandons whatever this member had buffered for it.
+    /// Each one requires any uncommitted buffer to be fenced from later writes.
     pub revoked: Vec<(String, i32)>,
     /// Partitions the group placed on this member since the last poll.
     pub gained: Vec<(String, i32)>,
@@ -33,8 +33,7 @@ impl WalAssignmentChange {
 
     /// Whether the group took a partition away from this member.
     ///
-    /// This is the state that abandons buffered records. A gain on its own is
-    /// safe, because a partition that arrives brings no buffer with it.
+    /// A gain on its own is safe because it brings no old buffer with it.
     #[must_use]
     pub fn strands_buffered_records(&self) -> bool {
         !self.revoked.is_empty()

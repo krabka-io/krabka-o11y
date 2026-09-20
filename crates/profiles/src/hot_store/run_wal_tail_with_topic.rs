@@ -1,6 +1,8 @@
+use krabka_client_consumer::IsolationLevel;
 use krabka_observability::{
     persisted_format::validate_persisted_format, wal_group_assignment::WalAssignmentWatch,
 };
+use krabka_units::convert::TimeExt;
 
 use super::{
     AutoOffsetReset, CancellationToken, Consumer, ProfileRecord, ProfilesError, WalTailConfig,
@@ -51,6 +53,8 @@ pub async fn run_wal_tail_with_topic(
             .group_id(group_id)
             .subscribe(vec![wal_topic])
             .auto_offset_reset(AutoOffsetReset::Earliest)
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .enable_auto_commit(false)
             .build() => built.map_err(|err| {
                 ProfilesError::Wal(format!("hot WAL-tail consumer build failed: {err}"))
             })?,
@@ -64,16 +68,23 @@ pub async fn run_wal_tail_with_topic(
         let polled = tokio::select! {
             biased;
             () = shutdown.cancelled() => None,
-            polled = consumer.poll(poll_timeout) => Some(
-                polled
-                    .inspect_err(|_| metrics.record_poll_failure())
-                    .map_err(|err| {
-                        ProfilesError::Wal(format!("hot WAL-tail consumer poll failed: {err}"))
-                    })?,
-            ),
+            polled = consumer.poll(poll_timeout) => Some(polled),
         };
-        let Some(records) = polled else {
+        let Some(polled) = polled else {
             return Ok(());
+        };
+        let records = match polled {
+            Ok(records) => records,
+            Err(error) => {
+                metrics.record_poll_failure();
+                tracing::warn!(%error, "profiles WAL-tail consumer poll failed; retrying");
+                tokio::select! {
+                    biased;
+                    () = shutdown.cancelled() => return Ok(()),
+                    () = tokio::time::sleep(poll_timeout.to_std()) => {}
+                }
+                continue;
+            }
         };
         metrics.record_poll(&records);
         assignment
@@ -97,10 +108,15 @@ pub async fn run_wal_tail_with_topic(
             .map(ProfileRecord::decode)
             .collect::<Result<Vec<_>, _>>()?;
         store.append_records(decoded)?;
-        consumer
-            .commit_sync()
-            .await
-            .map_err(|err| ProfilesError::Wal(format!("hot WAL-tail commit failed: {err}")))?;
+        if let Err(error) = consumer.commit_sync().await {
+            tracing::warn!(%error, "profiles WAL-tail commit failed; retrying");
+            tokio::select! {
+                biased;
+                () = shutdown.cancelled() => return Ok(()),
+                () = tokio::time::sleep(poll_timeout.to_std()) => {}
+            }
+            continue;
+        }
         metrics.record_commit();
         assignment.observe_applied(&consumer).await;
         // Checked after the commit, never between the poll and it: a batch

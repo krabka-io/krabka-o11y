@@ -48,7 +48,7 @@ const DEADLINE: Duration = Duration::from_secs(45);
 /// which is the port a `Loki` datasource would be pointed at.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_line_pushed_into_the_all_in_one_comes_back_out_of_its_query_api() {
-    let stack = AllInOne::start().await;
+    let stack = Box::pin(AllInOne::start()).await;
 
     let pushed = stack.push(push_body()).await;
     check!(pushed == reqwest::StatusCode::NO_CONTENT);
@@ -83,7 +83,7 @@ async fn a_line_pushed_into_the_all_in_one_comes_back_out_of_its_query_api() {
 /// that had been asked for, and the load balancer would go on sending pushes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_drain_request_takes_the_all_in_one_out_of_rotation() {
-    let stack = AllInOne::start().await;
+    let stack = Box::pin(AllInOne::start()).await;
     check!(!stack.ready_body().await.1.contains("accepting-writes"));
 
     let drained = stack.prepare_shutdown().await;
@@ -125,7 +125,7 @@ async fn a_drain_request_takes_the_all_in_one_out_of_rotation() {
 /// `StagedDrain` suite in `krabka_observability::supervision`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_stop_closes_the_data_port_and_leaves_the_last_push_in_a_block() {
-    let stack = AllInOne::start().await;
+    let stack = Box::pin(AllInOne::start()).await;
     check!(stack.push(push_body()).await == reqwest::StatusCode::NO_CONTENT);
     stack.query_until_answered().await;
 

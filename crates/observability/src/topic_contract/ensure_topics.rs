@@ -1,4 +1,4 @@
-use krabka_client_admin::AdminClient;
+use krabka_client_admin::{AdminClient, TopicMutationOptions};
 use krabka_units::secs;
 use tokio::time::{Duration, sleep};
 
@@ -47,7 +47,10 @@ pub async fn ensure_topics(
     let specs = desired_specs(topics, settings);
 
     for outcome in admin
-        .create_topics(&specs, secs(CREATE_TIMEOUT_SECS))
+        .create_topics(
+            &specs,
+            TopicMutationOptions::with_timeout(secs(CREATE_TIMEOUT_SECS)),
+        )
         .await?
     {
         let Some(error) = outcome.error else { continue };

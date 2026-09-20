@@ -121,8 +121,31 @@ mod tests {
             "the deadline follows the oldest record"
         );
     }
+
+    #[test]
+    fn a_compaction_buffer_fences_only_revoked_partitions() {
+        use std::{collections::BTreeSet, time::Instant};
+
+        let mut buffer = super::CompactionBuffer::new();
+        buffer.extend(
+            [0, 1]
+                .into_iter()
+                .map(|partition| super::CompactionWalRecord {
+                    partition: krabka_ids::PartitionIndex(partition),
+                    offset: krabka_ids::Offset(0),
+                    value: Vec::new(),
+                })
+                .collect(),
+            Instant::now(),
+        );
+
+        buffer.remove_partitions(&BTreeSet::from([0]));
+
+        assert_eq!(buffer.records.len(), 1);
+        assert_eq!(buffer.records[0].partition.0, 1);
+    }
     use std::{
-        collections::BTreeMap,
+        collections::{BTreeMap, BTreeSet},
         sync::{Arc, Mutex},
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
@@ -1569,6 +1592,7 @@ overrides:
                 offset: 10,
                 leader_epoch: -1,
                 timestamp: 100,
+                timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
                 key: None,
                 value: Some(bytes::Bytes::from(wal_record.encode().expect("encode wal"))),
                 headers: Vec::new(),
@@ -1579,6 +1603,7 @@ overrides:
                 offset: 11,
                 leader_epoch: -1,
                 timestamp: 101,
+                timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
                 key: None,
                 value: Some(bytes::Bytes::from_static(b"ignored")),
                 headers: Vec::new(),
@@ -1604,6 +1629,7 @@ overrides:
             offset: 12,
             leader_epoch: -1,
             timestamp: 102,
+            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: None,
             headers: Vec::new(),
@@ -1697,6 +1723,7 @@ overrides:
                 offset: 21,
                 leader_epoch: -1,
                 timestamp: 100,
+                timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
                 key: None,
                 value: Some(bytes::Bytes::from(wal_record.encode().expect("encode wal"))),
                 headers: Vec::new(),
@@ -1763,6 +1790,7 @@ overrides:
             offset,
             leader_epoch: -1,
             timestamp,
+            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: Some(bytes::Bytes::from(
                 float_record("tenant-a", "up", "api", timestamp)
@@ -1834,6 +1862,7 @@ overrides:
             offset,
             leader_epoch: -1,
             timestamp,
+            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: Some(bytes::Bytes::from(
                 float_record("tenant-a", "up", "api", timestamp)
@@ -1918,6 +1947,7 @@ overrides:
             offset,
             leader_epoch: -1,
             timestamp,
+            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: Some(bytes::Bytes::from(
                 float_record("tenant-a", "up", "api", timestamp)
@@ -1986,6 +2016,7 @@ overrides:
             offset,
             leader_epoch: -1,
             timestamp,
+            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: Some(bytes::Bytes::from(
                 float_record("tenant-a", "up", "api", timestamp)
@@ -2170,6 +2201,7 @@ overrides:
             offset: 10,
             leader_epoch: -1,
             timestamp: 100,
+            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: Some(bytes::Bytes::from(
                 float_record("tenant-a", "up", "api", 100)
@@ -2230,6 +2262,7 @@ overrides:
             offset: 10,
             leader_epoch: -1,
             timestamp: 100,
+            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: Some(bytes::Bytes::from(
                 float_record("tenant-a", "up", "api", 100)
@@ -2276,6 +2309,7 @@ overrides:
             offset,
             leader_epoch: -1,
             timestamp,
+            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: Some(bytes::Bytes::from(
                 float_record("tenant-a", "up", "api", timestamp)
@@ -2408,6 +2442,7 @@ overrides:
             offset,
             leader_epoch: -1,
             timestamp,
+            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: Some(bytes::Bytes::from(
                 float_record("tenant-a", "up", "api", timestamp)
@@ -2492,6 +2527,22 @@ overrides:
 
     struct RecordingSelectedCommit {
         calls: Arc<std::sync::Mutex<Vec<Vec<super::CompactionPartitionOffset>>>>,
+        revoked: BTreeSet<i32>,
+    }
+
+    #[async_trait]
+    impl super::CompactionConsumerPoll for RecordingSelectedCommit {
+        fn take_revoked_partitions(&mut self) -> BTreeSet<i32> {
+            std::mem::take(&mut self.revoked)
+        }
+
+        async fn poll(
+            &mut self,
+            _timeout: Time,
+        ) -> Result<Vec<krabka_client_consumer::ConsumerRecord>, super::CompactionConsumerPollError>
+        {
+            Ok(Vec::new())
+        }
     }
 
     #[async_trait]
@@ -2513,6 +2564,7 @@ overrides:
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let inner = RecordingSelectedCommit {
             calls: Arc::clone(&calls),
+            revoked: BTreeSet::new(),
         };
         let mut consumer = super::DurableCompactionConsumer::new(inner, crate::WAL_TOPIC);
         consumer
@@ -2535,6 +2587,20 @@ overrides:
         check!(calls[1].len() == 1);
         check!(calls[1][0].partition == krabka_ids::PartitionIndex(1));
         check!(calls[1][0].offset == krabka_ids::Offset(21));
+    }
+
+    #[test]
+    fn durable_consumer_forwards_revoked_partitions() {
+        use super::CompactionConsumerPoll as _;
+
+        let inner = RecordingSelectedCommit {
+            calls: Arc::default(),
+            revoked: BTreeSet::from([1]),
+        };
+        let mut consumer = super::DurableCompactionConsumer::new(inner, crate::WAL_TOPIC);
+
+        assert_eq!(consumer.take_revoked_partitions(), BTreeSet::from([1]));
+        assert!(consumer.take_revoked_partitions().is_empty());
     }
 
     #[test]

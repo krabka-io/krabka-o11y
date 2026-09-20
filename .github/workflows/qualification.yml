@@ -79,7 +79,7 @@ jobs:
             command: bazel run -c opt //bazel/images/krabka:load && tools/kubernetes-qualification.sh krabka-o11y:dev ghcr.io/krabka-io/krabka-o11y:sha-$(git rev-parse --short=12 HEAD^) qualification/evidence/kubernetes
           - id: ha
             gate: ha
-            command: bazel test //crates/observability:sigterm_drain_test //crates/observability:wal_live_broker_test //crates/profiles:all_drain_order_test //crates/profiles:block_builder_drain_test //crates/traces:all_in_one_drain_order_test //crates/traces:wal_group_rebalance_test
+            command: bazel test //crates/blockstore:blockstore_test //crates/blockstore:persistence_test //crates/observability:querier_object_store_test //crates/observability:sigterm_drain_test //crates/observability:wal_live_broker_test //crates/profiles:all_drain_order_test //crates/profiles:block_builder_drain_test //crates/profiles:block_builder_object_store_retry_test //crates/traces:all_in_one_drain_order_test //crates/traces:blockbuilder_test //crates/traces:wal_group_rebalance_test
           - id: migration
             gate: migration
             command: bazel run -c opt //bazel/images/krabka:load && tools/release-smoke.sh krabka-o11y:dev ghcr.io/krabka-io/krabka-o11y:sha-$(git rev-parse --short=12 HEAD^) qualification/evidence/persisted-upgrade

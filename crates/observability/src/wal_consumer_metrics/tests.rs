@@ -11,6 +11,7 @@ fn record(topic: &str, partition: i32, offset: i64, timestamp: i64) -> ConsumerR
         offset,
         leader_epoch: 0,
         timestamp,
+        timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
         key: None,
         value: None,
         headers: Vec::new(),

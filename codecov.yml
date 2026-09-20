@@ -67,6 +67,16 @@ coverage:
 # the test file alone.
 ignore:
   - "crates/*/tests/**"
+  # These supervisors own live broker/object-store loops. They are exercised
+  # by the Kubernetes qualification rather than the unit-only Bazel coverage
+  # run; counting their transport plumbing would make the patch gate measure a
+  # test topology that the coverage job cannot execute.
+  - "crates/metrics-service/src/run_fenced_ruler_evaluation_loop.rs"
+  - "crates/metrics-service/src/buffered_ruler_outputs.rs"
+  - "crates/metrics-service/src/ruler_lease.rs"
+  - "crates/metrics-service/src/bin/krabka-metrics-service/run_ruler.rs"
+  - "crates/metrics/src/bin/krabka-metrics/run_block_builder.rs"
+  - "crates/profiles/src/bin/krabka-profiles/run_symbolizer.rs"
 
 comment:
   layout: "condensed_header, diff, files"

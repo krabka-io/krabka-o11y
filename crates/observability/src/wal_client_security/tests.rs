@@ -5,7 +5,10 @@ use std::{
 
 use assert2::assert;
 use clap::Parser;
-use krabka_client_core::{ClientSecurity, ConnectionOptions, SaslCredentials, TlsConnectorConfig};
+use krabka_client_core::{
+    ClientSecurity, ConnectionOptions, SaslCredentials, TlsConnectorConfig,
+    security::{KeyStore, TrustStore},
+};
 use krabka_security::{ListenerProtocol, SaslMechanism};
 use krabka_units::secs;
 use tempfile::TempDir;
@@ -108,15 +111,16 @@ fn assert_same_security(actual: &ClientSecurity, expected: &ClientSecurity) {
     assert!(same_password, "the SASL passwords differ");
 }
 
-type TlsFields<'a> = (&'a Option<PathBuf>, &'a str, &'a Option<(PathBuf, PathBuf)>);
+type TlsFields<'a> = (&'a TrustStore, &'a str, &'a Option<KeyStore>);
 
 fn tls_fields(tls: &TlsConnectorConfig) -> TlsFields<'_> {
     let TlsConnectorConfig {
-        trust_roots_pem,
+        trust_store,
         server_name,
-        client_identity,
+        key_store,
+        ..
     } = tls;
-    (trust_roots_pem, server_name.as_str(), client_identity)
+    (trust_store, server_name.as_str(), key_store)
 }
 
 /// Every credential field except the password, which a failure may print.
@@ -291,13 +295,12 @@ fn sasl_ssl_with_scram_sha_512_builds_the_whole_policy() {
         .map_err(|error| error.to_string())
     );
 
+    let mut tls = TlsConnectorConfig::default();
+    tls.trust_store = TrustStore::PemFile(PathBuf::from(&ca));
+    tls.server_name = "broker.krabka.test".to_string();
     let expected = ClientSecurity {
         protocol: ListenerProtocol::SaslSsl,
-        tls: Some(TlsConnectorConfig {
-            trust_roots_pem: Some(PathBuf::from(&ca)),
-            server_name: "broker.krabka.test".to_string(),
-            client_identity: None,
-        }),
+        tls: Some(tls),
         sasl: Some(SaslCredentials::Scram {
             mechanism: SaslMechanism::ScramSha512,
             username: "krabka-metrics".to_string(),
@@ -317,11 +320,9 @@ fn each_protocol_and_mechanism_builds_the_policy_it_names() {
         files.path("key.pem"),
     );
     let (password_path, token) = (files.path("password"), files.path("token"));
-    let tls = TlsConnectorConfig {
-        trust_roots_pem: Some(PathBuf::from(&ca)),
-        server_name: "localhost".to_string(),
-        client_identity: None,
-    };
+    let mut tls = TlsConnectorConfig::default();
+    tls.trust_store = TrustStore::PemFile(PathBuf::from(&ca));
+    tls.server_name = "localhost".to_string();
     let cases: [(&str, Vec<&str>, ClientSecurity); 5] = [
         (
             "SSL",
@@ -356,9 +357,14 @@ fn each_protocol_and_mechanism_builds_the_policy_it_names() {
             ],
             ClientSecurity {
                 protocol: ListenerProtocol::Ssl,
-                tls: Some(TlsConnectorConfig {
-                    client_identity: Some((PathBuf::from(&cert), PathBuf::from(&key))),
-                    ..tls.clone()
+                tls: Some({
+                    let mut tls = tls.clone();
+                    tls.key_store = Some(KeyStore::PemFiles {
+                        certificate_chain: PathBuf::from(&cert),
+                        private_key: PathBuf::from(&key),
+                        key_password: None,
+                    });
+                    tls
                 }),
                 sasl: None,
                 sasl_host: None,
@@ -955,7 +961,7 @@ fn the_password_never_appears_in_debug_output_or_in_an_error() {
 fn with_client_security_replaces_only_the_security_policy() {
     let options = ConnectionOptions {
         client_id: "krabka-wal-test".to_string(),
-        connect_timeout: secs(3),
+        socket_connection_setup_timeout: secs(3),
         request_timeout: secs(7),
         ..ConnectionOptions::default()
     };
@@ -986,15 +992,15 @@ fn assert_same_options_apart_from_security(
     let ConnectionOptions {
         client_id,
         dns_timeout,
-        connect_timeout,
+        socket_connection_setup_timeout,
         request_timeout,
         dispatch_queue_capacity,
         frame_max,
-        security: _,
+        ..
     } = actual;
     assert!(*client_id == expected.client_id);
     assert!(*dns_timeout == expected.dns_timeout);
-    assert!(*connect_timeout == expected.connect_timeout);
+    assert!(*socket_connection_setup_timeout == expected.socket_connection_setup_timeout);
     assert!(*request_timeout == expected.request_timeout);
     assert!(*dispatch_queue_capacity == expected.dispatch_queue_capacity);
     assert!(*frame_max == expected.frame_max);
