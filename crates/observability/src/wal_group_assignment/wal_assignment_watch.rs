@@ -9,7 +9,7 @@ use crate::ReadinessGate;
 /// with what `Consumer::assignment` returned. The watch owns the comparison and
 /// the instruments, so the four signals report a rebalance in the same shape.
 ///
-/// The watch reports assignment changes; [`WalRebalanceListener`] supplies the
+/// The watch reports assignment changes; [`crate::wal_group_assignment::WalRebalanceListener`] supplies the
 /// synchronous fencing signal used to recover them.
 pub struct WalAssignmentWatch {
     metrics: WalConsumerMetrics,
