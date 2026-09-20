@@ -54,7 +54,11 @@ The scoped command excludes ignored container suites.
 
 ## Mutation Coverage
 
-This crate has no scheduled mutation target.
+The scheduled target is `bazel test //crates/query-frontend:query-frontend_mutants`.
+
+Its reviewed baseline is 64 survivors from a complete 8-shard run. The exact
+commit, command, runner, duration, and artifact checksums are recorded in
+[`qualification/milestone-19-mutation-baselines.json`](../../qualification/milestone-19-mutation-baselines.json).
 
 ## Test Infrastructure
 

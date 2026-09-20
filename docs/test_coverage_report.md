@@ -52,9 +52,14 @@ No percentage is quoted here without the complete LCOV output for this revision.
 
 ## Mutation Coverage
 
-Ten crate mutation targets run on the scheduled workflow.
+Eleven crate mutation targets run on the scheduled workflow. Four have reviewed
+baselines from complete, checksum-verified runs: logql (91 survivors), pprof
+(86), query-frontend (64), and traceql (1). The run metadata and artifact
+checksums are recorded in
+[`qualification/milestone-19-mutation-baselines.json`](../qualification/milestone-19-mutation-baselines.json).
 
-Their baselines are `unseeded`, so the reports quote no survivor count until every shard completes and `tools/mutants-ratchet.py` validates the totals.
+The other seven targets remain `unseeded` until every shard completes on a
+suitable runner and `tools/mutants-ratchet.py` validates the totals.
 
 ## Cross-Cutting Gaps
 
