@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "status": "partial",
+  "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/35502486604",
+  "commit": "a9f8ca3b977fc34c5ee2f62ab3a0ca2632f6dfe0",
+  "runner": {
+    "label": "ubuntu-latest",
+    "os": "Linux 6.17.0-1022-azure x86_64",
+    "cpu_count": 4,
+    "memory_kib": 16373452
+  },
+  "toolchain": {
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+    "bazel": "9.2.0",
+    "bazelisk": "1.28.1"
+  },
+  "results": {
+    "logql": {
+      "started_at": "2026-09-20T10:15:24Z",
+      "command": "bazel test //crates/logql:logql_mutants --nocache_test_results --test_output=all --test_timeout=36000 --local_test_jobs=4 --local_resources=memory=HOST_RAM*.6",
+      "duration_seconds": 6339,
+      "shards": 12,
+      "total": 1634,
+      "caught": 1390,
+      "survived": 91,
+      "unviable": 153,
+      "artifact_id": 10604659091,
+      "artifact_sha256": "e485c551af60cd96c1d9d144de8023c947fc28452f53fba1662fd5f60a0e2adf",
+      "contents_manifest_sha256": "af042135ce0d7c786c115330dc9f844954a259669ea0fe7504c7279dcd43babe"
+    },
+    "pprof": {
+      "started_at": "2026-09-20T10:05:43Z",
+      "command": "bazel test //crates/pprof:pprof_mutants --nocache_test_results --test_output=all --test_timeout=36000 --local_test_jobs=4 --local_resources=memory=HOST_RAM*.6",
+      "duration_seconds": 18049,
+      "shards": 12,
+      "total": 884,
+      "caught": 708,
+      "survived": 86,
+      "unviable": 90,
+      "artifact_id": 10607253158,
+      "artifact_sha256": "3a08ac7f6ad07557dbe80ef08398f16dbc485882f88a43758cf1706aceac00ef",
+      "contents_manifest_sha256": "c54d05530bc538be630a0fe2106d6f285e27136d31e130417078551bab845233"
+    },
+    "query-frontend": {
+      "started_at": "2026-09-20T10:02:26Z",
+      "command": "bazel test //crates/query-frontend:query-frontend_mutants --nocache_test_results --test_output=all --test_timeout=36000 --local_test_jobs=4 --local_resources=memory=HOST_RAM*.6",
+      "duration_seconds": 672,
+      "shards": 8,
+      "total": 234,
+      "caught": 154,
+      "survived": 64,
+      "unviable": 16,
+      "artifact_id": 10602794272,
+      "artifact_sha256": "d4b8313f2e9bd4560d7b319d6cde5aa5bfc96aaca2baa467b21f1f3a449daced",
+      "contents_manifest_sha256": "f8096c657a712ce16f61b9b99dc96594da5f8093ff381b231b915465f0d44af5"
+    },
+    "traceql": {
+      "started_at": "2026-09-20T10:01:15Z",
+      "command": "bazel test //crates/traceql:traceql_mutants --nocache_test_results --test_output=all --test_timeout=36000 --local_test_jobs=4 --local_resources=memory=HOST_RAM*.6",
+      "duration_seconds": 12126,
+      "shards": 16,
+      "total": 1396,
+      "caught": 1222,
+      "survived": 1,
+      "unviable": 173,
+      "artifact_id": 10605829551,
+      "artifact_sha256": "dcee8c3ffe29f1c482f880ebb2fb70e3643aa88a981ab9bdf06c577f48d78953",
+      "contents_manifest_sha256": "f83f2f9f1c4fd449f9ae711a8e5e2de1a8a45a5c1a777728679b25138f969454"
+    }
+  },
+  "unseeded": [
+    "blockstore",
+    "metrics",
+    "metrics-service",
+    "observability",
+    "profiles",
+    "promql",
+    "traces"
+  ]
+}

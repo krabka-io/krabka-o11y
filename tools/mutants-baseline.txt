@@ -20,14 +20,17 @@
 #
 #     tools/mutants-ratchet.py <crate> --record
 #
+# Recorded run metadata and artifact checksums live in
+# qualification/milestone-19-mutation-baselines.json.
+#
 blockstore       unseeded
-logql            unseeded
+logql            91
 metrics          unseeded
 metrics-service  unseeded
 observability    unseeded
-pprof            unseeded
+pprof            86
 profiles         unseeded
 promql           unseeded
-query-frontend   19
-traceql          unseeded
+query-frontend   64
+traceql          1
 traces           unseeded

@@ -13,9 +13,10 @@
 # such file, and with no window in it, this role keeps every block forever and
 # runs no sweep at all.
 #
-# `object-store-url` carries no path. //crates/metrics' object-store builder
-# drops the prefix a URL names, so blocks go at the bucket root; the querier's
-# `manifest-prefix` is what separates them from another signal's.
+# `object-store-url` may include a path. //crates/metrics' object-store builder
+# preserves that prefix, so blocks stay below the configured bucket namespace;
+# the querier's `manifest-prefix` separates its manifest layout from another
+# signal's.
 target: block-builder
 admin-listen-addr: 0.0.0.0:9404
 bootstrap: broker:9092
