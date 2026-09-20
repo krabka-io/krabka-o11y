@@ -6,6 +6,13 @@
 # Keep the action environment hermetic so build-script outputs are reproducible.
 build --incompatible_strict_action_env
 
+build --bes_results_url=https://krabka.buildbuddy.io/invocation/
+build --bes_backend=grpcs://krabka.buildbuddy.io
+common --remote_cache=grpcs://krabka.buildbuddy.io
+common --remote_timeout=10m
+common --remote_executor=grpcs://krabka.buildbuddy.io
+common --remote_header=x-buildbuddy-api-key=17TIEOG7HoiuUJsAySGk
+
 # The @llvm toolchain passes `--unwindlib=none` on link actions deliberately, to
 # stop clang picking a libunwind for itself. clang then reports the argument as
 # unused, and rustc's `linker_messages` lint surfaces that on stderr -- one
