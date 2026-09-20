@@ -73,7 +73,8 @@ jobs:
       # `--severity` defaults to `auto`, which the CLI resolves to `fail` on CI
       # and `info` off it -- so this gates here and only reports locally.
       - name: format
-        run: aspect format
+        # Formatting must not depend on optional Aspect remote-cache auth.
+        run: aspect format --bazel-flag=--remote_cache=
       # `aspect lint` narrows to the targets a change touched and annotates the
       # pull request. It reads the `rules_lint_machine` output group, which is
       # why the clippy aspect comes from aspect_rules_lint_rust rather than from
