@@ -328,7 +328,7 @@ snapshot_role_recovery() {
 }
 
 owner_pod() {
-  local workload pod recovery
+  local workload=$1 pod recovery
   while IFS= read -r pod; do
     recovery=$(kubectl get --raw "/api/v1/namespaces/${namespace}/pods/${pod}:9404/proxy/status/recovery")
     if jq -e '[.wal_consumers[].partitions[] | select(.assigned == true)] | length > 0' \
