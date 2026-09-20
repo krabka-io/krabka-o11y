@@ -1,3 +1,5 @@
+use krabka_o11y_verified::overlap_window;
+
 use super::{
     BTreeMap, BTreeSet, BlockEntry, BlockLevel, BlockListRepr, BlockMeta, Deserialize, Serialize,
     SeriesFingerprint, fingerprint_set_digest,
@@ -35,6 +37,8 @@ pub(crate) struct BlockList {
     postings: BTreeMap<SeriesFingerprint, Vec<u32>>,
     /// Live ordinals, sorted by `(min_ts, max_ts, object_key)`.
     order: Vec<u32>,
+    /// `min_ts` values in `order`, kept separately for verified binary search.
+    min_start: Vec<i64>,
     /// `ordinal -> position in order`, or `u32::MAX` for a dead ordinal.
     position: Vec<u32>,
     /// `max_end[i] = max(max_ts of order[0..=i])`. Non-decreasing, so it is
@@ -55,6 +59,7 @@ impl From<BlockListRepr> for BlockList {
             by_key: BTreeMap::new(),
             postings: repr.postings,
             order: Vec::new(),
+            min_start: Vec::new(),
             max_end: Vec::new(),
             dead: 0,
         };
@@ -304,12 +309,7 @@ impl BlockList {
     /// Blocks are cut on time and barely overlap, so in the usual case the
     /// span is the answer and the test rejects nothing.
     fn window(&self, min_ts: i64, max_ts: i64) -> (usize, usize) {
-        let entries = &self.entries;
-        let hi = self
-            .order
-            .partition_point(|ordinal| entries[*ordinal as usize].min_ts <= max_ts);
-        let lo = self.max_end[..hi].partition_point(|end| *end < min_ts);
-        (lo, hi)
+        overlap_window(&self.min_start, &self.max_end, min_ts, max_ts)
     }
 
     fn keys_in_window(
@@ -361,11 +361,13 @@ impl BlockList {
     /// Both are prefix-dependent only, so an edit at `from` leaves everything
     /// before it correct and nothing before it is touched.
     fn refresh_from(&mut self, from: usize) {
+        self.min_start.resize(self.order.len(), i64::MIN);
         self.max_end.resize(self.order.len(), i64::MIN);
         for index in from..self.order.len() {
             let ordinal = self.order[index];
             self.position[ordinal as usize] =
                 u32::try_from(index).expect("a position indexes a Vec that a u32 ordinal indexes");
+            self.min_start[index] = self.entries[ordinal as usize].min_ts;
             let previous = if index == 0 {
                 i64::MIN
             } else {
@@ -433,6 +435,7 @@ impl BlockList {
             by_key: BTreeMap::new(),
             postings,
             order: Vec::new(),
+            min_start: Vec::new(),
             max_end: Vec::new(),
             dead: 0,
         };
@@ -476,6 +479,7 @@ impl BlockList {
         });
         self.position.resize(self.entries.len(), NO_POSITION);
         self.position.fill(NO_POSITION);
+        self.min_start.clear();
         self.max_end.clear();
         self.refresh_from(0);
     }

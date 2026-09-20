@@ -12,11 +12,13 @@ Stateright exhaustively enumerates a bounded durable-publication protocol.
 | --- | --- |
 | `compaction_run_ends` | Every run is contiguous, contains at least two blocks, stays within the fan-in cap, and leaves at most one trailing block. All arithmetic and the loop are safe and terminating. |
 | `retention_cutoff` | Non-positive retention keeps data forever; positive retention subtracts without overflowing the timestamp range. |
+| `overlap_window` | Two binary searches return exactly the slice that can overlap a query: every earlier prefix ends too soon and every later block starts too late. The searches are safe and terminating. |
+| `bounded_shard_slots` | A bounded grid span produces every consecutive shard slot exactly once; an oversized span produces the unbounded fallback without overflowing at either end of `i64`. |
 
-The blockstore remains responsible for grouping candidates by tenant, level,
-and time bucket and for sorting each group. Those are adapter preconditions,
-not claims made by the kernels. The existing blockstore tests cover that
-adapter and compare its observable plans.
+The blockstore remains responsible for grouping compaction candidates and for
+maintaining the index's sorted start times and prefix maximum end times. Those
+are adapter preconditions, not claims made by the kernels. The existing
+blockstore tests cover those adapters and compare their observable plans.
 
 Creusot is pinned by `.creusot-version`; checked-in sessions live under
 `verif/krabka_o11y_verified_rlib`. Replay them with:
@@ -25,7 +27,7 @@ Creusot is pinned by `.creusot-version`; checked-in sessions live under
 bash tools/creusot-prove.sh
 ```
 
-## Stateright model
+## Stateright models
 
 `storage_protocol_model` enumerates two- and three-partition compaction batches
 through block write, index publication, assignment commit, transient failure,
@@ -38,3 +40,11 @@ The model assumes a stable consumer-group assignment and object-store puts
 that report durability accurately. Partition revocation is excluded: the
 traces block-builder documents the current buffered-window limitation, and
 GitHub issue #266 owns that larger handoff redesign.
+
+`index_snapshot_protocol_model` enumerates two concurrent snapshot writers
+through generation reads, immutable payload writes, conditional manifest
+publication, conflicts, crashes, retries, aging, and orphan sweeps. Its safety
+properties require every published or in-flight manifest payload to remain
+durable and require a successful writer's contribution never to disappear.
+Reachability properties cover conflict merging, crash replay, and reclamation;
+the exact 580-state graph is pinned.
