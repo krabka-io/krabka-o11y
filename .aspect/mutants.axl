@@ -1,0 +1,239 @@
+"""Run disjoint cargo-mutants Bazel shards without a shell wrapper."""
+
+def _is_digits(value: str) -> bool:
+    if not value:
+        return False
+    for index in range(len(value)):
+        if value[index] not in "0123456789":
+            return False
+    return True
+
+def _parse_nonnegative(ctx: TaskContext, value: str, message: str) -> int:
+    if not _is_digits(value):
+        ctx.std.process.exit(2, message)
+    return int(value)
+
+def _valid_crate(value: str) -> bool:
+    if not value:
+        return False
+    for index in range(len(value)):
+        if value[index] not in "abcdefghijklmnopqrstuvwxyz0123456789-":
+            return False
+    return True
+
+def _shards_for_part(total: int, part: int, parts: int) -> list[int]:
+    return [shard for shard in range(part, total, parts)]
+
+def _command_output(ctx: TaskContext, command: str, arguments: list[str]) -> str:
+    result = ctx.std.process.command(command).args(arguments).current_dir(
+        ctx.std.env.bazel_root_dir(),
+    ).stdout("piped").stderr("piped").spawn().wait_with_output()
+    if result.status.code != 0:
+        ctx.std.process.exit(result.status.code, result.stderr)
+    return result.stdout.strip()
+
+def _shard_count(ctx: TaskContext, target: str) -> int:
+    xml = _command_output(ctx, "bazel", ["query", target, "--output=xml"])
+    marker = '<int name="shard_count" value="'
+    start = xml.find(marker)
+    if start < 0:
+        ctx.std.process.exit(2, target + " has no positive shard_count")
+    start += len(marker)
+    end = xml.find('"', start)
+    if end < 0:
+        ctx.std.process.exit(2, target + " has no positive shard_count")
+    return _parse_nonnegative(ctx, xml[start:end], target + " has no positive shard_count")
+
+def _wait_for_shards(ctx: TaskContext, pending: list[dict]) -> None:
+    for shard in pending:
+        shard["child"].wait()
+        stderr = ctx.std.fs.read_to_string(shard["stderr"])
+        if stderr:
+            ctx.std.fs.write(
+                shard["log"],
+                ctx.std.fs.read_to_string(shard["log"]) + stderr,
+            )
+        ctx.std.fs.remove_file(shard["stderr"])
+
+def _spawn_shard(
+        ctx: TaskContext,
+        runner: str,
+        runfiles: str,
+        scratch_root: str,
+        crate: str,
+        part: int,
+        shard: int,
+        shard_count: int) -> dict:
+    scratch = scratch_root + "/" + crate + "/part-" + str(part) + "/shard-" + str(shard)
+    log = "bazel-testlogs/crates/{}/{}_mutants/shard_{}_of_{}/test.log".format(
+        crate,
+        crate,
+        shard + 1,
+        shard_count,
+    )
+    stderr = log + ".stderr"
+    ctx.std.fs.create_dir_all(scratch)
+    ctx.std.fs.create_dir_all(
+        "bazel-testlogs/crates/{}/{}_mutants/shard_{}_of_{}".format(
+            crate,
+            crate,
+            shard + 1,
+            shard_count,
+        ),
+    )
+    child = ctx.std.process.command(runner).args([]).current_dir(
+        ctx.std.env.bazel_root_dir(),
+    ).env("TEST_SRCDIR", runfiles).env("RUNFILES_DIR", runfiles).env(
+        "TEST_WORKSPACE",
+        "_main",
+    ).env("TEST_TOTAL_SHARDS", str(shard_count)).env(
+        "TEST_SHARD_INDEX",
+        str(shard),
+    ).env("TEST_TMPDIR", scratch).stdout(ctx.std.fs.create(log)).stderr(
+        ctx.std.fs.create(stderr),
+    ).spawn()
+    return {"child": child, "log": log, "stderr": stderr}
+
+def _self_test(ctx: TaskContext) -> None:
+    if _shards_for_part(8, 1, 3) != [1, 4, 7]:
+        ctx.std.process.exit(1, "unexpected shard partition")
+    if not (_is_digits("8") and _is_digits("0") and not _is_digits("")):
+        ctx.std.process.exit(1, "unexpected partition validation")
+    print("mutants task self-test passed")
+
+def _impl(ctx: TaskContext) -> int:
+    values = ctx.args.parameters
+    if ctx.args.self_test:
+        if len(values) != 0:
+            ctx.std.process.exit(2, "--self-test does not take positional arguments")
+        _self_test(ctx)
+        return 0
+    if len(values) != 3:
+        ctx.std.process.exit(2, "usage: aspect mutants <crate> <part> <part-count>")
+
+    crate = values[0]
+    if not _valid_crate(crate):
+        ctx.std.process.exit(2, "crate must contain only lowercase letters, digits, and hyphens")
+    part = _parse_nonnegative(ctx, values[1], "part must be a nonnegative integer")
+    parts = _parse_nonnegative(ctx, values[2], "part-count must be a positive integer")
+    if parts == 0 or part >= parts:
+        ctx.std.process.exit(2, "part must be less than a positive part-count")
+
+    target = "//crates/{}:{}_mutants".format(crate, crate)
+    shard_count = _shard_count(ctx, target)
+    if shard_count == 0:
+        ctx.std.process.exit(2, target + " has no positive shard_count")
+    if part >= shard_count:
+        ctx.std.process.exit(2, "part {} selects no shard from {}".format(part, shard_count))
+
+    cores = _parse_nonnegative(ctx, _command_output(ctx, "nproc", []), "nproc returned an invalid value")
+    default_concurrent = min(cores, 4)
+    concurrent_value = ctx.std.env.var("KRABKA_MUTANTS_CONCURRENT_SHARDS")
+    concurrent = default_concurrent if concurrent_value == None else _parse_nonnegative(
+        ctx,
+        concurrent_value,
+        "KRABKA_MUTANTS_CONCURRENT_SHARDS must be a positive integer",
+    )
+    if concurrent == 0:
+        ctx.std.process.exit(2, "KRABKA_MUTANTS_CONCURRENT_SHARDS must be a positive integer")
+
+    root = ctx.std.env.bazel_root_dir()
+    log_dir = ctx.std.env.var("KRABKA_MUTANTS_LOG_DIR")
+    if log_dir == None:
+        log_dir = ctx.std.env.home_dir() + "/krabka-work/sweep-results"
+    output_base = ctx.bazel.info(keys = ["output_base"]).get("output_base")
+    scratch_root = ctx.std.env.var("KRABKA_MUTANTS_SCRATCH_DIR")
+    if scratch_root == None:
+        scratch_root = output_base + "/mutants-parts"
+    ctx.std.fs.create_dir_all(log_dir)
+    ctx.std.fs.create_dir_all(scratch_root + "/" + crate + "/part-" + str(part))
+
+    build = ctx.bazel.build(target).wait()
+    if build.code != 0:
+        return build.code
+    bazel_bin = ctx.bazel.info(keys = ["bazel-bin"]).get("bazel-bin")
+    runner = bazel_bin + "/crates/" + crate + "/" + crate + "_mutants"
+    runfiles = runner + ".runfiles"
+    selected_shards = _shards_for_part(shard_count, part, parts)
+    print("sweeping {} part {} of {}: shards {}".format(
+        crate,
+        part + 1,
+        parts,
+        " ".join([str(shard) for shard in selected_shards]),
+    ))
+
+    started_at = _command_output(ctx, "date", ["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+    started_seconds = _parse_nonnegative(ctx, _command_output(ctx, "date", ["+%s"]), "date returned an invalid value")
+    pending = []
+    for shard in selected_shards:
+        pending.append(_spawn_shard(
+            ctx,
+            runner,
+            runfiles,
+            scratch_root,
+            crate,
+            part,
+            shard,
+            shard_count,
+        ))
+        if len(pending) == concurrent:
+            _wait_for_shards(ctx, pending)
+            pending = []
+    _wait_for_shards(ctx, pending)
+
+    duration_seconds = _parse_nonnegative(ctx, _command_output(ctx, "date", ["+%s"]), "date returned an invalid value") - started_seconds
+    metadata = log_dir + "/{}-part-{}.metadata.txt".format(crate, part)
+    ctx.std.fs.write(metadata, "\n".join([
+        "commit=" + _command_output(ctx, "git", ["rev-parse", "HEAD"]),
+        "started_at=" + started_at,
+        "duration_seconds=" + str(duration_seconds),
+        "part={}".format(part),
+        "parts={}".format(parts),
+        "shard_count={}".format(shard_count),
+        "selected_shards=" + " ".join([str(shard) for shard in selected_shards]),
+        "command=aspect mutants {} {} {}".format(crate, part, parts),
+        "host=" + _command_output(ctx, "uname", ["-a"]),
+        "cpu_count=" + _command_output(ctx, "nproc", []),
+        "memory_kib=" + _command_output(ctx, "awk", ["/^MemTotal:/ {print $2}", "/proc/meminfo"]),
+        "rustc=" + _command_output(ctx, "rustc", ["--version", "--verbose"]).replace("\n", ";"),
+        "bazel=" + _command_output(ctx, "bazel", ["version"]).replace("\n", ";"),
+        "",
+    ]))
+
+    checksums = []
+    for path in [metadata] + [
+        "bazel-testlogs/crates/{}/{}_mutants/shard_{}_of_{}/test.log".format(
+            crate,
+            crate,
+            shard + 1,
+            shard_count,
+        )
+        for shard in selected_shards
+    ]:
+        checksums.append(_command_output(ctx, "sha256sum", [path]))
+    ctx.std.fs.write(log_dir + "/{}-part-{}.SHA256SUMS".format(crate, part), "\n".join(checksums) + "\n")
+    for shard in selected_shards:
+        log = "bazel-testlogs/crates/{}/{}_mutants/shard_{}_of_{}/test.log".format(
+            crate,
+            crate,
+            shard + 1,
+            shard_count,
+        )
+        print(ctx.std.fs.read_to_string(log))
+    return 0
+
+mutants = task(
+    summary = "Run a bounded part of a mutation sweep.",
+    implementation = _impl,
+    args = {
+        "parameters": args.positional(
+            minimum = 0,
+            maximum = 3,
+            description = "Crate, zero-based part, and total part count; or --self-test.",
+        ),
+        "self_test": args.boolean(
+            default = False,
+            description = "Validate the shard partitioning without running a sweep.",
+        ),
+    },
+)
