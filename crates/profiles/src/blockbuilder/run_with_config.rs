@@ -1,3 +1,5 @@
+use krabka_client_consumer::IsolationLevel;
+
 use super::*;
 
 /// Builds profile blocks from the WAL until `shutdown` is cancelled.
@@ -86,6 +88,7 @@ pub async fn run_with_config(
             .fetch_partition_max(config.wal_fetch_partition_max)
             .subscribe(vec![config.wal_topic.clone()])
             .auto_offset_reset(AutoOffsetReset::Earliest)
+            .isolation_level(IsolationLevel::ReadCommitted)
             .rebalance_listener(Box::new(rebalance.clone()))
             .enable_auto_commit(false)
             .build() => built.map_err(|err| {

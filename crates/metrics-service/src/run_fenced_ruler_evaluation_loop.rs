@@ -85,23 +85,75 @@ where
                 }
                 if now_ms >= next_eval_ms {
                     if let Some(producer) = transport.bound_producer(&role).await {
-                        match evaluate_and_commit(
+                        let mut evaluation = Box::pin(evaluate_and_commit(
                             &state,
                             &alert_sink,
                             producer,
                             shard,
                             &topics,
                             now_ms,
-                        )
-                        .await
-                        {
-                            Ok(pass) => publish_committed(&state, &alert_sink, pass).await,
-                            Err(error) => {
-                                tracing::error!(%role, %token, %error, "fenced ruler pass did not commit");
-                                if transport.describe(&role).await.ok().flatten() != Some(token) {
-                                    held_token = None;
-                                    metrics.ruler_owner.set(0);
-                                    failover_started_ms = current_time_ms();
+                        ));
+                        let mut next_renew_at_ms = renew_at_ms;
+                        loop {
+                            let delay_ms = next_renew_at_ms
+                                .saturating_sub(current_time_ms())
+                                .clamp(1, 1_000);
+                            tokio::select! {
+                                biased;
+                                () = &mut stop => return Ok(()),
+                                result = &mut evaluation => {
+                                    match result {
+                                        Ok(pass) => publish_committed(&state, &alert_sink, pass).await,
+                                        Err(error) => {
+                                            tracing::error!(%role, %token, %error, "fenced ruler pass did not commit");
+                                            if transport.describe(&role).await.ok().flatten() != Some(token) {
+                                                held_token = None;
+                                                metrics.ruler_owner.set(0);
+                                                failover_started_ms = current_time_ms();
+                                            }
+                                        }
+                                    }
+                                    break;
+                                }
+                                () = tokio::time::sleep(std::time::Duration::from_millis(
+                                    u64::try_from(delay_ms).unwrap_or(1),
+                                )) => {
+                                    match advance_ruler_lease(
+                                        transport.as_ref(),
+                                        &role,
+                                        &member,
+                                        held_token,
+                                        lease_config,
+                                        current_time_ms(),
+                                    ).await {
+                                        Ok(super::RulerLeaseState::Active {
+                                            token: renewed,
+                                            renew_at_ms: next,
+                                            ..
+                                        }) => {
+                                            held_token = Some(renewed);
+                                            next_renew_at_ms = next;
+                                        }
+                                        Ok(super::RulerLeaseState::Standby { .. }) => {
+                                            held_token = None;
+                                            metrics.ruler_owner.set(0);
+                                            failover_started_ms = current_time_ms();
+                                            tracing::warn!(%role, %member, "ruler shard ownership lost during evaluation");
+                                            break;
+                                        }
+                                        Err(error) => {
+                                            metrics.ruler_lease_renew_failures.inc();
+                                            if error.is_fenced() {
+                                                held_token = None;
+                                                metrics.ruler_owner.set(0);
+                                                failover_started_ms = current_time_ms();
+                                                tracing::warn!(%role, %member, %error, "ruler lease fenced during evaluation");
+                                                break;
+                                            }
+                                            next_renew_at_ms = current_time_ms().saturating_add(1_000);
+                                            tracing::warn!(%role, %member, %error, "ruler lease renewal failed during evaluation");
+                                        }
+                                    }
                                 }
                             }
                         }

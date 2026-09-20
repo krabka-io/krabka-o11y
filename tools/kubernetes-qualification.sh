@@ -10,8 +10,9 @@ tenant=release-smoke
 base_marker="kubernetes-${GITHUB_SHA:-local}-$(date +%s)"
 marker=${base_marker}
 metrics_query_time=
-replicated=(metrics-block-builder metrics-querier logs-block-builder logs-querier \
-  traces-block-builder traces-querier profiles-block-builder profiles-querier)
+# Only roles with reconstructible local state are safe to replicate here.
+# Querier hot tails and the logs PVCs are single-writer by design.
+replicated=(metrics-block-builder traces-block-builder profiles-block-builder)
 mkdir -p "${evidence_dir}"
 commands="${evidence_dir}/commands.log"
 : >"${commands}"
@@ -185,17 +186,19 @@ send_corpus() {
   span_id=${trace_id:0:16}
   send_http logs http://127.0.0.1:19999/loki/api/v1/push \
     -H 'Content-Type: application/json' \
-    --data "{\"streams\":[{\"stream\":{\"job\":\"${marker}\"},\"values\":[[\"${now_ns}\",\"${marker}\"]]}]}"
+    --data "{\"streams\":[{\"stream\":{\"job\":\"${marker}\",\"series\":\"one\"},\"values\":[[\"${now_ns}\",\"${marker}\"]]},{\"stream\":{\"job\":\"${marker}\",\"series\":\"two\"},\"values\":[[\"$((now_ns + 1))\",\"${marker}\"]]}]}"
   send_http traces http://127.0.0.1:14318/v1/traces \
     -H 'Content-Type: application/json' \
-    --data "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"${marker}\"}}]},\"scopeSpans\":[{\"spans\":[{\"traceId\":\"${trace_id}\",\"spanId\":\"${span_id}\",\"name\":\"${marker}\",\"startTimeUnixNano\":\"${now_ns}\",\"endTimeUnixNano\":\"$((now_ns + 1000000))\"}]}]}]}"
+    --data "{\"resourceSpans\":[{\"resource\":{\"attributes\":[{\"key\":\"service.name\",\"value\":{\"stringValue\":\"${marker}\"}}]},\"scopeSpans\":[{\"spans\":[{\"traceId\":\"${trace_id}\",\"spanId\":\"${span_id}\",\"name\":\"${marker}-one\",\"startTimeUnixNano\":\"${now_ns}\",\"endTimeUnixNano\":\"$((now_ns + 1000000))\"},{\"traceId\":\"${trace_id:0:31}0\",\"spanId\":\"${span_id:0:15}0\",\"name\":\"${marker}-two\",\"startTimeUnixNano\":\"${now_ns}\",\"endTimeUnixNano\":\"$((now_ns + 1000000))\"}]}]}]}"
   send_http metrics 'http://127.0.0.1:14041/api/v1/push/influx/write?precision=ms' \
     -H "X-Scope-OrgID: ${tenant}" -H 'Content-Type: text/plain' \
-    --data-binary "krabka_qualification,marker=${marker} value=1 ${now_ms}"
-  send_http profiles \
-    "http://127.0.0.1:14040/ingest?name=qualification%7Bservice_name%3D%22${marker}%22%7D&format=groups&units=samples&until=${now_ms}" \
-    -H "X-Scope-OrgID: ${tenant}" -H 'Content-Type: text/plain' \
-    --data-binary 'qualification;sample 1'
+    --data-binary $'krabka_qualification,marker='"${marker}"',series=one value=1 '"${now_ms}"$'\nkrabka_qualification,marker='"${marker}"',series=two value=1 '"$((now_ms + 1))"
+  for series in one two; do
+    send_http profiles \
+      "http://127.0.0.1:14040/ingest?name=qualification%7Bservice_name%3D%22${marker}%22%2Cseries%3D%22${series}%22%7D&format=groups&units=samples&until=${now_ms}" \
+      -H "X-Scope-OrgID: ${tenant}" -H 'Content-Type: text/plain' \
+      --data-binary 'qualification;sample 1'
+  done
 }
 
 wait_for() {
@@ -324,6 +327,21 @@ snapshot_role_recovery() {
   done
 }
 
+owner_pod() {
+  local workload pod recovery
+  while IFS= read -r pod; do
+    recovery=$(kubectl get --raw "/api/v1/namespaces/${namespace}/pods/${pod}:9404/proxy/status/recovery")
+    if jq -e '[.wal_consumers[].partitions[] | select(.assigned == true)] | length > 0' \
+      <<<"${recovery}" >/dev/null; then
+      printf '%s\n' "${pod}"
+      return 0
+    fi
+  done < <(kubectl -n "${namespace}" get pod \
+    -l "app.kubernetes.io/name=${workload}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | sort)
+  echo "no assigned owner found for ${workload}" >&2
+  return 1
+}
+
 assert_marker_cardinality() {
   local stage=$1 signal before after
   for signal in metrics logs traces profiles; do
@@ -443,8 +461,7 @@ query_corpus replicated
 run kubectl -n "${namespace}" scale deployment/alloy --replicas=0
 printf 'workload\trecovery_ms\n' >"${evidence_dir}/takeover-times.tsv"
 for workload in "${replicated[@]}"; do
-  victim=$(kubectl -n "${namespace}" get pod \
-    -l "app.kubernetes.io/name=${workload}" -o name | sort | sed -n '1p')
+  victim="pod/$(owner_pod "${workload}")"
   started=$(monotonic_ms)
   run kubectl -n "${namespace}" delete "${victim}" --wait=false
   run kubectl -n "${namespace}" rollout status "deployment/${workload}" --timeout=10m

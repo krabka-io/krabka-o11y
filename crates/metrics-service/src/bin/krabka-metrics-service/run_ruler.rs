@@ -1,4 +1,5 @@
 use krabka_blockstore::MeteredObjectStore;
+use krabka_client_consumer::IsolationLevel;
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
@@ -128,7 +129,7 @@ pub(crate) async fn run_ruler(
                         .as_nanos()
                 ))
                 .client_id(format!("{}-ruler-state", cli.wal_client_id))
-                .auto_offset_reset(AutoOffsetReset::Earliest)
+                .auto_offset_reset(AutoOffsetReset::Earliest).isolation_level(IsolationLevel::ReadCommitted)
                 .subscribe([cli.ruler_state_topic.clone()])
                 .enable_auto_commit(false)
                 .build() => built?,
@@ -251,16 +252,13 @@ fn ruler_coordination_identity(
     cli: &Cli,
 ) -> Result<(Role, MemberId, LeaseConfig), Box<dyn std::error::Error>> {
     let role_name = format!(
-        "krabka-metrics-ruler-{}-of-{}",
-        cli.ruler_shard_index, cli.ruler_shard_total
+        "krabka-metrics-ruler-{}-{}-of-{}",
+        cli.ruler_state_topic, cli.ruler_shard_index, cli.ruler_shard_total
     );
-    let replica = cli.ruler_replica_id.clone().unwrap_or_else(|| {
-        format!(
-            "{}-{}",
-            std::env::var("HOSTNAME").unwrap_or_else(|_| cli.wal_client_id.clone()),
-            std::process::id()
-        )
-    });
+    let replica = cli
+        .ruler_replica_id
+        .clone()
+        .unwrap_or_else(|| cli.wal_client_id.clone());
     Ok((
         Role::new(&role_name)?,
         MemberId::new(&replica)?,

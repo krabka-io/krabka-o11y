@@ -1,3 +1,4 @@
+use krabka_client_consumer::IsolationLevel;
 use krabka_observability::{
     persisted_format::validate_persisted_format, wal_group_assignment::WalAssignmentWatch,
 };
@@ -52,6 +53,7 @@ pub async fn run_wal_tail_with_topic(
             .group_id(group_id)
             .subscribe(vec![wal_topic])
             .auto_offset_reset(AutoOffsetReset::Earliest)
+            .isolation_level(IsolationLevel::ReadCommitted)
             .enable_auto_commit(false)
             .build() => built.map_err(|err| {
                 ProfilesError::Wal(format!("hot WAL-tail consumer build failed: {err}"))

@@ -1,3 +1,4 @@
+use krabka_client_consumer::IsolationLevel;
 use krabka_observability::wal_group_assignment::WalRebalanceListener;
 
 use super::{AutoOffsetReset, Cli, ClientSecurity, Consumer, TRACES_WAL_TOPIC};
@@ -28,6 +29,7 @@ pub(crate) async fn wal_consumer(
             .maybe_security(security.cloned())
             .subscribe(vec![TRACES_WAL_TOPIC.to_string()])
             .auto_offset_reset(AutoOffsetReset::Earliest)
+            .isolation_level(IsolationLevel::ReadCommitted)
             .maybe_rebalance_listener(rebalance.map(|listener| {
                 Box::new(listener) as Box<dyn krabka_client_consumer::ConsumerRebalanceListener>
             }))

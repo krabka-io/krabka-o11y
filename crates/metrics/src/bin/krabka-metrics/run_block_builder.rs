@@ -94,7 +94,9 @@ pub(crate) async fn run_block_builder(
         };
         match attempt {
             Ok(result) => break result,
-            Err(error) if !stopping.is_cancelled() => {
+            Err(error @ krabka_metrics::CompactionPollError::Poll(_))
+                if !stopping.is_cancelled() =>
+            {
                 tracing::warn!(%error, "metrics block-builder loop failed; retrying");
                 tokio::time::sleep(config.poll_timeout.to_std()).await;
                 consumer = config

@@ -206,7 +206,7 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = "KRABKA_METRICS_RULER_COORDINATION_REPLICATION",
-        default_value_t = 3,
+        default_value_t = 1,
         value_parser = clap::value_parser!(i32).range(1..)
     )]
     pub(crate) ruler_coordination_replication: i32,

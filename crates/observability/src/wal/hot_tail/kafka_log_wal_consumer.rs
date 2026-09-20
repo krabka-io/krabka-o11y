@@ -1,3 +1,5 @@
+use krabka_client_consumer::IsolationLevel;
+
 use super::{
     AutoOffsetReset, ClientResourcePolicy, ClientSecurity, Consumer, ConsumerError, KafkaWalHeader,
     KafkaWalRecord, LogWalConsumer, Offset, PartitionIndex, Time, WalConsumerError,
@@ -60,6 +62,7 @@ impl KafkaLogWalConsumer {
             .maybe_security(security)
             .group_id(group_id)
             .auto_offset_reset(AutoOffsetReset::Earliest)
+            .isolation_level(IsolationLevel::ReadCommitted)
             .subscribe(vec![topic])
             .rebalance_listener(Box::new(rebalance.clone()))
             .enable_auto_commit(false)

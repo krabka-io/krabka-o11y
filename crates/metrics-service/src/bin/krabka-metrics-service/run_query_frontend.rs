@@ -1,4 +1,5 @@
 use krabka_blockstore::MeteredObjectStore;
+use krabka_client_consumer::IsolationLevel;
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
@@ -76,6 +77,7 @@ pub(crate) async fn run_query_frontend(
                         .group_id(group_id)
                         .client_id(client_id)
                         .auto_offset_reset(AutoOffsetReset::Earliest)
+                        .isolation_level(IsolationLevel::ReadCommitted)
                         .subscribe([subscribe_topic])
                         .enable_auto_commit(false)
                         .build()

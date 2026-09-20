@@ -1,3 +1,4 @@
+use krabka_client_consumer::IsolationLevel;
 use krabka_observability::{
     wal_consumer_metrics::WalConsumerMetrics, wal_group_assignment::WalRebalanceListener,
 };
@@ -133,6 +134,7 @@ impl MetricsCompactorConfig {
             .group_id(self.group_id.clone())
             .client_id(self.client_id.clone())
             .auto_offset_reset(self.auto_offset_reset)
+            .isolation_level(IsolationLevel::ReadCommitted)
             .subscribe([self.wal_topic.clone()])
             .rebalance_listener(Box::new(rebalance.clone()))
             .enable_auto_commit(false)

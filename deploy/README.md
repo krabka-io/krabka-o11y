@@ -263,9 +263,11 @@ offsets show whether work is still being made durable.
 four block builders, traces live-store, traces metrics-generator, and the
 logs, metrics, and profiles read paths with `minAvailable: 1` disruption
 budgets. Scale the WAL topic partitions before adding those consumers. The
-Kubernetes qualification renders two WAL partitions, scales every signal's
-block builder and querier to two replicas, and deletes one replica of each
-while it checks the acknowledged corpus and response cardinality.
+Kubernetes qualification renders two WAL partitions and scales only the
+reconstructible block builders to two replicas. Querier hot tails retain a
+complete recent-data view only while each signal's querier remains singleton;
+fan-out is required before scaling a querier. Logs block-builder and querier
+also share single-writer PVCs and remain singleton.
 
 Their rolling strategies do not surge: the old member stops before its
 replacement waits for the single partition and catches up. The two logs roles
