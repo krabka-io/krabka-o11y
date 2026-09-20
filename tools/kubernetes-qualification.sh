@@ -496,6 +496,10 @@ run kubectl -n "${namespace}" scale statefulset/broker statefulset/minio --repli
 run kubectl -n "${namespace}" rollout status statefulset/broker --timeout=10m
 run kubectl -n "${namespace}" rollout status statefulset/minio --timeout=10m
 wait_deployments
+# A dependency outage may exhaust a bounded I/O retry budget and let a role
+# restart under its supervisor. Establish the steady-state baseline only after
+# both dependencies are back; fresh recovery traffic must not add another one.
+snapshot_restarts dependency-recovery-ready
 query_corpus dependency-recovery
 assert_marker_cardinality dependency-recovery
 run kubectl -n "${namespace}" scale deployment/alloy --replicas=1
@@ -505,7 +509,7 @@ marker="${base_marker}-dependency-recovery"
 send_corpus
 query_corpus dependency-recovery-fresh
 snapshot_role_recovery dependency-recovery "${replicated[@]}"
-assert_no_new_restarts dependency-recovery replicated
+assert_no_new_restarts dependency-recovery dependency-recovery-ready
 
 kubectl -n "${namespace}" get all -o wide >"${evidence_dir}/objects.txt"
 docker image inspect "${new_image}" >"${evidence_dir}/new-image.json"
