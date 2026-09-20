@@ -178,7 +178,7 @@ pub(crate) struct Cli {
     pub(crate) ruler_shard_index: usize,
     #[arg(long, env = "KRABKA_METRICS_RULER_SHARD_TOTAL", default_value_t = 1)]
     pub(crate) ruler_shard_total: usize,
-    /// Stable identity of this ruler replica. Defaults to `HOSTNAME` plus the process id.
+    /// Stable identity of this ruler replica. Defaults to the WAL client id.
     #[arg(long, env = "KRABKA_METRICS_RULER_REPLICA_ID")]
     pub(crate) ruler_replica_id: Option<String>,
     #[arg(
