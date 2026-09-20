@@ -1,3 +1,5 @@
+use krabka_observability::wal_group_assignment::WalRebalanceListener;
+
 use super::{AutoOffsetReset, Cli, ClientSecurity, Consumer, TRACES_WAL_TOPIC};
 
 /// A consumer of the traces WAL in `group_id`, with the fetch and client
@@ -7,6 +9,7 @@ pub(crate) async fn wal_consumer(
     group_id: &str,
     group_instance_id: Option<&str>,
     security: Option<&ClientSecurity>,
+    rebalance: Option<WalRebalanceListener>,
 ) -> Result<Consumer, krabka_client_consumer::ConsumerError> {
     // Boxed: consumer startup (bootstrap resolve, double `JoinGroup`,
     // `SyncGroup`, offset priming) builds a ~13 KB future. Every role that
@@ -25,6 +28,10 @@ pub(crate) async fn wal_consumer(
             .maybe_security(security.cloned())
             .subscribe(vec![TRACES_WAL_TOPIC.to_string()])
             .auto_offset_reset(AutoOffsetReset::Earliest)
+            .maybe_rebalance_listener(rebalance.map(|listener| {
+                Box::new(listener) as Box<dyn krabka_client_consumer::ConsumerRebalanceListener>
+            }))
+            .enable_auto_commit(false)
             .build(),
     )
     .await

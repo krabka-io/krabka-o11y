@@ -15,18 +15,9 @@ use super::*;
 ///
 /// # Consumer group rebalances
 ///
-/// A shutdown is the only assignment change this loop survives. The accumulator
-/// holds decoded windows per partition across polls, and the consumer group can
-/// take a partition away between two of them. `krabka-client-consumer` releases
-/// the partition from a background task and calls nothing in this process
-/// first, so the windows buffered for that partition are abandoned.
-///
-/// [`BlockBuilderConsumer`] reports each such revocation on
-/// `wal_consumer_partition_revocations` and in the log. It does not repair it:
-/// a later flush still writes a block for a partition this member no longer
-/// owns, under a key that is a function of this member's own offset range. See
-/// [`krabka_observability::wal_group_assignment`] for why no code here can do
-/// better, and for what the group id does and does not do.
+/// [`BlockBuilderConsumer`] reports each revocation before this loop merges the
+/// new poll. The loop removes only those partition windows; their offsets stay
+/// at the last durable commit and the new owner replays them.
 ///
 /// # Object-store failures
 ///
@@ -79,6 +70,7 @@ where
             .poll(config.window)
             .await
             .inspect_err(|_| metrics.wal_consumer.record_poll_failure())?;
+        accumulator.remove_partitions(&consumer.take_revoked_partitions());
         // Recorded before the decode, so a poll that arrived is counted even
         // when the records in it turn out to be unreadable.
         metrics.wal_consumer.record_poll(&records);

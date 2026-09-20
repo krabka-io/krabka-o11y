@@ -10,6 +10,8 @@ tenant=release-smoke
 base_marker="kubernetes-${GITHUB_SHA:-local}-$(date +%s)"
 marker=${base_marker}
 metrics_query_time=
+replicated=(metrics-block-builder metrics-querier logs-block-builder logs-querier \
+  traces-block-builder traces-querier profiles-block-builder profiles-querier)
 mkdir -p "${evidence_dir}"
 commands="${evidence_dir}/commands.log"
 : >"${commands}"
@@ -19,6 +21,10 @@ run() {
   printf '%q ' "$@" >>"${commands}"
   printf '\n' >>"${commands}"
   "$@"
+}
+
+monotonic_ms() {
+  python3 -c 'import time; print(time.monotonic_ns() // 1_000_000)'
 }
 
 wait_deployments() {
@@ -39,9 +45,11 @@ set_krabka_image() {
   run kubectl -n "${namespace}" set image "${deployment}" "${images[@]}"
 }
 
-forward_pids=()
+query_forward_pids=()
+ingest_forward_pids=()
 cleanup() {
-  if ((${#forward_pids[@]})); then kill "${forward_pids[@]}" 2>/dev/null || true; fi
+  if ((${#query_forward_pids[@]})); then kill "${query_forward_pids[@]}" 2>/dev/null || true; fi
+  if ((${#ingest_forward_pids[@]})); then kill "${ingest_forward_pids[@]}" 2>/dev/null || true; fi
   kind delete cluster --name "${cluster}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -68,7 +76,8 @@ kubectl get nodes -o wide >"${evidence_dir}/nodes.txt"
 kubectl kustomize deploy >"${evidence_dir}/manifests.current.yaml"
 kubectl kustomize deploy >"${evidence_dir}/manifests.second.yaml"
 run cmp "${evidence_dir}/manifests.current.yaml" "${evidence_dir}/manifests.second.yaml"
-sed "s#image: ghcr.io/krabka-io/krabka-o11y:latest#image: ${old_image}#" \
+sed -e "s#image: ghcr.io/krabka-io/krabka-o11y:latest#image: ${old_image}#" \
+  -e 's/--partitions=1/--partitions=2/g' \
   <"${evidence_dir}/manifests.current.yaml" >"${evidence_dir}/manifests.yaml"
 run kubectl apply --server-side -f "${evidence_dir}/manifests.yaml"
 run kubectl -n "${namespace}" create configmap qualification-alloy \
@@ -80,16 +89,20 @@ run kubectl -n "${namespace}" rollout status statefulset/minio --timeout=10m
 wait_deployments
 
 port_forward() {
-  local target=$1 ports=$2
+  local target=$1 ports=$2 group=${3:-query}
   kubectl -n "${namespace}" port-forward "${target}" "${ports}" \
     >>"${evidence_dir}/port-forward.log" 2>&1 &
-  forward_pids+=("$!")
+  if [[ ${group} == ingest ]]; then
+    ingest_forward_pids+=("$!")
+  else
+    query_forward_pids+=("$!")
+  fi
 }
 
 wait_http() {
   local url=$1
   for _ in $(seq 1 90); do
-    curl -fsS "${url}" >/dev/null 2>&1 && return 0
+    curl --max-time 10 -fsS "${url}" >/dev/null 2>&1 && return 0
     sleep 2
   done
   echo "${url} did not become available" >&2
@@ -98,37 +111,54 @@ wait_http() {
 wait_reachable() {
   local url=$1
   for _ in $(seq 1 90); do
-    curl -sS -o /dev/null "${url}" 2>/dev/null && return 0
+    curl --max-time 10 -sS -o /dev/null "${url}" 2>/dev/null && return 0
     sleep 2
   done
   echo "${url} did not become reachable" >&2
   return 1
 }
-start_forwards() {
-  if ((${#forward_pids[@]})); then
-    kill "${forward_pids[@]}" 2>/dev/null || true
-    wait "${forward_pids[@]}" 2>/dev/null || true
+start_query_forwards() {
+  if ((${#query_forward_pids[@]})); then
+    kill "${query_forward_pids[@]}" 2>/dev/null || true
+    wait "${query_forward_pids[@]}" 2>/dev/null || true
   fi
-  forward_pids=()
-  port_forward service/alloy 19999:9999
-  port_forward service/alloy 14318:4318
-  port_forward service/metrics-distributor 14041:4041
-  port_forward service/profiles-distributor 14040:4040
+  query_forward_pids=()
   port_forward service/metrics-query-frontend 19090:9090
   port_forward service/logs-querier 13101:3100
   port_forward service/traces-query-frontend 13201:3200
   port_forward service/profiles-query-frontend 14042:4040
-  wait_reachable http://127.0.0.1:19999/
-  wait_reachable http://127.0.0.1:14318/
   wait_http http://127.0.0.1:19090/ready
   wait_http http://127.0.0.1:13101/ready
   wait_http http://127.0.0.1:13201/ready
   wait_http http://127.0.0.1:14042/ready
 }
+start_ingest_forwards() {
+  if ((${#ingest_forward_pids[@]})); then
+    kill "${ingest_forward_pids[@]}" 2>/dev/null || true
+    wait "${ingest_forward_pids[@]}" 2>/dev/null || true
+  fi
+  ingest_forward_pids=()
+  port_forward service/alloy 19999:9999 ingest
+  port_forward service/alloy 14318:4318 ingest
+  port_forward service/metrics-distributor 14041:4041 ingest
+  port_forward service/profiles-distributor 14040:4040 ingest
+  wait_reachable http://127.0.0.1:19999/
+  wait_reachable http://127.0.0.1:14318/
+}
+start_forwards() {
+  start_query_forwards
+  start_ingest_forwards
+}
 ensure_forwards() {
   local pid
-  for pid in "${forward_pids[@]}"; do
-    kill -0 "${pid}" 2>/dev/null || { start_forwards; return; }
+  for pid in "${query_forward_pids[@]}"; do
+    kill -0 "${pid}" 2>/dev/null || { start_query_forwards; return; }
+  done
+}
+ensure_ingest_forwards() {
+  local pid
+  for pid in "${ingest_forward_pids[@]}"; do
+    kill -0 "${pid}" 2>/dev/null || { start_ingest_forwards; return; }
   done
 }
 
@@ -136,8 +166,8 @@ send_http() {
   local name=$1
   shift
   for _ in $(seq 1 30); do
-    ensure_forwards
-    if run curl -fsS "$@"; then return 0; fi
+    ensure_ingest_forwards
+    if run curl --max-time 10 -fsS "$@"; then return 0; fi
     sleep 2
   done
   echo "${name} did not accept the qualification corpus" >&2
@@ -173,10 +203,10 @@ wait_for() {
   for _ in $(seq 1 120); do
     ensure_forwards
     if [[ -n ${body} ]]; then
-      response=$(curl -fsS "${url}" -H "X-Scope-OrgID: ${tenant}" \
+      response=$(curl --max-time 10 -fsS "${url}" -H "X-Scope-OrgID: ${tenant}" \
         -H 'Content-Type: application/json' --data "${body}" 2>/dev/null) || response=
     else
-      response=$(curl -fsS "${url}" -H "X-Scope-OrgID: ${tenant}" 2>/dev/null) || response=
+      response=$(curl --max-time 10 -fsS "${url}" -H "X-Scope-OrgID: ${tenant}" 2>/dev/null) || response=
     fi
     if grep -Fq "${marker}" <<<"${response}"; then
       printf '%s\n' "${response}" >"${evidence_dir}/${name}.json"
@@ -192,10 +222,10 @@ assert_absent() {
   local name=$1 url=$2 needle=$3 body=${4:-} response
   ensure_forwards
   if [[ -n ${body} ]]; then
-    response=$(curl -fsS "${url}" -H 'X-Scope-OrgID: release-smoke-isolated' \
+    response=$(curl --max-time 10 -fsS "${url}" -H 'X-Scope-OrgID: release-smoke-isolated' \
       -H 'Content-Type: application/json' --data "${body}")
   else
-    response=$(curl -fsS "${url}" -H 'X-Scope-OrgID: release-smoke-isolated')
+    response=$(curl --max-time 10 -fsS "${url}" -H 'X-Scope-OrgID: release-smoke-isolated')
   fi
   printf '%s\n' "${response}" >"${evidence_dir}/${name}.json"
   if grep -Fq "${needle}" <<<"${response}"; then
@@ -234,7 +264,7 @@ snapshot_restarts() {
 }
 
 assert_no_new_restarts() {
-  local stage=$1
+  local stage=$1 baseline=${2:-old}
   snapshot_restarts "${stage}"
   awk '
     NR == FNR {
@@ -250,7 +280,60 @@ assert_no_new_restarts() {
       }
     }
     END { exit failed }
-  ' "${evidence_dir}/old-restarts.txt" "${evidence_dir}/${stage}-restarts.txt"
+  ' "${evidence_dir}/${baseline}-restarts.txt" "${evidence_dir}/${stage}-restarts.txt"
+}
+
+probe_bounded_query() {
+  local name=$1 url=$2 body=${3:-} code started elapsed
+  ensure_forwards
+  started=$(monotonic_ms)
+  if [[ -n ${body} ]]; then
+    code=$(curl --max-time 60 -sS -o "${evidence_dir}/${name}.json" -w '%{http_code}' \
+      "${url}" -H "X-Scope-OrgID: ${tenant}" -H 'Content-Type: application/json' \
+      --data "${body}") || code=000
+  else
+    code=$(curl --max-time 60 -sS -o "${evidence_dir}/${name}.json" -w '%{http_code}' \
+      "${url}" -H "X-Scope-OrgID: ${tenant}") || code=000
+  fi
+  elapsed=$(( $(monotonic_ms) - started ))
+  printf 'status=%s\nelapsed_ms=%s\n' "${code}" "${elapsed}" \
+    >"${evidence_dir}/${name}.txt"
+  if [[ ${code} == 400 && ${url} == */loki/* ]] && ! grep -Eq '"status":"error".*"errorType"' \
+      "${evidence_dir}/${name}.json"; then
+    echo "${name} returned a non-Loki 400 response" >&2
+    return 1
+  fi
+  case ${code} in
+    200|400|500|503|504) ;;
+    *) echo "${name} returned incompatible or unbounded status ${code}" >&2; return 1 ;;
+  esac
+}
+
+snapshot_role_recovery() {
+  local stage=$1 workload pod safe
+  shift
+  for workload in "$@"; do
+    while IFS= read -r pod; do
+      safe=${pod//-/_}
+      kubectl get --raw "/api/v1/namespaces/${namespace}/pods/${pod}:9404/proxy/metrics" \
+        >"${evidence_dir}/${stage}-${safe}-metrics.txt"
+      kubectl get --raw "/api/v1/namespaces/${namespace}/pods/${pod}:9404/proxy/status/recovery" \
+        >"${evidence_dir}/${stage}-${safe}-recovery.json"
+    done < <(kubectl -n "${namespace}" get pod \
+      -l "app.kubernetes.io/name=${workload}" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+  done
+}
+
+assert_marker_cardinality() {
+  local stage=$1 signal before after
+  for signal in metrics logs traces profiles; do
+    before=$(grep -Fo "${marker}" "${evidence_dir}/replicated-${signal}.json" | wc -l)
+    after=$(grep -Fo "${marker}" "${evidence_dir}/${stage}-${signal}.json" | wc -l)
+    if [[ ${after} -ne ${before} ]]; then
+      echo "${signal} changed marker cardinality after ${stage}: ${before} -> ${after}" >&2
+      return 1
+    fi
+  done
 }
 
 send_corpus
@@ -268,6 +351,10 @@ for workload in "${scalable[@]}"; do
   query_corpus "scaled-${workload}"
 done
 assert_no_new_restarts scaled
+for workload in "${scalable[@]}"; do
+  run kubectl -n "${namespace}" scale "deployment/${workload}" --replicas=1
+done
+wait_deployments
 
 # A singleton durability owner must block a normal node drain through its PDB.
 protected_pod=$(kubectl -n "${namespace}" get pod -l app.kubernetes.io/name=metrics-block-builder -o jsonpath='{.items[0].metadata.name}')
@@ -302,21 +389,23 @@ assert_no_new_restarts node-drain
 # queryable. The immutable images are both loaded into the kind node above.
 mapfile -t deployments < <(kubectl -n "${namespace}" get deployments -l app.kubernetes.io/part-of=krabka-o11y -o name | sort)
 for deployment in "${deployments[@]}"; do
-  marker="${base_marker}-upgrade-${deployment##*/}"
-  send_corpus
   set_krabka_image "${deployment}" "${new_image}"
   run kubectl -n "${namespace}" rollout status "${deployment}" --timeout=10m
   query_corpus "upgrade-${deployment##*/}"
 done
 assert_no_new_restarts upgraded
 for deployment in "${deployments[@]}"; do
-  marker="${base_marker}-rollback-${deployment##*/}"
-  send_corpus
   set_krabka_image "${deployment}" "${old_image}"
   run kubectl -n "${namespace}" rollout status "${deployment}" --timeout=10m
   query_corpus "rollback-${deployment##*/}"
 done
 assert_no_new_restarts rolled-back
+for deployment in "${deployments[@]}"; do
+  set_krabka_image "${deployment}" "${new_image}"
+done
+wait_deployments
+query_corpus restored-new
+assert_no_new_restarts restored-new
 
 # Cold restart every Krabka role while the broker and object store retain their
 # PVCs, then prove the acknowledged corpus is still queryable.
@@ -326,16 +415,83 @@ done
 for deployment in "${deployments[@]}"; do
   run kubectl -n "${namespace}" scale "${deployment}" --replicas=1
 done
+# Stop the telemetry feedback loop while every block builder replays to its
+# durable offset. Public queries do not depend on Alloy.
+run kubectl -n "${namespace}" scale deployment/alloy --replicas=0
 wait_deployments
+run kubectl -n "${namespace}" scale deployment/alloy --replicas=1
+run kubectl -n "${namespace}" rollout status deployment/alloy --timeout=10m
+start_forwards
 query_corpus cold-restart
 assert_no_new_restarts cold-restart
+
+# Replicated data-plane takeover. Quiesce ingestion so each consumer can prove
+# fenced-buffer replay against a stable backlog, then establish a fresh restart
+# baseline before acknowledging the HA corpus.
+run kubectl -n "${namespace}" scale deployment/alloy --replicas=0
+for workload in "${replicated[@]}"; do
+  run kubectl -n "${namespace}" scale "deployment/${workload}" --replicas=2
+done
+wait_deployments
+snapshot_restarts replicated
+run kubectl -n "${namespace}" scale deployment/alloy --replicas=1
+run kubectl -n "${namespace}" rollout status deployment/alloy --timeout=10m
+start_forwards
+marker="${base_marker}-replicated"
+send_corpus
+query_corpus replicated
+run kubectl -n "${namespace}" scale deployment/alloy --replicas=0
+printf 'workload\trecovery_ms\n' >"${evidence_dir}/takeover-times.tsv"
+for workload in "${replicated[@]}"; do
+  victim=$(kubectl -n "${namespace}" get pod \
+    -l "app.kubernetes.io/name=${workload}" -o name | sort | sed -n '1p')
+  started=$(monotonic_ms)
+  run kubectl -n "${namespace}" delete "${victim}" --wait=false
+  run kubectl -n "${namespace}" rollout status "deployment/${workload}" --timeout=10m
+  printf '%s\t%s\n' "${workload}" "$(( $(monotonic_ms) - started ))" \
+    >>"${evidence_dir}/takeover-times.tsv"
+done
+query_corpus process-death
+assert_marker_cardinality process-death
+snapshot_role_recovery process-death "${replicated[@]}"
+assert_no_new_restarts process-death replicated
+
+# Overlap a complete broker outage with an object-store outage. Requests must
+# finish inside their client bound with either a compatible answer or a
+# bounded server error; after both dependencies return, the acknowledged
+# corpus must still be present and fresh input must make a full round trip.
+run kubectl -n "${namespace}" scale statefulset/broker statefulset/minio --replicas=0
+run kubectl -n "${namespace}" wait --for=delete pod/broker-0 pod/minio-0 --timeout=5m
+probe_bounded_query dependency-outage-metrics \
+  "http://127.0.0.1:19090/api/v1/query?query=krabka_qualification%7Bmarker%3D%22${marker}%22%7D&time=${metrics_query_time}"
+probe_bounded_query dependency-outage-logs \
+  "http://127.0.0.1:13101/loki/api/v1/query_range?query=%7Bjob%3D%22${marker}%22%7D"
+probe_bounded_query dependency-outage-traces \
+  "http://127.0.0.1:13201/api/search?q=%7Bresource.service.name%3D%22${marker}%22%7D&start=0&end=$(( $(date +%s) + 60 ))"
+probe_bounded_query dependency-outage-profiles \
+  'http://127.0.0.1:14042/querier.v1.QuerierService/Series' \
+  "{\"matchers\":[\"{service_name=\\\"${marker}\\\"}\"],\"labelNames\":[\"service_name\",\"__profile_type__\"]}"
+run kubectl -n "${namespace}" scale statefulset/broker statefulset/minio --replicas=1
+run kubectl -n "${namespace}" rollout status statefulset/broker --timeout=10m
+run kubectl -n "${namespace}" rollout status statefulset/minio --timeout=10m
+wait_deployments
+query_corpus dependency-recovery
+assert_marker_cardinality dependency-recovery
+run kubectl -n "${namespace}" scale deployment/alloy --replicas=1
+run kubectl -n "${namespace}" rollout status deployment/alloy --timeout=10m
+start_forwards
+marker="${base_marker}-dependency-recovery"
+send_corpus
+query_corpus dependency-recovery-fresh
+snapshot_role_recovery dependency-recovery "${replicated[@]}"
+assert_no_new_restarts dependency-recovery replicated
 
 kubectl -n "${namespace}" get all -o wide >"${evidence_dir}/objects.txt"
 docker image inspect "${new_image}" >"${evidence_dir}/new-image.json"
 docker image inspect "${old_image}" >"${evidence_dir}/old-image.json"
 printf 'result=passed\ncluster=%s\nnew_image=%s\nold_image=%s\nmanifest_sha256=%s\n' \
   "${cluster}" "${new_image}" "${old_image}" \
-  "$(sha256sum "${evidence_dir}/manifests.current.yaml" | cut -d ' ' -f 1)" \
+  "$(sha256sum "${evidence_dir}/manifests.yaml" | cut -d ' ' -f 1)" \
   >"${evidence_dir}/report.txt"
 find "${evidence_dir}" -maxdepth 1 -type f ! -name SHA256SUMS -print0 |
   sort -z | xargs -0 sha256sum >"${evidence_dir}/SHA256SUMS"

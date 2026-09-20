@@ -26,6 +26,14 @@ impl ConsumerRecordAccumulator {
         self.records.append(&mut records);
     }
 
+    pub(crate) fn remove_partitions(&mut self, partitions: &BTreeSet<i32>) {
+        self.records
+            .retain(|record| !partitions.contains(&record.partition));
+        if self.records.is_empty() {
+            self.oldest_record_at = None;
+        }
+    }
+
     pub(crate) fn should_flush(&self, now: Instant) -> bool {
         if self.records.is_empty() {
             return false;

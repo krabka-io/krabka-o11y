@@ -8,5 +8,9 @@ use super::*;
 /// [`decode_consumer_records`] consumes, so the loop body stays the same.
 #[async_trait::async_trait]
 pub trait WalConsumerPoll: Send {
+    fn take_revoked_partitions(&mut self) -> BTreeSet<i32> {
+        BTreeSet::new()
+    }
+
     async fn poll(&mut self, window: Time) -> Result<Vec<ConsumerRecord>, TracesError>;
 }

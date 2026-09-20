@@ -1,4 +1,4 @@
-use krabka_observability::RoleReadiness;
+use krabka_observability::{RoleReadiness, wal_group_assignment::WalRebalanceListener};
 
 use super::{
     Arc, BlockStoreGates, BlockWriter, CancellationToken, Cli, Mutex, ProcessSecurity,
@@ -27,11 +27,13 @@ pub(crate) async fn run_block_builder(
     let wal_catch_up_gate = readiness.gate("wal-catch-up");
     let gates = BlockStoreGates::register(&readiness);
     let promoted_attrs = promoted_attrs_from_cli(&cli)?;
+    let rebalance = WalRebalanceListener::new(crate::TRACES_WAL_TOPIC);
     let consumer = wal_consumer(
         &cli,
         "krabka-traces-block-builder",
         None,
         security.wal.as_ref(),
+        Some(rebalance.clone()),
     )
     .await?;
     wal_consumer_gate.mark_ready();
@@ -54,6 +56,7 @@ pub(crate) async fn run_block_builder(
             consumer,
             &metrics.wal_consumer,
             wal_catch_up_gate,
+            rebalance,
         ),
         writer,
         index,

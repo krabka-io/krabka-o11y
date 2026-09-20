@@ -1,4 +1,5 @@
 use krabka_observability::{CancellationToken, CriticalTaskError, SupervisedTasks};
+use krabka_units::convert::TimeExt as _;
 
 use super::{
     Arc, Cli, ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity, Limits,
@@ -43,7 +44,11 @@ pub(crate) async fn run_block_builder(
     config.flush_max_age = cli.block_builder_flush_max_age;
     let runtime = config.build_runtime(store.clone(), metrics.object_store.clone())?;
     let mut consumer = config
-        .build_consumer(&metrics.wal_consumer, wal_security, Some(wal_catch_up_gate))
+        .build_consumer(
+            &metrics.wal_consumer,
+            wal_security.clone(),
+            Some(wal_catch_up_gate),
+        )
         .await?;
     wal_consumer_gate.mark_ready();
     let stopping = CancellationToken::new();
@@ -71,19 +76,32 @@ pub(crate) async fn run_block_builder(
         krabka_observability::shutdown_signal().await;
         signal.cancel();
     });
-    let stop = stopping.clone();
-    let result = tokio::select! {
-        result = run_compactor_consumer_loop(
-            &mut consumer,
-            &runtime.block_writer,
-            &runtime.index_sink,
-            runtime.loop_config,
-            move |_| stop.is_cancelled(),
-            &metrics,
-        ) => result?,
-        name = tasks.first_unexpected_exit() => {
-            tasks.shutdown().await;
-            return Err(CriticalTaskError(name).into());
+    let result = loop {
+        let stop = stopping.clone();
+        let attempt = tokio::select! {
+            result = run_compactor_consumer_loop(
+                &mut consumer,
+                &runtime.block_writer,
+                &runtime.index_sink,
+                runtime.loop_config.clone(),
+                move |_| stop.is_cancelled(),
+                &metrics,
+            ) => result,
+            name = tasks.first_unexpected_exit() => {
+                tasks.shutdown().await;
+                return Err(CriticalTaskError(name).into());
+            }
+        };
+        match attempt {
+            Ok(result) => break result,
+            Err(error) if !stopping.is_cancelled() => {
+                tracing::warn!(%error, "metrics block-builder loop failed; retrying");
+                tokio::time::sleep(config.poll_timeout.to_std()).await;
+                consumer = config
+                    .build_consumer(&metrics.wal_consumer, wal_security.clone(), None)
+                    .await?;
+            }
+            Err(error) => return Err(error.into()),
         }
     };
     tasks.shutdown().await;

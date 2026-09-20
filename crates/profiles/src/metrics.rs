@@ -200,6 +200,7 @@ mod tests {
                 offset: 17,
                 leader_epoch: 0,
                 timestamp: 1_000,
+                timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
                 key: None,
                 value: None,
                 headers: Vec::new(),

@@ -72,6 +72,7 @@ mod tests {
                     offset: 0,
                     leader_epoch: 0,
                     timestamp: 0,
+                    timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
                     key: None,
                     value: None,
                     headers,

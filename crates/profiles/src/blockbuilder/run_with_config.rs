@@ -11,16 +11,9 @@ use super::*;
 ///
 /// # Consumer group rebalances
 ///
-/// The drain covers a shutdown this loop is told about. It does not cover a
-/// consumer group that takes a partition away. The accumulator holds records
-/// across polls, and `krabka-client-consumer` releases a partition from a
-/// background task without calling anything in this process, so the records
-/// buffered for that partition are abandoned.
-///
-/// The loop reports each such revocation on
-/// `wal_consumer_partition_revocations` and in the log. It does not repair it.
-/// See [`krabka_observability::wal_group_assignment`] for why, and for what the
-/// group id does and does not do.
+/// The rebalance listener reports revoked partitions before this loop merges
+/// the new poll. Their uncommitted records are removed from the accumulator and
+/// replayed by the new owner.
 ///
 /// # Object-store failures
 ///
@@ -79,6 +72,7 @@ pub async fn run_with_config(
             ProfilesError::Block(format!("profile index load failed: {error}"))
         })?,
     };
+    let rebalance = WalRebalanceListener::new(config.wal_topic.clone());
     let mut consumer = tokio::select! {
         biased;
         () = shutdown.cancelled() => return Ok(()),
@@ -92,16 +86,14 @@ pub async fn run_with_config(
             .fetch_partition_max(config.wal_fetch_partition_max)
             .subscribe(vec![config.wal_topic.clone()])
             .auto_offset_reset(AutoOffsetReset::Earliest)
+            .rebalance_listener(Box::new(rebalance.clone()))
+            .enable_auto_commit(false)
             .build() => built.map_err(|err| {
                 ProfilesError::Block(format!("consumer build failed: {err}"))
             })?,
     };
 
-    // Reports a group rebalance that takes WAL partitions away from this
-    // member. The builder buffers records across polls, so a revocation
-    // abandons whatever it holds for the lost partitions, and nothing in this
-    // process can flush them first. See
-    // `krabka_observability::wal_group_assignment`.
+    // Reports assignment movement while the listener fences revoked buffers.
     let wal_metrics = config
         .metrics
         .as_ref()
@@ -139,6 +131,7 @@ pub async fn run_with_config(
         assignment
             .observe_consumer(&consumer, !records.is_empty())
             .await;
+        accumulator.remove_partitions(&rebalance.take_revoked_partitions());
         let draining = shutdown.is_cancelled();
         let now = Instant::now();
         accumulator.push(records, now);

@@ -25,6 +25,10 @@ impl<C> CompactionConsumerPoll for DurableCompactionConsumer<C>
 where
     C: CompactionConsumerPoll + Send,
 {
+    fn take_revoked_partitions(&mut self) -> std::collections::BTreeSet<i32> {
+        self.inner.take_revoked_partitions()
+    }
+
     async fn poll(
         &mut self,
         timeout: Time,

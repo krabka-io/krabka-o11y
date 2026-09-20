@@ -28,7 +28,13 @@ pub(crate) fn only_security_disabled_turns_a_describe_error_into_an_allow() {
             "error 54 from another API",
             broker_error_for_test("DescribeClientQuotas", 54),
         ),
-        ("no broker reachable", AdminError::Connect { tried: 1 }),
+        (
+            "no broker reachable",
+            AdminError::Connect {
+                tried: 1,
+                source: None,
+            },
+        ),
     ] {
         check!(acl_set_from_describe(Err(error)).is_err(), "{name}");
     }

@@ -130,6 +130,7 @@ pub(crate) async fn run_ruler(
                 .client_id(format!("{}-ruler-state", cli.wal_client_id))
                 .auto_offset_reset(AutoOffsetReset::Earliest)
                 .subscribe([cli.ruler_state_topic.clone()])
+                .enable_auto_commit(false)
                 .build() => built?,
         };
         let coordination = tokio::select! {

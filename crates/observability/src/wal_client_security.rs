@@ -58,7 +58,10 @@ use std::{
 };
 
 use clap::{Args, ValueEnum, builder::NonEmptyStringValueParser};
-use krabka_client_core::{ClientSecurity, ConnectionOptions, SaslCredentials, TlsConnectorConfig};
+use krabka_client_core::{
+    ClientSecurity, ConnectionOptions, SaslCredentials, TlsConnectorConfig,
+    security::{KeyStore, TrustStore},
+};
 use krabka_security::{ListenerProtocol, SaslMechanism};
 use thiserror::Error;
 

@@ -77,6 +77,7 @@ pub(crate) async fn run_query_frontend(
                         .client_id(client_id)
                         .auto_offset_reset(AutoOffsetReset::Earliest)
                         .subscribe([subscribe_topic])
+                        .enable_auto_commit(false)
                         .build()
                         .await
                         .map_err(|error| error.to_string())

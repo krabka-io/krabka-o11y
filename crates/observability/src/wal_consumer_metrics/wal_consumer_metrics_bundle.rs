@@ -105,10 +105,9 @@ impl WalConsumerMetrics {
         registry.register(
             "partition_revocations",
             "Times the consumer group has taken this topic partition away \
-             from this member. Any increase means records this member had \
-             polled and not yet written into a block were abandoned: see \
-             krabka_observability::wal_group_assignment. A group whose \
-             membership never changes never increments this.",
+             from this member. Buffered records are fenced and replayed from \
+             the last durable offset: see \
+             krabka_observability::wal_group_assignment.",
             this.partition_revocations.clone(),
         );
 

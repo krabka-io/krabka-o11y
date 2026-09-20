@@ -9,11 +9,16 @@ use super::*;
 pub(crate) async fn accumulating_a_wal_batch_stops_when_empty_or_full() {
     struct ScriptedConsumer {
         pub(crate) batches: std::collections::VecDeque<Vec<WalRecordForTest>>,
+        revoked: std::collections::BTreeSet<i32>,
     }
     type WalRecordForTest = super::super::prelude::KafkaWalRecord;
 
     #[async_trait]
     impl super::super::prelude::LogWalConsumer for ScriptedConsumer {
+        fn take_revoked_partitions(&mut self) -> std::collections::BTreeSet<i32> {
+            std::mem::take(&mut self.revoked)
+        }
+
         async fn poll(
             &mut self,
             _timeout: Time,
@@ -41,6 +46,7 @@ pub(crate) async fn accumulating_a_wal_batch_stops_when_empty_or_full() {
     let poll = |batches: Vec<Vec<super::super::prelude::KafkaWalRecord>>, max: usize| async move {
         let mut consumer = ScriptedConsumer {
             batches: batches.into_iter().collect(),
+            revoked: std::collections::BTreeSet::new(),
         };
         super::super::prelude::poll_accumulated_log_compaction_records(
             &mut consumer,
@@ -66,4 +72,31 @@ pub(crate) async fn accumulating_a_wal_batch_stops_when_empty_or_full() {
     )
     .await;
     check!(full.len() == 3, "stops at the cap, got {}", full.len());
+
+    // A rebalance observed on an empty first poll belongs to the previous
+    // accumulation cycle and must not discard a later record for that shard.
+    let mut consumer = ScriptedConsumer {
+        batches: vec![vec![], vec![record(5)], vec![]].into_iter().collect(),
+        revoked: [0].into_iter().collect(),
+    };
+    let empty = super::super::prelude::poll_accumulated_log_compaction_records(
+        &mut consumer,
+        secs(1),
+        secs(5),
+        millis(10),
+        NonZeroUsize::new(3).expect("a positive cap"),
+    )
+    .await
+    .expect("the scripted consumer does not fail");
+    check!(empty.is_empty(), "the rebalance poll remains empty");
+    let replayed = super::super::prelude::poll_accumulated_log_compaction_records(
+        &mut consumer,
+        secs(1),
+        secs(5),
+        millis(10),
+        NonZeroUsize::new(3).expect("a positive cap"),
+    )
+    .await
+    .expect("the scripted consumer does not fail");
+    check!(replayed.len() == 1, "the later record survives");
 }

@@ -1,6 +1,7 @@
 use krabka_observability::{
-    ReadinessGate, wal_consumer_metrics::WalConsumerMetrics,
-    wal_group_assignment::WalAssignmentWatch,
+    ReadinessGate,
+    wal_consumer_metrics::WalConsumerMetrics,
+    wal_group_assignment::{WalAssignmentWatch, WalRebalanceListener},
 };
 
 use super::{Consumer, ConsumerRecord, Time, TracesError, WalConsumerCommit, WalConsumerPoll};
@@ -16,13 +17,12 @@ use super::{Consumer, ConsumerRecord, Time, TracesError, WalConsumerCommit, WalC
 /// generic over [`WalConsumerPoll`], and a test drives it with a scripted fake
 /// that joins no group.
 ///
-/// The watch reports the rebalance. It cannot repair it: the block builder
-/// holds decoded windows across polls, and the group releases a partition with
-/// no callback into this process. See
-/// [`krabka_observability::wal_group_assignment`].
+/// The listener reports revoked partitions to the block builder before it
+/// merges records from the new assignment.
 pub struct BlockBuilderConsumer {
     consumer: Consumer,
     assignment: WalAssignmentWatch,
+    rebalance: WalRebalanceListener,
     metrics: WalConsumerMetrics,
 }
 
@@ -33,6 +33,7 @@ impl BlockBuilderConsumer {
         Self {
             consumer,
             assignment: WalAssignmentWatch::new(metrics.clone()),
+            rebalance: WalRebalanceListener::new(""),
             metrics: metrics.clone(),
         }
     }
@@ -42,10 +43,12 @@ impl BlockBuilderConsumer {
         consumer: Consumer,
         metrics: &WalConsumerMetrics,
         gate: ReadinessGate,
+        rebalance: WalRebalanceListener,
     ) -> Self {
         Self {
             consumer,
             assignment: WalAssignmentWatch::with_catch_up(metrics.clone(), gate),
+            rebalance,
             metrics: metrics.clone(),
         }
     }
@@ -53,6 +56,10 @@ impl BlockBuilderConsumer {
 
 #[async_trait::async_trait]
 impl WalConsumerPoll for BlockBuilderConsumer {
+    fn take_revoked_partitions(&mut self) -> std::collections::BTreeSet<i32> {
+        self.rebalance.take_revoked_partitions()
+    }
+
     async fn poll(&mut self, window: Time) -> Result<Vec<ConsumerRecord>, TracesError> {
         let records = Consumer::poll(&mut self.consumer, window)
             .await

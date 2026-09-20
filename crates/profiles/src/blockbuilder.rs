@@ -1,6 +1,10 @@
 //! Block-builder helpers for WAL records -> profile sample blocks.
 
-use std::{collections::BTreeMap, sync::Arc, time::Instant};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+    time::Instant,
+};
 
 use arrow::record_batch::RecordBatch;
 use krabka_blockstore::{
@@ -11,8 +15,9 @@ use krabka_blockstore::{
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerRecord};
 use krabka_observability::{
-    ReadinessGate, wal_consumer_metrics::WalConsumerMetrics,
-    wal_group_assignment::WalAssignmentWatch,
+    ReadinessGate,
+    wal_consumer_metrics::WalConsumerMetrics,
+    wal_group_assignment::{WalAssignmentWatch, WalRebalanceListener},
 };
 use krabka_pprof::{FunctionRec, LineRec, LocationRec, MappingRec, MappingSymbolization, SymbolDb};
 use krabka_units::{
@@ -332,6 +337,7 @@ mod tests {
             offset,
             leader_epoch: -1,
             timestamp: 0,
+            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: Some(value),
             headers: Vec::new(),

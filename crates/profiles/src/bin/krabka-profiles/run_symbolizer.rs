@@ -26,20 +26,30 @@ pub(crate) async fn run_symbolizer(
     let configured = build_object_store(&cli.object_store_url, metrics.object_store.clone())
         .map_err(|error| format!("object store: {error}"))?;
     loop {
-        let index = ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
+        match ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(
             &configured.store,
             &cli.index_object_key,
             cli.index_snapshot_max,
         )
-        .await?;
-        let updated = krabka_profiles::symbolizer::symbolize_blocks_once(
-            &configured.store,
-            &index,
-            &resolver,
-            &metrics,
-        )
-        .await?;
-        tracing::info!(updated, "profiles offline symbolization pass complete");
+        .await
+        {
+            Ok(index) => match krabka_profiles::symbolizer::symbolize_blocks_once(
+                &configured.store,
+                &index,
+                &resolver,
+                &metrics,
+            )
+            .await
+            {
+                Ok(updated) => {
+                    tracing::info!(updated, "profiles offline symbolization pass complete");
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "profiles symbolization pass failed; retrying")
+                }
+            },
+            Err(error) => tracing::warn!(%error, "profile index load failed; retrying"),
+        }
         tokio::select! {
             () = shutdown.cancelled() => return Ok(()),
             () = tokio::time::sleep(cli.index_refresh_interval.to_std()) => {}

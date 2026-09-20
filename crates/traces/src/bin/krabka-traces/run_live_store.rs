@@ -26,6 +26,7 @@ pub(crate) async fn run_live_store(
         "krabka-traces-live-store",
         None,
         security.wal.as_ref(),
+        None,
     )
     .await?;
     let store = Arc::new(RwLock::new(LiveStore::new(cli.retention.nanos_i64())));

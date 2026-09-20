@@ -1,4 +1,6 @@
-use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
+use krabka_observability::{
+    wal_consumer_metrics::WalConsumerMetrics, wal_group_assignment::WalRebalanceListener,
+};
 
 use super::{
     Arc, AutoOffsetReset, BlockWriter, CompactionLoopConfig, Consumer, DEFAULT_FLUSH_MAX_AGE,
@@ -103,10 +105,8 @@ impl MetricsCompactorConfig {
     /// Builds the compactor's WAL consumer and reports its group assignment
     /// through `wal_consumer_metrics`.
     ///
-    /// The metrics bundle is not optional. A compactor whose group takes a
-    /// partition away abandons the records it buffered for that partition, and
-    /// the instruments are the only place that says so. See
-    /// [`krabka_observability::wal_group_assignment`].
+    /// The metrics bundle is not optional: it reports assignment movement and
+    /// replay when the rebalance listener fences a revoked partition.
     ///
     /// `security` is the broker connection policy that
     /// `krabka_observability::wal_client_security::WalClientSecurityArgs::load`
@@ -124,6 +124,7 @@ impl MetricsCompactorConfig {
         catch_up: Option<krabka_observability::ReadinessGate>,
     ) -> Result<DurableCompactionConsumer<WalAssignmentConsumer>, MetricsCompactorBuildError> {
         self.validate()?;
+        let rebalance = WalRebalanceListener::new(self.wal_topic.clone());
         let consumer = Consumer::builder()
             .bootstrap(self.bootstrap.clone())
             .maybe_security(security)
@@ -133,14 +134,19 @@ impl MetricsCompactorConfig {
             .client_id(self.client_id.clone())
             .auto_offset_reset(self.auto_offset_reset)
             .subscribe([self.wal_topic.clone()])
+            .rebalance_listener(Box::new(rebalance.clone()))
+            .enable_auto_commit(false)
             .build()
             .await
             .map_err(|error| consumer_build_error(&error))?;
         let consumer = match catch_up {
-            Some(gate) => {
-                WalAssignmentConsumer::with_catch_up(consumer, wal_consumer_metrics, gate)
-            }
-            None => WalAssignmentConsumer::new(consumer, wal_consumer_metrics),
+            Some(gate) => WalAssignmentConsumer::with_catch_up(
+                consumer,
+                wal_consumer_metrics,
+                gate,
+                rebalance,
+            ),
+            None => WalAssignmentConsumer::new(consumer, wal_consumer_metrics, rebalance),
         };
         Ok(DurableCompactionConsumer::new(
             consumer,

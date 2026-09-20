@@ -9,9 +9,8 @@ use crate::ReadinessGate;
 /// with what `Consumer::assignment` returned. The watch owns the comparison and
 /// the instruments, so the four signals report a rebalance in the same shape.
 ///
-/// The watch reports. It does not recover: see the
-/// [module documentation](super) for why a block builder cannot flush a
-/// partition it has already lost.
+/// The watch reports assignment changes; [`WalRebalanceListener`] supplies the
+/// synchronous fencing signal used to recover them.
 pub struct WalAssignmentWatch {
     metrics: WalConsumerMetrics,
     owned: BTreeSet<(String, i32)>,
@@ -80,27 +79,25 @@ impl WalAssignmentWatch {
         }
 
         if change.strands_buffered_records() {
-            tracing::error!(
+            tracing::warn!(
                 revoked = ?change.revoked,
                 gained = ?change.gained,
                 still_owned = self.owned.len(),
-                "the consumer group took WAL partitions away from this member. \
-                 Records polled from them and not yet written to a block are \
-                 abandoned. Do not change a WAL consumer group's membership \
-                 while it runs. The group id is not a scaling knob: set the WAL \
-                 topic's partition count instead."
+                "the consumer group took WAL partitions away from this member; \
+                 buffered records for them were fenced and will replay from \
+                 the last durable offset"
             );
         } else if !first_observation && !change.gained.is_empty() {
             // A pure gain means another member left the group or a new
             // partition appeared. Nothing of this member's is lost, but the
-            // member that gave the partitions up did abandon its buffer for
-            // them, and that member may be gone and unable to say so.
+            // member that gave the partitions up fenced its local buffer, and
+            // that member may be gone and unable to report the revocation.
             tracing::warn!(
                 gained = ?change.gained,
                 still_owned = self.owned.len(),
                 "the consumer group placed more WAL partitions on this member; \
-                 another member left the group or lost them, and abandoned \
-                 whatever it had buffered for them"
+                 another member left the group or lost them; replay begins at \
+                 the last durable offset"
             );
         }
 

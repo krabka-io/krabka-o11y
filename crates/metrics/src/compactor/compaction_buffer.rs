@@ -35,6 +35,14 @@ impl CompactionBuffer {
         self.records.extend(records);
     }
 
+    pub(crate) fn remove_partitions(&mut self, partitions: &std::collections::BTreeSet<i32>) {
+        self.records
+            .retain(|record| !partitions.contains(&record.partition.0));
+        if self.records.is_empty() {
+            self.oldest_arrival = None;
+        }
+    }
+
     /// Whether the buffer should flush now under the configured thresholds.
     pub(crate) fn should_flush(
         &self,

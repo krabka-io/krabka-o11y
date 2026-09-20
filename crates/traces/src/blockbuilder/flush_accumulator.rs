@@ -66,6 +66,17 @@ impl FlushAccumulator {
         }
     }
 
+    pub fn remove_partitions(&mut self, partitions: &BTreeSet<i32>) {
+        for partition in partitions {
+            if let Some(window) = self.windows.remove(partition) {
+                self.record_count -= window.records.len();
+            }
+        }
+        if self.record_count == 0 {
+            self.oldest_record_at = None;
+        }
+    }
+
     /// Whether the buffered records should be flushed now.
     ///
     /// This is true once the buffer reaches the record-count threshold, or once

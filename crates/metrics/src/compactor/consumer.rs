@@ -1,6 +1,8 @@
+use krabka_client_consumer::OffsetAndMetadata;
 use krabka_observability::{
-    ReadinessGate, wal_consumer_metrics::WalConsumerMetrics,
-    wal_group_assignment::WalAssignmentWatch,
+    ReadinessGate,
+    wal_consumer_metrics::WalConsumerMetrics,
+    wal_group_assignment::{WalAssignmentWatch, WalRebalanceListener},
 };
 
 use super::{
@@ -15,25 +17,27 @@ use super::{
 /// that takes partitions away from this member reaches the instruments and the
 /// log instead of passing unseen.
 ///
-/// The compaction loop buffers WAL records across polls and commits only the
-/// offsets its durable writes produced. That discipline holds while this member
-/// keeps its partitions. It cannot survive a partition that moves: the group
-/// releases the partition with no callback into this process, so the buffered
-/// records for it are abandoned. See
-/// [`krabka_observability::wal_group_assignment`].
+/// The rebalance listener tells the compaction loop which partition buffers to
+/// discard for replay before it merges records from the new assignment.
 pub struct WalAssignmentConsumer {
     consumer: Consumer,
     assignment: tokio::sync::Mutex<WalAssignmentWatch>,
+    rebalance: WalRebalanceListener,
     metrics: WalConsumerMetrics,
 }
 
 impl WalAssignmentConsumer {
     /// Wraps `consumer` and reports its assignment through `metrics`.
     #[must_use]
-    pub fn new(consumer: Consumer, metrics: &WalConsumerMetrics) -> Self {
+    pub fn new(
+        consumer: Consumer,
+        metrics: &WalConsumerMetrics,
+        rebalance: WalRebalanceListener,
+    ) -> Self {
         Self {
             consumer,
             assignment: tokio::sync::Mutex::new(WalAssignmentWatch::new(metrics.clone())),
+            rebalance,
             metrics: metrics.clone(),
         }
     }
@@ -43,6 +47,7 @@ impl WalAssignmentConsumer {
         consumer: Consumer,
         metrics: &WalConsumerMetrics,
         gate: ReadinessGate,
+        rebalance: WalRebalanceListener,
     ) -> Self {
         Self {
             consumer,
@@ -50,6 +55,7 @@ impl WalAssignmentConsumer {
                 metrics.clone(),
                 gate,
             )),
+            rebalance,
             metrics: metrics.clone(),
         }
     }
@@ -57,6 +63,10 @@ impl WalAssignmentConsumer {
 
 #[async_trait]
 impl CompactionConsumerPoll for WalAssignmentConsumer {
+    fn take_revoked_partitions(&mut self) -> std::collections::BTreeSet<i32> {
+        self.rebalance.take_revoked_partitions()
+    }
+
     async fn poll(
         &mut self,
         timeout: Time,
@@ -85,7 +95,12 @@ impl CompactionConsumerCommit for WalAssignmentConsumer {
     ) -> Result<(), CompactionConsumerCommitError> {
         let offsets = offsets
             .iter()
-            .map(|offset| ((topic.to_string(), offset.partition.0), offset.offset.0))
+            .map(|offset| {
+                (
+                    (topic.to_string(), offset.partition.0),
+                    OffsetAndMetadata::new(offset.offset.0),
+                )
+            })
             .collect();
         Consumer::commit_offsets_sync(&self.consumer, offsets)
             .await
