@@ -3274,6 +3274,7 @@ dependencies = [
  "derive_more",
  "futures",
  "hex",
+ "krabka-o11y-verified",
  "krabka-object-store",
  "krabka-units",
  "num-traits",
@@ -3523,6 +3524,13 @@ dependencies = [
  "krabka-units",
  "object_store",
  "tokio",
+]
+
+[[package]]
+name = "krabka-o11y-verified"
+version = "0.4.0"
+dependencies = [
+ "creusot-std",
 ]
 
 [[package]]

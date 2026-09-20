@@ -3193,6 +3193,7 @@ dependencies = [
  "derive_more",
  "futures",
  "hex",
+ "krabka-o11y-verified",
  "krabka-object-store",
  "krabka-units",
  "num-traits",
@@ -3443,6 +3444,13 @@ dependencies = [
  "opentelemetry-proto",
  "prost 0.14.4",
  "snap",
+]
+
+[[package]]
+name = "krabka-o11y-verified"
+version = "0.4.0"
+dependencies = [
+ "creusot-std",
 ]
 
 [[package]]
