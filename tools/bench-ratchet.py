@@ -44,12 +44,8 @@ A benchmark whose baseline reads `unseeded` skips the second gate only. The
 structural gate still applies, so a benchmark with no number yet is still
 unable to report a target that measured nothing as a clean run.
 
-**Every id in `tools/bench-baseline.txt` reads `unseeded` today, and the
-numbers to replace them with cannot be measured on a shared machine.** A
-baseline is a wall-clock number, so it is a statement about one machine under
-one load. Seeding it needs a runner that is quiet, dedicated, and the same one
-every night; until CI has that, the honest baseline is no baseline. Use
-`--record` on such a runner to print the lines to check in.
+Numeric values in `tools/bench-baseline.txt` are valid only for the stable
+runner recorded beside them. Use `--record` on that runner to refresh a value.
 
 `--self-test` runs the checks against synthetic Criterion output and needs no
 benchmark run.

@@ -64,9 +64,12 @@ The **numeric gate** is the ratchet. A line that carries a number fails when the
 
 Noise is measured, not assumed. When Criterion's own confidence interval for a benchmark is wider than a quarter of its mean, the numeric gate for that benchmark is skipped and the run says so. A measurement that noisy cannot support a verdict either way.
 
-**Every id in the baseline reads `unseeded` today, so the numeric gate is dormant and the structural gate is live.** A baseline is a wall-clock number. It is therefore a statement about one machine under one load, and it is valid only for that machine. To seed it, CI needs a runner that is quiet, dedicated, and the same one every night. It does not have one yet. Numbers measured anywhere else — a developer's laptop, a shared build box, a GitHub-hosted runner beside eleven other jobs — are not a baseline for this gate, and writing them in would arm it against noise.
-
-Once such a runner exists, take the lines from it:
+The checked-in baseline was measured on the dedicated 16-core `clod` runner.
+Its raw Criterion artifact, confidence intervals, host shape, toolchain,
+command, duration, and checksums are recorded in
+[`qualification/milestone-19-benchmarks.json`](../qualification/milestone-19-benchmarks.json).
+GitHub-hosted scheduled runs validate the inventory only because their hardware
+is different. Refresh numeric values on the recorded runner:
 
 ```bash
 tools/bench-ratchet.py --record

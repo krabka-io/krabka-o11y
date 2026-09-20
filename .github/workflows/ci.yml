@@ -959,10 +959,10 @@ jobs:
           # leaves nothing to upload, and the step that failed has already
           # said so.
           if-no-files-found: warn
-      # The verdict. The step above has printed each benchmark's own numbers;
-      # what this adds is the inventory check and the baseline comparison.
+      # GitHub-hosted hardware differs from the recorded stable runner, so it
+      # validates inventory only. The recorded runner applies numeric baselines.
       - name: ratchet
-        run: tools/bench-ratchet.py
+        run: tools/bench-ratchet.py --record
   # The scale suites: the block store at the cardinality and volume the design
   # targets, against a real object store.
   #

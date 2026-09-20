@@ -126,6 +126,7 @@ name = "pprof_merge"
 harness = false
 
 [patch.crates-io]
+object_store = { git = "https://github.com/apache/arrow-rs-object-store", rev = "994d60732c3379bc98982f5c4638996be0ee0d2f" }
 krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "19ea5bfac23c4858d5d6aed99890014fd0fa23d3" }
 krabka-authz = { git = "https://github.com/krabka-io/krabka-broker", rev = "19ea5bfac23c4858d5d6aed99890014fd0fa23d3" }
 krabka-broker = { git = "https://github.com/krabka-io/krabka-broker", rev = "19ea5bfac23c4858d5d6aed99890014fd0fa23d3" }

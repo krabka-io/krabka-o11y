@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "status": "seeded",
+  "commit": "b56cab02a8d8deaf57c2312ac0dac23b080b0605",
+  "runner": {
+    "label": "clod",
+    "os": "Linux 7.0.0-31-generic x86_64",
+    "cpu_count": 16,
+    "memory_kib": 64387700
+  },
+  "toolchain": {
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)"
+  },
+  "command": "tools/bench.sh",
+  "started_at": "2026-09-20T21:57:59Z",
+  "duration_seconds": 877,
+  "benchmark_count": 85,
+  "noise_ceiling": 0.25,
+  "artifact": {
+    "url": "gs://robot-head-krabka-o11y-contract/qualification/milestone-19/benchmarks/b56cab02/criterion.tar.zst",
+    "generation": "1789942479400216",
+    "sha256": "84a334e11d1c7bf7a690239ce79b14953924822b5f971b2ef8432928c58c1ccf",
+    "criterion_sha256sums_sha256": "c178d26889f27486166c9c891be04f109e8f4fb7e72e53f1be61384d124ec877",
+    "baseline_sha256": "42b4764110f300401d67f45fe270d83355bf0f07f2d4274445688c4f6ea32847"
+  },
+  "deliberate_regression": {
+    "benchmark": "blockstore_read/metadata/10000",
+    "baseline_nanoseconds": 1,
+    "result": "rejected"
+  }
+}
