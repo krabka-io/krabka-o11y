@@ -42,9 +42,11 @@ traces block-builder documents the current buffered-window limitation, and
 GitHub issue #266 owns that larger handoff redesign.
 
 `index_snapshot_protocol_model` enumerates two concurrent snapshot writers
-through generation reads, immutable payload writes, conditional manifest
-publication, conflicts, crashes, retries, aging, and orphan sweeps. Its safety
-properties require every published or in-flight manifest payload to remain
-durable and require a successful writer's contribution never to disappear.
-Reachability properties cover conflict merging, crash replay, and reclamation;
-the exact 580-state graph is pinned.
+through an add and a removal, generation reads, immutable payload writes,
+conditional manifest publication, retained generations, acknowledgement,
+crashes, retries, aging, and version-conditional orphan reclamation. Its safety
+properties require every retained manifest and unexpired publication payload
+to remain durable and require an acknowledgeable writer's effect never to
+disappear. Reachability covers conflict merging, publication expiry, stale
+sweep invalidation, post-publication removal replay, and reclamation; the exact
+113,426-state graph is pinned.
