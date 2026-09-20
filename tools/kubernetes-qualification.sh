@@ -225,10 +225,10 @@ assert_absent() {
   local name=$1 url=$2 needle=$3 body=${4:-} response
   ensure_forwards
   if [[ -n ${body} ]]; then
-    response=$(curl --max-time 10 -fsS "${url}" -H 'X-Scope-OrgID: release-smoke-isolated' \
+    response=$(curl --max-time 10 --retry 30 --retry-delay 2 --retry-max-time 120 -fsS "${url}" -H 'X-Scope-OrgID: release-smoke-isolated' \
       -H 'Content-Type: application/json' --data "${body}")
   else
-    response=$(curl --max-time 10 -fsS "${url}" -H 'X-Scope-OrgID: release-smoke-isolated')
+    response=$(curl --max-time 10 --retry 30 --retry-delay 2 --retry-max-time 120 -fsS "${url}" -H 'X-Scope-OrgID: release-smoke-isolated')
   fi
   printf '%s\n' "${response}" >"${evidence_dir}/${name}.json"
   if grep -Fq "${needle}" <<<"${response}"; then
