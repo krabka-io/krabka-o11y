@@ -83,11 +83,11 @@ jobs:
       # CLI. The aspect is named here rather than left to the `build:lint`
       # bazelrc config, which `aspect lint` does not read.
       - name: lint
-        run: aspect lint --aspect=//tools/lint:linters.bzl%clippy
+        run: aspect lint --bazel-flag=--remote_cache= --aspect=//tools/lint:linters.bzl%clippy
       - name: build
-        run: aspect build //...
+        run: aspect build --bazel-flag=--remote_cache= //...
       - name: test
-        run: aspect test //...
+        run: aspect test --bazel-flag=--remote_cache= //...
   # Cargo, gated. Bazel is what the rest of CI builds with, but the two are not
   # the same build, so the cargo path can break with nothing to say so:
   # //bazel/defs.bzl strips the `vendored-protoc` feature and hands `PROTOC` to
