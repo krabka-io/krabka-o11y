@@ -65,3 +65,6 @@ mutants.out.old
 
 # Python bytecode from local runs of scripts/tests
 __pycache__/
+
+# Local prover-result cache; checked-in sessions live under `verif/`.
+/.why3find/

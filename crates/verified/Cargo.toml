@@ -1,0 +1,19 @@
+[package]
+name = "krabka-o11y-verified"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Creusot-verified pure kernels for Krabka observability"
+repository = "https://github.com/krabka-io/krabka-o11y"
+
+[lints]
+workspace = true
+
+[dependencies]
+creusot-std = "0.13.0"
+
+[dev-dependencies]
+assert2 = { workspace = true }

@@ -193,6 +193,25 @@ jobs:
             -p krabka-profiles \
             -p krabka-traces \
             -- -D warnings
+  # Replay the checked-in Creusot sessions with the same immutable toolchain
+  # that produces the broker repository's proofs. The image supplies Rust,
+  # Why3 and the provers; this repository supplies the explicit package list.
+  proofs:
+    name: creusot proofs
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CREUSOT_IMAGE: ghcr.io/krabka-io/creusot@sha256:15834cde90d902a148d08ec6c8d9a03336ac353d24fa05d3beb32e69bb5cb51b
+    steps:
+      - uses: actions/checkout@v7
+      - name: replay proofs
+        run: |
+          docker run --rm \
+            --entrypoint /bin/bash \
+            --mount type=bind,source="${GITHUB_WORKSPACE}",target=/workspace \
+            --workdir /workspace \
+            "${CREUSOT_IMAGE}" tools/creusot-prove.sh
   # Supply-chain policy, from //deny.toml. That file names the advisories this
   # workspace accepts and the licenses and sources it allows, and until this
   # job existed nothing read it. It had drifted far enough to fail on its first

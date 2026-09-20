@@ -1,0 +1,198 @@
+use seq.Seq
+use creusot.int.UInt64
+use creusot.slice.Slice64
+use creusot.prelude.MutBorrow
+use creusot.prelude.Any
+use int.Int
+
+type t_Vec_usize_Global
+
+constant const_MAX: UInt64.t = (18446744073709551615: UInt64.t)
+
+function view_Vec_usize_Global (self: t_Vec_usize_Global) : Seq.seq UInt64.t
+
+axiom view_Vec_usize_Global_spec:
+  forall self: t_Vec_usize_Global [view_Vec_usize_Global self]. Seq.length (view_Vec_usize_Global self)
+    <= UInt64.t'int const_MAX
+
+let new_usize (return (x: t_Vec_usize_Global)) = any
+  [ return (result: t_Vec_usize_Global) -> {[@stop_split] [@expl:new ensures] Seq.length (view_Vec_usize_Global result)
+    = 0}
+    (! return {result}) ]
+
+predicate ge_log_Int [@inline:trivial] (self: int) (other: int) = other <= self
+
+meta "rewrite_def" predicate ge_log_Int
+
+predicate gt_log_Int [@inline:trivial] (self: int) (other: int) = other < self
+
+meta "rewrite_def" predicate gt_log_Int
+
+predicate well_founded_relation_Int [@inline:trivial] (self: int) (other: int) =
+  ge_log_Int self 0 /\ gt_log_Int self other
+
+meta "rewrite_def" predicate well_founded_relation_Int
+
+let len_usize (self_: Slice64.slice UInt64.t) (return (x: UInt64.t)) = any
+  [ return (result: UInt64.t) -> {[@stop_split] [@expl:len ensures] Seq.length (Slice64.view self_)
+    = UInt64.t'int result}
+    (! return {result}) ]
+
+constant const_MIN: UInt64.t = (0: UInt64.t)
+
+let saturating_add (self_: UInt64.t) (rhs: UInt64.t) (return (x: UInt64.t)) = any
+  [ return (result: UInt64.t) ->
+  {[@stop_split] [@expl:saturating_add ensures] ([@stop_split] [@expl:saturating_add ensures #0] ge_log_Int (UInt64.t'int self_
+          + UInt64.t'int rhs) (UInt64.t'int const_MIN)
+        /\ UInt64.t'int self_ + UInt64.t'int rhs <= UInt64.t'int const_MAX
+      -> UInt64.t'int result = UInt64.t'int self_ + UInt64.t'int rhs)
+    /\ ([@stop_split] [@expl:saturating_add ensures #1] UInt64.t'int self_ + UInt64.t'int rhs < UInt64.t'int const_MIN
+      -> UInt64.t'int result = UInt64.t'int const_MIN)
+    /\ ([@stop_split] [@expl:saturating_add ensures #2] gt_log_Int (UInt64.t'int self_
+      + UInt64.t'int rhs) (UInt64.t'int const_MAX) -> UInt64.t'int result = UInt64.t'int const_MAX)}
+    (! return {result}) ]
+
+let push_usize (self_: MutBorrow.t t_Vec_usize_Global) (v: UInt64.t) (return (x: ())) = any
+  [ return (result: ()) -> {[@stop_split] [@expl:push ensures] view_Vec_usize_Global self_.final
+    = Seq.snoc (view_Vec_usize_Global self_.current) v}
+    (! return {result}) ]
+
+meta "compute_max_steps" 1000000
+
+meta "select_lsinst" "all"
+
+let compaction_run_ends (row_counts: Slice64.slice UInt64.t) (max_blocks: UInt64.t) (target_rows: UInt64.t)
+  (return (x: t_Vec_usize_Global)) =
+{[@stop_split] [@expl:compaction_run_ends requires] ([@stop_split] [@expl:compaction_run_ends requires #0] ge_log_Int (UInt64.t'int max_blocks) 2)
+  /\ ([@stop_split] [@expl:compaction_run_ends requires #1] ge_log_Int (UInt64.t'int target_rows) 1)
+  /\ ([@stop_split] [@expl:compaction_run_ends requires #2] forall i: int. 0 <= i
+      /\ i < Seq.length (Slice64.view row_counts)
+    -> UInt64.t'int (Seq.get (Slice64.view row_counts) i) < UInt64.t'int target_rows)}
+  (! bb0
+  [ bb0 = s0
+    [ s0 = new_usize (fun (_x: t_Vec_usize_Global) -> [ &ends <- _x ] s1)
+    | s1 = [ &start <- (0: UInt64.t) ] s2
+    | s2 = [ &rows <- (0: UInt64.t) ] s3
+    | s3 = [ &index <- (0: UInt64.t) ] s4
+    | s4 = bb2 ]
+  | bb2 = bb2invariant
+    [ bb2 = {[@expl:loop variant] well_founded_relation_Int variant_old_bb2 (Seq.length (Slice64.view row_counts)
+      - UInt64.t'int index)}
+      bb2invariant
+    | bb2invariant = {[@expl:loop invariant #0] UInt64.t'int index <= Seq.length (Slice64.view row_counts)}
+      {[@expl:loop invariant #1] UInt64.t'int start <= UInt64.t'int index}
+      {[@expl:loop invariant #2] UInt64.t'int index - UInt64.t'int start < UInt64.t'int max_blocks}
+      {[@expl:loop invariant #3] UInt64.t'int index = UInt64.t'int start -> UInt64.t'int rows = 0}
+      {[@expl:loop invariant #4] UInt64.t'int index - UInt64.t'int start = 1
+      -> UInt64.t'int rows < UInt64.t'int target_rows}
+      {[@expl:loop invariant #5] forall i: int. 0 <= i /\ i < Seq.length (view_Vec_usize_Global ends)
+        -> UInt64.t'int (Seq.get (view_Vec_usize_Global ends) i) <= Seq.length (Slice64.view row_counts)}
+      {[@expl:loop invariant #6] forall i: int. 0 <= i /\ i < Seq.length (view_Vec_usize_Global ends)
+        -> ge_log_Int (if i = 0 then
+          UInt64.t'int (Seq.get (view_Vec_usize_Global ends) i)
+        else
+          UInt64.t'int (Seq.get (view_Vec_usize_Global ends) i)
+          - UInt64.t'int (Seq.get (view_Vec_usize_Global ends) (i - 1))
+        ) 2}
+      {[@expl:loop invariant #7] forall i: int. 0 <= i /\ i < Seq.length (view_Vec_usize_Global ends)
+        -> (if i = 0 then
+            UInt64.t'int (Seq.get (view_Vec_usize_Global ends) i)
+          else
+            UInt64.t'int (Seq.get (view_Vec_usize_Global ends) i)
+            - UInt64.t'int (Seq.get (view_Vec_usize_Global ends) (i - 1))
+          )
+        <= UInt64.t'int max_blocks}
+      {[@expl:loop invariant #8] Seq.length (view_Vec_usize_Global ends) = 0 -> UInt64.t'int start = 0}
+      {[@expl:loop invariant #9] gt_log_Int (Seq.length (view_Vec_usize_Global ends)) 0
+      -> UInt64.t'int start
+      = UInt64.t'int (Seq.get (view_Vec_usize_Global ends) (Seq.length (view_Vec_usize_Global ends) - 1))}
+      (! [ &variant_old_bb2 <- Seq.length (Slice64.view row_counts) - UInt64.t'int index ] s0)
+      [ s0 = len_usize {row_counts} (fun (_x: UInt64.t) -> [ &_65 <- _x ] s1)
+      | s1 = [ &_63 <- UInt64.lt index _65 ] s2
+      | s2 = any [ br0 -> {_63 = false} (! bb15) | br1 -> {_63} (! bb5) ] ]
+      [ bb5 = s0
+        [ s0 = [ &_70 <- index ] s1
+        | s1 = [ &_71 <- Slice64.length row_counts ] s2
+        | s2 = [ &_72 <- UInt64.lt _70 _71 ] s3
+        | s3 = {[@expl:index in bounds] _72} s4
+        | s4 = Slice64.get <UInt64.t> {row_counts} {_70} (fun (r: UInt64.t) -> [ &_69 <- r ] s5)
+        | s5 = saturating_add {rows} {_69} (fun (_x: UInt64.t) -> [ &_67 <- _x ] s6)
+        | s6 = [ &rows <- _67 ] s7
+        | s7 = UInt64.add {index} {(1: UInt64.t)} (fun (_x: UInt64.t) -> [ &index <- _x ] s8)
+        | s8 = UInt64.sub {index} {start} (fun (_x: UInt64.t) -> [ &_74 <- _x ] s9)
+        | s9 = [ &_73 <- UInt64.ge _74 max_blocks ] s10
+        | s10 = any [ br0 -> {_73 = false} (! bb9) | br1 -> {_73} (! bb11) ] ]
+      | bb9 = s0
+        [ s0 = [ &_78 <- UInt64.ge rows target_rows ] s1
+        | s1 = any [ br0 -> {_78 = false} (! bb2) | br1 -> {_78} (! bb11) ] ]
+      | bb11 = s0
+        [ s0 = MutBorrow.borrow_mut <t_Vec_usize_Global> {ends}
+            (fun (_bor: MutBorrow.t t_Vec_usize_Global) -> [ &_82 <- _bor ] [ &ends <- _bor.final ] s1)
+        | s1 = push_usize {_82} {index} (fun (_x: ()) -> [ &_81 <- _x ] s2)
+        | s2 = [ &start <- index ] s3
+        | s3 = [ &rows <- (0: UInt64.t) ] s4
+        | s4 = bb2 ] ] ]
+  | bb15 = s0
+    [ s0 = UInt64.sub {index} {start} (fun (_x: UInt64.t) -> [ &_88 <- _x ] s1)
+    | s1 = [ &_87 <- UInt64.ge _88 (2: UInt64.t) ] s2
+    | s2 = any [ br0 -> {_87 = false} (! bb19) | br1 -> {_87} (! bb16) ] ]
+  | bb16 = s0
+    [ s0 = MutBorrow.borrow_mut <t_Vec_usize_Global> {ends}
+        (fun (_bor: MutBorrow.t t_Vec_usize_Global) -> [ &_92 <- _bor ] [ &ends <- _bor.final ] s1)
+    | s1 = push_usize {_92} {index} (fun (_x: ()) -> [ &_91 <- _x ] s2)
+    | s2 = bb19 ]
+  | bb19 = s0 [ s0 = [ &_ret <- ends ] s1 | s1 = return {_ret} ] ]
+  [ & _ret: t_Vec_usize_Global = Any.any_l ()
+  | & row_counts: Slice64.slice UInt64.t = row_counts
+  | & max_blocks: UInt64.t = max_blocks
+  | & target_rows: UInt64.t = target_rows
+  | & ends: t_Vec_usize_Global = Any.any_l ()
+  | & start: UInt64.t = Any.any_l ()
+  | & rows: UInt64.t = Any.any_l ()
+  | & index: UInt64.t = Any.any_l ()
+  | & _63: bool = Any.any_l ()
+  | & _65: UInt64.t = Any.any_l ()
+  | & _67: UInt64.t = Any.any_l ()
+  | & _69: UInt64.t = Any.any_l ()
+  | & _70: UInt64.t = Any.any_l ()
+  | & _71: UInt64.t = Any.any_l ()
+  | & _72: bool = Any.any_l ()
+  | & _73: bool = Any.any_l ()
+  | & _74: UInt64.t = Any.any_l ()
+  | & _78: bool = Any.any_l ()
+  | & _81: () = Any.any_l ()
+  | & _82: MutBorrow.t t_Vec_usize_Global = Any.any_l ()
+  | & _87: bool = Any.any_l ()
+  | & _88: UInt64.t = Any.any_l ()
+  | & _91: () = Any.any_l ()
+  | & _92: MutBorrow.t t_Vec_usize_Global = Any.any_l ()
+  | & variant_old_bb2: int = Any.any_l () ])
+  [ return (result: t_Vec_usize_Global) ->
+  {[@stop_split] [@expl:compaction_run_ends ensures] ([@stop_split] [@expl:compaction_run_ends ensures #0] forall i: int. 0
+            <= i
+          /\ i < Seq.length (view_Vec_usize_Global result)
+        -> UInt64.t'int (Seq.get (view_Vec_usize_Global result) i) <= Seq.length (Slice64.view row_counts))
+    /\ ([@stop_split] [@expl:compaction_run_ends ensures #1] forall i: int. 0 <= i
+          /\ i < Seq.length (view_Vec_usize_Global result)
+        -> ge_log_Int (if i = 0 then
+          UInt64.t'int (Seq.get (view_Vec_usize_Global result) i)
+        else
+          UInt64.t'int (Seq.get (view_Vec_usize_Global result) i)
+          - UInt64.t'int (Seq.get (view_Vec_usize_Global result) (i - 1))
+        ) 2)
+    /\ ([@stop_split] [@expl:compaction_run_ends ensures #2] forall i: int. 0 <= i
+          /\ i < Seq.length (view_Vec_usize_Global result)
+        -> (if i = 0 then
+            UInt64.t'int (Seq.get (view_Vec_usize_Global result) i)
+          else
+            UInt64.t'int (Seq.get (view_Vec_usize_Global result) i)
+            - UInt64.t'int (Seq.get (view_Vec_usize_Global result) (i - 1))
+          )
+        <= UInt64.t'int max_blocks)
+    /\ ([@stop_split] [@expl:compaction_run_ends ensures #3] Seq.length (view_Vec_usize_Global result) = 0
+      -> Seq.length (Slice64.view row_counts) <= 1)
+    /\ ([@stop_split] [@expl:compaction_run_ends ensures #4] gt_log_Int (Seq.length (view_Vec_usize_Global result)) 0
+    -> Seq.length (Slice64.view row_counts)
+      - UInt64.t'int (Seq.get (view_Vec_usize_Global result) (Seq.length (view_Vec_usize_Global result) - 1))
+    <= 1)}
+    (! return {result}) ]
