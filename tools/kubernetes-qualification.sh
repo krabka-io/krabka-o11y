@@ -461,12 +461,16 @@ query_corpus replicated
 run kubectl -n "${namespace}" scale deployment/alloy --replicas=0
 printf 'workload\trecovery_ms\n' >"${evidence_dir}/takeover-times.tsv"
 for workload in "${replicated[@]}"; do
-  victim="pod/$(owner_pod "${workload}")"
-  started=$(monotonic_ms)
-  run kubectl -n "${namespace}" delete "${victim}" --wait=false
-  run kubectl -n "${namespace}" rollout status "deployment/${workload}" --timeout=10m
-  printf '%s\t%s\n' "${workload}" "$(( $(monotonic_ms) - started ))" \
-    >>"${evidence_dir}/takeover-times.tsv"
+  # Delete each current owner in turn. This covers both rendered partitions,
+  # even when the two keyed qualification records hash to the same one.
+  for attempt in 1 2; do
+    victim="pod/$(owner_pod "${workload}")"
+    started=$(monotonic_ms)
+    run kubectl -n "${namespace}" delete "${victim}" --wait=false
+    run kubectl -n "${namespace}" rollout status "deployment/${workload}" --timeout=10m
+    printf '%s-%s\t%s\n' "${workload}" "${attempt}" "$(( $(monotonic_ms) - started ))" \
+      >>"${evidence_dir}/takeover-times.tsv"
+  done
 done
 query_corpus process-death
 assert_marker_cardinality process-death
