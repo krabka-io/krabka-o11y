@@ -1,0 +1,27 @@
+name: buildbuddy smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  remote-runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: install BuildBuddy CLI
+        run: curl -fsSL https://install.buildbuddy.io | bash
+      - name: run remotely
+        run: |
+          set -euo pipefail
+          "${HOME}/.local/bin/bb" remote \
+            --os=linux \
+            --arch=amd64 \
+            --timeout=10m \
+            --disable_retry \
+            --script='git rev-parse HEAD'
