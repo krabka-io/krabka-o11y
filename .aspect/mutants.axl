@@ -52,7 +52,7 @@ def _wait_for_shards(ctx: TaskContext, pending: list[dict]) -> None:
             ctx.std.fs.write(
                 shard["log"],
                 ctx.std.fs.read_to_string(shard["log"]) + stderr,
-        )
+            )
         ctx.std.fs.remove_file(shard["stderr"])
         ctx.std.fs.remove_dir_all(shard["scratch"])
 
