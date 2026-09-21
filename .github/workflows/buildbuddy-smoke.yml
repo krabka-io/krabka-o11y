@@ -23,7 +23,7 @@ jobs:
       - name: run remotely
         run: |
           set -euo pipefail
-          "${HOME}/.local/bin/bb" remote \
+          bb remote \
             --os=linux \
             --arch=amd64 \
             --timeout=10m \
