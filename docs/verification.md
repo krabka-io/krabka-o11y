@@ -14,6 +14,7 @@ Stateright exhaustively enumerates a bounded durable-publication protocol.
 | `retention_cutoff` | Non-positive retention keeps data forever; positive retention subtracts without overflowing the timestamp range. |
 | `overlap_window` | Two binary searches return exactly the slice that can overlap a query: every earlier prefix ends too soon and every later block starts too late. The searches are safe and terminating. |
 | `bounded_shard_slots` | A bounded grid span produces every consecutive shard slot exactly once; an oversized span produces the unbounded fallback without overflowing at either end of `i64`. |
+| `shard_range` | A positive-width grid slot produces an ordered inclusive range whose span is at most the requested width, with both timestamp edges clamped safely. |
 
 The blockstore remains responsible for grouping compaction candidates and for
 maintaining the index's sorted start times and prefix maximum end times. Those
@@ -50,3 +51,9 @@ to remain durable and require an acknowledgeable writer's effect never to
 disappear. Reachability covers conflict merging, publication expiry, stale
 sweep invalidation, post-publication removal replay, and reclamation; the exact
 113,426-state graph is pinned.
+
+`block_deletion_protocol_model` enumerates sidecar deletion, block deletion,
+failures, crashes, and later sweep replay. Its safety property requires that a
+deleted block has no remaining sidecars; reachability covers completion after
+failure and crash and idempotent replay of an already absent sidecar. Exact
+two- and three-sidecar state counts are pinned.

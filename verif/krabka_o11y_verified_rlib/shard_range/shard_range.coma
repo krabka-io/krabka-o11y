@@ -1,0 +1,81 @@
+use creusot.int.Int64
+use creusot.prelude.Any
+use int.Int
+
+type t_Option_i64 = None | Some Int64.t
+
+constant const_MIN: Int64.t = (-9223372036854775808: Int64.t)
+
+predicate gt_log_Int [@inline:trivial] (self: int) (other: int) = other < self
+
+meta "rewrite_def" predicate gt_log_Int
+
+constant const_MAX: Int64.t = (9223372036854775807: Int64.t)
+
+let checked_mul (self_: Int64.t) (rhs: Int64.t) (return (x: t_Option_i64)) = any
+  [ return (result: t_Option_i64) ->
+  {[@stop_split] [@expl:checked_mul ensures] ([@stop_split] [@expl:checked_mul ensures #0] (result = None)
+      = (Int64.to_int self_ * Int64.to_int rhs < Int64.to_int const_MIN
+      \/ gt_log_Int (Int64.to_int self_ * Int64.to_int rhs) (Int64.to_int const_MAX)))
+    /\ ([@stop_split] [@expl:checked_mul ensures #1] forall r: Int64.t. result = Some r
+      -> Int64.to_int r = Int64.to_int self_ * Int64.to_int rhs)}
+    (! return {result}) ]
+
+let elim_Some (_x: t_Option_i64) (return (f0: Int64.t)) = any
+  [ _k (f0: Int64.t) -> {Some f0 = _x} (! return {f0})
+  | _chk -> (! {[@expl:elim Some] match _x with
+      | Some _ -> true
+      | _ -> false
+      end}
+    any) ]
+
+predicate ge_log_Int [@inline:trivial] (self: int) (other: int) = other <= self
+
+meta "rewrite_def" predicate ge_log_Int
+
+let saturating_add (self_: Int64.t) (rhs: Int64.t) (return (x: Int64.t)) = any
+  [ return (result: Int64.t) ->
+  {[@stop_split] [@expl:saturating_add ensures] ([@stop_split] [@expl:saturating_add ensures #0] ge_log_Int (Int64.to_int self_
+          + Int64.to_int rhs) (Int64.to_int const_MIN)
+        /\ Int64.to_int self_ + Int64.to_int rhs <= Int64.to_int const_MAX
+      -> Int64.to_int result = Int64.to_int self_ + Int64.to_int rhs)
+    /\ ([@stop_split] [@expl:saturating_add ensures #1] Int64.to_int self_ + Int64.to_int rhs < Int64.to_int const_MIN
+      -> Int64.to_int result = Int64.to_int const_MIN)
+    /\ ([@stop_split] [@expl:saturating_add ensures #2] gt_log_Int (Int64.to_int self_
+      + Int64.to_int rhs) (Int64.to_int const_MAX) -> Int64.to_int result = Int64.to_int const_MAX)}
+    (! return {result}) ]
+
+type tup2_i64_i64 = { f0: Int64.t; f1: Int64.t }
+
+meta "compute_max_steps" 1000000
+
+meta "select_lsinst" "all"
+
+let shard_range (slot: Int64.t) (width: Int64.t) (return (x: tup2_i64_i64)) =
+{[@stop_split] [@expl:shard_range requires] ge_log_Int (Int64.to_int width) 1}
+  (! bb0
+  [ bb0 = s0
+    [ s0 = checked_mul {slot} {width} (fun (_x: t_Option_i64) -> [ &_9 <- _x ] s1)
+    | s1 = any [ br0 -> {_9 = None} (! bb4) | br1 (x0: Int64.t) -> {_9 = Some x0} (! bb5) ] ]
+  | bb5 = s0
+    [ s0 = elim_Some {_9} (fun (r0: Int64.t) -> [ &start'0 <- r0 ] s1) | s1 = [ &start <- start'0 ] s2 | s2 = bb6 ]
+  | bb4 = s0 [ s0 = [ &start <- const_MIN ] s1 | s1 = bb6 ]
+  | bb6 = s0
+    [ s0 = Int64.sub {width} {(1: Int64.t)} (fun (_x: Int64.t) -> [ &_16 <- _x ] s1)
+    | s1 = saturating_add {start} {_16} (fun (_x: Int64.t) -> [ &end' <- _x ] s2)
+    | s2 = [ &_ret <- { f0 = start; f1 = end' } ] s3
+    | s3 = return {_ret} ] ]
+  [ & _ret: tup2_i64_i64 = Any.any_l ()
+  | & slot: Int64.t = slot
+  | & width: Int64.t = width
+  | & start: Int64.t = Any.any_l ()
+  | & _9: t_Option_i64 = Any.any_l ()
+  | & start'0: Int64.t = Any.any_l ()
+  | & end': Int64.t = Any.any_l ()
+  | & _16: Int64.t = Any.any_l () ])
+  [ return (result: tup2_i64_i64) ->
+  {[@stop_split] [@expl:shard_range ensures] ([@stop_split] [@expl:shard_range ensures #0] Int64.to_int result.f0
+      <= Int64.to_int result.f1)
+    /\ ([@stop_split] [@expl:shard_range ensures #1] Int64.to_int result.f1 - Int64.to_int result.f0
+    <= Int64.to_int width - 1)}
+    (! return {result}) ]
