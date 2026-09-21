@@ -9,7 +9,8 @@ use assert2::assert;
 use futures::{StreamExt as _, TryStreamExt as _, stream};
 use krabka_blockstore::{MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation};
 use object_store::{
-    Error, ObjectStore, ObjectStoreExt as _, integration, path::Path, prefix::PrefixStore,
+    Error, ObjectStore, ObjectStoreExt as _, PutMode, UpdateVersion, integration, path::Path,
+    prefix::PrefixStore,
 };
 use serde_json::json;
 use url::Url;
@@ -46,6 +47,56 @@ async fn wait_for_count(store: &Arc<dyn ObjectStore>, expected: usize) -> usize 
     panic!("the provider listing did not converge to {expected} objects within 30 seconds")
 }
 
+/// GCS limits mutations to one object more tightly than independent writes.
+///
+/// The generic integration helper uses five concurrent writers to prove a
+/// compare-and-swap loop. That intentionally exceeds GCS's per-object mutation
+/// limit and tests the provider's throttling policy, not Krabka's object-store
+/// contract. Keep the create and update preconditions covered without making a
+/// healthy GCS bucket fail from that deliberate overload.
+async fn gcs_conditional_puts(store: &dyn ObjectStore) {
+    let path = Path::from("put_opts");
+    let first = store
+        .put_opts(&path, "a".into(), PutMode::Create.into())
+        .await
+        .expect("GCS creates a new object conditionally");
+    assert!(matches!(
+        store
+            .put_opts(&path, "b".into(), PutMode::Create.into())
+            .await,
+        Err(Error::AlreadyExists { .. })
+    ));
+
+    let updated = store
+        .put_opts(
+            &path,
+            "c".into(),
+            PutMode::Update(UpdateVersion::from(first.clone())).into(),
+        )
+        .await
+        .expect("GCS updates the current object conditionally");
+    assert!(matches!(
+        store
+            .put_opts(
+                &path,
+                "d".into(),
+                PutMode::Update(UpdateVersion::from(first)).into(),
+            )
+            .await,
+        Err(Error::Precondition { .. })
+    ));
+    assert!(matches!(
+        store
+            .put_opts(
+                &path,
+                "e".into(),
+                PutMode::Update(UpdateVersion::from(updated)).into(),
+            )
+            .await,
+        Ok(_)
+    ));
+}
+
 fn report_path() -> Option<PathBuf> {
     std::env::var_os("KRABKA_OBJECT_STORE_CONTRACT_REPORT")
         .map(PathBuf::from)
@@ -79,7 +130,11 @@ async fn supported_provider_satisfies_the_object_store_contract() {
     delete_all(&store).await;
     integration::get_opts(store.as_ref()).await;
     delete_all(&store).await;
-    integration::put_opts(store.as_ref(), true).await;
+    if url.scheme() == "gs" {
+        gcs_conditional_puts(store.as_ref()).await;
+    } else {
+        integration::put_opts(store.as_ref(), true).await;
+    }
     delete_all(&store).await;
     integration::rename_and_copy(&store).await;
     delete_all(&store).await;

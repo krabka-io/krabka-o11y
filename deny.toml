@@ -91,6 +91,8 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
     # Temporary DataFusion pin for profile query support.
     "https://github.com/apache/datafusion",
+    # Pinned upstream object_store GCS copy/overwrite fix.
+    "https://github.com/apache/arrow-rs-object-store",
     # The sibling repositories. `[patch.crates-io]` in Cargo.toml pins every
     # crate each one publishes to a single revision. krabka-schema-registry
     # is on the list because the

@@ -155,6 +155,13 @@ done
 for crate_name in "${!patch_url[@]}"; do
   url="${patch_url[$crate_name]}"
 
+  # Only Krabka's multi-crate sibling workspaces need an explicit Bazel
+  # member path. A standalone upstream patch, such as object_store, is
+  # resolved directly from Cargo metadata by rules_rs.
+  if [[ $url != https://github.com/krabka-io/* ]]; then
+    continue
+  fi
+
   if [[ -z ${bazel_dir["$crate_name"]:-} ]]; then
     fail "$crate_name is in [patch.crates-io] in Cargo.toml but in no list in MODULE.bazel. Add it to SIBLING_MEMBERS with its directory in the sibling, or Bazel resolves it against the sibling's crates/* glob and fails analysis."
     continue

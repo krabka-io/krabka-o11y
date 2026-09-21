@@ -66,12 +66,67 @@
       "artifact_id": 10605829551,
       "artifact_sha256": "dcee8c3ffe29f1c482f880ebb2fb70e3643aa88a981ab9bdf06c577f48d78953",
       "contents_manifest_sha256": "f83f2f9f1c4fd449f9ae711a8e5e2de1a8a45a5c1a777728679b25138f969454"
+    },
+    "metrics-service": {
+      "started_at": "2026-09-20T22:24:06Z",
+      "command": "aspect mutants metrics-service 0 1",
+      "duration_seconds": 1787,
+      "shards": 8,
+      "total": 376,
+      "caught": 207,
+      "survived": 119,
+      "unviable": 50,
+      "artifact_url": "gs://robot-head-krabka-o11y-contract/qualification/milestone-19/mutants/243965d0/metrics-service.tar.zst",
+      "artifact_generation": "1789944929170642",
+      "artifact_sha256": "a5055042efa2e3f965c7bfabe6adc6caa4d99ee96919c42815764de1f8ddfddd",
+      "contents_manifest_sha256": "04e98ff67228c82668bea1803c4fa26c18bbc22430d2c64627253ba920a5e8e4",
+      "provenance": {
+        "commit": "243965d01c284522ad379e8368afc739cbd0facb",
+        "runner": {
+          "label": "clod",
+          "os": "Linux clod 7.0.0-31-generic #31-Ubuntu SMP PREEMPT_DYNAMIC Sat Aug 1 04:26:38 UTC 2026 x86_64 GNU/Linux",
+          "cpu_count": 16,
+          "memory_kib": 64387700
+        },
+        "toolchain": {
+          "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+          "bazel": "9.2.0",
+          "bazelisk": "1.29.0"
+        }
+      }
+    },
+    "verified": {
+      "started_at": "2026-09-20T22:20:38Z",
+      "command": "aspect mutants verified 0 1",
+      "duration_seconds": 22,
+      "shards": 8,
+      "total": 23,
+      "caught": 21,
+      "survived": 2,
+      "unviable": 0,
+      "artifact_url": "gs://robot-head-krabka-o11y-contract/qualification/milestone-19/mutants/a12b8722/verified.tar.zst",
+      "artifact_generation": "1789942908968317",
+      "artifact_sha256": "143a9755f16bcc8c7cabfeaef72bbc4edc15aa509f09bd570bd8d34e56086e62",
+      "contents_manifest_sha256": "0978c63823775addae3ca833d73e98dac4757045d49236d43443cb8927f4563e",
+      "provenance": {
+        "commit": "a12b8722c29280f99ea097973fae21530f1bf2d3",
+        "runner": {
+          "label": "clod",
+          "os": "Linux clod 7.0.0-31-generic #31-Ubuntu SMP PREEMPT_DYNAMIC Sat Aug 1 04:26:38 UTC 2026 x86_64 GNU/Linux",
+          "cpu_count": 16,
+          "memory_kib": 64387700
+        },
+        "toolchain": {
+          "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+          "bazel": "9.2.0",
+          "bazelisk": "1.29.0"
+        }
+      }
     }
   },
   "unseeded": [
     "blockstore",
     "metrics",
-    "metrics-service",
     "observability",
     "profiles",
     "promql",

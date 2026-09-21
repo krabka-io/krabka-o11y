@@ -202,6 +202,9 @@ krabka-units = "0.4.0"
 # tools/check-sibling-members.sh checks this table and the SIBLING_MEMBERS
 # dict in MODULE.bazel against the siblings at the pinned revisions.
 [patch.crates-io]
+# Keep the 0.13 API shared with DataFusion while picking up the upstream GCS
+# overwrite/copy precondition fix; it shipped after the 0.13.2 release.
+object_store = { git = "https://github.com/apache/arrow-rs-object-store", rev = "994d60732c3379bc98982f5c4638996be0ee0d2f" }
 krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "19ea5bfac23c4858d5d6aed99890014fd0fa23d3" }
 krabka-authz = { git = "https://github.com/krabka-io/krabka-broker", rev = "19ea5bfac23c4858d5d6aed99890014fd0fa23d3" }
 krabka-broker = { git = "https://github.com/krabka-io/krabka-broker", rev = "19ea5bfac23c4858d5d6aed99890014fd0fa23d3" }

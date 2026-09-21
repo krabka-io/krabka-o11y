@@ -17,112 +17,100 @@
 # with no number yet still cannot report a target that measured nothing as a
 # clean run.
 #
-# `unseeded` means no number is checked in yet. The numeric gate is dormant for
-# that id: the run reports its mean and gates nothing on it.
+# These values came from the dedicated 16-core `clod` runner on 2026-09-20.
+# Raw Criterion artifacts, host shape, toolchain, command, duration, and
+# checksums are recorded in qualification/milestone-19-benchmarks.json.
 #
-# EVERY ID BELOW READS `unseeded`, AND THAT IS DELIBERATE.
-#
-# A baseline here is a wall-clock number, so it is a statement about one machine
-# under one load, and it is valid only for that machine. The numbers this suite
-# has actually produced were measured on a shared, contended build box with
-# sixteen cores and other work running beside it. They are useful -- they are in
-# the pull request that added this file, and they say which operations are
-# linear in what -- and they are not a baseline. Writing them in would arm the
-# gate against the noise of whatever machine ran next.
-#
-# Seeding this needs a CI runner that is quiet, dedicated, and the same one
-# every night. GitHub-hosted runners are none of those: two shared vCPUs on a
-# host with no admission control. Until such a runner exists, the honest
-# baseline is no baseline, and the structural checks above are what this file
-# buys. Do not guess a number. Take it from that runner, which prints the lines
-# to check in:
+# GitHub-hosted runners only validate the inventory because their hardware is
+# different. Run the numeric gate on the recorded runner, or an equivalent
+# stable runner, before updating a value:
 #
 #     tools/bench.sh && tools/bench-ratchet.py --record
 #
 # See //benches/README.md for the reasoning in full.
 
-blockstore_read/metadata/10000            unseeded
-blockstore_read/metadata/100000           unseeded
-blockstore_read/metadata/1000000          unseeded
-blockstore_read/one_row_group/10000       unseeded
-blockstore_read/one_row_group/100000      unseeded
-blockstore_read/one_row_group/1000000     unseeded
-blockstore_read/whole_block/10000         unseeded
-blockstore_read/whole_block/100000        unseeded
-blockstore_read/whole_block/1000000       unseeded
-blockstore_write/parquet/10000            unseeded
-blockstore_write/parquet/100000           unseeded
-blockstore_write/parquet/1000000          unseeded
-index_load/one_day/1                      unseeded
-index_load/one_day/30                     unseeded
-index_load/one_day/7                      unseeded
-index_load/whole_index/1                  unseeded
-index_load/whole_index/30                 unseeded
-index_load/whole_index/7                  unseeded
-index_prune/candidate_blocks/12           unseeded
-index_prune/candidate_blocks/360          unseeded
-index_prune/candidate_blocks/90           unseeded
-index_prune/label_values/1000             unseeded
-index_prune/label_values/10000            unseeded
-index_prune/label_values/100000           unseeded
-index_prune/resolve_one_job/1000          unseeded
-index_prune/resolve_one_job/10000         unseeded
-index_prune/resolve_one_job/100000        unseeded
-index_prune/resolve_one_series/1000       unseeded
-index_prune/resolve_one_series/10000      unseeded
-index_prune/resolve_one_series/100000     unseeded
-index_prune/resolve_regex/1000            unseeded
-index_prune/resolve_regex/10000           unseeded
-index_prune/resolve_regex/100000          unseeded
-index_prune/trace_prune_by_tag/12         unseeded
-index_prune/trace_prune_by_tag/360        unseeded
-index_prune/trace_prune_by_tag/90         unseeded
-log_object_store_scan/parquet_scan/10000          unseeded
-log_object_store_scan/parquet_scan/100000         unseeded
-log_object_store_scan/parquet_scan/1000000        unseeded
-log_object_store_scan/row_struct_round_trip/10000     unseeded
-log_object_store_scan/row_struct_round_trip/100000    unseeded
-log_object_store_scan/row_struct_round_trip/1000000   unseeded
-pprof_merge/depth/16                      unseeded
-pprof_merge/depth/4                       unseeded
-pprof_merge/depth/64                      unseeded
-pprof_merge/stacks/1000                   unseeded
-pprof_merge/stacks/10000                  unseeded
-pprof_merge/stacks/100000                 unseeded
-pprof_merge/to_flamegraph/1000            unseeded
-pprof_merge/to_flamegraph/10000           unseeded
-pprof_merge/to_flamegraph/100000          unseeded
-promql_range/parse/rate                   unseeded
-promql_range/parse/selector               unseeded
-promql_range/parse/sum_by_job             unseeded
-promql_range/rate/100                     unseeded
-promql_range/rate/1000                    unseeded
-promql_range/rate/10000                   unseeded
-promql_range/selector/100                 unseeded
-promql_range/selector/1000                unseeded
-promql_range/selector/10000               unseeded
-promql_range/sum_by_job/100               unseeded
-promql_range/sum_by_job/1000              unseeded
-promql_range/sum_by_job/10000             unseeded
-traceql_filter/attr_eq/1000               unseeded
-traceql_filter/attr_eq/10000              unseeded
-traceql_filter/attr_eq/100000             unseeded
-traceql_filter/conjunction/1000           unseeded
-traceql_filter/conjunction/10000          unseeded
-traceql_filter/conjunction/100000         unseeded
-traceql_filter/descendant/1000            unseeded
-traceql_filter/descendant/10000           unseeded
-traceql_filter/descendant/100000          unseeded
-traceql_filter/intrinsic_duration/1000    unseeded
-traceql_filter/intrinsic_duration/10000   unseeded
-traceql_filter/intrinsic_duration/100000  unseeded
-traceql_filter/parse/attr_eq              unseeded
-traceql_filter/parse/conjunction          unseeded
-traceql_filter/parse/descendant           unseeded
-traceql_filter/parse/intrinsic_duration   unseeded
-wal_head_apply/per_batch_no_reader/1000       unseeded
-wal_head_apply/per_batch_no_reader/5000       unseeded
-wal_head_apply/per_batch_with_reader/1000     unseeded
-wal_head_apply/per_batch_with_reader/5000     unseeded
-wal_head_apply/per_record_with_reader/1000    unseeded
-wal_head_apply/per_record_with_reader/5000    unseeded
+blockstore_read/metadata/10000            3666
+blockstore_read/metadata/100000           3667
+blockstore_read/metadata/1000000          8832
+blockstore_read/one_row_group/10000       90809
+blockstore_read/one_row_group/100000      837371
+blockstore_read/one_row_group/1000000     842816
+blockstore_read/whole_block/10000         90818
+blockstore_read/whole_block/100000        830748
+blockstore_read/whole_block/1000000       9546885
+blockstore_write/parquet/10000            568164
+blockstore_write/parquet/100000           6350072
+blockstore_write/parquet/1000000          69659676
+index_load/one_day/1                      15870203
+index_load/one_day/30                     16010820
+index_load/one_day/7                      15864680
+index_load/whole_index/1                  15911391
+index_load/whole_index/30                 294243866
+index_load/whole_index/7                  73052241
+index_prune/candidate_blocks/12           134
+index_prune/candidate_blocks/360          4459
+index_prune/candidate_blocks/90           1016
+index_prune/label_values/1000             185
+index_prune/label_values/10000            182
+index_prune/label_values/100000           186
+index_prune/resolve_one_job/1000          192
+index_prune/resolve_one_job/10000         2112
+index_prune/resolve_one_job/100000        23415
+index_prune/resolve_one_series/1000       68
+index_prune/resolve_one_series/10000      74
+index_prune/resolve_one_series/100000     79
+index_prune/resolve_regex/1000            37979
+index_prune/resolve_regex/10000           72169
+index_prune/resolve_regex/100000          805518
+index_prune/trace_prune_by_tag/12         145
+index_prune/trace_prune_by_tag/360        4080
+index_prune/trace_prune_by_tag/90         1071
+log_object_store_scan/parquet_scan/10000          1121407
+log_object_store_scan/parquet_scan/100000         1428723
+log_object_store_scan/parquet_scan/1000000        1641663
+log_object_store_scan/row_struct_round_trip/10000     2530555
+log_object_store_scan/row_struct_round_trip/100000    29371011
+log_object_store_scan/row_struct_round_trip/1000000   298870887
+pprof_merge/depth/16                      7699377
+pprof_merge/depth/4                       183831
+pprof_merge/depth/64                      40821116
+pprof_merge/stacks/1000                   447054
+pprof_merge/stacks/10000                  7142751
+pprof_merge/stacks/100000                 96004759
+pprof_merge/to_flamegraph/1000            1180648
+pprof_merge/to_flamegraph/10000           11821613
+pprof_merge/to_flamegraph/100000          164745830
+promql_range/parse/rate                   26380
+promql_range/parse/selector               24251
+promql_range/parse/sum_by_job             29634
+promql_range/rate/100                     18055326
+promql_range/rate/1000                    213149471
+promql_range/rate/10000                   2637713408
+promql_range/selector/100                 15221059
+promql_range/selector/1000                187271520
+promql_range/selector/10000               2264056830
+promql_range/sum_by_job/100               16247135
+promql_range/sum_by_job/1000              190817376
+promql_range/sum_by_job/10000             2245603448
+traceql_filter/attr_eq/1000               255732
+traceql_filter/attr_eq/10000              1097803
+traceql_filter/attr_eq/100000             16283992
+traceql_filter/conjunction/1000           233668
+traceql_filter/conjunction/10000          943917
+traceql_filter/conjunction/100000         13635874
+traceql_filter/descendant/1000            3065861
+traceql_filter/descendant/10000           4753007
+traceql_filter/descendant/100000          31807030
+traceql_filter/intrinsic_duration/1000    584938
+traceql_filter/intrinsic_duration/10000   4401165
+traceql_filter/intrinsic_duration/100000  82249430
+traceql_filter/parse/attr_eq              468
+traceql_filter/parse/conjunction          887
+traceql_filter/parse/descendant           1019
+traceql_filter/parse/intrinsic_duration   542
+wal_head_apply/per_batch_no_reader/1000       5300
+wal_head_apply/per_batch_no_reader/5000       5252
+wal_head_apply/per_batch_with_reader/1000     6736
+wal_head_apply/per_batch_with_reader/5000     7268
+wal_head_apply/per_record_with_reader/1000    57071
+wal_head_apply/per_record_with_reader/5000    68952
