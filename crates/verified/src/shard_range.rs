@@ -10,10 +10,7 @@ use creusot_std::prelude::*;
 #[cfg_attr(creusot, ensures(result.1@ - result.0@ <= width@ - 1))]
 #[must_use]
 pub fn shard_range(slot: i64, width: i64) -> (i64, i64) {
-    let start = match slot.checked_mul(width) {
-        Some(start) => start,
-        None => i64::MIN,
-    };
+    let start = slot.checked_mul(width).unwrap_or(i64::MIN);
     let end = start.saturating_add(width - 1);
     (start, end)
 }
