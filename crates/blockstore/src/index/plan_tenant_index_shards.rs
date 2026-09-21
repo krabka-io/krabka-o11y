@@ -1,3 +1,5 @@
+use krabka_o11y_verified::shard_range;
+
 use super::{BTreeMap, BTreeSet, IndexShardRange, TenantIndex, index_shard_width_for_span};
 
 /// Assigns a tenant's live blocks to shards on a grid.
@@ -38,14 +40,9 @@ pub(crate) fn plan_tenant_index_shards(
 
     shards
         .into_iter()
-        .map(|(slot, ordinals)| (shard_range(slot, width), ordinals))
+        .map(|(slot, ordinals)| {
+            let (start, end) = shard_range(slot, width);
+            (IndexShardRange::new(start, end), ordinals)
+        })
         .collect()
-}
-
-/// The span of grid slot `slot`, clamped where the grid runs off the ends of
-/// an `i64`.
-fn shard_range(slot: i64, width: i64) -> IndexShardRange {
-    let start = slot.checked_mul(width).unwrap_or(i64::MIN);
-    let end = start.saturating_add(width.saturating_sub(1));
-    IndexShardRange::new(start, end)
 }

@@ -1,0 +1,11 @@
+{
+  "profile": [],
+  "proofs": {
+    "Coma": {
+      "vc_checked_mul": { "prover": "alt-ergo", "time": 0.008 },
+      "vc_elim_Some": { "prover": "alt-ergo", "time": 0.006 },
+      "vc_saturating_add": { "prover": "alt-ergo", "time": 0.01 },
+      "vc_shard_range": { "prover": "alt-ergo", "time": 0.013 }
+    }
+  }
+}
