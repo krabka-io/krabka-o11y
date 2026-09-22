@@ -48,8 +48,10 @@ jobs:
               tools/bench.sh &&
                 tools/bench-ratchet.py ${{ inputs.record && '--record' || '' }} || status=$?
               if [ -d benches/target/criterion ]; then
+                cat benches/target/criterion/run.metadata.txt
                 tar -C benches/target -czf \
                   "$BUILDBUDDY_ARTIFACTS_DIRECTORY/criterion.tar.gz" criterion
+                sha256sum "$BUILDBUDDY_ARTIFACTS_DIRECTORY/criterion.tar.gz"
               fi
               exit "$status"
             '
