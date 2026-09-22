@@ -1,27 +1,39 @@
 {
   "schema_version": 1,
   "status": "seeded",
-  "commit": "b56cab02a8d8deaf57c2312ac0dac23b080b0605",
+  "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/35690927567",
+  "buildbuddy_invocation_url": "https://app.buildbuddy.io/invocation/3f7059ec-5c66-4dc6-8848-15b546d0da67",
+  "commit": "ea4c8c2a012bcccf1dc35411aef0be853b52088a",
   "runner": {
-    "label": "clod",
-    "os": "Linux 7.0.0-31-generic x86_64",
-    "cpu_count": 16,
-    "memory_kib": 64387700
+    "label": "buildbuddy-remote",
+    "os": "Linux 5.15.0 x86_64",
+    "cpu_count": 19,
+    "memory_kib": 69072204,
+    "container_image": "docker.io/library/rust@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97"
   },
   "toolchain": {
-    "rustc": "1.97.1 (8bab26f4f 2026-07-14)"
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+    "llvm": "22.1.6"
   },
-  "command": "tools/bench.sh",
-  "started_at": "2026-09-20T21:57:59Z",
-  "duration_seconds": 877,
+  "command": "tools/bench.sh && tools/bench-ratchet.py --record",
+  "started_at": "2026-09-22T05:30:34Z",
+  "duration_seconds": 1193,
+  "sample_size": 10,
+  "measurement_time_seconds": 5,
+  "warm_up_time_seconds": 1,
   "benchmark_count": 85,
   "noise_ceiling": 0.25,
   "artifact": {
-    "url": "gs://robot-head-krabka-o11y-contract/qualification/milestone-19/benchmarks/b56cab02/criterion.tar.zst",
-    "generation": "1789942479400216",
-    "sha256": "84a334e11d1c7bf7a690239ce79b14953924822b5f971b2ef8432928c58c1ccf",
-    "criterion_sha256sums_sha256": "c178d26889f27486166c9c891be04f109e8f4fb7e72e53f1be61384d124ec877",
-    "baseline_sha256": "42b4764110f300401d67f45fe270d83355bf0f07f2d4274445688c4f6ea32847"
+    "name": "command-0/criterion.tar.gz",
+    "sha256": "4aa77f0e7c6556550ddd2637d9f94e23bbcd1000ac7ece2123fcee93d95069c2",
+    "baseline_sha256": "e6a583f8a703397b3a12c13b528e370854a8aab7c051ce700934a44b07c47e6c"
+  },
+  "gate": {
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/35692500769",
+    "commit": "e187bf9554e365a87742c1384822b99fe6fea2e4",
+    "result": "passed",
+    "compared": 85,
+    "noise_skipped": 0
   },
   "deliberate_regression": {
     "benchmark": "blockstore_read/metadata/10000",
