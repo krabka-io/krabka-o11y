@@ -1,0 +1,209 @@
+name: mutation ratchet
+
+on:
+  pull_request:
+    paths:
+      - .aspect/mutants.axl
+      - .github/workflows/mutants-ratchet.yml
+      - tools/mutants-ratchet.py
+  workflow_dispatch:
+    inputs:
+      crate:
+        description: Crate to sweep
+        required: true
+        type: choice
+        options:
+          - blockstore
+          - metrics
+          - observability
+          - profiles
+          - promql
+          - traces
+          - verified
+      parts:
+        description: Number of bounded remote jobs
+        required: true
+        type: choice
+        options:
+          - "2"
+          - "4"
+          - "8"
+          - "16"
+        default: "8"
+      record:
+        description: Print a replacement baseline instead of applying the ratchet
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-ratchet-${{ github.ref }}-${{ inputs.crate || 'verified' }}
+  cancel-in-progress: false
+
+env:
+  MUTANTS_CRATE: ${{ inputs.crate || 'verified' }}
+  MUTANTS_PARTS: ${{ inputs.parts || '2' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      parts: ${{ steps.parts.outputs.value }}
+    steps:
+      - id: parts
+        env:
+          PARTS: ${{ env.MUTANTS_PARTS }}
+        run: echo "value=$(jq -cn --argjson count "${PARTS}" '[range(0; $count)]')" >>"${GITHUB_OUTPUT}"
+
+  sweep:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        part: ${{ fromJSON(needs.plan.outputs.parts) }}
+    env:
+      BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: install BuildBuddy CLI
+        run: curl -fsSL https://install.buildbuddy.io | bash
+      - name: run bounded mutation part remotely
+        id: remote
+        env:
+          CRATE: ${{ env.MUTANTS_CRATE }}
+          PART: ${{ matrix.part }}
+          PARTS: ${{ env.MUTANTS_PARTS }}
+        run: |
+          set -euo pipefail
+          log="${RUNNER_TEMP}/buildbuddy-${CRATE}-part-${PART}.log"
+          status=0
+          bb remote \
+            --os=linux \
+            --arch=amd64 \
+            --container_image=docker://docker.io/library/rust@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 \
+            --env=PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            --env=KRABKA_CRATE="${CRATE}" \
+            --env=KRABKA_PART="${PART}" \
+            --env=KRABKA_PARTS="${PARTS}" \
+            --run_from_commit="${GITHUB_SHA}" \
+            --timeout=5h30m \
+            --disable_retry \
+            --runner_exec_properties=dockerUser=root \
+            --runner_exec_properties=EstimatedCPU=16 \
+            --runner_exec_properties=EstimatedMemory=64GB \
+            --runner_exec_properties=EstimatedFreeDiskBytes=200GB \
+            --script='
+              set -u
+              curl -fsSLo /usr/local/bin/aspect https://github.com/aspect-build/aspect-cli/releases/download/v2026.26.9/aspect-cli-x86_64-unknown-linux-musl
+              echo "e7873629a3f4a42fa42a9cec854193c8dc11037e621fb7f3212a96e905dd9a95  /usr/local/bin/aspect" | sha256sum -c -
+              chmod +x /usr/local/bin/aspect
+              curl -fsSLo /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
+              echo "5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992  /usr/local/bin/bazel" | sha256sum -c -
+              chmod +x /usr/local/bin/bazel
+
+              export KRABKA_MUTANTS_LOG_DIR="$PWD/mutants"
+              export KRABKA_MUTANTS_SCRATCH_DIR=/tmp/krabka-mutants
+              status=0
+              aspect mutants "$KRABKA_CRATE" "$KRABKA_PART" "$KRABKA_PARTS" || status=$?
+
+              mkdir -p "evidence/bazel-testlogs/crates/$KRABKA_CRATE" evidence/mutants
+              target="bazel-testlogs/crates/$KRABKA_CRATE/${KRABKA_CRATE}_mutants"
+              if [ -d "$target" ]; then
+                cp -R "$target" "evidence/bazel-testlogs/crates/$KRABKA_CRATE/"
+              fi
+              if [ -d mutants ]; then
+                cp -R mutants/. evidence/mutants/
+              fi
+              artifact="$BUILDBUDDY_ARTIFACTS_DIRECTORY/mutants-$KRABKA_CRATE-part-$KRABKA_PART.tar.gz"
+              tar -C evidence -czf "$artifact" .
+              sha256sum "$artifact"
+
+              rm -rf /tmp/krabka-mutants "$PWD/mutants" "$PWD/evidence"
+              bazel clean --expunge >/dev/null 2>&1 || true
+              exit "$status"
+            ' 2>&1 | tee "$log" || status=${PIPESTATUS[0]}
+
+          invocation_id="$({ sed -nE 's|.*https://app\.buildbuddy\.io/invocation/([0-9a-f-]+).*|\1|p' "$log" || true; } | head -1)"
+          test -n "$invocation_id"
+          echo "invocation_id=${invocation_id}" >>"${GITHUB_OUTPUT}"
+          exit "$status"
+      - name: download remote evidence
+        if: always() && steps.remote.outputs.invocation_id != ''
+        env:
+          CRATE: ${{ env.MUTANTS_CRATE }}
+          PART: ${{ matrix.part }}
+          INVOCATION_ID: ${{ steps.remote.outputs.invocation_id }}
+        run: |
+          set -euo pipefail
+          package="${RUNNER_TEMP}/package"
+          mkdir -p "$package/provenance"
+          response="$package/provenance/invocation-part-${PART}.json"
+          request="$(jq -cn --arg id "$INVOCATION_ID" '{selector:{invocation_id:$id},include_artifacts:true}')"
+          artifact=""
+          for attempt in $(seq 1 10); do
+            curl -fsS \
+              -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}" \
+              -H 'Content-Type: application/json' \
+              -d "$request" \
+              https://app.buildbuddy.io/api/v1/GetInvocation >"$response"
+            artifact="$(jq -r --arg suffix "mutants-${CRATE}-part-${PART}.tar.gz" \
+              '.invocation[0].artifacts[]? | select(.name | endswith($suffix)) | [.uri, .hash] | @tsv' \
+              "$response")"
+            if [ -n "$artifact" ]; then
+              break
+            fi
+            sleep 3
+          done
+          test -n "$artifact"
+          IFS=$'\t' read -r uri expected_sha <<<"$artifact"
+          archive="${RUNNER_TEMP}/mutants-${CRATE}-part-${PART}.tar.gz"
+          jq -cn --arg uri "$uri" '{uri:$uri}' |
+            curl -fsS \
+              -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}" \
+              -H 'Content-Type: application/json' \
+              --data-binary @- \
+              https://app.buildbuddy.io/api/v1/GetFile >"$archive"
+          echo "${expected_sha}  ${archive}" | sha256sum -c -
+          tar -C "$package" -xzf "$archive"
+          cp "${RUNNER_TEMP}/buildbuddy-${CRATE}-part-${PART}.log" \
+            "$package/provenance/remote-part-${PART}.log"
+          sha256sum "$archive" >"$package/provenance/artifact-part-${PART}.sha256"
+      - name: upload part evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-${{ env.MUTANTS_CRATE }}-part-${{ matrix.part }}
+          path: ${{ runner.temp }}/package/
+          if-no-files-found: error
+
+  ratchet:
+    if: always() && (github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository)
+    needs: sweep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: mutants-${{ env.MUTANTS_CRATE }}-part-*
+          path: .
+          merge-multiple: true
+      - name: apply ratchet
+        run: tools/mutants-ratchet.py "${MUTANTS_CRATE}" ${{ inputs.record && '--record' || '' }} | tee mutants-ratchet.txt
+      - name: upload complete evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-${{ env.MUTANTS_CRATE }}-complete
+          path: |
+            bazel-testlogs/
+            mutants/
+            provenance/
+            mutants-ratchet.txt
+          if-no-files-found: error
