@@ -28,6 +28,13 @@
     "sha256": "4aa77f0e7c6556550ddd2637d9f94e23bbcd1000ac7ece2123fcee93d95069c2",
     "baseline_sha256": "e6a583f8a703397b3a12c13b528e370854a8aab7c051ce700934a44b07c47e6c"
   },
+  "gate": {
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/35692500769",
+    "commit": "e187bf9554e365a87742c1384822b99fe6fea2e4",
+    "result": "passed",
+    "compared": 85,
+    "noise_skipped": 0
+  },
   "deliberate_regression": {
     "benchmark": "blockstore_read/metadata/10000",
     "baseline_nanoseconds": 1,
