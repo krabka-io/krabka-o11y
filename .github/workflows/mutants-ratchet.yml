@@ -101,8 +101,8 @@ jobs:
             --runner_exec_properties=EstimatedFreeDiskBytes=200GB \
             --script='
               set -u
-              curl -fsSLo /usr/local/bin/aspect https://github.com/aspect-build/aspect-cli/releases/download/v2026.26.9/aspect-cli-x86_64-unknown-linux-musl
-              echo "e7873629a3f4a42fa42a9cec854193c8dc11037e621fb7f3212a96e905dd9a95  /usr/local/bin/aspect" | sha256sum -c -
+              curl -fsSLo /usr/local/bin/aspect https://github.com/aspect-build/aspect-cli/releases/download/v2026.31.17/aspect-cli-x86_64-unknown-linux-musl
+              echo "1635a492bed80fb6e9074c6846f4aea04bd31d7652a26871164b16ee3afff466  /usr/local/bin/aspect" | sha256sum -c -
               chmod +x /usr/local/bin/aspect
               curl -fsSLo /usr/local/bin/bazel https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64
               echo "5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992  /usr/local/bin/bazel" | sha256sum -c -
@@ -154,7 +154,7 @@ jobs:
               -d "$request" \
               https://app.buildbuddy.io/api/v1/GetInvocation >"$response"
             artifact="$(jq -r --arg suffix "mutants-${CRATE}-part-${PART}.tar.gz" \
-              '.invocation[0].artifacts[]? | select(.name | endswith($suffix)) | [.uri, .hash] | @tsv' \
+              '.invocation[0].artifacts[]? | select(.name | endswith($suffix)) | .uri' \
               "$response")"
             if [ -n "$artifact" ]; then
               break
@@ -162,7 +162,9 @@ jobs:
             sleep 3
           done
           test -n "$artifact"
-          IFS=$'\t' read -r uri expected_sha <<<"$artifact"
+          uri="$artifact"
+          blob="${uri%/*}"
+          expected_sha="${blob##*/}"
           archive="${RUNNER_TEMP}/mutants-${CRATE}-part-${PART}.tar.gz"
           jq -cn --arg uri "$uri" '{uri:$uri}' |
             curl -fsS \
