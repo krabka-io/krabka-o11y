@@ -35,6 +35,7 @@ jobs:
             --os=linux \
             --arch=amd64 \
             --container_image=docker://docker.io/library/rust@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 \
+            --env=PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             --run_from_commit="${GITHUB_SHA}" \
             --timeout=2h \
             --disable_retry \
