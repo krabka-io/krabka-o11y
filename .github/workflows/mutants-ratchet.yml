@@ -55,8 +55,16 @@ jobs:
     steps:
       - id: parts
         env:
+          CRATE: ${{ env.MUTANTS_CRATE }}
           PARTS: ${{ env.MUTANTS_PARTS }}
-        run: echo "value=$(jq -cn --argjson count "${PARTS}" '[range(0; $count)]')" >>"${GITHUB_OUTPUT}"
+        run: |
+          case "${CRATE}" in
+            blockstore) maximum=12 ;;
+            verified) maximum=8 ;;
+            *) maximum=16 ;;
+          esac
+          count=$((PARTS < maximum ? PARTS : maximum))
+          echo "value=$(jq -cn --argjson count "${count}" '[range(0; $count)]')" >>"${GITHUB_OUTPUT}"
 
   sweep:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
@@ -100,7 +108,7 @@ jobs:
             --runner_exec_properties=EstimatedMemory=64GB \
             --runner_exec_properties=EstimatedFreeDiskBytes=200GB \
             --script='
-              set -u
+              set -euo pipefail
               curl -fsSLo /usr/local/bin/aspect https://github.com/aspect-build/aspect-cli/releases/download/v2026.31.17/aspect-cli-x86_64-unknown-linux-musl
               echo "1635a492bed80fb6e9074c6846f4aea04bd31d7652a26871164b16ee3afff466  /usr/local/bin/aspect" | sha256sum -c -
               chmod +x /usr/local/bin/aspect
@@ -147,18 +155,18 @@ jobs:
           response="$package/provenance/invocation-part-${PART}.json"
           request="$(jq -cn --arg id "$INVOCATION_ID" '{selector:{invocation_id:$id},include_artifacts:true}')"
           artifact=""
-          for attempt in $(seq 1 10); do
-            curl -fsS \
+          for _ in $(seq 1 10); do
+            if curl -fsS \
               -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}" \
               -H 'Content-Type: application/json' \
               -d "$request" \
-              https://app.buildbuddy.io/api/v1/GetInvocation >"$response"
-            artifact="$(jq -r --arg suffix "mutants-${CRATE}-part-${PART}.tar.gz" \
-              '.invocation[0].artifacts[]? | select(.name | endswith($suffix)) | .uri' \
-              "$response")"
-            if [ -n "$artifact" ]; then
+              https://app.buildbuddy.io/api/v1/GetInvocation >"$response" && \
+              artifact="$(jq -r --arg suffix "mutants-${CRATE}-part-${PART}.tar.gz" \
+                '.invocation[0].artifacts[]? | select(.name | endswith($suffix)) | .uri' \
+                "$response")" && [ -n "$artifact" ]; then
               break
             fi
+            artifact=""
             sleep 3
           done
           test -n "$artifact"
