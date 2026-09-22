@@ -80,8 +80,6 @@ jobs:
       BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
     steps:
       - uses: actions/checkout@v7
-      - name: install BuildBuddy CLI
-        run: curl -fsSL https://install.buildbuddy.io | bash
       - name: run bounded mutation part remotely
         id: remote
         env:
@@ -91,23 +89,7 @@ jobs:
         run: |
           set -euo pipefail
           log="${RUNNER_TEMP}/buildbuddy-${CRATE}-part-${PART}.log"
-          status=0
-          bb remote \
-            --os=linux \
-            --arch=amd64 \
-            --container_image=docker://docker.io/library/rust@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 \
-            --env=PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            --env=KRABKA_CRATE="${CRATE}" \
-            --env=KRABKA_PART="${PART}" \
-            --env=KRABKA_PARTS="${PARTS}" \
-            --run_from_commit="${GITHUB_SHA}" \
-            --timeout=5h30m \
-            --disable_retry \
-            --runner_exec_properties=dockerUser=root \
-            --runner_exec_properties=EstimatedCPU=16 \
-            --runner_exec_properties=EstimatedMemory=64GB \
-            --runner_exec_properties=EstimatedFreeDiskBytes=200GB \
-            --script='
+          script="$(cat <<'REMOTE_SCRIPT'
               set -euo pipefail
               curl -fsSLo /usr/local/bin/aspect https://github.com/aspect-build/aspect-cli/releases/download/v2026.31.17/aspect-cli-x86_64-unknown-linux-musl
               echo "1635a492bed80fb6e9074c6846f4aea04bd31d7652a26871164b16ee3afff466  /usr/local/bin/aspect" | sha256sum -c -
@@ -136,12 +118,84 @@ jobs:
               rm -rf /tmp/krabka-mutants "$PWD/mutants" "$PWD/evidence"
               bazel clean --expunge >/dev/null 2>&1 || true
               exit "$status"
-            ' 2>&1 | tee "$log" || status=${PIPESTATUS[0]}
+          REMOTE_SCRIPT
+          )"
 
-          invocation_id="$({ sed -nE 's|.*https://app\.buildbuddy\.io/invocation/([0-9a-f-]+).*|\1|p' "$log" || true; } | head -1)"
+          request="$(jq -cn \
+            --arg repo "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --arg commit_sha "${GITHUB_SHA}" \
+            --arg script "$script" \
+            --arg crate "$CRATE" \
+            --arg part "$PART" \
+            --arg parts "$PARTS" \
+            '{
+              repo: $repo,
+              commit_sha: $commit_sha,
+              steps: [{run: $script}],
+              env: {
+                PATH: "/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                KRABKA_CRATE: $crate,
+                KRABKA_PART: $part,
+                KRABKA_PARTS: $parts
+              },
+              platform_properties: {
+                OSFamily: "linux",
+                Arch: "amd64",
+                "container-image": "docker://docker.io/library/rust@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97",
+                dockerUser: "root",
+                EstimatedCPU: "16",
+                EstimatedMemory: "64GB",
+                EstimatedFreeDiskBytes: "200GB"
+              },
+              timeout: "5h30m"
+            }')"
+          response="$(curl -fsS --retry 9 --retry-all-errors --retry-delay 3 \
+            -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            -d "$request" \
+            https://app.buildbuddy.io/api/v1/Run)"
+          invocation_id="$(jq -r '.invocationId // .invocation_id // empty' <<<"$response")"
+
           test -n "$invocation_id"
           echo "invocation_id=${invocation_id}" >>"${GITHUB_OUTPUT}"
-          exit "$status"
+          echo "BuildBuddy invocation: https://app.buildbuddy.io/invocation/${invocation_id}"
+
+          invocation_request="$(jq -cn --arg id "$invocation_id" \
+            '{selector:{invocation_id:$id},include_artifacts:true}')"
+          deadline=$((SECONDS + 20100))
+          while ((SECONDS < deadline)); do
+            curl -fsS --retry 9 --retry-all-errors --retry-delay 3 \
+              -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}" \
+              -H 'Content-Type: application/json' \
+              -d "$invocation_request" \
+              https://app.buildbuddy.io/api/v1/GetInvocation >"${RUNNER_TEMP}/invocation.json"
+            invocation_status="$(jq -r '.invocation[0].invocationStatus // empty' \
+              "${RUNNER_TEMP}/invocation.json")"
+            echo "BuildBuddy status: ${invocation_status:-pending}"
+            case "$invocation_status" in
+              COMPLETE_INVOCATION_STATUS|DISCONNECTED_INVOCATION_STATUS) break ;;
+            esac
+            sleep 30
+          done
+
+          page_token=""
+          : >"$log"
+          while true; do
+            log_request="$(jq -cn --arg id "$invocation_id" --arg token "$page_token" \
+              '{selector:{invocation_id:$id}} + if $token == "" then {} else {page_token:$token} end')"
+            curl -fsS --retry 9 --retry-all-errors --retry-delay 3 \
+              -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}" \
+              -H 'Content-Type: application/json' \
+              -d "$log_request" \
+              https://app.buildbuddy.io/api/v1/GetLog >"${RUNNER_TEMP}/log.json"
+            jq -r '.log.contents // ""' "${RUNNER_TEMP}/log.json" | tee -a "$log"
+            page_token="$(jq -r '.nextPageToken // .next_page_token // empty' \
+              "${RUNNER_TEMP}/log.json")"
+            [ -n "$page_token" ] || break
+          done
+
+          test "$invocation_status" = COMPLETE_INVOCATION_STATUS
+          test "$(jq -r '.invocation[0].success' "${RUNNER_TEMP}/invocation.json")" = true
       - name: download remote evidence
         if: always() && steps.remote.outputs.invocation_id != ''
         env:
