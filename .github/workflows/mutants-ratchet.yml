@@ -174,13 +174,13 @@ jobs:
           blob="${uri%/*}"
           expected_sha="${blob##*/}"
           archive="${RUNNER_TEMP}/mutants-${CRATE}-part-${PART}.tar.gz"
-          jq -cn --arg uri "$uri" '{uri:$uri}' |
-            curl -fsS --retry 9 --retry-all-errors --retry-delay 3 \
-              --output "$archive" \
-              -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}" \
-              -H 'Content-Type: application/json' \
-              --data-binary @- \
-              https://app.buildbuddy.io/api/v1/GetFile
+          file_request="$(jq -cn --arg uri "$uri" '{uri:$uri}')"
+          curl -fsS --retry 9 --retry-all-errors --retry-delay 3 \
+            --output "$archive" \
+            -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            --data-binary "$file_request" \
+            https://app.buildbuddy.io/api/v1/GetFile
           echo "${expected_sha}  ${archive}" | sha256sum -c -
           tar -C "$package" -xzf "$archive"
           cp "${RUNNER_TEMP}/buildbuddy-${CRATE}-part-${PART}.log" \
