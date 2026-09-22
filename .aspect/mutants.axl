@@ -150,7 +150,7 @@ def _impl(ctx: TaskContext) -> int:
     log_dir = ctx.std.env.var("KRABKA_MUTANTS_LOG_DIR")
     if log_dir == None:
         log_dir = ctx.std.env.home_dir() + "/krabka-work/sweep-results"
-    output_base = ctx.bazel.info(keys = ["output_base"]).get("output_base")
+    output_base = ctx.bazel.info().get("output_base")
     scratch_root = ctx.std.env.var("KRABKA_MUTANTS_SCRATCH_DIR")
     if scratch_root == None:
         scratch_root = output_base + "/mutants-parts"
@@ -160,7 +160,7 @@ def _impl(ctx: TaskContext) -> int:
     build = ctx.bazel.build(target).wait()
     if build.code != 0:
         return build.code
-    bazel_bin = ctx.bazel.info(keys = ["bazel-bin"]).get("bazel-bin")
+    bazel_bin = ctx.bazel.info().get("bazel-bin")
     runner = bazel_bin + "/crates/" + crate + "/" + crate + "_mutants"
     runfiles = runner + ".runfiles"
     selected_shards = _shards_for_part(shard_count, part, parts)

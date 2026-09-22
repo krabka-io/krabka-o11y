@@ -197,7 +197,9 @@ jobs:
           path: .
           merge-multiple: true
       - name: apply ratchet
-        run: tools/mutants-ratchet.py "${MUTANTS_CRATE}" ${{ inputs.record && '--record' || '' }} | tee mutants-ratchet.txt
+        run: |
+          set -o pipefail
+          tools/mutants-ratchet.py "${MUTANTS_CRATE}" ${{ inputs.record && '--record' || '' }} | tee mutants-ratchet.txt
       - name: upload complete evidence
         if: always()
         uses: actions/upload-artifact@v4
