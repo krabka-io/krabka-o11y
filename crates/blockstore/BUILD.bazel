@@ -30,6 +30,8 @@ crate_tests(
     # 48 on a 32-core machine, which drove load average past 200 and made every
     # shard miss its deadline for want of CPU rather than for want of time.
     mutants_jobs = 1,
-    mutants_shards = 12,
+    # Keep each hosted-runner part below the observed 35-minute executor
+    # lifetime. Twelve shards still disconnected before producing evidence.
+    mutants_shards = 24,
     mutants_timeout = "eternal",
 )
