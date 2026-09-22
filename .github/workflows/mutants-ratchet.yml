@@ -175,7 +175,7 @@ jobs:
           expected_sha="${blob##*/}"
           archive="${RUNNER_TEMP}/mutants-${CRATE}-part-${PART}.tar.gz"
           jq -cn --arg uri "$uri" '{uri:$uri}' |
-            curl -fsS \
+            curl -fsS --retry 9 --retry-all-errors --retry-delay 3 \
               -H "x-buildbuddy-api-key: ${BUILDBUDDY_API_KEY}" \
               -H 'Content-Type: application/json' \
               --data-binary @- \
