@@ -25,13 +25,11 @@ crate_tests(
     # unlimited, and the larger crates run past that too. Going beyond an hour
     # needs --test_timeout on the command line, which overrides the category;
     # the sweep script passes it.
-    # One cargo job per shard. Bazel already runs the shards concurrently, so
-    # the default of 4 multiplied out to shards x 4 concurrent cargo builds --
-    # 48 on a 32-core machine, which drove load average past 200 and made every
-    # shard miss its deadline for want of CPU rather than for want of time.
-    mutants_jobs = 1,
-    # Keep each hosted-runner part below the observed 35-minute executor
-    # lifetime. Twelve shards still disconnected before producing evidence.
+    # The bounded sweep runs at most two shards at once, each on its own
+    # 16-core runner. Four cargo jobs use those cores without recreating the
+    # old 12 shards x 4 jobs overload on one machine.
+    mutants_jobs = 4,
+    # Keep each hosted-runner part below its one-hour execution boundary.
     mutants_shards = 24,
     mutants_timeout = "eternal",
 )
