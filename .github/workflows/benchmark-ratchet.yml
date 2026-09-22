@@ -1,0 +1,55 @@
+name: benchmark ratchet
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      record:
+        description: Print a replacement baseline instead of applying the ratchet
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-ratchet-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark-ratchet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: install BuildBuddy CLI
+        run: curl -fsSL https://install.buildbuddy.io | bash
+      - name: run numeric ratchet remotely
+        run: |
+          set -euo pipefail
+          bb remote \
+            --os=linux \
+            --arch=amd64 \
+            --container_image=docker://docker.io/library/rust@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 \
+            --env=PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            --run_from_commit="${GITHUB_SHA}" \
+            --timeout=2h \
+            --disable_retry \
+            --runner_exec_properties=dockerUser=root \
+            --runner_exec_properties=EstimatedCPU=16 \
+            --runner_exec_properties=EstimatedMemory=64GB \
+            --runner_exec_properties=EstimatedFreeDiskBytes=200GB \
+            --script='
+              status=0
+              tools/bench.sh &&
+                tools/bench-ratchet.py ${{ inputs.record && '--record' || '' }} || status=$?
+              if [ -d benches/target/criterion ]; then
+                tar -C benches/target -czf \
+                  "$BUILDBUDDY_ARTIFACTS_DIRECTORY/criterion.tar.gz" criterion
+              fi
+              exit "$status"
+            '

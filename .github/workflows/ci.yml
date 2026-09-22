@@ -963,30 +963,6 @@ jobs:
       # validates inventory only. The recorded runner applies numeric baselines.
       - name: ratchet
         run: tools/bench-ratchet.py --record
-  benchmark-ratchet:
-    name: benchmark ratchet
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 150
-    env:
-      BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: install BuildBuddy CLI
-        run: curl -fsSL https://install.buildbuddy.io | bash
-      - name: run numeric ratchet remotely
-        run: |
-          set -euo pipefail
-          bb remote \
-            --os=linux \
-            --arch=amd64 \
-            --run_from_commit="${GITHUB_SHA}" \
-            --timeout=2h \
-            --disable_retry \
-            --runner_exec_properties=EstimatedCPU=16 \
-            --runner_exec_properties=EstimatedMemory=64GB \
-            --runner_exec_properties=EstimatedFreeDiskBytes=200GB \
-            --script='tools/bench.sh && tools/bench-ratchet.py'
   # The scale suites: the block store at the cardinality and volume the design
   # targets, against a real object store.
   #
