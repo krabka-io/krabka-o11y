@@ -40,6 +40,7 @@ crate_tests(
     # 48 on a 32-core machine, which drove load average past 200 and made every
     # shard miss its deadline for want of CPU rather than for want of time.
     mutants_jobs = 1,
-    mutants_shards = 16,
+    # Keep each remote-runner part below BuildBuddy's one-hour free-tier limit.
+    mutants_shards = 24,
     mutants_timeout = "eternal",
 )
