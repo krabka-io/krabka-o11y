@@ -57,6 +57,35 @@
       "artifact_sha256": "e485c551af60cd96c1d9d144de8023c947fc28452f53fba1662fd5f60a0e2adf",
       "contents_manifest_sha256": "af042135ce0d7c786c115330dc9f844954a259669ea0fe7504c7279dcd43babe"
     },
+    "metrics": {
+      "started_at": "2026-09-23T14:13:35Z",
+      "command": "aspect mutants metrics <part> 24, for parts 0 through 23",
+      "duration_seconds": 29964,
+      "parts": 24,
+      "shards": 24,
+      "total": 1438,
+      "caught": 1023,
+      "survived": 174,
+      "unviable": 241,
+      "artifact_id": 10780232595,
+      "artifact_sha256": "43ec0b00ad00205b27bf3e6fb572489c62b7b67126ee737643c4f66eb2294e4b",
+      "contents_manifest_sha256": "05c245e6857d29523bbfeecec0e0216993371ed9c3158dfdaf8eda8fa5f803c8",
+      "provenance": {
+        "commit": "ccb0515f49878edae0513e3f0141d6774583313c",
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/35870291878",
+        "runner": {
+          "label": "BuildBuddy hosted remote runner",
+          "os": "Linux 5.15.0 x86_64",
+          "cpu_count": 19,
+          "memory_kib": 69072204
+        },
+        "toolchain": {
+          "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+          "bazel": "9.2.0",
+          "bazelisk": "1.25.0"
+        }
+      }
+    },
     "pprof": {
       "started_at": "2026-09-20T10:05:43Z",
       "command": "bazel test //crates/pprof:pprof_mutants --nocache_test_results --test_output=all --test_timeout=36000 --local_test_jobs=4 --local_resources=memory=HOST_RAM*.6",
@@ -154,7 +183,6 @@
     }
   },
   "unseeded": [
-    "metrics",
     "observability",
     "profiles",
     "promql",

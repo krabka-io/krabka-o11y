@@ -25,7 +25,7 @@
 #
 blockstore       145
 logql            91
-metrics          unseeded
+metrics          174
 metrics-service  119
 observability    unseeded
 pprof            86
