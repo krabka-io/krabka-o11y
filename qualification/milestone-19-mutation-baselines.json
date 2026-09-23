@@ -15,6 +15,35 @@
     "bazelisk": "1.28.1"
   },
   "results": {
+    "blockstore": {
+      "started_at": "2026-09-22T20:37:05Z",
+      "command": "aspect mutants blockstore <part> 24, for parts 0 through 23",
+      "duration_seconds": 15953,
+      "parts": 24,
+      "shards": 24,
+      "total": 1742,
+      "caught": 1261,
+      "survived": 145,
+      "unviable": 336,
+      "artifact_id": 10727002003,
+      "artifact_sha256": "8a66d2ffd52ce2639209a97d375b644ad4e03b0345ba072de204329f2386cda1",
+      "contents_manifest_sha256": "fd928a39b9cad7307fe8f77e279f06f428eeb34c6fac6c3c633b049ddb2fbea2",
+      "provenance": {
+        "commit": "e00c62ad7cf63c34e9e3d46758006316d13c4da0",
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/35781241801",
+        "runner": {
+          "label": "BuildBuddy hosted remote runner",
+          "os": "Linux 5.15.0 x86_64",
+          "cpu_count": 19,
+          "memory_kib": 69072204
+        },
+        "toolchain": {
+          "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+          "bazel": "9.2.0",
+          "bazelisk": "1.25.0"
+        }
+      }
+    },
     "logql": {
       "started_at": "2026-09-20T10:15:24Z",
       "command": "bazel test //crates/logql:logql_mutants --nocache_test_results --test_output=all --test_timeout=36000 --local_test_jobs=4 --local_resources=memory=HOST_RAM*.6",
@@ -125,7 +154,6 @@
     }
   },
   "unseeded": [
-    "blockstore",
     "metrics",
     "observability",
     "profiles",
