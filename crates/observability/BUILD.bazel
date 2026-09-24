@@ -76,7 +76,7 @@ crate_tests(
     # 48 on a 32-core machine, which drove load average past 200 and made every
     # shard miss its deadline for want of CPU rather than for want of time.
     mutants_jobs = 1,
-    mutants_shards = 32,
+    mutants_shards = 64,
     mutants_timeout = "eternal",
     # Ten thousand series, a million spans and a twenty-four block compaction,
     # against the MinIO above. The `scale` tag is what keeps this out of
