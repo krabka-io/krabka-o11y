@@ -56,6 +56,9 @@ def _wait_for_shards(ctx: TaskContext, pending: list[dict]) -> None:
         ctx.std.fs.remove_file(shard["stderr"])
         ctx.std.fs.remove_dir_all(shard["scratch"])
 
+def _runner_args(jobs: int) -> list[str]:
+    return [] if jobs == 0 else ["--jobs", str(jobs)]
+
 def _spawn_shard(
         ctx: TaskContext,
         runner: str,
@@ -64,7 +67,8 @@ def _spawn_shard(
         crate: str,
         part: int,
         shard: int,
-        shard_count: int) -> dict:
+        shard_count: int,
+        jobs: int) -> dict:
     scratch = scratch_root + "/" + crate + "/part-" + str(part) + "/shard-" + str(shard)
     log = "bazel-testlogs/crates/{}/{}_mutants/shard_{}_of_{}/test.log".format(
         crate,
@@ -82,7 +86,7 @@ def _spawn_shard(
             shard_count,
         ),
     )
-    child = ctx.std.process.command(runner).args([]).current_dir(
+    child = ctx.std.process.command(runner).args(_runner_args(jobs)).current_dir(
         ctx.std.env.bazel_root_dir(),
     ).env("TEST_SRCDIR", runfiles).env("RUNFILES_DIR", runfiles).env(
         "TEST_WORKSPACE",
@@ -100,6 +104,8 @@ def _self_test(ctx: TaskContext) -> None:
         ctx.std.process.exit(1, "unexpected shard partition")
     if not (_is_digits("8") and _is_digits("0") and not _is_digits("")):
         ctx.std.process.exit(1, "unexpected partition validation")
+    if _runner_args(0) != [] or _runner_args(4) != ["--jobs", "4"]:
+        ctx.std.process.exit(1, "unexpected runner job override")
     print("mutants task self-test passed")
 
 def _impl(ctx: TaskContext) -> int:
@@ -145,6 +151,14 @@ def _impl(ctx: TaskContext) -> int:
     )
     if batch == 0 or batch > concurrent:
         ctx.std.process.exit(2, "KRABKA_MUTANTS_BATCH_SHARDS must be between 1 and KRABKA_MUTANTS_CONCURRENT_SHARDS")
+    jobs_value = ctx.std.env.var("KRABKA_MUTANTS_JOBS")
+    jobs = 0 if jobs_value == None else _parse_nonnegative(
+        ctx,
+        jobs_value,
+        "KRABKA_MUTANTS_JOBS must be a positive integer",
+    )
+    if jobs_value != None and jobs == 0:
+        ctx.std.process.exit(2, "KRABKA_MUTANTS_JOBS must be a positive integer")
 
     root = ctx.std.env.bazel_root_dir()
     log_dir = ctx.std.env.var("KRABKA_MUTANTS_LOG_DIR")
@@ -184,6 +198,7 @@ def _impl(ctx: TaskContext) -> int:
             part,
             shard,
             shard_count,
+            jobs,
         ))
         if len(pending) == batch:
             _wait_for_shards(ctx, pending)
@@ -201,6 +216,7 @@ def _impl(ctx: TaskContext) -> int:
         "shard_count={}".format(shard_count),
         "selected_shards=" + " ".join([str(shard) for shard in selected_shards]),
         "command=aspect mutants {} {} {}".format(crate, part, parts),
+        "jobs=" + ("target-default" if jobs == 0 else str(jobs)),
         "host=" + _command_output(ctx, "uname", ["-a"]),
         "cpu_count=" + _command_output(ctx, "nproc", []),
         "memory_kib=" + _command_output(ctx, "awk", ["/^MemTotal:/ {print $2}", "/proc/meminfo"]),
