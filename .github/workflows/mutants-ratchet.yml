@@ -30,6 +30,7 @@ on:
           - "8"
           - "16"
           - "24"
+          - "32"
         default: "8"
       record:
         description: Print a replacement baseline instead of applying the ratchet
@@ -60,6 +61,7 @@ jobs:
           PARTS: ${{ env.MUTANTS_PARTS }}
         run: |
           case "${CRATE}" in
+            observability) maximum=32 ;;
             blockstore|metrics) maximum=24 ;;
             verified) maximum=8 ;;
             *) maximum=16 ;;
