@@ -104,7 +104,7 @@ jobs:
 
               export KRABKA_MUTANTS_LOG_DIR="$PWD/mutants"
               export KRABKA_MUTANTS_SCRATCH_DIR=/tmp/krabka-mutants
-              export KRABKA_MUTANTS_JOBS=4
+              export KRABKA_MUTANTS_JOBS=8
               status=0
               aspect mutants "$KRABKA_CRATE" "$KRABKA_PART" "$KRABKA_PARTS" || status=$?
 
