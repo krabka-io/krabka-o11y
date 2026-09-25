@@ -127,7 +127,12 @@ def _impl(ctx: TaskContext) -> int:
         ctx.std.process.exit(2, "part must be less than a positive part-count")
 
     target = "//crates/{}:{}_mutants".format(crate, crate)
-    shard_count = _shard_count(ctx, target)
+    configured_shard_count = ctx.std.env.var("KRABKA_MUTANTS_SHARDS")
+    shard_count = _shard_count(ctx, target) if configured_shard_count == None else _parse_nonnegative(
+        ctx,
+        configured_shard_count,
+        "KRABKA_MUTANTS_SHARDS must be a positive integer",
+    )
     if shard_count == 0:
         ctx.std.process.exit(2, target + " has no positive shard_count")
     if part >= shard_count:

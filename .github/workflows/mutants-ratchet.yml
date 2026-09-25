@@ -32,6 +32,7 @@ on:
           - "24"
           - "32"
           - "48"
+          - "96"
         default: "8"
       record:
         description: Print a replacement baseline instead of applying the ratchet
@@ -62,7 +63,7 @@ jobs:
           PARTS: ${{ env.MUTANTS_PARTS }}
         run: |
           case "${CRATE}" in
-            observability) maximum=48 ;;
+            observability) maximum=96 ;;
             blockstore|metrics) maximum=24 ;;
             verified) maximum=8 ;;
             *) maximum=16 ;;
@@ -104,7 +105,10 @@ jobs:
 
               export KRABKA_MUTANTS_LOG_DIR="$PWD/mutants"
               export KRABKA_MUTANTS_SCRATCH_DIR=/tmp/krabka-mutants
-              export KRABKA_MUTANTS_JOBS=8
+              export KRABKA_MUTANTS_JOBS=4
+              if [ "$KRABKA_CRATE" = observability ]; then
+                export KRABKA_MUTANTS_SHARDS=96
+              fi
               status=0
               aspect mutants "$KRABKA_CRATE" "$KRABKA_PART" "$KRABKA_PARTS" || status=$?
 
