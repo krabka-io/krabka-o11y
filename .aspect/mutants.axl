@@ -44,6 +44,9 @@ def _shard_count(ctx: TaskContext, target: str) -> int:
         ctx.std.process.exit(2, target + " has no positive shard_count")
     return _parse_nonnegative(ctx, xml[start:end], target + " has no positive shard_count")
 
+def _completed_sweep(log: str) -> bool:
+    return log.find(" mutants: ") >= 0 and log.find(" caught, ") >= 0 and log.find(" unviable") >= 0
+
 def _wait_for_shards(ctx: TaskContext, pending: list[dict]) -> None:
     failure = None
     for shard in pending:
@@ -54,12 +57,13 @@ def _wait_for_shards(ctx: TaskContext, pending: list[dict]) -> None:
                 shard["log"],
                 ctx.std.fs.read_to_string(shard["log"]) + stderr,
             )
+        log = ctx.std.fs.read_to_string(shard["log"])
         ctx.std.fs.remove_file(shard["stderr"])
         ctx.std.fs.remove_dir_all(shard["scratch"])
-        if status.code != 0 and failure == None:
-            failure = {"code": status.code, "log": shard["log"]}
+        if status.code != 0 and not _completed_sweep(log) and failure == None:
+            failure = {"code": status.code, "log": log}
     if failure != None:
-        ctx.std.process.exit(failure["code"], ctx.std.fs.read_to_string(failure["log"]))
+        ctx.std.process.exit(failure["code"], failure["log"])
 
 def _runner_args(jobs: int) -> list[str]:
     return [] if jobs == 0 else ["--jobs", str(jobs)]
@@ -111,6 +115,10 @@ def _self_test(ctx: TaskContext) -> None:
         ctx.std.process.exit(1, "unexpected partition validation")
     if _runner_args(0) != [] or _runner_args(4) != ["--jobs", "4"]:
         ctx.std.process.exit(1, "unexpected runner job override")
+    if not _completed_sweep("44 mutants: 39 caught, 1 missed, 4 unviable") or _completed_sweep(
+        "cargo_mutants: the unmutated tests do not pass",
+    ):
+        ctx.std.process.exit(1, "unexpected sweep completion detection")
     print("mutants task self-test passed")
 
 def _impl(ctx: TaskContext) -> int:
