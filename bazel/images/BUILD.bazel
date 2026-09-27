@@ -1,17 +1,21 @@
-"""Images the differential suites run against.
+"""Images the container suites run against.
 
-Pulled by Bazel from a digest and loaded into the local daemon at test time,
-rather than pulled by testcontainers over the network mid-test. That pins the
-bytes a test runs against, keeps the network out of the test itself, and lets
-the repository cache carry the images between CI runs.
+Pulled by Bazel from a digest, or assembled from a Wolfi package lock, and
+loaded into the local daemon at test time, rather than pulled by testcontainers
+over the network mid-test. That pins the bytes a test runs against, keeps the
+network out of the test itself, and lets the repository cache carry the images
+between CI runs.
 
 `image_load` produces a `docker load`-able tarball; `//bazel:docker_test.sh` loads
 each one it is handed before executing the test binary.
 """
 
+load("@rules_apko//apko:defs.bzl", "apko_image")
+load("@rules_img//img:convert.bzl", "image_manifest_from_oci_layout")
 load("@rules_img//img:load.bzl", "image_load")
+load("@rules_img//img:media_types.bzl", "GZIP_LAYER")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load(":images.bzl", "CLIENTS", "IMAGES", "ORACLES")
+load(":images.bzl", "BUILT_IMAGES", "CLIENTS", "IMAGES", "ORACLES", "PULLED_IMAGES")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -22,7 +26,44 @@ package(default_visibility = ["//visibility:public"])
         tag = tag,
         tags = ["docker"],
     )
-    for name, tag in IMAGES.items()
+    for name, tag in PULLED_IMAGES.items()
+]
+
+# The images built here rather than pulled. apko assembles the locked packages
+# into an OCI layout, rules_img turns that into a manifest, and `image_load`
+# gives it the same tarball shape the pulled images have, under the reference
+# `BUILT_IMAGES` names. See //bazel/images/images.bzl for why MinIO is built.
+[
+    apko_image(
+        name = name + "_oci",
+        config = name + ".apko.yaml",
+        contents = "@" + name + "_lock//:contents",
+        tag = name + ":locked",
+        tags = ["docker"],
+    )
+    for name in BUILT_IMAGES
+]
+
+[
+    image_manifest_from_oci_layout(
+        name = name + "_manifest",
+        src = ":" + name + "_oci",
+        architecture = "amd64",
+        layers = [GZIP_LAYER],
+        os = "linux",
+        tags = ["docker"],
+    )
+    for name in BUILT_IMAGES
+]
+
+[
+    image_load(
+        name = name,
+        image = ":" + name + "_manifest",
+        tag = tag,
+        tags = ["docker"],
+    )
+    for name, tag in BUILT_IMAGES.items()
 ]
 
 # The tarball each `image_load` produces, which is what a test consumes.

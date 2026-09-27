@@ -97,25 +97,11 @@ pull_image = use_repo_rule("@rules_img//img:pull.bzl", "pull")
         ("grafana_previous", "mirror.gcr.io", "grafana/grafana", "13.1.6", "sha256:66611512245b182e0928918b71db91fef25cb8f13d94f71fd2fb6253c383bb64"),
         ("loki", "mirror.gcr.io", "grafana/loki", "3.7.7", "sha256:550d599ec4efacd8ebc0a5871766855057cba2bd0c669c0711d898c00d6d901f"),
         ("mimir", "mirror.gcr.io", "grafana/mimir", "3.2.1", "sha256:d42bfba7a8ef82a14b883a4cf235406324aeecae94c85eba000bdaa21aa2f289"),
-        # The object store the `scale` suites run against. Not a differential
-        # oracle: nothing here compares an answer against MinIO. It is a real
-        # S3 API in front of real storage, which is what makes a scale run
-        # measure request counts, retries and multipart behaviour rather than
-        # the behaviour of an in-process `InMemory` map.
-        #
-        # Pinned to a dated release rather than to whatever `latest` was.
-        #
-        # Served from `quay.io`, which is MinIO's own registry, not from
-        # `mirror.gcr.io`. The mirror copies Docker Hub, MinIO stopped
-        # publishing there after this release, and the mirror then served
-        # neither the old digest nor `minio:latest` -- both 404. Every Bazel
-        # invocation that analyses `//...` fetches this repository, so a cold
-        # cache failed the lint, coverage and container-selection jobs at once
-        # while a warm one carried on.
-        #
-        # The digest is unchanged, so this is the same image bytes from a
-        # registry that still serves them.
-        ("minio", "quay.io", "minio/minio", "RELEASE.2025-04-22T22-12-26Z", "sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb"),
+        # MinIO, the object store the `scale` suites run against, is not in
+        # this list. It is //bazel/images:minio, assembled from a Wolfi
+        # package lock, because MinIO discontinued every registry that
+        # published it: see the note above `BUILT_IMAGES` in
+        # //bazel/images/images.bzl.
         ("prometheus", "mirror.gcr.io", "prom/prometheus", "v3.14.0", "sha256:e906cef998316bbe319f98711e1b4d8613ad37e14b08ff831d7036e77b7464f9"),
         ("prometheus_previous", "mirror.gcr.io", "prom/prometheus", "v3.13.3", "sha256:595c907995955f2d5fda19fae66392680921d9501cad0be5270b3fee959780b1"),
         ("pyroscope", "mirror.gcr.io", "grafana/pyroscope", "2.3.1", "sha256:718b585ea168a616ca737018dbd1676992db9e5f1084ec4e9cd18f669326f334"),
@@ -138,7 +124,15 @@ apk.translate_lock(
     name = "o11y_base_arm64_lock",
     lock = "//bazel/images/krabka:base.arm64.apko.lock.json",
 )
-use_repo(apk, "o11y_base_arm64_lock", "o11y_base_lock")
+
+# The MinIO server the `scale` suites run against, assembled from Wolfi
+# packages. The lock pins every package by version and checksum, so the image
+# bytes are fixed without a registry digest.
+apk.translate_lock(
+    name = "minio_lock",
+    lock = "//bazel/images:minio.apko.lock.json",
+)
+use_repo(apk, "minio_lock", "o11y_base_arm64_lock", "o11y_base_lock")
 
 # ---------------------------------------------------------------------------
 # Format and lint. See //tools/format and //tools/lint.
