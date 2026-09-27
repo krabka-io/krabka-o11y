@@ -34,6 +34,7 @@ per signal above them.
 ## Documentation
 
 - [Getting started](docs/getting_started.md)
+- [Observing Krabka clusters](docs/observing_krabka_clusters.md)
 - [Operations](docs/operations.md)
 - [Architecture](docs/architecture_design.md)
 - [Grafana datasource setup](docs/grafana.md)
