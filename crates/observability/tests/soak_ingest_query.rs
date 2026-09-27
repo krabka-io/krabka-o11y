@@ -218,16 +218,33 @@ fn series_batch(fingerprints: &[u64], block: usize) -> RecordBatch {
     .expect("the generated columns match the schema")
 }
 
-async fn start_minio() -> (ContainerAsync<GenericImage>, Arc<dyn ObjectStore>) {
-    let tag = std::env::var("KRABKA_MINIO_IMAGE_TAG").expect(
-        "KRABKA_MINIO_IMAGE_TAG is unset. This suite runs under `bazel test --config=scale`, \
-         which loads the digest-pinned image and sets this. To run it under cargo, set it to \
-         that image's tag in //bazel/images/images.bzl.",
+/// The repository and tag of the MinIO image the build loaded into the daemon.
+///
+/// # Panics
+///
+/// Panics when `KRABKA_MINIO_IMAGE_REF` is unset or holds no tag. The build
+/// sets it for `bazel test --config=scale`; under cargo, set it to the
+/// `minio` reference in `//bazel/images/images.bzl` after loading that image.
+fn minio_image() -> (String, String) {
+    let reference = std::env::var("KRABKA_MINIO_IMAGE_REF").expect(
+        "KRABKA_MINIO_IMAGE_REF is unset. This suite runs under `bazel test --config=scale`, \
+         which loads the pinned image and sets this. To run it under cargo, set it to the \
+         `minio` reference in //bazel/images/images.bzl.",
     );
+    let (repository, tag) = reference
+        .rsplit_once(':')
+        .expect("the MinIO image reference carries a tag");
+    (repository.to_string(), tag.to_string())
+}
+
+async fn start_minio() -> (ContainerAsync<GenericImage>, Arc<dyn ObjectStore>) {
+    // The whole reference comes from the build; see the same note in
+    // scale_object_store.rs.
+    let (repository, tag) = minio_image();
 
     let container = tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
-        GenericImage::new("mirror.gcr.io/minio/minio".to_string(), tag)
+        GenericImage::new(repository, tag)
             .with_exposed_port(ContainerPort::Tcp(MINIO_API_PORT))
             // MinIO writes its whole banner to stderr, the `API:` line
             // included. Waiting on stdout waits for a stream that stays empty,

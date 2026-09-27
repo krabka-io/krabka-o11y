@@ -41,14 +41,28 @@ def workflow_commands():
 
 
 def module_pins():
+    """The image each qualification artifact must match, keyed by name.
+
+    A pulled image is pinned by the registry digest in its MODULE.bazel pull
+    tuple. A built image (`BUILT_IMAGES` in bazel/images/images.bzl) has no
+    registry digest: apko assembles it from the package lock beside its config,
+    so its pin is the SHA-256 of that lock, which fixes every package by
+    version and checksum.
+    """
     module = (ROOT / "MODULE.bazel").read_text(encoding="utf-8")
-    return {
+    pins = {
         name: {"image": f"{registry}/{repository}:{tag}", "digest": digest}
         for name, registry, repository, tag, digest in re.findall(
             r'\("([^"]+)", "([^"]+)", "([^"]+)", "([^"]+)", "(sha256:[0-9a-f]{64})"\)',
             module,
         )
     }
+    images = (ROOT / "bazel/images/images.bzl").read_text(encoding="utf-8")
+    built = re.search(r"^BUILT_IMAGES = \{\n(.*?)^\}", images, re.MULTILINE | re.DOTALL)
+    for name, image in re.findall(r'^\s+"([^"]+)": "([^"]+)",$', built.group(1) if built else "", re.MULTILINE):
+        lock = (ROOT / "bazel/images" / f"{name}.apko.lock.json").read_bytes()
+        pins[name] = {"image": image, "digest": f"sha256:{hashlib.sha256(lock).hexdigest()}"}
+    return pins
 
 
 def validate(report, final=False, commit=None):

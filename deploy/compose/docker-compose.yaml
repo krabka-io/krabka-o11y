@@ -100,8 +100,12 @@ services:
     stop_grace_period: 60s
 
   # --- object store -------------------------------------------------------
+  # MinIO discontinued its own image channels, so this is Chainguard's public
+  # build of the Wolfi `minio` package, pinned by digest. The `-dev` variant:
+  # it carries the `mc` client for `minio-buckets` and busybox for the
+  # health check below, which the distroless variant does not.
   minio:
-    image: ${KRABKA_MINIO_IMAGE:-quay.io/minio/minio@sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb}
+    image: ${KRABKA_MINIO_IMAGE:-cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba}
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -109,13 +113,13 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-krabka-secret}
     volumes: ["minio-data:/data"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
       interval: 5s
       timeout: 3s
       retries: 30
 
   minio-buckets:
-    image: ${KRABKA_MINIO_IMAGE:-quay.io/minio/minio@sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb}
+    image: ${KRABKA_MINIO_IMAGE:-cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba}
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
