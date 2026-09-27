@@ -13,11 +13,11 @@ exporter is needed.
 
 | Signal | Broker surface | Notes |
 | --- | --- | --- |
-| Metrics | Prometheus text format on the `/metrics` listener | `KRABKA_METRICS_LISTEN_ADDR` sets the address. |
+| Metrics | Prometheus text format at `/metrics` on the metrics listener | `--metrics-listen-addr` or `KRABKA_METRICS_LISTEN_ADDR` sets the address. The default is `0.0.0.0:9404`. |
 | Traces | OTLP export | The `KRABKA_OTLP_*` environment variables turn tracing on. |
-| Profiles | pprof debug routes | CPU, allocation, and contention profiles of the running process. |
+| Profiles | pprof routes on the admin listener | `GET /debug/pprof/profile` gives a CPU profile. `GET /debug/pprof/heap` gives a heap profile when the broker is built with the `heap-profiling` feature. `KRABKA_ADMIN_LISTEN_ADDR` sets the address. |
 | Logs | Structured JSON or logfmt | The `krabka-logfmt` crate encodes each line as key-value pairs. |
-| Audit | OCSF audit events | The `krabka-audit` crate serializes security events. |
+| Audit | Hash-chained OCSF records on the `__krabka_audit` topic | The `krabka-audit` crate writes them. Its verify command checks the chain. krabka-o11y does not ingest this topic. |
 
 Trace context crosses the wire in record headers with the W3C `traceparent`
 format from the `krabka-trace-context` crate.
@@ -26,14 +26,15 @@ format from the `krabka-trace-context` crate.
 
 krabka-o11y stores all four signals through one columnar block store over
 object storage. Each signal keeps the query language its ecosystem already
-speaks.
+speaks. Audit records stay on their Kafka topic and are not a krabka-o11y
+signal.
 
-| Signal | Query interface | Crates |
-| --- | --- | --- |
-| Metrics | PromQL | `krabka-promql`, `krabka-metrics`, `krabka-metrics-service` |
-| Traces | TraceQL and OTLP | `krabka-traceql`, `krabka-traces` |
-| Logs and audit | LogQL | `krabka-logql`, `krabka-observability` |
-| Profiles | pprof | `krabka-pprof`, `krabka-profiles` |
+| Signal | Ingest | Query interface | Crates |
+| --- | --- | --- | --- |
+| Metrics | Prometheus remote write | PromQL | `krabka-promql`, `krabka-metrics`, `krabka-metrics-service` |
+| Traces | OTLP | TraceQL through the Tempo API | `krabka-traceql`, `krabka-traces` |
+| Logs | Loki push | LogQL | `krabka-logql`, `krabka-observability` |
+| Profiles | Pyroscope push | pprof | `krabka-pprof`, `krabka-profiles` |
 
 [Getting started](getting_started.md) starts the stack and sends one request
 per signal. [Grafana datasources](grafana.md) provisions Grafana against it.
