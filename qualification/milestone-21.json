@@ -10,7 +10,7 @@
     "grafana_previous": {"image": "mirror.gcr.io/grafana/grafana:13.1.6", "digest": "sha256:66611512245b182e0928918b71db91fef25cb8f13d94f71fd2fb6253c383bb64", "revision": "25d4f6c5c796b3a1390163406484ade5bd150851"},
     "loki": {"image": "mirror.gcr.io/grafana/loki:3.7.7", "digest": "sha256:550d599ec4efacd8ebc0a5871766855057cba2bd0c669c0711d898c00d6d901f", "revision": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da"},
     "mimir": {"image": "mirror.gcr.io/grafana/mimir:3.2.1", "digest": "sha256:d42bfba7a8ef82a14b883a4cf235406324aeecae94c85eba000bdaa21aa2f289", "revision": "e49585d43c6e852225e114bd1ddd98da58a4c060"},
-    "minio": {"image": "quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z", "digest": "sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb"},
+    "minio": {"image": "docker.io/krabka-io/minio:RELEASE.2026-09-22T19-25-18Z", "digest": "sha256:90018286a1962ca16351b4b912b5deddbcbb19128cf650b55b28126491905674"},
     "prometheus": {"image": "mirror.gcr.io/prom/prometheus:v3.14.0", "digest": "sha256:e906cef998316bbe319f98711e1b4d8613ad37e14b08ff831d7036e77b7464f9", "revision": "d7598b7141418fa35be2b5ec5d0fefb634199610"},
     "prometheus_previous": {"image": "mirror.gcr.io/prom/prometheus:v3.13.3", "digest": "sha256:595c907995955f2d5fda19fae66392680921d9501cad0be5270b3fee959780b1", "revision": "b273ae3adeb64ad630d65ef7f16440df95658410"},
     "pyroscope": {"image": "mirror.gcr.io/grafana/pyroscope:2.3.1", "digest": "sha256:718b585ea168a616ca737018dbd1676992db9e5f1084ec4e9cd18f669326f334", "revision": "7aeaa0ff91e83538b3ff0d09bfefb168bddc022d"},

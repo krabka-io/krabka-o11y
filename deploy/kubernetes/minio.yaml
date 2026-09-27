@@ -1,5 +1,9 @@
 # The object store every signal's blocks are written to. One replica on one
 # volume: enough to run the stack, not a storage tier.
+#
+# The image is Chainguard's public build of the Wolfi `minio` package, pinned
+# by digest, because MinIO discontinued its own image channels. The `-dev`
+# variant carries the `mc` client and a shell for the `minio-buckets` job.
 apiVersion: v1
 kind: Service
 metadata:
@@ -33,7 +37,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: minio
-          image: quay.io/minio/minio@sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb
+          image: cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
           args: [server, /data]
           env:
             - name: MINIO_ROOT_USER
@@ -77,7 +81,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: mc
-          image: quay.io/minio/minio@sha256:3f97c5651cb6662b880c787a232b6b34fec8d8922e08d6617b25d241a21164bb
+          image: cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
           command: [/bin/sh, -c]
           args:
             - >-

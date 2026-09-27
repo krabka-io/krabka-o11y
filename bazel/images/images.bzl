@@ -15,6 +15,10 @@ hands each suite the reference from this map, and no suite carries a default.
 
 The tag half of a reference is a local label for bytes a digest already fixed;
 `docker load` re-creates it from the pinned tarball before every run.
+
+`BUILT_IMAGES` holds the one image the build assembles rather than pulls. Its
+bytes are fixed by the apko lock beside its config in //bazel/images, not by a
+//MODULE.bazel pull tuple, and its reference is a local label in the same way.
 """
 
 ORACLES = {
@@ -79,19 +83,42 @@ CLIENTS = {
     ),
 }
 
-IMAGES = {
+# The images //MODULE.bazel pulls by digest.
+PULLED_IMAGES = {
     "alloy": CLIENTS["alloy"].image,
     "alloy_previous": CLIENTS["alloy_previous"].image,
     "grafana": CLIENTS["grafana"].image,
     "grafana_previous": CLIENTS["grafana_previous"].image,
     "loki": ORACLES["loki"].image,
     "mimir": ORACLES["mimir"].image,
-    "minio": "mirror.gcr.io/minio/minio:RELEASE.2025-04-22T22-12-26Z",
     "prometheus": CLIENTS["prometheus"].image,
     "prometheus_previous": CLIENTS["prometheus_previous"].image,
     "pyroscope": ORACLES["pyroscope"].image,
     "tempo": ORACLES["tempo"].image,
 }
+
+# The images //bazel/images assembles from a Wolfi package lock.
+#
+# MinIO is the object store the `scale` suites run against. It is not a
+# differential oracle: nothing here compares an answer against MinIO. It is a
+# real S3 API in front of real storage, which is what makes a scale run measure
+# request counts, retries and multipart behaviour rather than the behaviour of
+# an in-process `InMemory` map.
+#
+# It used to be a pull tuple, first from `mirror.gcr.io/minio/minio` and then
+# from `quay.io/minio/minio` when the mirror stopped serving it. MinIO has
+# since discontinued every channel that published it: `quay.io/minio/minio`
+# answers `401 UNAUTHORIZED` to every request, the Docker Hub repository is
+# gone, and `dl.min.io` answers `410 Gone` because the open-source server is
+# archived. Wolfi still packages the server from source, so the image is
+# assembled from that package with apko, the same way krabka-broker builds
+# its MinIO. The tag names the upstream release the packaged source is built
+# from, which is what `minio --version` reports.
+BUILT_IMAGES = {
+    "minio": "docker.io/krabka-io/minio:RELEASE.2026-09-22T19-25-18Z",
+}
+
+IMAGES = dict(PULLED_IMAGES.items() + BUILT_IMAGES.items())
 
 def image_tag_env(name):
     """The environment variable a suite reads image `name`'s tag from."""
