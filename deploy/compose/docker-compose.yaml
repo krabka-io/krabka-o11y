@@ -100,6 +100,18 @@ services:
     stop_grace_period: 60s
 
   # --- object store -------------------------------------------------------
+  # The image runs MinIO as UID 65532. A `minio-data` volume that an earlier
+  # deployment wrote with MinIO's own image belongs to root, and the buckets
+  # and `.minio.sys` under it too, so the ownership step is recursive where
+  # the broker's is not.
+  minio-permissions:
+    image: ${KRABKA_O11Y_IMAGE:-ghcr.io/krabka-io/krabka-o11y:latest}
+    restart: "no"
+    user: "0:0"
+    entrypoint: ["/bin/busybox", "chown"]
+    command: ["-R", "65532:65532", "/data"]
+    volumes: ["minio-data:/data"]
+
   # MinIO discontinued its own image channels, so this is Chainguard's public
   # build of the Wolfi `minio` package, pinned by digest. The `-dev` variant:
   # it carries the `mc` client for `minio-buckets` and busybox for the
@@ -112,6 +124,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-krabka}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-krabka-secret}
     volumes: ["minio-data:/data"]
+    depends_on:
+      minio-permissions: {condition: service_completed_successfully}
     healthcheck:
       test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:9000/minio/health/live"]
       interval: 5s

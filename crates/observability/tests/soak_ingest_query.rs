@@ -473,7 +473,7 @@ async fn ingest_and_query_together_hold_memory_and_request_count() {
         "signal": "metrics",
         "object_store": {
             "provider": "minio-s3",
-            "image": std::env::var("KRABKA_MINIO_IMAGE_TAG").unwrap_or_else(|_| "unknown".into()),
+            "image": std::env::var("KRABKA_MINIO_IMAGE_REF").unwrap_or_else(|_| "unknown".into()),
             "image_id": std::env::var("KRABKA_MINIO_IMAGE_ID").unwrap_or_else(|_| "unknown".into()),
             "requests": {"put": puts, "get": gets, "list": lists},
             "transferred_bytes": transferred_bytes,

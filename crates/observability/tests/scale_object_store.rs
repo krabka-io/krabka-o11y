@@ -27,10 +27,13 @@
 //! bazel test --config=scale //crates/observability:scale_object_store_scale_test
 //! ```
 //!
-//! Under Cargo, with a `MinIO` reachable and its tag named:
+//! Under Cargo, after loading the assembled `MinIO` image into the daemon and
+//! naming the reference it was loaded under, which is the `minio` entry of
+//! `BUILT_IMAGES` in //bazel/images/images.bzl:
 //!
 //! ```text
-//! KRABKA_MINIO_IMAGE_TAG=latest \
+//! bazel run //bazel/images:minio
+//! KRABKA_MINIO_IMAGE_REF=docker.io/krabka-io/minio:RELEASE.2026-09-22T19-25-18Z \
 //!   cargo test -p krabka-observability --test scale_object_store -- --ignored --nocapture
 //! ```
 //!
