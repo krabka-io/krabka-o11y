@@ -1,4 +1,7 @@
-use krabka_blockstore::{MeteredObjectStore, ObjectStoreMetrics};
+use krabka_blockstore::{
+    ConditionalUpdateRequirement, MeteredObjectStore, ObjectStoreMetrics,
+    verify_object_store_semantics,
+};
 
 use super::{
     Arc, ConfiguredObjectStore, LocalFileSystem, ObjectPath, ServiceConfig, ServiceConfigError,
@@ -10,15 +13,33 @@ use super::{
 ///
 /// The wrap happens here and nowhere else, so one decorator covers every
 /// reader and writer in the role.
+///
+/// The store is probed with [`verify_object_store_semantics`] below its
+/// prefix before it is returned. A store that lacks a semantic the role writes
+/// against stops the role here, before it accepts any data.
 #[cfg_attr(test, mutants::skip)]
-pub(crate) fn build_configured_object_store(
+pub(crate) async fn build_configured_object_store(
     config: &ServiceConfig,
     metrics: ObjectStoreMetrics,
 ) -> Result<Option<ConfiguredObjectStore>, ServiceConfigError> {
     let Some(raw_url) = config.object_store_url.as_deref() else {
         return Ok(None);
     };
+    let configured = open_configured_object_store(raw_url, metrics)?;
+    verify_object_store_semantics(
+        configured.store.as_ref(),
+        &configured.prefix,
+        ConditionalUpdateRequirement::for_object_store_url(raw_url),
+    )
+    .await?;
+    Ok(Some(configured))
+}
 
+#[cfg_attr(test, mutants::skip)]
+fn open_configured_object_store(
+    raw_url: &str,
+    metrics: ObjectStoreMetrics,
+) -> Result<ConfiguredObjectStore, ServiceConfigError> {
     match Url::parse(raw_url) {
         Ok(url) if url.scheme() == "file" => {
             let path =
@@ -27,28 +48,28 @@ pub(crate) fn build_configured_object_store(
                         url: raw_url.to_string(),
                         reason: "file URL must map to a local filesystem path".to_string(),
                     })?;
-            Ok(Some(ConfiguredObjectStore {
+            Ok(ConfiguredObjectStore {
                 store: MeteredObjectStore::wrap(
                     Arc::new(LocalFileSystem::new_with_prefix(path)?),
                     metrics,
                 ),
                 prefix: ObjectPath::from(""),
-            }))
+            })
         }
         Ok(url) => {
             let (store, prefix) = parse_url_opts(&url, std::env::vars())?;
-            Ok(Some(ConfiguredObjectStore {
+            Ok(ConfiguredObjectStore {
                 store: MeteredObjectStore::wrap(Arc::from(store), metrics),
                 prefix,
-            }))
+            })
         }
-        Err(url::ParseError::RelativeUrlWithoutBase) => Ok(Some(ConfiguredObjectStore {
+        Err(url::ParseError::RelativeUrlWithoutBase) => Ok(ConfiguredObjectStore {
             store: MeteredObjectStore::wrap(
                 Arc::new(LocalFileSystem::new_with_prefix(raw_url)?),
                 metrics,
             ),
             prefix: ObjectPath::from(""),
-        })),
+        }),
         Err(error) => Err(ServiceConfigError::InvalidObjectStoreUrl {
             url: raw_url.to_string(),
             reason: error.to_string(),

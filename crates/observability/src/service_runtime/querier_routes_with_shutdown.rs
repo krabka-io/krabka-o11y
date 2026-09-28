@@ -30,7 +30,7 @@ pub(crate) async fn querier_routes_with_shutdown(
 ) -> Result<(Router, Vec<(&'static str, JoinHandle<()>)>), ServiceConfigError> {
     let mut background_tasks = Vec::new();
     let configured_store = if object_store.is_none() {
-        build_configured_object_store(config, metrics.object_store.clone())?
+        build_configured_object_store(config, metrics.object_store.clone()).await?
     } else {
         None
     };

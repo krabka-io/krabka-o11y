@@ -5,7 +5,7 @@ use super::{
     build_configured_object_store,
 };
 
-pub(crate) fn build_compactor_configured_object_store(
+pub(crate) async fn build_compactor_configured_object_store(
     config: &ServiceConfig,
     object_store: Option<&dyn ObjectStore>,
     metrics: ObjectStoreMetrics,
@@ -14,5 +14,5 @@ pub(crate) fn build_compactor_configured_object_store(
         return Ok(None);
     }
 
-    build_configured_object_store(config, metrics)
+    build_configured_object_store(config, metrics).await
 }

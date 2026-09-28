@@ -21,7 +21,7 @@ pub(crate) async fn run_block_builder(
     let object_store_gate = readiness.gate("object-store");
     let wal_consumer_gate = readiness.gate("wal-consumer");
     let wal_catch_up_gate = readiness.gate("wal-catch-up");
-    let store = build_object_store(&cli.object_store_url, metrics.object_store.clone())?;
+    let store = build_object_store(&cli.object_store_url, metrics.object_store.clone()).await?;
     object_store_gate.mark_ready();
     // The same runtime overrides file the distributor reads. It holds the
     // retention window of every tenant, and without it every tenant keeps its

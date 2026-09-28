@@ -24,7 +24,8 @@ pub async fn run_compactor_until_idle(
         dependencies
             .object_store_metrics()
             .unwrap_or_else(krabka_blockstore::ObjectStoreMetrics::unregistered),
-    )?;
+    )
+    .await?;
     let (store, object_store_prefix) =
         compactor_object_store(object_store, configured_store.as_ref())?;
     let index_prefix = config
