@@ -37,12 +37,42 @@ jobs:
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}-${{ inputs.provider }}
           repository-cache: true
+      # Both steps pass the same provider environment. `--nozip_undeclared_test_outputs`
+      # leaves each JSON report as a plain file under `test.outputs/`, so the
+      # evidence step can check and hash it.
       - name: provider contract
         run: |
           bazel test //crates/blockstore:object_store_provider_contract_test \
             --nocache_test_results \
+            --nozip_undeclared_test_outputs \
             --test_output=all \
             --test_arg=--ignored \
+            --test_env=KRABKA_OBJECT_STORE_CONTRACT_URL \
+            --test_env=KRABKA_CONTRACT_COMMIT=${GITHUB_SHA} \
+            --test_env=AWS_ACCESS_KEY_ID \
+            --test_env=AWS_SECRET_ACCESS_KEY \
+            --test_env=AWS_REGION \
+            --test_env=AWS_CHECKSUM_ALGORITHM \
+            --test_env=GOOGLE_SERVICE_ACCOUNT_KEY \
+            --test_env=AZURE_STORAGE_ACCOUNT_NAME \
+            --test_env=AZURE_STORAGE_ACCOUNT_KEY
+      # One end-to-end test per signal takes a block through flush, query,
+      # compaction, retention, orphan reconciliation and restart on the
+      # provider. Each test writes below a unique sub-prefix of the contract
+      # prefix, deletes it afterwards, and reports its request and byte costs.
+      - name: signal lifecycle suites
+        if: always()
+        run: |
+          bazel test \
+            //crates/metrics:level_compaction_test \
+            //crates/observability:compactor_test \
+            //crates/profiles:lifecycle_test \
+            //crates/traces:block_lifecycle_test \
+            --nocache_test_results \
+            --nozip_undeclared_test_outputs \
+            --test_output=all \
+            --test_arg=a_block_survives_its_whole_lifecycle_on_the_configured_store \
+            --test_arg=--exact \
             --test_env=KRABKA_OBJECT_STORE_CONTRACT_URL \
             --test_env=KRABKA_CONTRACT_COMMIT=${GITHUB_SHA} \
             --test_env=AWS_ACCESS_KEY_ID \
@@ -64,18 +94,34 @@ jobs:
             echo "cpu_count=$(nproc)"
             awk '/^MemTotal:/ {print "memory_kib=" $2}' /proc/meminfo
             echo "command=bazel test //crates/blockstore:object_store_provider_contract_test"
+            echo "command=bazel test //crates/{metrics:level_compaction,observability:compactor,profiles:lifecycle,traces:block_lifecycle}_test"
           } >"${evidence}/run.metadata.txt"
-          find bazel-testlogs/crates/blockstore/object_store_provider_contract_test \
-            -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum \
-            >"${evidence}/SHA256SUMS"
-          sha256sum "${evidence}/run.metadata.txt" >>"${evidence}/SHA256SUMS"
+          find bazel-testlogs/ -path '*/test.outputs/object-store-*.json' \
+            -exec cp {} "${evidence}/" \;
+          for target in \
+            blockstore/object_store_provider_contract_test \
+            metrics/level_compaction_test \
+            observability/compactor_test \
+            profiles/lifecycle_test \
+            traces/block_lifecycle_test; do
+            log="bazel-testlogs/crates/${target}/test.log"
+            if [ -f "${log}" ]; then
+              cp "${log}" "${evidence}/${target//\//-}.test.log"
+            fi
+          done
+          (cd "${evidence}" && find . -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum >SHA256SUMS)
+      # Fails the run unless every required case, signal and cost figure is in
+      # the evidence, and every file matches its SHA256SUMS line.
+      - name: evidence check
+        run: |
+          tools/object-store-evidence.py "${RUNNER_TEMP}/object-store-evidence" \
+            --provider ${{ inputs.provider }} \
+            --commit "${GITHUB_SHA}"
       - name: evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: object-store-${{ inputs.provider }}-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/object-store-evidence/
-            bazel-testlogs/crates/blockstore/object_store_provider_contract_test/test.log
-            bazel-testlogs/crates/blockstore/object_store_provider_contract_test/test.outputs/**
+          path: ${{ runner.temp }}/object-store-evidence/
           if-no-files-found: error
