@@ -50,7 +50,7 @@ The results go to `benches/target/criterion`. Criterion writes an HTML report at
 
 ## Where they run
 
-The `bench` job in [//.github/workflows/ci.yml](../.github/workflows/ci.yml) runs them on a schedule, not on a pull request. This follows the mutation sweep and the fuzz run, which are scheduled for the same reason: the work is unbounded, and a pull request cannot pay for it.
+The `bench` job in [//.github/workflows/ci.yml](../.github/workflows/ci.yml) runs them on a schedule, not on a pull request. This follows the fuzz run, which is scheduled for the same reason: the work is unbounded, and a pull request cannot pay for it.
 
 The pull-request half is the `bench-build` job. It compiles the benchmarks with `cargo clippy` and runs none of them. A benchmark that no longer builds is then a failure on the pull request that broke it, instead of a surprise on the next nightly run.
 

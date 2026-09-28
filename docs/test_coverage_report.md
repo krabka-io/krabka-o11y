@@ -52,14 +52,14 @@ No percentage is quoted here without the complete LCOV output for this revision.
 
 ## Mutation Coverage
 
-Twelve crate mutation targets run on the scheduled workflow. Six have reviewed
+Twelve crates define mutation targets. Sweeps run by hand, not in CI. Six have reviewed
 baselines from complete, checksum-verified runs: logql (91 survivors), pprof
 (86), query-frontend (64), traceql (1), verified (2), and metrics-service (119). The run metadata and artifact
 checksums are recorded in
 [`qualification/milestone-19-mutation-baselines.json`](../qualification/milestone-19-mutation-baselines.json).
 
 The other six targets remain `unseeded` until every shard completes on a
-suitable runner and `tools/mutants-ratchet.py` validates the totals.
+dedicated host and `tools/mutants-ratchet.py` validates the totals.
 
 ## Cross-Cutting Gaps
 
@@ -71,4 +71,4 @@ The metrics collection tier, trace sampling, Jaeger queries, and legacy Pyroscop
 
 Every workspace crate now has a report, and every supported upstream surface in the compatibility matrix points to a live differential suite.
 
-CI remains the authority for pass status, line coverage, and complete mutation output.
+CI remains the authority for pass status and line coverage. Complete mutation output comes from manual sweeps.

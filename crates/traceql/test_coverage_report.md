@@ -54,7 +54,7 @@ The scoped command excludes ignored container suites.
 
 ## Mutation Coverage
 
-The scheduled target is `bazel test //crates/traceql:traceql_mutants`.
+The manual target is `bazel test //crates/traceql:traceql_mutants`.
 
 Its reviewed baseline is 1 survivor from a complete 16-shard run. The exact
 commit, command, runner, duration, and artifact checksums are recorded in

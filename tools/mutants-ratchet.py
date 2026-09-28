@@ -253,7 +253,7 @@ def run(crate, logs_root, baseline_path, record):
 
 # --- self-test ---------------------------------------------------------------
 #
-# The sweep is a nightly job that takes hours, so the checks above cannot be
+# A sweep is a manual job that takes hours, so the checks above cannot be
 # developed against a real run. They are developed against these, which are the
 # shard logs a run writes, written by hand.
 

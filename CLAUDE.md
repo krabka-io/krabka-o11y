@@ -4,7 +4,7 @@
 
 ## Commands
 
-CI gates on both Bazel and Cargo, and they are not the same build. Bazel is the primary lane: it supplies its own `protoc`, pins the differential suites' container images, and runs the mutation sweep. The `cargo` job covers what only Cargo reaches -- the `protoc-bin-vendored` fallback, `.cargo/config.toml`, `--locked` against `Cargo.lock`, and the `heap-profiling` feature that no Bazel target turns on.
+CI gates on both Bazel and Cargo, and they are not the same build. Bazel is the primary lane: it supplies its own `protoc`, pins the differential suites' container images, and defines the mutation targets. The `cargo` job covers what only Cargo reaches -- the `protoc-bin-vendored` fallback, `.cargo/config.toml`, `--locked` against `Cargo.lock`, and the `heap-profiling` feature that no Bazel target turns on.
 
 ```bash
 bazel run //tools/format     # rewrite formatting (replaces `cargo +nightly fmt --all`)
@@ -33,6 +33,8 @@ cargo clippy -p krabka-promql --all-targets -- -D warnings
 | `bazel build //...` cold | 90-min CI budget; fetches LLVM, JDK 21, protoc, and a ~340 MB DataFusion clone |
 | `bazel test //crates/<crate>:<crate>_mutants` | Rebuilds the crate once per mutant; 180-min budget for promql/observability/traces |
 | `tools/mutants-sweep.sh` | 10-hour timeout; has OOM-killed a 31 GB machine twice |
+
+Mutation sweeps never run in CI, not even nightly: they hold a runner for hours. Do not add a workflow or job that runs one. Run a sweep by hand on a dedicated host; CI keeps only `tools/mutants-ratchet.py --self-test` and `aspect mutants --self-test`.
 | `bazel coverage //crates/...` | Separate 90-min job; evicts the normal build cache |
 | `tools/bench.sh` | Criterion over //benches, minutes per target; builds the DataFusion pin at opt-level 3 into a second target dir. `tools/bench.sh --quick` is the local mode |
 | `bazel test --config=scale //crates/...` | The `scale` suites: 10k series, 1M spans, a 24-block compaction, and a bounded ingest-and-query soak, all against a real MinIO. Its own nightly job |

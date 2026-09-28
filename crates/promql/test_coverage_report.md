@@ -54,7 +54,7 @@ The scoped command excludes ignored container suites.
 
 ## Mutation Coverage
 
-The scheduled target is `bazel test //crates/promql:promql_mutants`.
+The manual target is `bazel test //crates/promql:promql_mutants`.
 
 Its baseline is `unseeded`, so no survivor count is quoted until every shard writes a valid totals line.
 

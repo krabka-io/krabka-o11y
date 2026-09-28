@@ -4,7 +4,7 @@
 #
 #     <crate> <survivors>
 #
-# The nightly sweep fails a crate whose survivor count is above the number
+# A sweep fails a crate whose survivor count is above the number
 # here. It passes a crate whose count is below, and asks for the number to be
 # lowered. Lower it in the same change that killed the mutants.
 #
@@ -14,7 +14,7 @@
 # with no number is still unable to report a killed shard as a clean sweep.
 #
 # `unseeded` crates have not completed a trustworthy full sweep since the
-# ratchet was written. A sweep is a nightly job of several hours, and a number
+# ratchet was written. A sweep is a manual job of several hours, and a number
 # written from a partial run would be a guess. Take a count only from a complete
 # run, which prints the line to check in:
 #
