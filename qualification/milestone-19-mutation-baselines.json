@@ -15,6 +15,35 @@
     "bazelisk": "1.28.1"
   },
   "results": {
+    "blockstore": {
+      "started_at": "2026-09-22T20:37:05Z",
+      "command": "aspect mutants blockstore <part> 24, for parts 0 through 23",
+      "duration_seconds": 15953,
+      "parts": 24,
+      "shards": 24,
+      "total": 1742,
+      "caught": 1261,
+      "survived": 145,
+      "unviable": 336,
+      "artifact_id": 10727002003,
+      "artifact_sha256": "8a66d2ffd52ce2639209a97d375b644ad4e03b0345ba072de204329f2386cda1",
+      "contents_manifest_sha256": "fd928a39b9cad7307fe8f77e279f06f428eeb34c6fac6c3c633b049ddb2fbea2",
+      "provenance": {
+        "commit": "e00c62ad7cf63c34e9e3d46758006316d13c4da0",
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/35781241801",
+        "runner": {
+          "label": "BuildBuddy hosted remote runner",
+          "os": "Linux 5.15.0 x86_64",
+          "cpu_count": 19,
+          "memory_kib": 69072204
+        },
+        "toolchain": {
+          "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+          "bazel": "9.2.0",
+          "bazelisk": "1.25.0"
+        }
+      }
+    },
     "logql": {
       "started_at": "2026-09-20T10:15:24Z",
       "command": "bazel test //crates/logql:logql_mutants --nocache_test_results --test_output=all --test_timeout=36000 --local_test_jobs=4 --local_resources=memory=HOST_RAM*.6",
@@ -27,6 +56,35 @@
       "artifact_id": 10604659091,
       "artifact_sha256": "e485c551af60cd96c1d9d144de8023c947fc28452f53fba1662fd5f60a0e2adf",
       "contents_manifest_sha256": "af042135ce0d7c786c115330dc9f844954a259669ea0fe7504c7279dcd43babe"
+    },
+    "metrics": {
+      "started_at": "2026-09-23T14:13:35Z",
+      "command": "aspect mutants metrics <part> 24, for parts 0 through 23",
+      "duration_seconds": 29964,
+      "parts": 24,
+      "shards": 24,
+      "total": 1438,
+      "caught": 1023,
+      "survived": 174,
+      "unviable": 241,
+      "artifact_id": 10780232595,
+      "artifact_sha256": "43ec0b00ad00205b27bf3e6fb572489c62b7b67126ee737643c4f66eb2294e4b",
+      "contents_manifest_sha256": "05c245e6857d29523bbfeecec0e0216993371ed9c3158dfdaf8eda8fa5f803c8",
+      "provenance": {
+        "commit": "ccb0515f49878edae0513e3f0141d6774583313c",
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/35870291878",
+        "runner": {
+          "label": "BuildBuddy hosted remote runner",
+          "os": "Linux 5.15.0 x86_64",
+          "cpu_count": 19,
+          "memory_kib": 69072204
+        },
+        "toolchain": {
+          "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+          "bazel": "9.2.0",
+          "bazelisk": "1.25.0"
+        }
+      }
     },
     "pprof": {
       "started_at": "2026-09-20T10:05:43Z",
@@ -125,8 +183,6 @@
     }
   },
   "unseeded": [
-    "blockstore",
-    "metrics",
     "observability",
     "profiles",
     "promql",

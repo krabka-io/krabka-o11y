@@ -40,6 +40,10 @@ crate_tests(
     # 48 on a 32-core machine, which drove load average past 200 and made every
     # shard miss its deadline for want of CPU rather than for want of time.
     mutants_jobs = 1,
-    mutants_shards = 16,
+    # The reviewed baseline in
+    # qualification/milestone-19-mutation-baselines.json came from a
+    # 24-shard run. tools/mutants-record.py --check fails when the record
+    # and this number differ, so change both together.
+    mutants_shards = 24,
     mutants_timeout = "eternal",
 )
