@@ -3,6 +3,8 @@
 //! The URL must point below `krabka-contract/`; every object below that prefix
 //! is deleted. See `docs/object_store_contract.md` for credentials and usage.
 
+mod faults;
+
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Instant};
 
 use assert2::assert;
@@ -14,6 +16,11 @@ use object_store::{
 };
 use serde_json::json;
 use url::Url;
+
+use self::faults::{
+    ChecksumOutcome, StaleListingOutcome, ThrottlingOutcome, checksum_mismatch, stale_listing,
+    throttling,
+};
 
 const OBJECTS_OVER_ONE_S3_PAGE: usize = 1_005;
 
@@ -85,16 +92,16 @@ async fn gcs_conditional_puts(store: &dyn ObjectStore) {
             .await,
         Err(Error::Precondition { .. })
     ));
-    assert!(matches!(
+    assert!(
         store
             .put_opts(
                 &path,
                 "e".into(),
                 PutMode::Update(UpdateVersion::from(updated)).into(),
             )
-            .await,
-        Ok(_)
-    ));
+            .await
+            .is_ok()
+    );
 }
 
 fn report_path() -> Option<PathBuf> {
@@ -151,6 +158,14 @@ async fn supported_provider_satisfies_the_object_store_contract() {
         integration::get_nonexistent_object(&store, None).await,
         Err(Error::NotFound { .. })
     ));
+    // The injected faults run over the provider, so the retry, decode and
+    // sweep paths meet its real latency, timestamps and listing order.
+    assert!(throttling(Arc::clone(&store)).await == ThrottlingOutcome::absorbed());
+    delete_all(&store).await;
+    assert!(checksum_mismatch(Arc::clone(&store)).await == ChecksumOutcome::surfaced());
+    delete_all(&store).await;
+    assert!(stale_listing(Arc::clone(&store)).await == StaleListingOutcome::nothing_lost());
+    delete_all(&store).await;
 
     stream::iter(0..OBJECTS_OVER_ONE_S3_PAGE)
         .map(|number| {
@@ -189,6 +204,7 @@ async fn supported_provider_satisfies_the_object_store_contract() {
         "pagination_objects": OBJECTS_OVER_ONE_S3_PAGE,
         "listing_convergence_attempts": listing_attempts,
         "deletion_convergence_attempts": deletion_attempts,
+        "fault_cases": ["throttling", "checksum_mismatch", "stale_listing"],
         "operations": operations,
         "transferred_bytes": transferred_bytes,
     });
