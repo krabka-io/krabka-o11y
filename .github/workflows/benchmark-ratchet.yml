@@ -45,13 +45,31 @@ jobs:
             --runner_exec_properties=EstimatedFreeDiskBytes=200GB \
             --script='
               status=0
+              verdict="$BUILDBUDDY_ARTIFACTS_DIRECTORY/verdict.json"
               tools/bench.sh &&
-                tools/bench-ratchet.py ${{ inputs.record && '--record' || '' }} || status=$?
-              if [ -d benches/target/criterion ]; then
-                cat benches/target/criterion/run.metadata.txt
-                tar -C benches/target -czf \
-                  "$BUILDBUDDY_ARTIFACTS_DIRECTORY/criterion.tar.gz" criterion
-                sha256sum "$BUILDBUDDY_ARTIFACTS_DIRECTORY/criterion.tar.gz"
+                tools/bench-ratchet.py ${{ inputs.record && '--record' || '--json "$verdict"' }} || status=$?
+              # Exit 1 is a steady measurement over its budget. One slow host
+              # gives that too, so rerun only those benchmarks, at most four
+              # and for at most ten minutes, and fail only if one reproduces.
+              if [ "$status" -eq 1 ]; then
+                status=0
+                tools/bench-ratchet.py --confirm "$verdict" \
+                  --confirm-limit 4 --confirm-timeout 600 \
+                  --json "$BUILDBUDDY_ARTIFACTS_DIRECTORY/confirm.json" || status=$?
+              fi
+              for dir in criterion criterion-confirm; do
+                if [ -d "benches/target/$dir" ]; then
+                  cat "benches/target/$dir/run.metadata.txt" || true
+                  tar -C benches/target -czf \
+                    "$BUILDBUDDY_ARTIFACTS_DIRECTORY/$dir.tar.gz" "$dir"
+                  sha256sum "$BUILDBUDDY_ARTIFACTS_DIRECTORY/$dir.tar.gz"
+                fi
+              done
+              # Exit 4 is runner variance: a measurement too noisy to gate, or
+              # a regression that did not reproduce. Report it, and pass.
+              if [ "$status" -eq 4 ]; then
+                echo "benchmark ratchet: runner variance, not a regression"
+                status=0
               fi
               exit "$status"
             '

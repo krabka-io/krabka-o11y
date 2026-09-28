@@ -128,6 +128,16 @@ def annotate(level, message):
         print(f"{level}: {message}", flush=True)
 
 
+def keep_stdout_for_json(destination):
+    """Sends every other line to standard error when the JSON goes to stdout.
+
+    `--json -` is for a pipe into another tool, and the annotations would
+    break that JSON.
+    """
+    if destination == "-":
+        sys.stdout = sys.stderr
+
+
 def shard_logs(logs_root, crate):
     """Shard name to log text, for one crate's mutants target.
 
@@ -366,7 +376,8 @@ def write_json(verdict, destination):
     """Writes a verdict to a path, or to standard output for `-`."""
     text = json.dumps(verdict, indent=2, sort_keys=True) + "\n"
     if destination == "-":
-        sys.stdout.write(text)
+        sys.__stdout__.write(text)
+        sys.__stdout__.flush()
     else:
         pathlib.Path(destination).write_text(text)
 
@@ -745,6 +756,7 @@ def main():
     args = parser.parse_args()
     if args.self_test:
         return self_test()
+    keep_stdout_for_json(args.json)
     try:
         if args.prove_gate:
             block = prove_gate(args.prove_gate, RECORD, args.baseline)
