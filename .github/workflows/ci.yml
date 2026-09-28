@@ -278,6 +278,13 @@ jobs:
       # point: the `bench` job below is nightly, and a ratchet developed only
       # against it would be checked once a day.
       - run: tools/bench-ratchet.py --self-test
+      # //tools/mutants-record.py checks the two Milestone 19 records under
+      # //qualification. Each record must name the commit, toolchain, host
+      # shape, command, duration and checksums of its run, and each number in
+      # //tools/mutants-baseline.txt and //tools/bench-baseline.txt must match
+      # its record. It reads JSON and text and runs no sweep.
+      - run: tools/mutants-record.py --self-test
+      - run: tools/mutants-record.py --check
       # //tools/fuzz-corpus.py writes the seed corpora under //fuzz/corpus, and
       # its `--self-test` checks the varint, zigzag, snappy and protobuf
       # encoders it writes them with against encodings the formats fix. It
