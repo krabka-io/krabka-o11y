@@ -59,7 +59,7 @@ bazel test //...
 
 Both are gated in CI, and they are not the same build. Bazel supplies its own
 `protoc`, pins the container images the differential suites run against, and
-runs the mutation sweep. The cargo job covers what only cargo reaches: the
+defines the mutation targets. The cargo job covers what only cargo reaches: the
 `protoc-bin-vendored` fallback, `.cargo/config.toml`, `--locked` against
 `Cargo.lock`, and the `heap-profiling` feature. CI also runs `cargo deny check`
 over the policy in [`deny.toml`](deny.toml).
@@ -190,6 +190,18 @@ Sharded, and bounded per shard. A shard that overruns its bound reports
 *nothing* rather than reporting a failure, so a survivor count is only worth
 quoting once `tools/mutants-ratchet.py` validates every shard and the totals
 line adds up: `caught + missed + unviable == total`.
+
+Mutation sweeps do not run in CI, not even on a schedule. A sweep takes hours
+and holds a machine for the whole run. Run one by hand on a dedicated host and
+apply the ratchet to its output:
+
+```bash
+tools/mutants-sweep.sh promql
+tools/mutants-ratchet.py promql
+```
+
+CI runs only the ratchet's `--self-test`, which checks the verdict logic
+against synthetic shard logs in about a second.
 
 ## Publishing
 

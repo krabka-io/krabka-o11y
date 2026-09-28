@@ -26,7 +26,7 @@ Run the Docker-tagged upstream suites when a change affects compatibility:
 bazel test --config=docker //crates/...
 ```
 
-Run a focused mutation sweep with:
+Mutation sweeps do not run in CI. Run a focused sweep by hand with:
 
 ```bash
 bazel test //crates/<name>:<name>_mutants

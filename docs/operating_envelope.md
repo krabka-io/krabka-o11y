@@ -30,7 +30,7 @@ configured maximum or a partial run is never promoted.
 The scheduled scale soak writes `soak-report.json` with warm-up, duration,
 throughput, query quantiles, errors, RSS, and object-store cost. Criterion
 writes raw estimates, confidence intervals, runner metadata, duration, and
-`SHA256SUMS` below `benches/target/criterion`. Mutation sweeps preserve every
+`SHA256SUMS` below `benches/target/criterion`. Manual mutation sweeps preserve every
 shard log plus commit, toolchain, host, command, duration, and checksums.
 
 `tools/bench-ratchet.py` rejects missing or noisy measurements and applies
