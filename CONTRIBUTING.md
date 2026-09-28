@@ -34,6 +34,8 @@ tools/mutants-ratchet.py <name>
 ```
 
 The ratchet rejects incomplete shard output before it reads the survivor count.
+To seed or change a baseline, follow "Seeding a crate by hand" in
+[README.md](README.md#seeding-a-crate-by-hand).
 
 ## Code conventions
 

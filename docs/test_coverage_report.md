@@ -52,14 +52,19 @@ No percentage is quoted here without the complete LCOV output for this revision.
 
 ## Mutation Coverage
 
-Twelve crates define mutation targets. Sweeps run by hand, not in CI. Six have reviewed
-baselines from complete, checksum-verified runs: logql (91 survivors), pprof
-(86), query-frontend (64), traceql (1), verified (2), and metrics-service (119). The run metadata and artifact
-checksums are recorded in
-[`qualification/milestone-19-mutation-baselines.json`](../qualification/milestone-19-mutation-baselines.json).
+Twelve crates define mutation targets. Sweeps run by hand, not in CI. Eight have reviewed
+baselines from complete, checksum-verified runs: blockstore (145 survivors),
+logql (91), metrics (174), metrics-service (119), pprof (86), query-frontend
+(64), traceql (1), and verified (2). The run metadata and artifact checksums are
+recorded in
+[`qualification/milestone-19-mutation-baselines.json`](../qualification/milestone-19-mutation-baselines.json),
+and `tools/mutants-record.py --check` makes sure that each baseline number
+matches its record.
 
-The other six targets remain `unseeded` until every shard completes on a
-dedicated host and `tools/mutants-ratchet.py` validates the totals.
+The other four targets, observability, profiles, promql, and traces, remain
+`unseeded` until every shard completes on a dedicated host and
+`tools/mutants-ratchet.py` validates the totals. The procedure is in
+[`README.md`](../README.md#seeding-a-crate-by-hand).
 
 ## Cross-Cutting Gaps
 

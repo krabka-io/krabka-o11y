@@ -64,18 +64,51 @@ The **numeric gate** is the ratchet. A line that carries a number fails when the
 
 Noise is measured, not assumed. When Criterion's own confidence interval for a benchmark is wider than a quarter of its mean, the numeric gate for that benchmark is skipped and the run says so. A measurement that noisy cannot support a verdict either way.
 
-The checked-in baseline was measured on the dedicated 16-core `clod` runner.
-Its raw Criterion artifact, confidence intervals, host shape, toolchain,
-command, duration, and checksums are recorded in
+The checked-in baseline was measured on the 16-core BuildBuddy remote runner.
+Its raw Criterion artifact, host shape, toolchain, command, duration, and
+checksums are recorded in
 [`qualification/milestone-19-benchmarks.json`](../qualification/milestone-19-benchmarks.json).
-GitHub-hosted scheduled runs validate the inventory only because their hardware
-is different. Refresh numeric values on the recorded runner:
+`tools/mutants-record.py --check` fails when `//tools/bench-baseline.txt` has
+a SHA-256 or a benchmark count that is different from the record, so a number
+cannot change without a recorded run. GitHub-hosted scheduled runs check only
+the inventory, because their hardware is different. Refresh the numbers on the
+recorded runner, with the `record` input of the
+[benchmark-ratchet workflow](../.github/workflows/benchmark-ratchet.yml):
 
 ```bash
-tools/bench-ratchet.py --record
+tools/bench.sh && tools/bench-ratchet.py --record
 ```
 
-Check in the lines it prints. Lower a number in the same change that made the benchmark faster.
+Check in the lines it prints, and record the run in the JSON file. Lower a number in the same change that made the benchmark faster.
+
+### Verdicts
+
+The ratchet puts each benchmark in one class, and the run takes the worst class. The exit code names that class:
+
+| Exit | Class | Meaning |
+| ---: | --- | --- |
+| 0 | `pass` | Every benchmark is in its budget, or is too noisy to judge and is in its budget. |
+| 1 | `regression` | A benchmark with a steady measurement is over its budget. |
+| 2 | | The command line is wrong. |
+| 3 | `incomplete` | A benchmark is missing, is not listed, or has an estimates file that cannot be read. The run did not measure what it has to measure, so no number is judged. |
+| 4 | `noisy` or `variance` | A benchmark is over its budget, but its confidence interval is too wide to be sure. Or `--confirm` did not see a regression again. This is the runner, not the code. |
+
+`--json <path>` writes the verdict with each benchmark's class, mean, spread, budget, and reason. `-` writes it to standard output, and the annotations then go to standard error.
+
+### Confirming a regression
+
+One slow host can put a benchmark over its budget. `--confirm` reruns only the benchmarks that a previous verdict called `regression`, and fails only when a regression occurs again:
+
+```bash
+tools/bench-ratchet.py --json verdict.json          # exit 1
+tools/bench-ratchet.py --confirm verdict.json --json confirm.json
+```
+
+The rerun calls `tools/bench.sh` once for each bench target, with a filter that holds only the regressed ids. It writes to `benches/target/criterion-confirm`, so the first run stays as it was. Two limits keep it small: `--confirm-limit` (default 8) reruns only the worst regressions, and `--confirm-timeout` (default 900 seconds) is the time for all the reruns together. At that limit, the rerun stops `tools/bench.sh` and every process it started. The exit code is 1 when a regression occurs again, 4 when none does, and 3 when a benchmark was not rerun and none of the reruns regressed.
+
+The rerun uses the `tolerance` and `noise_ceiling` that the first verdict records. If you give `--tolerance` or `--noise-ceiling` with a different value, the command stops with exit 2.
+
+The benchmark-ratchet workflow runs this step after exit 1, with a limit of four benchmarks and ten minutes. The step is a second `bb remote` invocation with runner recycling off, so it does not run in the container that measured the first run. The first step prints the verdict to its log, and the second step reads it from there. The workflow reports exit 4 as runner variance and passes.
 
 ## Adding a benchmark
 
