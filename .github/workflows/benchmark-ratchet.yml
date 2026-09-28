@@ -21,7 +21,9 @@ concurrency:
 jobs:
   benchmark-ratchet:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    # Two remote runs at most: the measurement, up to 2 hours, and the
+    # confirmation, up to 75 minutes.
+    timeout-minutes: 210
     env:
       BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
     steps:
@@ -29,8 +31,10 @@ jobs:
       - name: install BuildBuddy CLI
         run: curl -fsSL https://install.buildbuddy.io | bash
       - name: run numeric ratchet remotely
+        id: measure
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          status=0
           bb remote \
             --os=linux \
             --arch=amd64 \
@@ -48,25 +52,91 @@ jobs:
               verdict="$BUILDBUDDY_ARTIFACTS_DIRECTORY/verdict.json"
               tools/bench.sh &&
                 tools/bench-ratchet.py ${{ inputs.record && '--record' || '--json "$verdict"' }} || status=$?
-              # Exit 1 is a steady measurement over its budget. One slow host
-              # gives that too, so rerun only those benchmarks, at most four
-              # and for at most ten minutes, and fail only if one reproduces.
-              if [ "$status" -eq 1 ]; then
-                status=0
-                tools/bench-ratchet.py --confirm "$verdict" \
-                  --confirm-limit 4 --confirm-timeout 600 \
-                  --json "$BUILDBUDDY_ARTIFACTS_DIRECTORY/confirm.json" || status=$?
+              # The runner step reads the ratchet exit code and the verdict
+              # back out of these lines, and does not depend on bb remote
+              # passing the exit code through.
+              echo "krabka-status=$status"
+              if [ -f "$verdict" ]; then
+                printf "krabka-verdict=%s\n" "$(base64 -w0 "$verdict")"
               fi
-              for dir in criterion criterion-confirm; do
-                if [ -d "benches/target/$dir" ]; then
-                  cat "benches/target/$dir/run.metadata.txt" || true
-                  tar -C benches/target -czf \
-                    "$BUILDBUDDY_ARTIFACTS_DIRECTORY/$dir.tar.gz" "$dir"
-                  sha256sum "$BUILDBUDDY_ARTIFACTS_DIRECTORY/$dir.tar.gz"
-                fi
-              done
-              # Exit 4 is runner variance: a measurement too noisy to gate, or
-              # a regression that did not reproduce. Report it, and pass.
+              if [ -d benches/target/criterion ]; then
+                cat benches/target/criterion/run.metadata.txt || true
+                tar -C benches/target -czf \
+                  "$BUILDBUDDY_ARTIFACTS_DIRECTORY/criterion.tar.gz" criterion
+                sha256sum "$BUILDBUDDY_ARTIFACTS_DIRECTORY/criterion.tar.gz"
+              fi
+              exit "$status"
+            ' | tee remote.log || status=$?
+          reported=$(grep -o 'krabka-status=[0-9]*' remote.log | tail -n 1 | cut -d= -f2)
+          if [ -n "$reported" ]; then
+            status=$reported
+          elif [ "$status" -eq 0 ]; then
+            echo "::error::the remote run printed no ratchet exit code"
+            exit 1
+          fi
+          case "$status" in
+            0) ;;
+            # Exit 1 is a steady measurement over its budget. One slow host
+            # gives that too, so the next step reruns those benchmarks on a
+            # second remote runner, and fails only if one reproduces.
+            1)
+              grep -o 'krabka-verdict=[A-Za-z0-9+/=]*' remote.log | tail -n 1 \
+                | cut -d= -f2- >verdict.b64
+              if [ ! -s verdict.b64 ]; then
+                echo "::error::the ratchet exited 1 and printed no verdict"
+                exit 1
+              fi
+              echo "confirm=true" >>"$GITHUB_OUTPUT"
+              ;;
+            # Exit 4 is runner variance: a measurement too noisy to gate.
+            # Report it, and pass.
+            4) echo "benchmark ratchet: runner variance, not a regression" ;;
+            *) exit "$status" ;;
+          esac
+      - name: confirm the regression on a second remote runner
+        if: steps.measure.outputs.confirm == 'true'
+        run: |
+          set -euo pipefail
+          # A separate invocation with runner recycling off, so BuildBuddy
+          # schedules a fresh runner and does not reuse the one that measured
+          # the first run. The scheduler can still place it on the same
+          # machine; the run.metadata.txt of both runs names the host.
+          bb remote \
+            --os=linux \
+            --arch=amd64 \
+            --container_image=docker://docker.io/library/rust@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 \
+            --env=PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            --env=KRABKA_FIRST_VERDICT="$(cat verdict.b64)" \
+            --run_from_commit="${GITHUB_SHA}" \
+            --timeout=75m \
+            --disable_retry \
+            --runner_exec_properties=dockerUser=root \
+            --runner_exec_properties=recycle-runner=false \
+            --runner_exec_properties=EstimatedCPU=16 \
+            --runner_exec_properties=EstimatedMemory=64GB \
+            --runner_exec_properties=EstimatedFreeDiskBytes=200GB \
+            --script='
+              status=0
+              first="$BUILDBUDDY_ARTIFACTS_DIRECTORY/verdict.json"
+              printf "%s" "$KRABKA_FIRST_VERDICT" | base64 -d >"$first"
+              # Build before the rerun, with the profile tools/bench.sh sets,
+              # so that --confirm-timeout bounds the measurement and not a
+              # cold build.
+              CARGO_PROFILE_BENCH_DEBUG=0 cargo bench \
+                --manifest-path benches/Cargo.toml --locked --no-run || exit 1
+              # At most four benchmarks, the worst first, for at most ten
+              # minutes.
+              tools/bench-ratchet.py --confirm "$first" \
+                --confirm-limit 4 --confirm-timeout 600 \
+                --json "$BUILDBUDDY_ARTIFACTS_DIRECTORY/confirm.json" || status=$?
+              if [ -d benches/target/criterion-confirm ]; then
+                cat benches/target/criterion-confirm/run.metadata.txt || true
+                tar -C benches/target -czf \
+                  "$BUILDBUDDY_ARTIFACTS_DIRECTORY/criterion-confirm.tar.gz" criterion-confirm
+                sha256sum "$BUILDBUDDY_ARTIFACTS_DIRECTORY/criterion-confirm.tar.gz"
+              fi
+              # Exit 4 is a regression that did not reproduce: runner
+              # variance, not a finding.
               if [ "$status" -eq 4 ]; then
                 echo "benchmark ratchet: runner variance, not a regression"
                 status=0

@@ -78,11 +78,13 @@ benchmark run.
 """
 
 import argparse
+import contextlib
 import json
 import math
 import os
 import pathlib
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -492,13 +494,18 @@ def confirm_plan(previous, targets, limit):
     return plan, skipped
 
 
-def rerun(plan, criterion_root, timeout):
+def rerun(plan, criterion_root, timeout, command=None):
     """Reruns the planned ids through tools/bench.sh. Returns a fault or None.
 
     One `tools/bench.sh` call per target, each with an anchored, exact filter
     over that target's ids, and all into `criterion_root`. The first call
     clears that directory and the later ones keep it. `timeout` bounds the
     whole rerun, not each call.
+
+    Each call starts in its own process group. On the bound, the whole group
+    is stopped, so `cargo bench` and the benchmark binaries under
+    `tools/bench.sh` stop with it and write nothing more into `criterion_root`.
+    `command` replaces `tools/bench.sh <target>` in the self-test.
     """
     environment = dict(os.environ, CRITERION_HOME=str(pathlib.Path(criterion_root).resolve()))
     deadline = time.monotonic() + timeout
@@ -509,18 +516,33 @@ def rerun(plan, criterion_root, timeout):
         environment["KRABKA_BENCH_KEEP"] = "0" if first else "1"
         first = False
         remaining = deadline - time.monotonic()
-        try:
-            if remaining <= 0:
-                raise subprocess.TimeoutExpired(target, timeout)
-            result = subprocess.run(
-                [str(ROOT / "tools" / "bench.sh"), target],
-                env=environment, cwd=ROOT, timeout=remaining, check=False,
-            )
-        except subprocess.TimeoutExpired:
+        if remaining <= 0:
             return f"the rerun passed its {timeout}s bound at {target}"
-        if result.returncode != 0:
-            return f"the rerun of {target} exited {result.returncode}"
+        argv = command(target) if command else [str(ROOT / "tools" / "bench.sh"), target]
+        process = subprocess.Popen(argv, env=environment, cwd=ROOT, start_new_session=True)
+        try:
+            returncode = process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            stop_group(process)
+            return f"the rerun passed its {timeout}s bound at {target}"
+        finally:
+            if process.poll() is None:
+                stop_group(process)
+        if returncode != 0:
+            return f"the rerun of {target} exited {returncode}"
     return None
+
+
+def stop_group(process, grace=10):
+    """Stops every process in the group that `process` leads, then reaps it."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, sig)
+        try:
+            process.wait(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            continue
 
 
 def confirm(previous_path, criterion_root, baseline_path, tolerance,
@@ -531,11 +553,20 @@ def confirm(previous_path, criterion_root, baseline_path, tolerance,
     A regression that reproduces is `regression`, and one that does not is
     `variance`. A first verdict that was not a regression passes through as
     it was: there is nothing to confirm in it.
+
+    The rerun is gated with the `tolerance` and `noise_ceiling` the first
+    verdict records. `None` means "use the recorded value". A value that
+    differs from the recorded one is refused, because a rerun gated more
+    loosely than the first run calls a real regression variance.
     """
     previous = json.loads(pathlib.Path(previous_path).read_text())
     status = previous.get("status")
     if status not in RANK:
         raise UsageError(f"{previous_path} has no verdict status this script wrote")
+    tolerance = recorded_threshold(previous_path, previous, "tolerance", tolerance,
+                                   DEFAULT_TOLERANCE)
+    noise_ceiling = recorded_threshold(previous_path, previous, "noise_ceiling",
+                                       noise_ceiling, DEFAULT_NOISE_CEILING)
     if status != REGRESSION:
         print(f"the first run reads `{status}`, so there is nothing to confirm", flush=True)
         if json_out:
@@ -573,6 +604,20 @@ def confirm(previous_path, criterion_root, baseline_path, tolerance,
         write_json(dict(verdict, schema_version=1, confirmed=True,
                         rerun=sorted(ids), not_rerun=skipped), json_out)
     return EXIT_CODES[verdict["status"]]
+
+
+def recorded_threshold(previous_path, previous, key, given, default):
+    """The threshold the first verdict used. Refuses a different given one."""
+    recorded = previous.get(key)
+    if recorded is None:
+        return default if given is None else given
+    if given is not None and given != recorded:
+        flag = "--" + key.replace("_", "-")
+        raise UsageError(
+            f"{previous_path} was gated with {key} {recorded}, and {flag} is {given}. "
+            f"Leave {flag} out to confirm with the recorded value."
+        )
+    return recorded
 
 
 class UsageError(Exception):
@@ -807,6 +852,8 @@ def self_test():
 
     failures += self_test_json()
     failures += self_test_confirm()
+    failures += self_test_confirm_thresholds()
+    failures += self_test_rerun_bound()
     print(f"{len(cases) + 1 + 1 + len(CONFIRM_CASES) + 1} cases, {failures} failed", flush=True)
     return 1 if failures else 0
 
@@ -948,6 +995,85 @@ def self_test_confirm():
     return failures
 
 
+def self_test_confirm_thresholds():
+    """`--confirm` gates the rerun with the thresholds the first verdict used."""
+    failures = 0
+    # The first run used --tolerance 1.2, so 130 against 100 regressed. The
+    # rerun measures 130 again, which the default 1.5 would pass.
+    cases = [
+        ("the recorded tolerance gates the rerun", None, EXIT_REGRESSION),
+        ("the same tolerance, given again, is accepted", 1.2, EXIT_REGRESSION),
+        ("a different tolerance is refused", 1.5, EXIT_USAGE),
+    ]
+    for name, given, expected in cases:
+        with tempfile.TemporaryDirectory() as scratch:
+            scratch = pathlib.Path(scratch)
+            benches = scratch / "benches"
+            benches.mkdir()
+            (benches / "alpha.rs").write_text('c.benchmark_group("alpha");\n')
+            baseline_path = scratch / "baseline.txt"
+            baseline_path.write_text("alpha/a 100\n")
+            previous = scratch / "first.json"
+            previous.write_text(json.dumps({
+                "status": REGRESSION, "tolerance": 1.2,
+                "noise_ceiling": DEFAULT_NOISE_CEILING,
+                "benchmarks": {"alpha/a": {"class": REGRESSION, "mean_ns": 130.0,
+                                           "baseline_ns": 100.0}},
+            }))
+
+            def fake(plan, criterion_root, timeout):
+                write_run(criterion_root, {"alpha/a": estimates(130.0)})
+                return None
+
+            criterion = scratch / "criterion-confirm"
+            criterion.mkdir()
+            try:
+                got = confirm(previous, criterion, baseline_path, given, None, 8,
+                              DEFAULT_CONFIRM_TIMEOUT, runner=fake, benches_dir=benches)
+            except UsageError:
+                got = EXIT_USAGE
+        ok = got == expected
+        failures += 0 if ok else 1
+        print(f"  {'ok' if ok else 'FAILED':<8} exit {got}, expected {expected}: {name}",
+              flush=True)
+    return failures
+
+
+def process_alive(pid):
+    """Whether `pid` runs. A zombie waiting for its reaper has stopped."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    stat = pathlib.Path(f"/proc/{pid}/stat")
+    with contextlib.suppress(OSError):
+        return stat.read_text().rsplit(")", 1)[1].split()[0] != "Z"
+    return True
+
+
+def self_test_rerun_bound():
+    """On the bound, the rerun stops the benchmark under the script, not only the script."""
+    with tempfile.TemporaryDirectory() as scratch:
+        pid_file = pathlib.Path(scratch) / "child.pid"
+        # The shell stands in for tools/bench.sh, and the `sleep` it starts
+        # stands in for `cargo bench`.
+        script = f'sleep 300 & echo $! > "{pid_file}"; wait'
+        fault = rerun({"alpha": ["alpha/a"]}, scratch, 1,
+                      command=lambda target: ["sh", "-c", script])
+        child = int(pid_file.read_text()) if pid_file.exists() else None
+        deadline = time.monotonic() + 10
+        while child is not None and process_alive(child) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        survived = child is not None and process_alive(child)
+        if survived:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(child, signal.SIGKILL)
+    ok = fault == "the rerun passed its 1s bound at alpha" and child is not None and not survived
+    print(f"  {'ok' if ok else 'FAILED':<8} a rerun past its bound stops the whole "
+          f"process group (fault {fault!r}, child {child}, survived {survived})", flush=True)
+    return 0 if ok else 1
+
+
 def main():
     global ARGS_BASELINE_HINT
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -965,12 +1091,14 @@ def main():
         help="narrow to one `[[bench]]` target's ids, for a partial run",
     )
     parser.add_argument(
-        "--tolerance", type=float, default=DEFAULT_TOLERANCE,
-        help="how many times its baseline a benchmark may take (default 1.5)",
+        "--tolerance", type=float,
+        help="how many times its baseline a benchmark may take (default 1.5; "
+        "--confirm uses the verdict's)",
     )
     parser.add_argument(
-        "--noise-ceiling", type=float, default=DEFAULT_NOISE_CEILING,
-        help="interval width, over the mean, past which the gate is skipped",
+        "--noise-ceiling", type=float,
+        help="interval width, over the mean, past which the gate is skipped "
+        "(--confirm uses the verdict's)",
     )
     parser.add_argument(
         "--record", action="store_true",
@@ -1004,7 +1132,7 @@ def main():
     if args.self_test:
         return self_test()
     keep_stdout_for_json(args.json)
-    if args.tolerance < 1.0:
+    if args.tolerance is not None and args.tolerance < 1.0:
         parser.error("--tolerance below 1.0 fails a benchmark that got faster")
     if args.confirm and args.record:
         parser.error("--confirm gates a rerun, and --record gates nothing")
@@ -1028,8 +1156,8 @@ def main():
             args.baseline,
             args.bench,
             args.record,
-            args.tolerance,
-            args.noise_ceiling,
+            DEFAULT_TOLERANCE if args.tolerance is None else args.tolerance,
+            DEFAULT_NOISE_CEILING if args.noise_ceiling is None else args.noise_ceiling,
             json_out=args.json,
         )
     except UsageError as error:

@@ -35,16 +35,21 @@ top-level `commit`, `run_url`, `runner` and `toolchain` for that result only.
 `--capture <crate>` records a sweep that `tools/mutants-sweep.sh` ran by hand
 on a dedicated host. It reads the shard logs through the same structural gate
 as `tools/mutants-ratchet.py`, and reads the `<crate>.metadata.txt` and
-`<crate>.SHA256SUMS` files that the sweep script writes. It also takes the
-checksum of the log archive. Then it prints the result entry. With `--write`,
+`<crate>.SHA256SUMS` files that the sweep script writes. The manifest must
+checksum the metadata file and the same shard logs, and the log archive must
+hold the same shard logs, so evidence left from an earlier sweep is not
+recorded beside the counts of a later one. It also takes the checksum of the
+log archive. Then it prints the result entry. With `--write`,
 it puts the entry in the record, removes the crate from `unseeded`, and writes
 the survivor count into `tools/mutants-baseline.txt`. A sweep that is not
-complete is not recorded, and the exit code is 3.
+complete, or whose evidence does not match its shard logs, is not recorded,
+and the exit code is 3.
 
 `--self-test` runs these checks against a synthetic repository.
 
 Exit codes: 0 the records are valid, 1 a record is not valid, 2 the command
-line is wrong, 3 `--capture` read a sweep that is not complete.
+line is wrong, 3 `--capture` read a sweep that is not complete, or evidence
+that does not match its shard logs.
 """
 
 import argparse
@@ -55,6 +60,7 @@ import io
 import json
 import pathlib
 import re
+import subprocess
 import sys
 import tempfile
 
@@ -351,6 +357,94 @@ def read_metadata(path):
     return fields
 
 
+def read_manifest(path):
+    """`sha256sum` output as path to checksum."""
+    sums = {}
+    for number, line in enumerate(pathlib.Path(path).read_text().splitlines(), 1):
+        digest, sep, name = line.partition("  ")
+        if not sep or not SHA256.match(digest):
+            raise UsageError(f"{path}:{number}: not a `sha256sum` line")
+        sums[name] = digest
+    return sums
+
+
+def shard_sums(directory, crate):
+    """Each `test.log` under a `<crate>_mutants` directory, by its path in there."""
+    target = f"{crate}_mutants"
+    sums = {}
+    for log in sorted(pathlib.Path(directory).rglob("test.log")):
+        parts = log.parts
+        if target in parts:
+            inside = parts[len(parts) - parts[::-1].index(target):]
+            sums["/".join(inside)] = sha256_file(log)
+    return sums
+
+
+def manifest_shard_sums(manifest, crate):
+    """The `test.log` checksums in the manifest, by their path in `<crate>_mutants`."""
+    marker = f"/{crate}_mutants/"
+    return {
+        name.split(marker, 1)[1]: digest
+        for name, digest in manifest.items()
+        if marker in name and name.endswith("/test.log")
+    }
+
+
+def archive_shard_sums(artifact, crate):
+    """The `test.log` checksums inside the archive, or None when `tar` cannot read it.
+
+    `tar` reads the compression from the file.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        result = subprocess.run(
+            ["tar", "-xf", str(pathlib.Path(artifact).resolve()), "-C", scratch],
+            capture_output=True, check=False,
+        )
+        return shard_sums(scratch, crate) if result.returncode == 0 else None
+
+
+def compare_sums(crate, what, found, live):
+    """The faults when `found` does not hold the same shard logs as `live`."""
+    faults = []
+    missing = sorted(set(live) - set(found))
+    extra = sorted(set(found) - set(live))
+    changed = sorted(name for name in set(live) & set(found) if live[name] != found[name])
+    if missing:
+        faults.append(f"{crate}: {what} has no {', '.join(missing)}")
+    if extra:
+        faults.append(f"{crate}: {what} has {', '.join(extra)}, which the shard logs do not")
+    if changed:
+        faults.append(f"{crate}: {what} holds a different {', '.join(changed)}")
+    return faults
+
+
+def evidence_faults(crate, logs_root, metadata_path, manifest_path, artifact):
+    """The faults when the metadata, manifest and archive are not of this sweep.
+
+    The survivor count comes from the shard logs under `logs_root`. The
+    manifest must checksum those same logs and the metadata file, and the
+    archive must hold those same logs. Otherwise a log directory or an archive
+    left from an earlier sweep would be recorded beside the counts of a
+    later one.
+    """
+    live = shard_sums(pathlib.Path(logs_root) / "crates" / crate, crate)
+    manifest = read_manifest(manifest_path)
+    faults = []
+    metadata_sums = {
+        digest for name, digest in manifest.items()
+        if pathlib.PurePath(name).name == metadata_path.name
+    }
+    if sha256_file(metadata_path) not in metadata_sums:
+        faults.append(f"{crate}: {manifest_path.name} does not checksum {metadata_path}")
+    faults += compare_sums(crate, manifest_path.name, manifest_shard_sums(manifest, crate), live)
+    archived = archive_shard_sums(artifact, crate)
+    if archived is None:
+        faults.append(f"{crate}: tar cannot read {artifact}")
+    else:
+        faults += compare_sums(crate, pathlib.Path(artifact).name, archived, live)
+    return faults
+
+
 def capture(crate, logs_root, log_dir, artifact, artifact_url, runner_label,
             root=ROOT, run_url=None):
     """The result entry for one manual sweep, or None when it is incomplete."""
@@ -365,6 +459,9 @@ def capture(crate, logs_root, log_dir, artifact, artifact_url, runner_label,
 
     expected = MUTANTS.declared_shards(root / "crates" / crate / "BUILD.bazel")
     totals, faults = MUTANTS.read_sweep(logs_root, crate, expected)
+    if not faults:
+        faults = evidence_faults(crate, logs_root, log_dir / f"{crate}.metadata.txt",
+                                 manifest, artifact)
     for fault in faults:
         MUTANTS.annotate("error", fault)
     if faults:
@@ -589,9 +686,9 @@ def self_test_capture():
             "rustc=rustc 1.97.1 (8bab26f4f 2026-07-14);binary: rustc;\n"
             "bazel=Bazelisk version: 1.28.1;Build label: 9.2.0;\n"
         )
-        (results / "other.SHA256SUMS").write_text("0" * 64 + "  other.log\n")
-        archive = results / "other.tar.zst"
-        archive.write_bytes(b"logs")
+        (results / "other.log").write_text("other: 100 mutants\n")
+        seal_sweep(root, results)
+        archive = results / "other.tar.gz"
         entry = capture("other", logs, results, archive, "gs://bucket/other.tar.zst",
                         "sweeper", root)
         expected = {
@@ -604,7 +701,7 @@ def self_test_capture():
             "survived": 7,
             "unviable": 3,
             "artifact_url": "gs://bucket/other.tar.zst",
-            "artifact_sha256": hashlib.sha256(b"logs").hexdigest(),
+            "artifact_sha256": sha256_file(archive),
             "contents_manifest_sha256": sha256_file(results / "other.SHA256SUMS"),
             "provenance": {
                 "commit": "d" * 40,
@@ -627,11 +724,83 @@ def self_test_capture():
         if "other  7" not in (root / MUTANTS_BASELINE).read_text():
             return "the baseline line was not written in place"
 
+        # Evidence that is not of the sweep in bazel-testlogs is not recorded.
+        metadata = results / "other.metadata.txt"
+        written = metadata.read_text()
+        shard = logs / "crates/other/other_mutants/shard_3_of_16/test.log"
+        for name, spoil in MISMATCHED_EVIDENCE:
+            metadata.write_text(written)
+            seal_sweep(root, results)
+            spoil(root, results, archive, shard)
+            if capture("other", logs, results, archive, "gs://b/o", "sweeper", root) is not None:
+                return f"captured {name}"
+        metadata.write_text(written)
+
         # A killed shard is not recorded.
-        (logs / "crates/other/other_mutants/shard_3_of_16/test.log").write_text("Test timed out\n")
+        seal_sweep(root, results)
+        shard.write_text("Test timed out\n")
         if capture("other", logs, results, archive, "gs://b/o", "sweeper", root) is not None:
             return "a sweep with a killed shard was captured"
     return None
+
+
+def seal_sweep(root, results, manifest=True, archive=True):
+    """Writes the synthetic sweep's manifest and archive, with the commands a person runs.
+
+    The manifest lines are the ones tools/mutants-sweep.sh writes, and the
+    archive is the README's `tar` step.
+    """
+    commands = []
+    if manifest:
+        commands.append(
+            f'sha256sum "{results}/other.log" "{results}/other.metadata.txt" '
+            f'>"{results}/other.SHA256SUMS" && '
+            "find bazel-testlogs/crates/other/other_mutants -name test.log -type f | sort "
+            f'| xargs sha256sum >>"{results}/other.SHA256SUMS"'
+        )
+    if archive:
+        commands.append(
+            f'tar -C bazel-testlogs/crates/other -czf "{results}/other.tar.gz" other_mutants'
+        )
+    subprocess.run(["sh", "-c", " && ".join(commands)], cwd=root, check=True)
+
+
+def rewrite_shard(shard):
+    """Gives a shard log the same counts and different bytes, as a later sweep would."""
+    shard.write_text(shard.read_text() + "\n")
+
+
+def earlier_archive(root, results, archive, shard):
+    rewrite_shard(shard)
+    seal_sweep(root, results, archive=False)
+
+
+def earlier_manifest(root, results, archive, shard):
+    rewrite_shard(shard)
+    seal_sweep(root, results, manifest=False)
+
+
+def edited_metadata(root, results, archive, shard):
+    metadata = results / "other.metadata.txt"
+    metadata.write_text(metadata.read_text() + "note=edited\n")
+
+
+def partial_archive(root, results, archive, shard):
+    subprocess.run(
+        ["tar", "-C", "bazel-testlogs/crates/other", "-czf", str(archive),
+         "--exclude=shard_3_of_16", "other_mutants"],
+        cwd=root, check=True,
+    )
+
+
+MISMATCHED_EVIDENCE = [
+    ("an archive that is not a log archive",
+     lambda root, results, archive, shard: archive.write_bytes(b"logs")),
+    ("an archive from an earlier sweep", earlier_archive),
+    ("a manifest from an earlier sweep", earlier_manifest),
+    ("a manifest that does not checksum the metadata", edited_metadata),
+    ("an archive with a shard log missing", partial_archive),
+]
 
 
 def self_test():

@@ -104,9 +104,11 @@ tools/bench-ratchet.py --json verdict.json          # exit 1
 tools/bench-ratchet.py --confirm verdict.json --json confirm.json
 ```
 
-The rerun calls `tools/bench.sh` once for each bench target, with a filter that holds only the regressed ids. It writes to `benches/target/criterion-confirm`, so the first run stays as it was. Two limits keep it small: `--confirm-limit` (default 8) reruns only the worst regressions, and `--confirm-timeout` (default 900 seconds) is the time for all the reruns together. The exit code is 1 when a regression occurs again, 4 when none does, and 3 when a benchmark was not rerun and none of the reruns regressed.
+The rerun calls `tools/bench.sh` once for each bench target, with a filter that holds only the regressed ids. It writes to `benches/target/criterion-confirm`, so the first run stays as it was. Two limits keep it small: `--confirm-limit` (default 8) reruns only the worst regressions, and `--confirm-timeout` (default 900 seconds) is the time for all the reruns together. At that limit, the rerun stops `tools/bench.sh` and every process it started. The exit code is 1 when a regression occurs again, 4 when none does, and 3 when a benchmark was not rerun and none of the reruns regressed.
 
-The benchmark-ratchet workflow runs this step after exit 1, with a limit of four benchmarks and ten minutes. A full run takes about twenty minutes, so the job stays inside its two-hour remote timeout. The workflow reports exit 4 as runner variance and passes.
+The rerun uses the `tolerance` and `noise_ceiling` that the first verdict records. If you give `--tolerance` or `--noise-ceiling` with a different value, the command stops with exit 2.
+
+The benchmark-ratchet workflow runs this step after exit 1, with a limit of four benchmarks and ten minutes. The step is a second `bb remote` invocation with runner recycling off, so it does not run in the container that measured the first run. The first step prints the verdict to its log, and the second step reads it from there. The workflow reports exit 4 as runner variance and passes.
 
 ## Adding a benchmark
 
