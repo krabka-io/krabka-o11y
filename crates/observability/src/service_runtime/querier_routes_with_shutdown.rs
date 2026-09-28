@@ -1,3 +1,5 @@
+use krabka_blockstore::ObjectStoreAccess;
+
 use super::{
     Arc, BufferedLogHotTail, CancellationToken, JoinHandle, ObjectStore, OverridesProvider, Router,
     ServiceConfig, ServiceConfigError, ServiceDependencies, ServiceMetrics,
@@ -29,8 +31,16 @@ pub(crate) async fn querier_routes_with_shutdown(
     overrides: Arc<OverridesProvider>,
 ) -> Result<(Router, Vec<(&'static str, JoinHandle<()>)>), ServiceConfigError> {
     let mut background_tasks = Vec::new();
+    // The querier only reads blocks and the compaction frontier. Its rules and
+    // delete requests live under `data_root`, so its credential needs no write
+    // access to the object store.
     let configured_store = if object_store.is_none() {
-        build_configured_object_store(config, metrics.object_store.clone()).await?
+        build_configured_object_store(
+            config,
+            metrics.object_store.clone(),
+            ObjectStoreAccess::ReadOnly,
+        )
+        .await?
     } else {
         None
     };

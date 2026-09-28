@@ -1,4 +1,4 @@
-use krabka_blockstore::ObjectStoreMetrics;
+use krabka_blockstore::{ObjectStoreAccess, ObjectStoreMetrics};
 
 use super::{
     ConfiguredObjectStore, ObjectStore, ServiceConfig, ServiceConfigError,
@@ -14,5 +14,5 @@ pub(crate) async fn build_compactor_configured_object_store(
         return Ok(None);
     }
 
-    build_configured_object_store(config, metrics).await
+    build_configured_object_store(config, metrics, ObjectStoreAccess::ReadWrite).await
 }

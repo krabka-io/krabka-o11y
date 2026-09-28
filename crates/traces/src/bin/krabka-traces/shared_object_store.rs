@@ -1,5 +1,5 @@
 use krabka_blockstore::{
-    ConditionalUpdateRequirement, ObjectStoreMetrics, verify_object_store_semantics,
+    ConditionalUpdateRequirement, ObjectStoreAccess, ObjectStoreMetrics, verify_object_store_access,
 };
 
 use super::{Arc, Cli, ConfiguredObjectStore, build_object_store};
@@ -35,6 +35,8 @@ use super::{Arc, Cli, ConfiguredObjectStore, build_object_store};
 #[derive(Clone)]
 pub(crate) struct SharedObjectStore {
     cell: Arc<tokio::sync::OnceCell<ConfiguredObjectStore>>,
+    read_verified: Arc<tokio::sync::OnceCell<()>>,
+    read_write_verified: Arc<tokio::sync::OnceCell<()>>,
 }
 
 impl SharedObjectStore {
@@ -42,37 +44,52 @@ impl SharedObjectStore {
     pub(crate) fn new() -> Self {
         Self {
             cell: Arc::new(tokio::sync::OnceCell::new()),
+            read_verified: Arc::new(tokio::sync::OnceCell::new()),
+            read_write_verified: Arc::new(tokio::sync::OnceCell::new()),
         }
     }
 
     /// The process's object store, building it on the first call.
     ///
-    /// The first build also runs [`verify_object_store_semantics`] below the
-    /// configured prefix. A store that lacks a semantic the roles write against
-    /// stops the role that asked, before that role accepts any data.
+    /// The store is probed once for each `access` below the configured
+    /// prefix, before the role that asked accepts any data. The block builder
+    /// and the compactor ask for [`ObjectStoreAccess::ReadWrite`] and get
+    /// [`verify_object_store_access`]'s full probe. The querier and the
+    /// query-frontend ask for [`ObjectStoreAccess::ReadOnly`], which writes
+    /// nothing, so they can run with a read-only credential. A process whose
+    /// store already passed the full probe does not run the read probe.
     ///
     /// # Errors
     /// Returns whatever [`build_object_store`] returns: a `--object-store-url`
     /// that does not parse, or a backend that rejects the configuration it was
     /// given. Returns the probe's error when the store fails it. A failed build
-    /// is not remembered, so the next role to ask tries again rather than
-    /// inheriting a poisoned cell.
+    /// or probe is not remembered, so the next role to ask tries again rather
+    /// than inheriting a poisoned cell.
     pub(crate) async fn get(
         &self,
         cli: &Cli,
         metrics: ObjectStoreMetrics,
+        access: ObjectStoreAccess,
     ) -> Result<ConfiguredObjectStore, Box<dyn std::error::Error + Send + Sync>> {
         let configured = self
             .cell
-            .get_or_try_init(|| async {
-                let configured = build_object_store(cli, metrics)?;
-                verify_object_store_semantics(
+            .get_or_try_init(|| async { build_object_store(cli, metrics) })
+            .await?;
+        let verified = match access {
+            ObjectStoreAccess::ReadWrite => &self.read_write_verified,
+            ObjectStoreAccess::ReadOnly if self.read_write_verified.initialized() => {
+                return Ok(configured.clone());
+            }
+            ObjectStoreAccess::ReadOnly => &self.read_verified,
+        };
+        verified
+            .get_or_try_init(|| {
+                verify_object_store_access(
                     configured.store.as_ref(),
                     &configured.prefix,
+                    access,
                     ConditionalUpdateRequirement::for_object_store_url(&cli.object_store_url),
                 )
-                .await?;
-                Ok::<_, Box<dyn std::error::Error + Send + Sync>>(configured)
             })
             .await?;
         Ok(configured.clone())

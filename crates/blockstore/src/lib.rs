@@ -106,8 +106,9 @@ pub use metrics::{
 };
 pub use nested_set::{NestedSet, SpanNode, assign_nested_set};
 pub use object_store_semantics::{
-    ConditionalUpdateRequirement, OBJECT_STORE_PROBE_PREFIX, ObjectStoreCapabilities,
-    ObjectStoreSemanticsError, verify_object_store_semantics,
+    ConditionalUpdateRequirement, OBJECT_STORE_PROBE_PREFIX, ObjectStoreAccess,
+    ObjectStoreCapabilities, ObjectStoreSemanticsError, verify_object_store_access,
+    verify_object_store_read_access, verify_object_store_semantics,
 };
 pub use path_escape::{escape_object_path_segment, unescape_object_path_segment};
 pub use persisted_format::{

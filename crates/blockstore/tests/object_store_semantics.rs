@@ -13,7 +13,8 @@ use async_trait::async_trait;
 use futures::{StreamExt as _, TryStreamExt as _, stream::BoxStream};
 use krabka_blockstore::{
     BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, ConditionalUpdateRequirement,
-    OBJECT_STORE_PROBE_PREFIX, ObjectStoreCapabilities, ObjectStoreSemanticsError, read_block,
+    OBJECT_STORE_PROBE_PREFIX, ObjectStoreAccess, ObjectStoreCapabilities,
+    ObjectStoreSemanticsError, read_block, verify_object_store_access,
     verify_object_store_semantics,
 };
 use object_store::{
@@ -33,6 +34,12 @@ enum Quirk {
     /// Matches an update on `version` alone and ignores `e_tag`, as GCS
     /// matches on the object generation.
     VersionMatchedUpdate,
+    /// Refuses every put and delete, as a read-only credential does.
+    ReadOnlyCredential,
+    /// Returns one byte fewer than a range asks for.
+    ShortRange,
+    /// Fails every listing, as a credential without list permission does.
+    ListingRefused,
 }
 
 #[derive(Debug)]
@@ -67,6 +74,13 @@ impl std::fmt::Display for QuirkyStore {
     }
 }
 
+fn permission_denied(location: &Path) -> ObjectStoreError {
+    ObjectStoreError::PermissionDenied {
+        path: location.to_string(),
+        source: "the credential is read-only".into(),
+    }
+}
+
 fn not_implemented(operation: &str) -> ObjectStoreError {
     ObjectStoreError::NotImplemented {
         operation: operation.to_string(),
@@ -82,6 +96,9 @@ impl ObjectStore for QuirkyStore {
         payload: PutPayload,
         mut options: PutOptions,
     ) -> object_store::Result<PutResult> {
+        if self.quirk == Quirk::ReadOnlyCredential {
+            return Err(permission_denied(location));
+        }
         match (self.quirk, &options.mode) {
             (Quirk::CreateUnsupported, PutMode::Create) => {
                 return Err(not_implemented("put_opts with PutMode::Create"));
@@ -135,12 +152,26 @@ impl ObjectStore for QuirkyStore {
                 source: "suffix range requests".into(),
             });
         }
+        if self.quirk == Quirk::ShortRange
+            && let Some(GetRange::Bounded(range)) = &options.range
+        {
+            let options = GetOptions {
+                range: Some(GetRange::Bounded(range.start..range.end - 1)),
+                ..options
+            };
+            return self.inner.get_opts(location, options).await;
+        }
         self.inner.get_opts(location, options).await
     }
 
     fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
         if self.quirk == Quirk::ListingLags {
             return futures::stream::empty().boxed();
+        }
+        if self.quirk == Quirk::ListingRefused {
+            let path = prefix.map(ToString::to_string).unwrap_or_default();
+            return futures::stream::once(async move { Err(permission_denied(&Path::from(path))) })
+                .boxed();
         }
         self.inner.list(prefix)
     }
@@ -162,6 +193,11 @@ impl ObjectStore for QuirkyStore {
         &self,
         locations: BoxStream<'static, object_store::Result<Path>>,
     ) -> BoxStream<'static, object_store::Result<Path>> {
+        if self.quirk == Quirk::ReadOnlyCredential {
+            return locations
+                .map(|location| location.and_then(|path| Err(permission_denied(&path))))
+                .boxed();
+        }
         self.inner.delete_stream(locations)
     }
 }
@@ -366,4 +402,68 @@ async fn a_block_reads_from_a_store_without_suffix_ranges() {
     let read = read_block(store, "azure/block.parquet").await.unwrap();
 
     assert!(read == vec![batch]);
+}
+
+/// A read-only role probes with list and get only. It passes on a read-only
+/// credential, which the write probe refuses, and it writes nothing.
+#[tokio::test]
+async fn a_read_only_role_probes_without_writing() {
+    const BLOCK: &str = "tenant-data/blocks/a.parquet";
+    let cases = [
+        ("an empty prefix", Quirk::ReadOnlyCredential, false, Ok(())),
+        (
+            "a prefix with a block",
+            Quirk::ReadOnlyCredential,
+            true,
+            Ok(()),
+        ),
+        ("a store with every semantic", Quirk::None, true, Ok(())),
+        (
+            "a range read that comes back short",
+            Quirk::ShortRange,
+            true,
+            Err("RangedReadMismatch"),
+        ),
+        (
+            "a listing that fails",
+            Quirk::ListingRefused,
+            false,
+            Err("list the configured prefix"),
+        ),
+    ];
+    for (name, quirk, with_block, want) in cases {
+        let store = QuirkyStore::new(quirk);
+        if with_block {
+            object_store::ObjectStoreExt::put(&store.inner, &Path::from(BLOCK), "block".into())
+                .await
+                .unwrap();
+        }
+        let before = store.keys().await;
+
+        let result = verify_object_store_access(
+            &store,
+            &Path::from("tenant-data"),
+            ObjectStoreAccess::ReadOnly,
+            ConditionalUpdateRequirement::Required,
+        )
+        .await;
+
+        check!(describe(&result.map(|()| FULL)).map(drop) == want, "{name}");
+        check!(
+            store.keys().await == before,
+            "{name}: the probe writes nothing"
+        );
+    }
+
+    let refused = verify_object_store_access(
+        &QuirkyStore::new(Quirk::ReadOnlyCredential),
+        &Path::from("tenant-data"),
+        ObjectStoreAccess::ReadWrite,
+        ConditionalUpdateRequirement::Required,
+    )
+    .await;
+    check!(
+        describe(&refused.map(|()| FULL)) == Err("create a probe object"),
+        "the write probe refuses a read-only credential"
+    );
 }

@@ -1,6 +1,6 @@
 use krabka_blockstore::{
-    ConditionalUpdateRequirement, MeteredObjectStore, ObjectStoreMetrics,
-    verify_object_store_semantics,
+    ConditionalUpdateRequirement, MeteredObjectStore, ObjectStoreAccess, ObjectStoreMetrics,
+    verify_object_store_access,
 };
 
 use super::{
@@ -14,21 +14,25 @@ use super::{
 /// The wrap happens here and nowhere else, so one decorator covers every
 /// reader and writer in the role.
 ///
-/// The store is probed with [`verify_object_store_semantics`] below its
-/// prefix before it is returned. A store that lacks a semantic the role writes
-/// against stops the role here, before it accepts any data.
+/// The store is probed with [`verify_object_store_access`] below its prefix
+/// before it is returned. `access` names what the role does with the store. A
+/// writer gets the full probe, so a store that lacks a semantic the role writes
+/// against stops the role here, before it accepts any data. A reader gets the
+/// read probe, which writes nothing, so a read-only credential is enough.
 #[cfg_attr(test, mutants::skip)]
 pub(crate) async fn build_configured_object_store(
     config: &ServiceConfig,
     metrics: ObjectStoreMetrics,
+    access: ObjectStoreAccess,
 ) -> Result<Option<ConfiguredObjectStore>, ServiceConfigError> {
     let Some(raw_url) = config.object_store_url.as_deref() else {
         return Ok(None);
     };
     let configured = open_configured_object_store(raw_url, metrics)?;
-    verify_object_store_semantics(
+    verify_object_store_access(
         configured.store.as_ref(),
         &configured.prefix,
+        access,
         ConditionalUpdateRequirement::for_object_store_url(raw_url),
     )
     .await?;

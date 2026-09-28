@@ -29,9 +29,31 @@ roles probe in `build_object_store`, traces in `SharedObjectStore::get`, and
 logs in `build_configured_object_store`. A failed probe stops the role before
 its readiness gate opens.
 
-The probe writes one object below `<prefix>/.krabka-probe/` and deletes it
-after the probe, pass or fail. The write credential therefore needs put, get,
-list and delete on that sub-prefix. The probe checks these semantics in order:
+A role that writes to the store gets the full probe. A role that only reads
+gets the read probe, which writes nothing:
+
+| Role | Probe | Why |
+| --- | --- | --- |
+| Metrics block builder and compactor | Full | They write blocks. No other metrics role opens the store. |
+| Traces block builder and compactor | Full | They write blocks. |
+| Traces querier and query frontend | Read | They read blocks and the trace index. |
+| Logs compactor | Full | It writes blocks and the compaction frontier. |
+| Logs querier | Read | It reads blocks and the frontier. Its rules and delete requests stay under `data_root`. |
+| Every profiles role | Full | The querier and query frontend also write tenant settings to the store. |
+
+In `--target all`, traces runs each probe at most once. It skips the read
+probe when the full probe has already passed.
+
+The read probe lists `<prefix>` and reads a bounded range of the first object
+it finds. An empty prefix passes, because a new deployment has no blocks yet.
+A read credential therefore needs get and list on `<prefix>`. A short range
+gives `RangedReadMismatch`. A failed listing or read gives `ObjectStore` with
+the probe step.
+
+The full probe writes one object below `<prefix>/.krabka-probe/` and deletes
+it after the probe, pass or fail. The write credential therefore needs put,
+get, list and delete on that sub-prefix. The full probe checks these semantics
+in order:
 
 | Check | Error when it fails | What to change |
 | --- | --- | --- |
@@ -48,7 +70,7 @@ step. A bad credential, a missing bucket and an unreachable endpoint give this
 error. A conditional update is optional for `file://`, `memory://` and bare
 paths, because one process owns those stores. Every other scheme needs it.
 
-The probe also tries a suffix range read and logs the result as
+The full probe also tries a suffix range read and logs the result as
 `suffix_range_read`. A store without suffix ranges passes. Block reads then
 fall back to a `HEAD` for the size and a bounded range for the footer.
 

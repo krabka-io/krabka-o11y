@@ -2,9 +2,9 @@ use krabka_observability::RoleReadiness;
 
 use super::{
     Arc, ArcSwap, BlockStore, BlockStoreGates, Cli, HttpConfig, IndexedLiveSource, InternalClient,
-    KrabkaSpanStore, LiveStore, LiveTier, ObjectStore, RemoteLiveSource, RwLock, ServiceMetrics,
-    SharedObjectStore, SharedTraceIndex, TenantPolicy, TraceIndex, TraceqlEngine, Url,
-    engine_opts_from_cli, limits_from_cli, load_traces_limits_overrides_config, trace_querier,
+    KrabkaSpanStore, LiveStore, LiveTier, ObjectStore, ObjectStoreAccess, RemoteLiveSource, RwLock,
+    ServiceMetrics, SharedObjectStore, SharedTraceIndex, TenantPolicy, TraceIndex, TraceqlEngine,
+    Url, engine_opts_from_cli, limits_from_cli, load_traces_limits_overrides_config, trace_querier,
 };
 
 pub(crate) async fn build_querier_router_with_live(
@@ -26,7 +26,13 @@ pub(crate) async fn build_querier_router_with_live(
         cli.traces_api_overrides_file.as_deref(),
         limits_from_cli(cli),
     )?;
-    let configured = object_store.get(cli, metrics.object_store.clone()).await?;
+    let configured = object_store
+        .get(
+            cli,
+            metrics.object_store.clone(),
+            ObjectStoreAccess::ReadOnly,
+        )
+        .await?;
     gates.object_store.mark_ready();
     let trace_index_key = configured.object_key(&cli.trace_index_key);
     let initial = TraceIndex::load_latest_snapshot_or_empty_with_max_bytes(

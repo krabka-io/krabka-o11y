@@ -2,7 +2,7 @@ use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
 use krabka_units::fmt::Human as _;
 
 use super::{
-    CancellationToken, Cli, ServiceMetrics, SharedObjectStore, compaction_loop,
+    CancellationToken, Cli, ObjectStoreAccess, ServiceMetrics, SharedObjectStore, compaction_loop,
     compaction_policy_from_cli, limits_from_cli, load_traces_limits_overrides_config,
 };
 
@@ -43,7 +43,13 @@ pub(crate) async fn run_compactor(
         cli.traces_api_overrides_file.as_deref(),
         limits_from_cli(&cli),
     )?;
-    let configured = object_store.get(&cli, metrics.object_store.clone()).await?;
+    let configured = object_store
+        .get(
+            &cli,
+            metrics.object_store.clone(),
+            ObjectStoreAccess::ReadWrite,
+        )
+        .await?;
     object_store_gate.mark_ready();
     let policy = compaction_policy_from_cli(&cli);
     tracing::info!(
