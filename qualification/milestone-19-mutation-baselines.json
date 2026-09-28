@@ -187,5 +187,20 @@
     "profiles",
     "promql",
     "traces"
-  ]
+  ],
+  "deliberate_survivor": {
+    "crate": "verified",
+    "command": "tools/mutants-ratchet.py --prove-gate verified",
+    "input": "synthetic shard logs in the runner's line format, with the recorded shard count and totals, and one MISSED line added. No sweep ran.",
+    "shards": 8,
+    "modelled_artifact_sha256": "143a9755f16bcc8c7cabfeaef72bbc4edc15aa509f09bd570bd8d34e56086e62",
+    "baseline_survivors": 2,
+    "recorded_survivors": 2,
+    "presented_survivors": 3,
+    "recorded_exit_code": 0,
+    "exit_code": 1,
+    "lowered_baseline_exit_code": 1,
+    "result": "rejected",
+    "python": "3.13.5"
+  }
 }
