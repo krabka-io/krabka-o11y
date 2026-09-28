@@ -4,6 +4,9 @@
 //! reads the object store back rather than the report: a pass that says it
 //! deleted a block and left the object is the failure these exist to catch.
 
+#[path = "../../blockstore/tests/support/lifecycle_store.rs"]
+mod lifecycle_store;
+
 use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -13,7 +16,7 @@ use assert2::{assert, check};
 use krabka_blockstore::{
     BlockDeletionReport, BlockIndex as _, BlockLevel, BlockMeta, BlockTimestampUnit,
     CompactionPolicy, DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, Labels, ObjectStoreMetrics,
-    ProfileIndex,
+    OrphanSweepStats, ProfileIndex,
 };
 use krabka_pprof::{EngineOpts, FlameEngine};
 use krabka_profiles::{
@@ -25,6 +28,8 @@ use krabka_profiles::{
 };
 use krabka_units::{Time, hours};
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, memory::InMemory, path::Path};
+
+use self::lifecycle_store::{LifecycleStep, LifecycleStore};
 
 const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
 const INDEX_KEY: &str = "index/profiles.json";
@@ -432,7 +437,7 @@ async fn an_index_that_names_no_block_sweeps_nothing() {
     .await
     .expect("the pass runs");
 
-    check!(report.orphans == krabka_blockstore::OrphanSweepStats::default());
+    check!(report.orphans == OrphanSweepStats::default());
     check!(exists(&store, &stranded).await);
 }
 
@@ -495,4 +500,123 @@ async fn the_retention_cutoff_is_counted_in_milliseconds() {
             "{name}"
         );
     }
+}
+
+/// A block goes through every stage of its life on the store the environment
+/// names, and a restarted process finds what the last one left.
+///
+/// The orphan sweep dates an object by the store's `last_modified`, so this
+/// test runs on the wall clock and not on `NOW_MS`. By default the store is in
+/// memory. See `docs/object_store_contract.md` to run it against a provider.
+#[tokio::test]
+async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
+    let mut lifecycle = LifecycleStore::open("profiles", "block_lifecycle");
+    let store = lifecycle.store();
+    let wall = SystemTime::now();
+    let wall_ms = i64::try_from(
+        wall.duration_since(UNIX_EPOCH)
+            .expect("the clock is after the epoch")
+            .as_millis(),
+    )
+    .expect("an epoch time");
+    // The start of the current two-hour bucket, so both of tenant t's blocks
+    // share one merge job whatever the hour.
+    let bucket_ms = wall_ms - wall_ms % (2 * HOUR_MS);
+
+    // Flush: two blocks for tenant t, and one five hours old for a tenant whose
+    // window is one hour.
+    let mut index = ProfileIndex::new();
+    let first = write_block(&store, &mut index, "t", "alpha", bucket_ms, 0).await;
+    let second = write_block(&store, &mut index, "t", "bravo", bucket_ms + 1, 1).await;
+    let old = write_block(
+        &store,
+        &mut index,
+        "old",
+        "ancient",
+        wall_ms - 5 * HOUR_MS,
+        2,
+    )
+    .await;
+    publish(&store, &index).await;
+    let orphan = format!("{BLOCK_OBJECT_PREFIX}/t/00000/abandoned.parquet");
+    store
+        .put(&Path::from(orphan.as_str()), PutPayload::from_static(b"x"))
+        .await
+        .expect("the orphan is written");
+
+    // Restart: a new process loads the index the block builder published.
+    let store = lifecycle.restart();
+    let mut index = reload(&store).await;
+    let mut flushed = vec![
+        first.object_key.clone(),
+        second.object_key.clone(),
+        old.object_key.clone(),
+    ];
+    flushed.sort();
+    let mut reloaded = block_keys(&index);
+    reloaded.sort();
+    check!(reloaded == flushed);
+
+    // Compaction, retention and orphan reconciliation: one pass, two hours on,
+    // so the orphan is past its one-hour grace.
+    let windows = retention(&[("old", 3600)]);
+    let report = run_lifecycle_pass(
+        &store,
+        &mut index,
+        &options(merge_pairs(), &windows, wall + Duration::from_hours(2)),
+    )
+    .await
+    .expect("the pass runs");
+
+    assert!(report.compacted.len() == 1);
+    let merged = report.compacted[0].object_key.clone();
+    check!(report.expired == 1);
+    check!(
+        report.deletions
+            == BlockDeletionReport {
+                blocks_deleted: 3,
+                sidecars_deleted: 3,
+                ..BlockDeletionReport::default()
+            },
+        "both merge inputs and the expired block, each with its symbol database"
+    );
+    check!(
+        report.orphans
+            == OrphanSweepStats {
+                listed: 3,
+                live: 2,
+                deleted: 1,
+                ..OrphanSweepStats::default()
+            }
+    );
+    for gone in [&first, &second, &old] {
+        check!(block_objects_exist(&store, &gone.object_key).await == (false, false));
+    }
+    check!(!exists(&store, &orphan).await);
+
+    // Query, after a second restart: the merged block answers what its inputs
+    // answered.
+    let store = lifecycle.restart();
+    let index = reload(&store).await;
+    check!(block_keys(&index) == vec![merged.clone()]);
+    let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
+    let graph = FlameEngine::new(cold, EngineOpts::default())
+        .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
+        .await
+        .expect("the merged block answers");
+    check!(graph.total == 2);
+    for name in ["alpha", "bravo"] {
+        check!(graph.names.iter().any(|frame| frame == name), "{name}");
+    }
+
+    lifecycle
+        .finish(&[
+            LifecycleStep::Flush,
+            LifecycleStep::Restart,
+            LifecycleStep::Compaction,
+            LifecycleStep::Retention,
+            LifecycleStep::OrphanReconciliation,
+            LifecycleStep::Query,
+        ])
+        .await;
 }

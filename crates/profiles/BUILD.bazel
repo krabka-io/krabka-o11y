@@ -41,6 +41,10 @@ crate_tests(
             },
         },
     },
+    # The shared lifecycle store, reached with `#[path]` from //crates/blockstore.
+    extra_srcs = {
+        "lifecycle": ["//crates/blockstore:tests/support/lifecycle_store.rs"],
+    },
     lib = "profiles",
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is
     # crate size times mutants-per-shard. At the default `long` (900s) every

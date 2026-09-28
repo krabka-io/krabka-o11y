@@ -104,6 +104,18 @@ async fn gcs_conditional_puts(store: &dyn ObjectStore) {
     );
 }
 
+/// The host of the endpoint override, or `None` for the provider's default.
+///
+/// The URL host of `s3://`, `gs://` and `az://` names a bucket or container,
+/// so an S3-compatible store is only visible here.
+fn endpoint_host() -> Option<String> {
+    ["AWS_ENDPOINT", "AWS_ENDPOINT_URL", "AZURE_STORAGE_ENDPOINT"]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok())
+        .and_then(|raw| Url::parse(&raw).ok())
+        .and_then(|endpoint| endpoint.host_str().map(str::to_owned))
+}
+
 fn report_path() -> Option<PathBuf> {
     std::env::var_os("KRABKA_OBJECT_STORE_CONTRACT_REPORT")
         .map(PathBuf::from)
@@ -197,14 +209,27 @@ async fn supported_provider_satisfies_the_object_store_contract() {
     }
     let report = json!({
         "schema_version": 1,
+        "kind": "contract",
         "commit": std::env::var("KRABKA_CONTRACT_COMMIT").unwrap_or_else(|_| "unknown".into()),
         "provider": url.scheme(),
-        "endpoint_host": url.host_str(),
+        "bucket": url.host_str(),
+        "endpoint_host": endpoint_host(),
         "duration_seconds": started.elapsed().as_secs_f64(),
         "pagination_objects": OBJECTS_OVER_ONE_S3_PAGE,
         "listing_convergence_attempts": listing_attempts,
         "deletion_convergence_attempts": deletion_attempts,
-        "fault_cases": ["throttling", "checksum_mismatch", "stale_listing"],
+        // Each case above ran and passed, or the test panicked before this.
+        "cases": [
+            "conditional_writes",
+            "multipart",
+            "pagination",
+            "stale_listing",
+            "checksum_mismatch",
+            "throttling",
+            "deletion",
+        ],
+        "requests_total": operations.values().sum::<u64>(),
+        "transferred_bytes_total": transferred_bytes.values().sum::<u64>(),
         "operations": operations,
         "transferred_bytes": transferred_bytes,
     });
