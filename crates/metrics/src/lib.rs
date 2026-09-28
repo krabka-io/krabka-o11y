@@ -18,6 +18,7 @@ pub mod request_tenant;
 pub mod sample;
 pub mod schema;
 pub mod symbols;
+pub mod tsdb_import;
 pub mod wal;
 pub mod wire;
 
@@ -73,6 +74,10 @@ pub use schema::{
     metadata_schema, native_histogram_schema,
 };
 pub use symbols::{SymbolError, SymbolTable};
+pub use tsdb_import::{
+    DecodedTsdbBlock, TsdbBlockFiles, TsdbBlockMeta, TsdbImportError, TsdbImportLimits,
+    TsdbImportStats, decode_tsdb_block,
+};
 pub use wal::{
     ClockReadingPayload, SamplePayload, WAL_TOPIC, WalError, WalExemplar, WalRecord, partition_key,
 };
