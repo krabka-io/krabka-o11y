@@ -3,12 +3,18 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
+use arrow::{
+    array::{Int64Array, StringArray, UInt64Array},
+    datatypes::{DataType, Field, Schema},
+    record_batch::RecordBatch,
+};
 use assert2::{assert, check};
 use async_trait::async_trait;
 use futures::{StreamExt as _, TryStreamExt as _, stream::BoxStream};
 use krabka_blockstore::{
-    ConditionalUpdateRequirement, OBJECT_STORE_PROBE_PREFIX, ObjectStoreCapabilities,
-    ObjectStoreSemanticsError, verify_object_store_semantics,
+    BlockWriter, COL_FINGERPRINT, COL_TIMESTAMP, ConditionalUpdateRequirement,
+    OBJECT_STORE_PROBE_PREFIX, ObjectStoreCapabilities, ObjectStoreSemanticsError, read_block,
+    verify_object_store_semantics,
 };
 use object_store::{
     CopyOptions, Error as ObjectStoreError, GetOptions, GetRange, GetResult, ListResult,
@@ -326,4 +332,38 @@ fn only_a_store_one_process_owns_may_skip_the_conditional_update() {
             "{url}"
         );
     }
+}
+
+/// Azure has no suffix range, and every block read loads its footer through
+/// one. The reader falls back to a bounded range, so a block still reads.
+#[tokio::test]
+async fn a_block_reads_from_a_store_without_suffix_ranges() {
+    let store: Arc<dyn ObjectStore> = Arc::new(QuirkyStore::new(Quirk::SuffixUnsupported));
+    let schema = Arc::new(Schema::new(vec![
+        Field::new(COL_FINGERPRINT, DataType::UInt64, false),
+        Field::new(COL_TIMESTAMP, DataType::Int64, false),
+        Field::new("line", DataType::Utf8, true),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![
+            Arc::new(UInt64Array::from(vec![7, 7])),
+            Arc::new(Int64Array::from(vec![10, 20])),
+            Arc::new(StringArray::from(vec!["first", "second"])),
+        ],
+    )
+    .unwrap();
+    BlockWriter::new(Arc::clone(&store))
+        .write_block(
+            "tenant",
+            "azure/block.parquet",
+            schema,
+            std::slice::from_ref(&batch),
+        )
+        .await
+        .unwrap();
+
+    let read = read_block(store, "azure/block.parquet").await.unwrap();
+
+    assert!(read == vec![batch]);
 }
