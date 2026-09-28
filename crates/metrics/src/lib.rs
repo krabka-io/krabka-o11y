@@ -75,8 +75,9 @@ pub use schema::{
 };
 pub use symbols::{SymbolError, SymbolTable};
 pub use tsdb_import::{
-    DecodedTsdbBlock, TsdbBlockFiles, TsdbBlockMeta, TsdbImportError, TsdbImportLimits,
-    TsdbImportStats, decode_tsdb_block,
+    DecodedTsdbBlock, TsdbBlockFiles, TsdbBlockMeta, TsdbImportBinding, TsdbImportError,
+    TsdbImportLimits, TsdbImportObject, TsdbImportOutcome, TsdbImportRecord, TsdbImportStats,
+    TsdbImportTarget, TsdbPublishError, decode_tsdb_block, publish_tsdb_import, tsdb_block_sha256,
 };
 pub use wal::{
     ClockReadingPayload, SamplePayload, WAL_TOPIC, WalError, WalExemplar, WalRecord, partition_key,

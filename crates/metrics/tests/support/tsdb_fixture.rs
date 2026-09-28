@@ -1,6 +1,10 @@
 //! The checked-in Prometheus TSDB block and the samples that the Prometheus
 //! TSDB library reads from it. `tests/testdata/tsdb/ATTRIBUTION.md` records
 //! how both were produced.
+//!
+//! Several suites include this module, and each one uses part of it.
+
+#![allow(dead_code)]
 
 use std::{collections::BTreeMap, io::Read as _, path::PathBuf};
 
