@@ -1,10 +1,12 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::BTreeSet, fs::OpenOptions, path::PathBuf, sync::Arc, time::SystemTime};
 
 use clap::{Parser, Subcommand};
 use krabka_blockstore::{
-    TenantId, WalOffset, audit_backup, audit_recovery_target, create_backup, load_backup_manifest,
-    restore_backup,
+    RepairOptions, StorageAuditOptions, StorageFindingKind, StorageSignal, TenantId, WalOffset,
+    audit_backup, audit_recovery_target, audit_store, create_backup, load_backup_manifest,
+    repair_store, restore_backup,
 };
+use krabka_units::Time;
 use object_store::{ObjectStore, parse_url_opts, prefix::PrefixStore};
 use serde::Serialize;
 use url::Url;
@@ -54,6 +56,55 @@ enum Command {
         apply: bool,
         #[arg(long)]
         report: Option<PathBuf>,
+    },
+    /// Audit the blocks, indexes and state of a live store. Reads only.
+    AuditStore {
+        /// The root the services write to. A URL with no path audits the
+        /// whole bucket.
+        #[arg(long)]
+        store_url: String,
+        #[arg(long)]
+        signal: Option<StorageSignal>,
+        #[arg(long)]
+        tenant: Option<String>,
+        /// Unindexed objects younger than this are pending, not orphans.
+        #[arg(long, value_parser = krabka_units::parse::non_negative_time, default_value = "1h")]
+        grace: Time,
+        /// Decode every row of every block, not only the footers.
+        #[arg(long)]
+        verify_data: bool,
+        #[arg(long, default_value = "index/traces.json")]
+        trace_index_key: String,
+        #[arg(long, default_value = "index/profiles.json")]
+        profile_index_key: String,
+        #[arg(long)]
+        report: Option<PathBuf>,
+    },
+    /// Delete the orphans an audit of one tenant finds. Plans unless
+    /// `--apply` is set.
+    Repair {
+        #[arg(long)]
+        store_url: String,
+        #[arg(long)]
+        tenant: String,
+        #[arg(long)]
+        signal: StorageSignal,
+        /// A finding kind to act on. Repeat for more than one.
+        #[arg(long = "finding-kind", required = true)]
+        finding_kinds: Vec<StorageFindingKind>,
+        #[arg(long, value_parser = krabka_units::parse::non_negative_time, default_value = "1h")]
+        grace: Time,
+        #[arg(long, default_value = "index/traces.json")]
+        trace_index_key: String,
+        #[arg(long, default_value = "index/profiles.json")]
+        profile_index_key: String,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long)]
+        report: Option<PathBuf>,
+        /// The JSON Lines file each action is appended to.
+        #[arg(long)]
+        audit_log: PathBuf,
     },
 }
 
@@ -123,8 +174,81 @@ async fn run(cli: Cli) -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
             emit(&result, report)?;
         }
+        Command::AuditStore {
+            store_url,
+            signal,
+            tenant,
+            grace,
+            verify_data,
+            trace_index_key,
+            profile_index_key,
+            report,
+        } => {
+            let options = StorageAuditOptions {
+                signal,
+                tenant,
+                grace,
+                verify_data,
+                now: SystemTime::now(),
+                trace_index_key,
+                profile_index_key,
+            };
+            let audit = audit_store(&root_store(&store_url)?, &options)
+                .await
+                .map_err(|error| error.to_string())?;
+            emit(&audit, report)?;
+            if audit.has_damage() {
+                return Err("audit found storage damage".into());
+            }
+        }
+        Command::Repair {
+            store_url,
+            tenant,
+            signal,
+            finding_kinds,
+            grace,
+            trace_index_key,
+            profile_index_key,
+            apply,
+            report,
+            audit_log,
+        } => {
+            let options = RepairOptions {
+                tenant,
+                signal,
+                kinds: finding_kinds.into_iter().collect::<BTreeSet<_>>(),
+                apply,
+                grace,
+                now: SystemTime::now(),
+                trace_index_key,
+                profile_index_key,
+            };
+            options.validate().map_err(|error| error.to_string())?;
+            let mut log = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&audit_log)
+                .map_err(|error| format!("cannot open {}: {error}", audit_log.display()))?;
+            let result = repair_store(&root_store(&store_url)?, &options, &mut log)
+                .await
+                .map_err(|error| error.to_string())?;
+            emit(&result, report)?;
+            if result.has_failures() {
+                return Err("repair could not act on every object; run it again".into());
+            }
+        }
     }
     Ok(())
+}
+
+fn root_store(raw: &str) -> Result<Arc<dyn ObjectStore>, String> {
+    let url = Url::parse(raw).map_err(|error| format!("invalid object-store URL: {error}"))?;
+    let (store, prefix) = parse_url_opts(&url, std::env::vars())
+        .map_err(|error| format!("object-store configuration failed: {error}"))?;
+    if prefix.as_ref().is_empty() {
+        return Ok(Arc::from(store));
+    }
+    Ok(Arc::new(PrefixStore::new(store, prefix)))
 }
 
 fn scoped_store(raw: &str) -> Result<Arc<dyn ObjectStore>, String> {
@@ -187,6 +311,7 @@ fn emit<T: Serialize>(value: &T, path: Option<PathBuf>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
+    use krabka_blockstore::DEFAULT_BLOCK_SWEEP_GRACE;
 
     use super::*;
 
@@ -217,6 +342,172 @@ mod tests {
         assert!(scoped_store("memory:///tenant-a").is_ok());
         assert!(require_distinct("memory:///a", "memory:///a").is_err());
         assert!(require_distinct("memory:///a", "memory:///b").is_ok());
+    }
+
+    #[test]
+    fn repair_needs_tenant_signal_and_finding_kinds() {
+        let parsed = |args: &[&str]| {
+            Cli::try_parse_from(
+                [
+                    "krabka-storage-admin",
+                    "repair",
+                    "--store-url",
+                    "memory:///",
+                ]
+                .iter()
+                .chain(args),
+            )
+        };
+        let full = [
+            "--tenant",
+            "t",
+            "--signal",
+            "traces",
+            "--finding-kind",
+            "orphan",
+            "--audit-log",
+            "log.jsonl",
+        ];
+        for missing in ["--tenant", "--signal", "--finding-kind", "--audit-log"] {
+            let at = full.iter().position(|arg| *arg == missing).unwrap();
+            let args = [&full[..at], &full[at + 2..]].concat();
+            check!(parsed(&args).is_err(), "{missing}");
+        }
+        let Command::Repair {
+            tenant,
+            signal,
+            finding_kinds,
+            apply,
+            grace,
+            ..
+        } = parsed(&full).unwrap().command
+        else {
+            panic!("expected repair");
+        };
+        check!(
+            (tenant, signal, finding_kinds, apply, grace)
+                == (
+                    "t".to_string(),
+                    StorageSignal::Traces,
+                    vec![StorageFindingKind::Orphan],
+                    false,
+                    DEFAULT_BLOCK_SWEEP_GRACE,
+                )
+        );
+    }
+
+    #[test]
+    fn audit_store_defaults_to_every_signal_and_tenant() {
+        let cli = Cli::try_parse_from([
+            "krabka-storage-admin",
+            "audit-store",
+            "--store-url",
+            "memory:///",
+            "--grace",
+            "10m",
+        ])
+        .unwrap();
+        let Command::AuditStore {
+            signal,
+            tenant,
+            grace,
+            verify_data,
+            trace_index_key,
+            profile_index_key,
+            ..
+        } = cli.command
+        else {
+            panic!("expected audit-store");
+        };
+        check!(
+            (
+                signal,
+                tenant,
+                grace,
+                verify_data,
+                trace_index_key,
+                profile_index_key
+            ) == (
+                None,
+                None,
+                krabka_units::minutes(10),
+                false,
+                "index/traces.json".to_string(),
+                "index/profiles.json".to_string(),
+            )
+        );
+    }
+
+    #[test]
+    fn audited_stores_may_be_a_bucket_root() {
+        assert!(root_store("memory:///").is_ok());
+        assert!(root_store("memory:///prefix").is_ok());
+        assert!(root_store("not a URL").is_err());
+    }
+
+    #[tokio::test]
+    async fn audit_store_and_plan_only_repair_run_against_an_empty_store() {
+        let directory = tempfile::tempdir().unwrap();
+        let report = directory.path().join("report.json");
+        let audit_log = directory.path().join("repair.jsonl");
+        let audit = Cli::try_parse_from([
+            "krabka-storage-admin",
+            "audit-store",
+            "--store-url",
+            "memory:///",
+            "--report",
+            report.to_str().unwrap(),
+        ])
+        .unwrap();
+        run(audit).await.unwrap();
+        let written =
+            krabka_blockstore::StorageAuditReport::from_json(&std::fs::read(&report).unwrap())
+                .unwrap();
+        check!(written.findings.is_empty());
+
+        let repair = Cli::try_parse_from([
+            "krabka-storage-admin",
+            "repair",
+            "--store-url",
+            "memory:///",
+            "--tenant",
+            "t",
+            "--signal",
+            "profiles",
+            "--finding-kind",
+            "orphan_sidecar",
+            "--audit-log",
+            audit_log.to_str().unwrap(),
+            "--report",
+            report.to_str().unwrap(),
+        ])
+        .unwrap();
+        run(repair).await.unwrap();
+        check!(std::fs::read(&audit_log).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn repair_refuses_a_kind_that_needs_a_person() {
+        let directory = tempfile::tempdir().unwrap();
+        let audit_log = directory.path().join("repair.jsonl");
+        let repair = Cli::try_parse_from([
+            "krabka-storage-admin",
+            "repair",
+            "--store-url",
+            "memory:///",
+            "--tenant",
+            "t",
+            "--signal",
+            "metrics",
+            "--finding-kind",
+            "corrupt_block",
+            "--apply",
+            "--audit-log",
+            audit_log.to_str().unwrap(),
+        ])
+        .unwrap();
+        assert!(run(repair).await.is_err());
+        check!(!audit_log.exists());
     }
 
     #[test]
