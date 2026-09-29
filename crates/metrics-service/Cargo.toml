@@ -58,6 +58,7 @@ url = { workspace = true }
 tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
 
 [dev-dependencies]
+flate2 = { workspace = true }
 krabka-broker = { version = "0.4.0" }
 krabka-client-admin = { version = "0.4.0" }
 opentelemetry-proto = { workspace = true }

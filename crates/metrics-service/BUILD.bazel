@@ -48,7 +48,11 @@ crate_binary(
 crate_tests(
     # The shipped clock rule bundle. `clock_rules_bundle` loads it from this
     # path and evaluates it, so the suite reads the file a deployment ships.
-    data = ["rules/krabka-clock.yaml"] + PROMQL_CORPUS,
+    data = [
+        "rules/krabka-clock.yaml",
+        # The Prometheus TSDB block that `tsdb_import` uploads.
+        "//crates/metrics:tsdb_fixture",
+    ] + PROMQL_CORPUS,
     # Suites that drive a real Grafana-stack component and compare against
     # it, with the images each one starts. //bazel/images pins those by
     # digest and //bazel/defs.bzl loads them before the suite runs.
@@ -56,6 +60,7 @@ crate_tests(
         "diff_mimir": ["mimir"],
         "diff_prometheus": ["prometheus"],
         "grafana_integration": ["grafana"],
+        "tsdb_import": ["prometheus"],
     },
     docker_variants = {
         "diff_prometheus": {"previous": {"prometheus": "prometheus_previous"}},
@@ -67,12 +72,13 @@ crate_tests(
     # sibling of the suites themselves, under tests/support/, so `crate_tests`
     # picks it up as an ordinary helper module.
     extra_srcs = {
-        stem: ["//crates/metrics:tests/support/diff_corpus.rs"]
-        for stem in [
-            "diff_mimir",
-            "diff_prometheus",
-            "grafana_integration",
-        ]
+        "diff_mimir": ["//crates/metrics:tests/support/diff_corpus.rs"],
+        "diff_prometheus": ["//crates/metrics:tests/support/diff_corpus.rs"],
+        "grafana_integration": ["//crates/metrics:tests/support/diff_corpus.rs"],
+        "tsdb_import": [
+            "//crates/metrics:tests/support/diff_corpus.rs",
+            "//crates/metrics:tests/support/tsdb_fixture.rs",
+        ],
     },
     lib = "metrics-service",
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is

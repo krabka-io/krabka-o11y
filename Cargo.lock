@@ -4322,6 +4322,7 @@ dependencies = [
  "axum",
  "bytes",
  "clap",
+ "flate2",
  "futures",
  "krabka-blockstore",
  "krabka-broker",

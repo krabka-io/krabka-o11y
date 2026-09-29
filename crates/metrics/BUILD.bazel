@@ -14,6 +14,13 @@ exports_files(
     ] + glob(["tests/testdata/tsdb/**"]),
 )
 
+# The Prometheus TSDB block fixture, for the //crates/metrics-service suites
+# that upload it. They find it at this workspace path in their runfiles.
+filegroup(
+    name = "tsdb_fixture",
+    srcs = glob(["tests/testdata/tsdb/**"]),
+)
+
 crate_library(
     name = "metrics",
     # `build.rs` generates prost types from these.
