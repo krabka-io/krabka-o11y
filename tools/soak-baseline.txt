@@ -1,0 +1,192 @@
+# Baseline for the operating-envelope soak, read by tools/soak-gate.py.
+#
+# One line per metric that the soak is expected to report:
+#
+#     <signal>/<phase>/<metric> <value>
+#
+# Latencies are microseconds, rates are accepted rows per second, resident
+# memory is KiB, and recovery is seconds. The gate fails a metric that moves
+# against the number here by more than 1.5 times: a latency, memory, request
+# count or recovery time above it, or a rate below it.
+#
+# This file is also the inventory. A report with no value for a line here
+# fails, and so does a value with no line here. Those checks apply whether or
+# not a number is set, so a phase that stops measuring cannot pass as clean.
+#
+# Every line is `unseeded`. No stable-runner soak has run yet, so the ratchet
+# is dormant and only the inventory applies. Numbers from a shared GitHub
+# runner do not belong here, because a different host gives different numbers.
+# To seed the file, run the soak on the stable runner recorded in
+# docs/operating_envelope.md and record its report:
+#
+#     bazel test --config=scale //crates/integration:soak_envelope_docker_test
+#     tools/soak-gate.py --record \
+#         bazel-testlogs/crates/integration/soak_envelope_docker_test/test.outputs/soak-report.json
+#
+# Check the recorded lines in with the host shape, commit, and report digest
+# beside them.
+
+logs/burst/accepted_rows_per_sec unseeded
+logs/burst/peak_rss_kib unseeded
+logs/burst/query_p99_us unseeded
+logs/burst/read_requests_per_op unseeded
+logs/burst/write_p99_us unseeded
+logs/burst/write_requests_per_op unseeded
+logs/cold_blocks/peak_rss_kib unseeded
+logs/cold_blocks/query_p99_us unseeded
+logs/cold_blocks/read_requests_per_op unseeded
+logs/compaction/accepted_rows_per_sec unseeded
+logs/compaction/peak_rss_kib unseeded
+logs/compaction/query_p99_us unseeded
+logs/compaction/read_requests_per_op unseeded
+logs/compaction/write_p99_us unseeded
+logs/compaction/write_requests_per_op unseeded
+logs/deletion/accepted_rows_per_sec unseeded
+logs/deletion/peak_rss_kib unseeded
+logs/deletion/query_p99_us unseeded
+logs/deletion/read_requests_per_op unseeded
+logs/deletion/write_p99_us unseeded
+logs/deletion/write_requests_per_op unseeded
+logs/high_cardinality/accepted_rows_per_sec unseeded
+logs/high_cardinality/peak_rss_kib unseeded
+logs/high_cardinality/query_p99_us unseeded
+logs/high_cardinality/read_requests_per_op unseeded
+logs/high_cardinality/write_p99_us unseeded
+logs/high_cardinality/write_requests_per_op unseeded
+logs/noisy_tenant/accepted_rows_per_sec unseeded
+logs/noisy_tenant/peak_rss_kib unseeded
+logs/noisy_tenant/query_p99_us unseeded
+logs/noisy_tenant/read_requests_per_op unseeded
+logs/noisy_tenant/write_p99_us unseeded
+logs/noisy_tenant/write_requests_per_op unseeded
+logs/restart/peak_rss_kib unseeded
+logs/restart/recovery_seconds unseeded
+logs/steady/accepted_rows_per_sec unseeded
+logs/steady/peak_rss_kib unseeded
+logs/steady/query_p99_us unseeded
+logs/steady/read_requests_per_op unseeded
+logs/steady/write_p99_us unseeded
+logs/steady/write_requests_per_op unseeded
+metrics/burst/accepted_rows_per_sec unseeded
+metrics/burst/peak_rss_kib unseeded
+metrics/burst/query_p99_us unseeded
+metrics/burst/read_requests_per_op unseeded
+metrics/burst/write_p99_us unseeded
+metrics/burst/write_requests_per_op unseeded
+metrics/cold_blocks/peak_rss_kib unseeded
+metrics/cold_blocks/query_p99_us unseeded
+metrics/cold_blocks/read_requests_per_op unseeded
+metrics/compaction/accepted_rows_per_sec unseeded
+metrics/compaction/peak_rss_kib unseeded
+metrics/compaction/query_p99_us unseeded
+metrics/compaction/read_requests_per_op unseeded
+metrics/compaction/write_p99_us unseeded
+metrics/compaction/write_requests_per_op unseeded
+metrics/deletion/accepted_rows_per_sec unseeded
+metrics/deletion/peak_rss_kib unseeded
+metrics/deletion/query_p99_us unseeded
+metrics/deletion/read_requests_per_op unseeded
+metrics/deletion/write_p99_us unseeded
+metrics/deletion/write_requests_per_op unseeded
+metrics/high_cardinality/accepted_rows_per_sec unseeded
+metrics/high_cardinality/peak_rss_kib unseeded
+metrics/high_cardinality/query_p99_us unseeded
+metrics/high_cardinality/read_requests_per_op unseeded
+metrics/high_cardinality/write_p99_us unseeded
+metrics/high_cardinality/write_requests_per_op unseeded
+metrics/noisy_tenant/accepted_rows_per_sec unseeded
+metrics/noisy_tenant/peak_rss_kib unseeded
+metrics/noisy_tenant/query_p99_us unseeded
+metrics/noisy_tenant/read_requests_per_op unseeded
+metrics/noisy_tenant/write_p99_us unseeded
+metrics/noisy_tenant/write_requests_per_op unseeded
+metrics/restart/peak_rss_kib unseeded
+metrics/restart/recovery_seconds unseeded
+metrics/steady/accepted_rows_per_sec unseeded
+metrics/steady/peak_rss_kib unseeded
+metrics/steady/query_p99_us unseeded
+metrics/steady/read_requests_per_op unseeded
+metrics/steady/write_p99_us unseeded
+metrics/steady/write_requests_per_op unseeded
+profiles/burst/accepted_rows_per_sec unseeded
+profiles/burst/peak_rss_kib unseeded
+profiles/burst/query_p99_us unseeded
+profiles/burst/read_requests_per_op unseeded
+profiles/burst/write_p99_us unseeded
+profiles/burst/write_requests_per_op unseeded
+profiles/cold_blocks/peak_rss_kib unseeded
+profiles/cold_blocks/query_p99_us unseeded
+profiles/cold_blocks/read_requests_per_op unseeded
+profiles/compaction/accepted_rows_per_sec unseeded
+profiles/compaction/peak_rss_kib unseeded
+profiles/compaction/query_p99_us unseeded
+profiles/compaction/read_requests_per_op unseeded
+profiles/compaction/write_p99_us unseeded
+profiles/compaction/write_requests_per_op unseeded
+profiles/deletion/accepted_rows_per_sec unseeded
+profiles/deletion/peak_rss_kib unseeded
+profiles/deletion/query_p99_us unseeded
+profiles/deletion/read_requests_per_op unseeded
+profiles/deletion/write_p99_us unseeded
+profiles/deletion/write_requests_per_op unseeded
+profiles/high_cardinality/accepted_rows_per_sec unseeded
+profiles/high_cardinality/peak_rss_kib unseeded
+profiles/high_cardinality/query_p99_us unseeded
+profiles/high_cardinality/read_requests_per_op unseeded
+profiles/high_cardinality/write_p99_us unseeded
+profiles/high_cardinality/write_requests_per_op unseeded
+profiles/noisy_tenant/accepted_rows_per_sec unseeded
+profiles/noisy_tenant/peak_rss_kib unseeded
+profiles/noisy_tenant/query_p99_us unseeded
+profiles/noisy_tenant/read_requests_per_op unseeded
+profiles/noisy_tenant/write_p99_us unseeded
+profiles/noisy_tenant/write_requests_per_op unseeded
+profiles/restart/peak_rss_kib unseeded
+profiles/restart/recovery_seconds unseeded
+profiles/steady/accepted_rows_per_sec unseeded
+profiles/steady/peak_rss_kib unseeded
+profiles/steady/query_p99_us unseeded
+profiles/steady/read_requests_per_op unseeded
+profiles/steady/write_p99_us unseeded
+profiles/steady/write_requests_per_op unseeded
+traces/burst/accepted_rows_per_sec unseeded
+traces/burst/peak_rss_kib unseeded
+traces/burst/query_p99_us unseeded
+traces/burst/read_requests_per_op unseeded
+traces/burst/write_p99_us unseeded
+traces/burst/write_requests_per_op unseeded
+traces/cold_blocks/peak_rss_kib unseeded
+traces/cold_blocks/query_p99_us unseeded
+traces/cold_blocks/read_requests_per_op unseeded
+traces/compaction/accepted_rows_per_sec unseeded
+traces/compaction/peak_rss_kib unseeded
+traces/compaction/query_p99_us unseeded
+traces/compaction/read_requests_per_op unseeded
+traces/compaction/write_p99_us unseeded
+traces/compaction/write_requests_per_op unseeded
+traces/deletion/accepted_rows_per_sec unseeded
+traces/deletion/peak_rss_kib unseeded
+traces/deletion/query_p99_us unseeded
+traces/deletion/read_requests_per_op unseeded
+traces/deletion/write_p99_us unseeded
+traces/deletion/write_requests_per_op unseeded
+traces/high_cardinality/accepted_rows_per_sec unseeded
+traces/high_cardinality/peak_rss_kib unseeded
+traces/high_cardinality/query_p99_us unseeded
+traces/high_cardinality/read_requests_per_op unseeded
+traces/high_cardinality/write_p99_us unseeded
+traces/high_cardinality/write_requests_per_op unseeded
+traces/noisy_tenant/accepted_rows_per_sec unseeded
+traces/noisy_tenant/peak_rss_kib unseeded
+traces/noisy_tenant/query_p99_us unseeded
+traces/noisy_tenant/read_requests_per_op unseeded
+traces/noisy_tenant/write_p99_us unseeded
+traces/noisy_tenant/write_requests_per_op unseeded
+traces/restart/peak_rss_kib unseeded
+traces/restart/recovery_seconds unseeded
+traces/steady/accepted_rows_per_sec unseeded
+traces/steady/peak_rss_kib unseeded
+traces/steady/query_p99_us unseeded
+traces/steady/read_requests_per_op unseeded
+traces/steady/write_p99_us unseeded
+traces/steady/write_requests_per_op unseeded
