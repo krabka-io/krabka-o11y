@@ -4149,18 +4149,23 @@ dependencies = [
 name = "krabka-integration"
 version = "0.4.0"
 dependencies = [
+ "arc-swap",
  "assert2",
  "async-trait",
  "axum",
  "bytes",
  "hex",
  "krabka-blockstore",
+ "krabka-logql",
  "krabka-metrics",
  "krabka-observability",
+ "krabka-pprof",
  "krabka-profiles",
  "krabka-promql",
+ "krabka-traceql",
  "krabka-traces",
  "krabka-units",
+ "num-traits",
  "object_store",
  "reqwest 0.13.5",
  "serde_json",
@@ -4168,6 +4173,7 @@ dependencies = [
  "testcontainers",
  "tokio",
  "tower",
+ "url",
 ]
 
 [[package]]
