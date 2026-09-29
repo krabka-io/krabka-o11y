@@ -127,9 +127,5 @@ tracing-opentelemetry = { workspace = true }
 name = "scale_object_store"
 test = false
 
-[[test]]
-name = "soak_ingest_query"
-test = false
-
 [lints]
 workspace = true
