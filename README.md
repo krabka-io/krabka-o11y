@@ -59,7 +59,7 @@ bazel test //...
 
 Both are gated in CI, and they are not the same build. Bazel supplies its own
 `protoc`, pins the container images the differential suites run against, and
-runs the mutation sweep. The cargo job covers what only cargo reaches: the
+defines the mutation targets. The cargo job covers what only cargo reaches: the
 `protoc-bin-vendored` fallback, `.cargo/config.toml`, `--locked` against
 `Cargo.lock`, and the `heap-profiling` feature. CI also runs `cargo deny check`
 over the policy in [`deny.toml`](deny.toml).
@@ -190,6 +190,86 @@ Sharded, and bounded per shard. A shard that overruns its bound reports
 *nothing* rather than reporting a failure, so a survivor count is only worth
 quoting once `tools/mutants-ratchet.py` validates every shard and the totals
 line adds up: `caught + missed + unviable == total`.
+
+Mutation sweeps do not run in CI, not even on a schedule. A sweep takes hours
+and holds a machine for the whole run. Run one by hand on a dedicated host and
+apply the ratchet to its output:
+
+```bash
+tools/mutants-sweep.sh promql
+tools/mutants-ratchet.py promql
+```
+
+The ratchet's exit code names its verdict. 0 is a pass. 1 is a regression: a
+complete sweep has more survivors than its baseline allows. 3 is an incomplete
+sweep: a shard was killed, was silent, refused, or its numbers disagree, so the
+survivor count is unknown. Rerun the missing shards, and do not change the
+baseline. 2 is a wrong command line. `--json <path>` writes the same verdict,
+with each crate's counts and reasons.
+
+`tools/mutants-ratchet.py --prove-gate <crate>` shows that the checked-in
+baseline rejects one new survivor. It writes synthetic shard logs in the shape
+of the crate's recorded sweep and runs no sweep. The `deliberate_survivor`
+block in
+[`qualification/milestone-19-mutation-baselines.json`](qualification/milestone-19-mutation-baselines.json)
+is its output.
+
+CI runs only checks that read files: the ratchet's `--self-test`, which checks
+the verdict logic against synthetic shard logs in about a second, and
+`tools/mutants-record.py --check`, which makes sure that each number in
+`tools/mutants-baseline.txt` matches a recorded run with its commit, toolchain,
+host shape, command, duration, and checksums.
+
+### Seeding a crate by hand
+
+Eight crates have a baseline. observability, profiles, promql, and traces are
+still `unseeded`. Their sweeps are the largest, and a partial run gives no
+number. Seed each one on a dedicated host:
+
+1. Get a host that does no other work for the full run. A sweep of one of these
+   crates can take up to the 10-hour shard timeout, and
+   `tools/mutants-sweep.sh` has twice stopped a 31 GB machine because it ran
+   out of memory. Each concurrent shard links with `ld.lld`, which holds 1.5 to
+   2 GB. Use at least 64 GB of memory, or set `KRABKA_MUTANTS_CONCURRENT_SHARDS`
+   lower (the default is the CPU count, to a maximum of 8). Keep about 200 GB
+   of disk free for the Bazel output base.
+2. Check out the commit to record, with a clean working tree. Do not change
+   `mutants_shards` in the crate's BUILD file. The ratchet rejects logs from a
+   different shard count.
+3. Run the sweep and the ratchet:
+
+   ```bash
+   tools/mutants-sweep.sh promql
+   tools/mutants-ratchet.py promql --json promql-verdict.json
+   ```
+
+   The sweep writes `promql.log`, `promql.metadata.txt` and
+   `promql.SHA256SUMS` to `~/krabka-work/sweep-results`, not to `/tmp`. Exit 3
+   means the sweep is incomplete. Rerun it, and record nothing.
+4. Archive the shard logs and store the archive where the team can get it:
+
+   ```bash
+   tar -C bazel-testlogs/crates/promql -caf ~/krabka-work/sweep-results/promql.tar.zst promql_mutants
+   gcloud storage cp ~/krabka-work/sweep-results/promql.tar.zst gs://<bucket>/qualification/milestone-19/mutants/<commit>/
+   ```
+
+5. Record the run:
+
+   ```bash
+   tools/mutants-record.py --capture promql \
+     --artifact ~/krabka-work/sweep-results/promql.tar.zst \
+     --artifact-url gs://<bucket>/qualification/milestone-19/mutants/<commit>/promql.tar.zst \
+     --runner-label <host> --write
+   ```
+
+   It applies the ratchet's structural gate again and reads the metadata and
+   checksum files. It takes the SHA-256 of the archive and of
+   `promql.SHA256SUMS`, and writes the result into the JSON record. It removes
+   the crate from `unseeded` and writes the survivor count into
+   `tools/mutants-baseline.txt`. Then it runs `--check`.
+6. Update the crate's `test_coverage_report.md` and
+   [`docs/test_coverage_report.md`](docs/test_coverage_report.md), and commit
+   the record, the baseline, and the reports together.
 
 ## Publishing
 

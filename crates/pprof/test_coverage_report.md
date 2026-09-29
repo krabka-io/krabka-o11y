@@ -54,7 +54,7 @@ The scoped command excludes ignored container suites.
 
 ## Mutation Coverage
 
-The scheduled target is `bazel test //crates/pprof:pprof_mutants`.
+The manual target is `bazel test //crates/pprof:pprof_mutants`.
 
 Its reviewed baseline is 86 survivors from a complete 12-shard run. The exact
 commit, command, runner, duration, and artifact checksums are recorded in
