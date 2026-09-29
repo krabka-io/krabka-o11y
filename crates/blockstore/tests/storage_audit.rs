@@ -196,6 +196,67 @@ async fn inject(
             .await;
             vec![finding(StorageFindingKind::WalOverlap, signal, t, block)]
         }
+        Fault::CorruptManifest
+        | Fault::UnsupportedManifest
+        | Fault::NoIndex
+        | Fault::CorruptPayload => inject_index_fault(store, signal, fault).await,
+        Fault::CorruptDeleteMarker => {
+            let marker = "mimir-tenant-deletions/t.json";
+            put_bytes(
+                store,
+                marker,
+                br#"{"tenant_id":"t","objects":["metrics/u/float/x.parquet"]}"#,
+            )
+            .await;
+            vec![finding(
+                StorageFindingKind::UnreadableDeleteState,
+                signal,
+                t,
+                marker,
+            )]
+        }
+        Fault::ForeignErasureRequest => {
+            let request = ErasureRequest::new("u", "{job=\"a\"}", Vec::new(), 0, 1, 2);
+            let key = format!("metric-erasure-requests/t/{}.json", request.id);
+            store
+                .put(
+                    &Path::from(key.as_str()),
+                    PutPayload::from(serde_json::to_vec(&request).unwrap()),
+                )
+                .await
+                .unwrap();
+            vec![finding(
+                StorageFindingKind::UnreadableDeleteState,
+                signal,
+                t,
+                &key,
+            )]
+        }
+        Fault::StaleFrontier => {
+            let frontier = "index/logs/compaction-frontier.json";
+            put_bytes(
+                store,
+                frontier,
+                br#"{"version":1,"compacted_through_ns":0,"partition_offsets":{"0":50}}"#,
+            )
+            .await;
+            vec![finding(
+                StorageFindingKind::StaleFrontier,
+                signal,
+                None,
+                frontier,
+            )]
+        }
+    }
+}
+
+async fn inject_index_fault(
+    store: &Arc<dyn ObjectStore>,
+    signal: StorageSignal,
+    fault: Fault,
+) -> Vec<StorageFinding> {
+    let t = Some("t");
+    match fault {
         Fault::CorruptManifest => {
             if signal == StorageSignal::Logs {
                 put_bytes(store, &log_manifest("t"), b"{").await;
@@ -289,53 +350,7 @@ async fn inject(
                 payload,
             )]
         }
-        Fault::CorruptDeleteMarker => {
-            let marker = "mimir-tenant-deletions/t.json";
-            put_bytes(
-                store,
-                marker,
-                br#"{"tenant_id":"t","objects":["metrics/u/float/x.parquet"]}"#,
-            )
-            .await;
-            vec![finding(
-                StorageFindingKind::UnreadableDeleteState,
-                signal,
-                t,
-                marker,
-            )]
-        }
-        Fault::ForeignErasureRequest => {
-            let request = ErasureRequest::new("u", "{job=\"a\"}", Vec::new(), 0, 1, 2);
-            let key = format!("metric-erasure-requests/t/{}.json", request.id);
-            store
-                .put(
-                    &Path::from(key.as_str()),
-                    PutPayload::from(serde_json::to_vec(&request).unwrap()),
-                )
-                .await
-                .unwrap();
-            vec![finding(
-                StorageFindingKind::UnreadableDeleteState,
-                signal,
-                t,
-                &key,
-            )]
-        }
-        Fault::StaleFrontier => {
-            let frontier = "index/logs/compaction-frontier.json";
-            put_bytes(
-                store,
-                frontier,
-                br#"{"version":1,"compacted_through_ns":0,"partition_offsets":{"0":50}}"#,
-            )
-            .await;
-            vec![finding(
-                StorageFindingKind::StaleFrontier,
-                signal,
-                None,
-                frontier,
-            )]
-        }
+        _ => unreachable!("{fault:?} is not an index fault"),
     }
 }
 
