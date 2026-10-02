@@ -3306,7 +3306,7 @@ dependencies = [
 [[package]]
 name = "krabka-client-admin"
 version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=63c0814b8021fbed0639824e693997361bec6f2e#63c0814b8021fbed0639824e693997361bec6f2e"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=c4ce581587772b3750d88c61f3389d9626a20235#c4ce581587772b3750d88c61f3389d9626a20235"
 dependencies = [
  "assert2",
  "async-trait",
@@ -3327,7 +3327,7 @@ dependencies = [
 [[package]]
 name = "krabka-client-consumer"
 version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=63c0814b8021fbed0639824e693997361bec6f2e#63c0814b8021fbed0639824e693997361bec6f2e"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=c4ce581587772b3750d88c61f3389d9626a20235#c4ce581587772b3750d88c61f3389d9626a20235"
 dependencies = [
  "assert2",
  "async-trait",
@@ -3349,7 +3349,7 @@ dependencies = [
 [[package]]
 name = "krabka-client-core"
 version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=63c0814b8021fbed0639824e693997361bec6f2e#63c0814b8021fbed0639824e693997361bec6f2e"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=c4ce581587772b3750d88c61f3389d9626a20235#c4ce581587772b3750d88c61f3389d9626a20235"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3387,7 +3387,7 @@ dependencies = [
 [[package]]
 name = "krabka-client-producer"
 version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=63c0814b8021fbed0639824e693997361bec6f2e#63c0814b8021fbed0639824e693997361bec6f2e"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=c4ce581587772b3750d88c61f3389d9626a20235#c4ce581587772b3750d88c61f3389d9626a20235"
 dependencies = [
  "assert2",
  "async-trait",
@@ -7962,7 +7962,7 @@ source = "git+https://github.com/krabka-io/krabka-broker?rev=505d7c890d46d3937f3
 [[patch.unused]]
 name = "krabka-client-coordination"
 version = "0.4.0"
-source = "git+https://github.com/krabka-io/krabka-client-rs?rev=63c0814b8021fbed0639824e693997361bec6f2e#63c0814b8021fbed0639824e693997361bec6f2e"
+source = "git+https://github.com/krabka-io/krabka-client-rs?rev=c4ce581587772b3750d88c61f3389d9626a20235#c4ce581587772b3750d88c61f3389d9626a20235"
 
 [[patch.unused]]
 name = "krabka-format"
