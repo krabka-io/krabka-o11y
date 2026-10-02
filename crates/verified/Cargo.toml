@@ -5,7 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-rust-version.workspace = true
+# The pinned Creusot 0.13 toolchain supplies Rust 1.98.0-nightly.
+rust-version = "1.98.0"
 description = "Creusot-verified pure kernels for Krabka observability"
 repository = "https://github.com/krabka-io/krabka-o11y"
 

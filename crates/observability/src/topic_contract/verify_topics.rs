@@ -1,4 +1,4 @@
-use krabka_client_admin::AdminClient;
+use krabka_client_admin::{AdminClient, ConfigResource, DescribeConfigsOptions};
 
 use super::{
     TopicContract, TopicContractError, TopicDrift, TopicExpectation, TopicReport, TopicSettings,
@@ -52,7 +52,13 @@ async fn report(
 ) -> Result<TopicReport, TopicContractError> {
     let names: Vec<&str> = topics.iter().map(|topic| topic.name).collect();
     let metadata = admin.metadata(&names).await?;
-    let configs = admin.describe_configs(&names).await?;
+    let resources: Vec<_> = names
+        .iter()
+        .map(|name| ConfigResource::topic(*name))
+        .collect();
+    let configs = admin
+        .describe_configs(&resources, DescribeConfigsOptions::default())
+        .await?;
     let (observed, drift) = inspect_topics(topics, expectation, &metadata, &configs);
 
     let (fatal, advisory): (Vec<_>, Vec<_>) = drift.into_iter().partition(TopicDrift::is_fatal);

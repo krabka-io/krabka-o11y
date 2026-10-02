@@ -89,21 +89,13 @@ impl KafkaTopicAuditSink {
 #[async_trait]
 impl AuditSink for KafkaTopicAuditSink {
     async fn write(&self, record: AuditRecord) -> Result<(), AuditError> {
-        let produce = async {
-            let delivery = self
-                .producer
-                .send(audit_producer_record(&self.topic, self.partition, record))
-                .await;
-            delivery.await
-        };
+        let produce =
+            self.producer
+                .send(audit_producer_record(&self.topic, self.partition, record));
         match tokio::time::timeout(self.write_timeout.to_std(), produce).await {
-            Ok(Ok(Ok(_metadata))) => Ok(()),
-            Ok(Ok(Err(error))) => Err(AuditError::Sink(format!(
+            Ok(Ok(_metadata)) => Ok(()),
+            Ok(Err(error)) => Err(AuditError::Sink(format!(
                 "audit topic {} partition {}: {error}",
-                self.topic, self.partition
-            ))),
-            Ok(Err(_canceled)) => Err(AuditError::Sink(format!(
-                "audit topic {} partition {}: the producer canceled the delivery",
                 self.topic, self.partition
             ))),
             Err(_elapsed) => Err(AuditError::Sink(format!(

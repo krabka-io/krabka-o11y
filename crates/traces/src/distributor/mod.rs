@@ -74,7 +74,6 @@ mod tests {
         collector::trace::v1::ExportTraceServiceRequest,
         trace::v1::{ResourceSpans, ScopeSpans, Span as OtlpSpan, TracesData},
     };
-    use prost::Message as _;
     use tonic::Request as GrpcRequest;
     use tower::ServiceExt as _;
 

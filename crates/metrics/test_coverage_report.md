@@ -54,9 +54,11 @@ The scoped command excludes ignored container suites.
 
 ## Mutation Coverage
 
-The scheduled target is `bazel test //crates/metrics:metrics_mutants`.
+The manual target is `bazel test //crates/metrics:metrics_mutants`.
 
-Its baseline is `unseeded`, so no survivor count is quoted until every shard writes a valid totals line.
+Its reviewed baseline is 174 survivors from a complete 24-shard run. The exact
+commit, command, runner, duration, and artifact checksums are recorded in
+[`qualification/milestone-19-mutation-baselines.json`](../../qualification/milestone-19-mutation-baselines.json).
 
 ## Test Infrastructure
 

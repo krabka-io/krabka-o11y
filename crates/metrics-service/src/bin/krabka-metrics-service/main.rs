@@ -47,7 +47,7 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     use assert2::check;
-    use clap::{Parser, ValueEnum as _};
+    use clap::Parser;
 
     use super::*;
 

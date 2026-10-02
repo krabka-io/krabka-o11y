@@ -1,4 +1,4 @@
-use krabka_client_admin::{TopicConfigOverrides, TopicMetadata};
+use krabka_client_admin::{ConfigResource, DescribeConfigsResults, TopicMetadata};
 
 use super::{
     CLEANUP_POLICY, COMPACT, ObservedTopic, PartitionCount, RETENTION_MS, TopicContract,
@@ -21,7 +21,7 @@ pub(crate) fn inspect_topics(
     contracts: &[TopicContract],
     expectation: &TopicExpectation<'_>,
     metadata: &TopicMetadata,
-    configs: &[TopicConfigOverrides],
+    configs: &DescribeConfigsResults,
 ) -> (Vec<ObservedTopic>, Vec<TopicDrift>) {
     let mut observed = Vec::with_capacity(contracts.len());
     let mut drift = Vec::new();
@@ -63,11 +63,24 @@ pub(crate) fn inspect_topics(
             continue;
         };
 
-        let overrides = configs
-            .iter()
-            .find(|c| c.topic == contract.name)
-            .map(|c| c.overrides.clone())
-            .unwrap_or_default();
+        let resource = ConfigResource::topic(contract.name);
+        let overrides = match configs.get(&resource) {
+            Some(Ok(config)) => config.dynamic_overrides(&resource),
+            Some(Err(error)) => {
+                drift.push(TopicDrift::Unreadable {
+                    topic: contract.name.to_string(),
+                    error: error.name.to_string(),
+                });
+                continue;
+            }
+            None => {
+                drift.push(TopicDrift::Unreadable {
+                    topic: contract.name.to_string(),
+                    error: "DescribeConfigs omitted the topic".to_string(),
+                });
+                continue;
+            }
+        };
 
         // Compaction is structural: a state topic under `delete` loses its
         // map whatever the deployment's size, so it is checked even when no
