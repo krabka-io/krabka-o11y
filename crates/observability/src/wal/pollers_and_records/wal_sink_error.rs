@@ -8,6 +8,4 @@ pub enum WalSinkError {
     Serialize(#[from] serde_json::Error),
     #[error("wal producer failed: {0}")]
     Producer(#[from] ProducerError),
-    #[error("wal producer delivery channel closed")]
-    DeliveryCanceled,
 }

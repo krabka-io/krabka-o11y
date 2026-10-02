@@ -19,7 +19,7 @@ pub(crate) async fn prometheus_rules(
     .await
     {
         Ok(tenant) => tenant,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     let filters = match PrometheusRulesFilters::parse(raw_query.as_deref()) {
         Ok(filters) => filters,

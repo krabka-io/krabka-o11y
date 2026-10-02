@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use krabka_blockstore::{Labels, MatchOp};
 use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
-use krabka_units::prelude::*;
 
 use super::*;
 use crate::{

@@ -13,6 +13,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -24,7 +25,7 @@ use axum::{
 use krabka_blockstore::{
     BlockKey, TimeRange, labels, read_log_block_from_object_store, series_fingerprint,
 };
-use krabka_broker::{Broker, BrokerConfig};
+use krabka_broker::{Broker, BrokerConfig, authorizer::SimpleAclAuthorizer};
 use krabka_client_admin::{
     AclEntry, AclOperation, AdminClient, CreateTopicSpec, PatternType, PermissionType, ResourceType,
 };
@@ -60,9 +61,11 @@ const BROKER_DEADLINE: Duration = Duration::from_secs(20);
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() {
     let broker_dir = tempfile::tempdir().expect("broker tempdir");
-    let broker = Broker::start(BrokerConfig::for_tests(broker_dir.path().to_path_buf()))
-        .await
-        .expect("broker start");
+    let mut broker_config = BrokerConfig::for_tests(broker_dir.path().to_path_buf());
+    broker_config.authorizer = Arc::new(SimpleAclAuthorizer::new(
+        std::iter::once("ANONYMOUS".to_owned()).collect(),
+    ));
+    let broker = Broker::start(broker_config).await.expect("broker start");
     let bootstrap = broker.listen_addr().to_string();
     let wal_topic = ServiceConfig::default().wal_topic;
     create_wal_topic(&bootstrap, &wal_topic).await;
@@ -415,7 +418,10 @@ async fn grant_tenant_wal_access_for_test(bootstrap: &str, wal_topic: &str, tena
         }])
         .await
         .expect("create the tenant's WAL topic ACL");
-    assert!(outcomes.iter().all(|outcome| outcome.error.is_none()));
+    assert!(
+        outcomes.iter().all(|outcome| outcome.error.is_none()),
+        "{outcomes:?}"
+    );
 }
 
 async fn create_wal_topic(bootstrap: &str, wal_topic: &str) {
@@ -425,12 +431,13 @@ async fn create_wal_topic(bootstrap: &str, wal_topic: &str) {
     admin
         .create_topics(
             &[CreateTopicSpec {
+                replica_assignments: std::collections::BTreeMap::default(),
                 name: wal_topic.to_string(),
                 partitions: 1,
                 replicas: 1,
                 configs: BTreeMap::default(),
             }],
-            secs(10),
+            krabka_client_admin::TopicMutationOptions::with_timeout(secs(10)),
         )
         .await
         .expect("create observability wal topic");

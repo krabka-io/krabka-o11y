@@ -669,7 +669,7 @@ mod tests {
         COL_CHILD_COUNT, COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, EngineOpts,
         EventRef, LinkRef, ScanJob, ScanOptions, TraceqlEngine,
     };
-    use krabka_units::{convert::ByteSizeExt as _, nanos};
+    use krabka_units::nanos;
     use object_store::{ObjectStore, buffered::BufWriter, memory::InMemory, path::Path};
     use parquet::{arrow::AsyncArrowWriter, file::properties::WriterProperties};
     use url::Url;
