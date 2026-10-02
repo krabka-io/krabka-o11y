@@ -18,22 +18,26 @@ The import validates the whole block before it writes anything:
 - It checks the CRC32C of the index table of contents, every index section, every series entry and every chunk.
 - It checks that series are in label order and that sample timestamps increase in each series.
 - It checks that every sample is in the range `[minTime, maxTime)` of `meta.json`.
-- It checks the `__org_id__` and `__tenant_id__` labels in `thanos.labels`. If one of them is present, it must be the tenant of the request.
+- It accepts the same `thanos.labels` external labels as Mimir: `__compactor_shard_id__` with a value such as `1_of_4`, and the deprecated `__org_id__`, `__ingester_id__` and `__shard_id__`. The `start` request fails with `400 unsupported external label` for any other label. As in Mimir, the import does not add an external label to the series.
+- If `__org_id__` is present, it must be the tenant of the request. Mimir ignores the value of this label, so this check is a Krabka addition.
 - It applies the limits in the table below. A block over a limit fails with the name of that limit.
 
 | Limit | Value |
 | --- | --- |
 | Index, chunk segment and tombstones bytes | 1 GiB |
 | Series | 1,000,000 |
-| Symbols | 4,194,304 |
+| Symbols | 4,000,000 |
 | Labels per series | 256 |
 | Chunks per series | 100,000 |
+| Chunks of all series | 25,000,000 |
 | Samples, before tombstones | 25,000,000 |
 | Spans, buckets or custom bounds of one histogram side | 65,536 |
 
 ## Atomicity and re-import
 
-An upload that fails leaves no index entry, so queries never see part of a block. The import writes the Parquet blocks first, then one import record, then the `.index` manifests that make the blocks queryable. The import record is the commit point. If the querier stops after the record and before the manifests, the next upload of the same content writes the missing manifests.
+An upload that fails leaves no index entry. The import writes the Parquet blocks first, then one import record, then the `.index` manifests that make the blocks queryable. The import record is the commit point. Before the record exists, a failure deletes what the import wrote. After the record exists, a retry completes the import.
+
+The manifests do not become live at the same time. A block with float and native-histogram samples has two manifests, and the import writes the float manifest first. A query that runs between the two writes can return the float samples without the histogram samples. If the querier stops between the two writes, `check` gives `validating`, and the float samples stay queryable without the histogram samples. Send `finish` again. The retry writes the missing manifest. An upload of the same content under a new ULID also writes it.
 
 The import is idempotent by content. The content hash is a SHA-256 over the `index`, each chunk segment and the `tombstones` file.
 

@@ -10,9 +10,10 @@
 //! A TSDB block holds float and histogram samples only. It carries no
 //! exemplars and no metric metadata, so the decoded rows hold none.
 //!
-//! [`publish_tsdb_import`] writes the decoded rows as metric blocks and makes
-//! them live through one commit point, the import record of the block
-//! content. [`tsdb_block_sha256`] names that content.
+//! [`publish_tsdb_import`] writes the decoded rows as metric blocks, then
+//! creates the import record of the block content as the commit point, then
+//! makes the blocks live one manifest at a time. [`tsdb_block_sha256`] names
+//! that content.
 
 use std::{collections::BTreeMap, sync::Arc};
 

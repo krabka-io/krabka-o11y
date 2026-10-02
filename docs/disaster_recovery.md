@@ -61,8 +61,8 @@ the backup manifest, command output, broker snapshot identity, and post-restore
 query-equivalence results together as the recovery evidence bundle.
 
 Native Prometheus TSDB block import is separate from backup restore. The Mimir
-block-upload endpoint imports Prometheus blocks with one atomic publication for
-each block. See [Migrating Prometheus TSDB Blocks](prometheus_tsdb_migration.md).
+block-upload endpoint imports Prometheus blocks with one commit point for each
+block. See [Migrating Prometheus TSDB Blocks](prometheus_tsdb_migration.md).
 An imported block is an ordinary metric block with an ordinary manifest. The
 import records are under `mimir-block-uploads/<tenant>/`. The backup prefix
 should include them, so that a restored cluster does not import the same block

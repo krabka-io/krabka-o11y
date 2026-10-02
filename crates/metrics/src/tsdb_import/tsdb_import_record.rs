@@ -3,8 +3,10 @@ use super::{Deserialize, Serialize, TsdbImportObject, TsdbImportStats};
 /// The persisted record of one imported TSDB block content.
 ///
 /// The import creates it under the content hash after every Parquet object of
-/// the block is written. Its creation is the commit point of the import. The
+/// the block is written. Its creation is the commit point of the import:
+/// after it, a retry completes the import and does not roll it back. The
 /// import sets [`Self::published`] after it writes every `.index` manifest.
+/// Until then, queries can read some of the objects and not the others.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TsdbImportRecord {
     /// The format version. Readers reject a version above [`Self::VERSION`]

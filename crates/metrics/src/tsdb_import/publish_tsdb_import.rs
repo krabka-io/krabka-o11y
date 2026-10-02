@@ -16,17 +16,22 @@ use super::{
 /// 2. It writes one Parquet block per sample kind. No manifest names them
 ///    yet, so the query path does not read them.
 /// 3. It creates the import record of the content hash with a create-only
-///    put. The record is the commit point.
-/// 4. It writes the `.index` manifest of each block. The manifests make the
-///    blocks live.
+///    put. The record is the commit point. Before it, a failure rolls the
+///    import back. After it, a retry completes the import.
+/// 4. It writes the `.index` manifest of each block, one at a time. Each
+///    manifest makes its block live when the put ends.
 /// 5. It marks the record published.
 ///
 /// An error before the commit point deletes the blocks and a binding that
 /// this call created. An error in step 4 or 5 deletes the manifests that this
 /// call wrote. Either way, a failed call leaves no index entry of the import.
-/// A process that stops during step 4 can leave some manifests live under an
-/// unpublished record. Any later import of the same content, under any ULID,
-/// writes the missing manifests and marks the record published.
+///
+/// The publication is not atomic for readers. A block with float and
+/// histogram samples has two manifests. A query that lists the manifests
+/// between the two puts reads the float samples only. A process that stops
+/// between the two puts leaves the float manifest live under an unpublished
+/// record until a later import of the same content, under any ULID, writes
+/// the missing manifest and marks the record published.
 ///
 /// If the record is already published, the function writes nothing and
 /// returns [`TsdbImportOutcome::AlreadyImported`] with the stored record, so
