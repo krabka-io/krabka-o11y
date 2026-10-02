@@ -73,10 +73,15 @@ checksums.
 Each signal runs eight phases in this order. The default phase is 12 seconds,
 and `KRABKA_SOAK_PHASE_SECONDS` changes it. Each phase starts with a warm-up of
 one quarter of the phase, and the harness discards the measurements from the
-warm-up. The harness counts each operation that ends after the warm-up. No
-loop starts an operation after the phase ends, but an operation in progress
-runs to its end. The measured window then extends to the last operation, so a
-slow query is measured whole and is not dropped.
+warm-up. The warm-up and the measured window are two rounds of the same load.
+In each round, no loop starts an operation after the round ends, but an
+operation in progress runs to its end. The harness waits for the last warm-up
+operation to end. Then it reads the object-store counters and starts the
+measured round. Thus each operation is in one round only, and its requests,
+its latency, and its count are all in that round. The measured window extends
+to the last operation, so a slow query is measured whole and is not dropped.
+The warm-up also extends to its last operation, and `warmup_seconds` gives
+that full time.
 
 | Phase | Load |
 | --- | --- |
@@ -120,7 +125,7 @@ Each entry in `entries` has a `signal` and a `phase`, and these fields:
 
 | Field | Content |
 | --- | --- |
-| `warmup_seconds`, `duration_seconds` | The discarded warm-up and the measured window |
+| `warmup_seconds`, `duration_seconds` | The discarded warm-up, until its last operation ended, and the measured window |
 | `ingest` | Attempted, accepted, and rejected batches and rows, accepted and rejected rows for each second, and `latency_us` |
 | `query` | Count, errors, queries for each second, rows seen, and `latency_us` |
 | `latency_us` | Count, p50, p95, p99, and max in microseconds, and `cv` |

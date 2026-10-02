@@ -1,5 +1,11 @@
 //! Drives one phase: writers, readers and a maintenance loop against one
 //! signal, for a warm-up and then a measured window.
+//!
+//! The warm-up and the measured window are two rounds of the same load. The
+//! harness waits for every warm-up operation to end before it reads the
+//! object-store counters and starts the measured round. Each operation thus
+//! falls entirely in one round, and the counters, the operation counts and the
+//! latencies of the measured round all cover the same operations.
 
 use std::{
     collections::BTreeMap,
@@ -11,6 +17,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
+use tokio::task::JoinHandle;
 
 use super::{
     Batch, Signal, WriteOutcome,
@@ -127,38 +134,62 @@ impl Stats {
     }
 }
 
-/// The clock one phase measures against.
+/// The clock of one round of load: the warm-up or the measured window.
 ///
 /// No loop starts an operation after `until`, but an operation that started
-/// before it runs to its end. The harness counts every operation that ends
-/// after `measure_from`, so a slow operation is measured whole and is never
-/// dropped for straddling an edge of the window.
+/// before it runs to its end. A round thus holds every operation that started
+/// in it, whole, and only those.
 #[derive(Clone, Copy)]
 struct Window {
-    measure_from: Instant,
+    from: Instant,
     until: Instant,
 }
 
 impl Window {
-    /// The offset into the measured window of an operation that ended at
-    /// `ended`, or `None` when it ended during warm-up.
-    fn offset(self, ended: Instant) -> Option<Duration> {
-        ended.checked_duration_since(self.measure_from)
+    fn starting_now(length: Duration) -> Self {
+        let from = Instant::now();
+        Self {
+            from,
+            until: from + length,
+        }
+    }
+
+    /// The offset into the round of an operation that started at `started`.
+    fn offset(self, started: Instant) -> Duration {
+        started.saturating_duration_since(self.from)
     }
 
     fn open(self) -> bool {
         Instant::now() < self.until
     }
+
+    /// Sleeps for `gap`, or until the round ends if that is sooner. A loop
+    /// that waits past `until` adds idle time to the round and lowers its
+    /// rates, so no wait goes past it.
+    async fn pause(self, gap: Duration) {
+        tokio::time::sleep_until(self.until.min(Instant::now() + gap).into()).await;
+    }
 }
 
 /// Runs `plan` and returns the entry for it, without the signal and phase
 /// names, which the caller adds.
+///
+/// The warm-up round runs first, and its numbers are discarded. The harness
+/// waits for its last operation to end, then reads the object-store counters
+/// and starts the measured round. So the warm-up lasts `plan.warmup` plus the
+/// time the slowest warm-up operation runs past it, and the entry reports
+/// that whole time as `warmup_seconds`.
 pub async fn run(ctx: &Context, plan: &Plan) -> Value {
     let start = Instant::now();
-    let window = Window {
-        measure_from: start + plan.warmup,
-        until: start + plan.warmup + plan.duration,
-    };
+    let discarded = Arc::new(Mutex::new(Stats::default()));
+    drain(spawn_load(
+        ctx,
+        plan,
+        Window::starting_now(plan.warmup),
+        &discarded,
+    ))
+    .await;
+
     let mut initial = Stats::default();
     // Every tenant the plan drives has an entry, so a tenant whose every
     // operation failed or never ended reports zeros, not a missing object.
@@ -171,51 +202,19 @@ pub async fn run(ctx: &Context, plan: &Plan) -> Value {
         initial.tenant(tenant);
     }
     let stats = Arc::new(Mutex::new(initial));
-    let mut tasks = Vec::new();
-
-    for group in &plan.writers {
-        for _ in 0..group.count {
-            tasks.push(tokio::spawn(write_loop(
-                ctx.clone(),
-                *group,
-                window,
-                Arc::clone(&stats),
-            )));
-        }
-    }
-    for group in &plan.readers {
-        for _ in 0..group.count {
-            tasks.push(tokio::spawn(read_loop(
-                ctx.clone(),
-                *group,
-                window,
-                Arc::clone(&stats),
-            )));
-        }
-    }
-    if let Some(maintenance) = plan.maintenance {
-        tasks.push(tokio::spawn(maintenance_loop(
-            ctx.clone(),
-            maintenance,
-            window,
-            Arc::clone(&stats),
-        )));
-    }
-
-    tokio::time::sleep_until(window.measure_from.into()).await;
+    // No warm-up operation is in progress, so every request the counters see
+    // from here on belongs to an operation of the measured round.
     let meters_before = ctx.meters.snapshot();
     let rss = RssSampler::start();
-    for task in tasks {
-        task.await.expect("a soak task does not panic");
-    }
-    // The window ends when the last operation does, which is `until` or
+    let window = Window::starting_now(plan.duration);
+    let warmup = window.from.duration_since(start);
+    drain(spawn_load(ctx, plan, window, &stats)).await;
+    // The round ends when its last operation does, which is `until` or
     // later, so the rates, the object-store counters and the peak memory all
     // cover the same operations.
     let meters_after = ctx.meters.snapshot();
     let rss = rss.finish().await;
-    let measured = Instant::now()
-        .max(window.until)
-        .duration_since(window.measure_from);
+    let measured = Instant::now().max(window.until).duration_since(window.from);
 
     let stats = std::mem::take(&mut *stats.lock().expect("the stats lock is not poisoned"));
     let (writes, reads) = stats
@@ -239,7 +238,7 @@ pub async fn run(ctx: &Context, plan: &Plan) -> Value {
 
     json!({
         "tenant": plan.primary,
-        "warmup_seconds": plan.warmup.as_secs_f64(),
+        "warmup_seconds": warmup.as_secs_f64(),
         "duration_seconds": measured.as_secs_f64(),
         "load": {
             "writers": plan.writers.iter().map(|w| json!({
@@ -271,6 +270,53 @@ pub async fn run(ctx: &Context, plan: &Plan) -> Value {
     })
 }
 
+/// Starts every writer, reader and maintenance loop of `plan` for one round,
+/// all recording into `stats`.
+fn spawn_load(
+    ctx: &Context,
+    plan: &Plan,
+    window: Window,
+    stats: &Arc<Mutex<Stats>>,
+) -> Vec<JoinHandle<()>> {
+    let mut tasks = Vec::new();
+    for group in &plan.writers {
+        for _ in 0..group.count {
+            tasks.push(tokio::spawn(write_loop(
+                ctx.clone(),
+                *group,
+                window,
+                Arc::clone(stats),
+            )));
+        }
+    }
+    for group in &plan.readers {
+        for _ in 0..group.count {
+            tasks.push(tokio::spawn(read_loop(
+                ctx.clone(),
+                *group,
+                window,
+                Arc::clone(stats),
+            )));
+        }
+    }
+    if let Some(maintenance) = plan.maintenance {
+        tasks.push(tokio::spawn(maintenance_loop(
+            ctx.clone(),
+            maintenance,
+            window,
+            Arc::clone(stats),
+        )));
+    }
+    tasks
+}
+
+/// Waits for every loop of one round to end.
+async fn drain(tasks: Vec<JoinHandle<()>>) {
+    for task in tasks {
+        task.await.expect("a soak task does not panic");
+    }
+}
+
 async fn write_loop(ctx: Context, group: Writers, window: Window, stats: Arc<Mutex<Stats>>) {
     while window.open() {
         let batch = Batch {
@@ -281,12 +327,14 @@ async fn write_loop(ctx: Context, group: Writers, window: Window, stats: Arc<Mut
         let started = Instant::now();
         let outcome = ctx.signal.write(group.tenant, batch).await;
         let elapsed = started.elapsed();
-        if let Some(at) = window.offset(started + elapsed) {
+        {
             let mut stats = stats.lock().expect("the stats lock is not poisoned");
             let tenant = stats.tenant(group.tenant);
             match outcome {
                 Ok(WriteOutcome::Accepted) => {
-                    tenant.write_latency.observe(at, elapsed);
+                    tenant
+                        .write_latency
+                        .observe(window.offset(started), elapsed);
                     tenant.accepted_batches += 1;
                     tenant.accepted_rows += batch.rows();
                 }
@@ -301,7 +349,7 @@ async fn write_loop(ctx: Context, group: Writers, window: Window, stats: Arc<Mut
             }
         }
         if group.paced {
-            tokio::time::sleep(ctx.config.write_interval).await;
+            window.pause(ctx.config.write_interval).await;
         } else {
             tokio::task::yield_now().await;
         }
@@ -316,13 +364,15 @@ async fn read_loop(ctx: Context, group: Readers, window: Window, stats: Arc<Mute
             .query(group.tenant, group.window, group.fresh)
             .await;
         let elapsed = started.elapsed();
-        if let Some(at) = window.offset(started + elapsed) {
+        {
             let mut stats = stats.lock().expect("the stats lock is not poisoned");
             let tenant = stats.tenant(group.tenant);
             tenant.queries += 1;
             match outcome {
                 Ok(rows) => {
-                    tenant.query_latency.observe(at, elapsed);
+                    tenant
+                        .query_latency
+                        .observe(window.offset(started), elapsed);
                     tenant.rows_seen = rows;
                 }
                 Err(message) => {
@@ -334,7 +384,7 @@ async fn read_loop(ctx: Context, group: Readers, window: Window, stats: Arc<Mute
         if group.interval.is_zero() {
             tokio::task::yield_now().await;
         } else {
-            tokio::time::sleep(group.interval).await;
+            window.pause(group.interval).await;
         }
     }
 }
@@ -346,7 +396,7 @@ async fn maintenance_loop(
     stats: Arc<Mutex<Stats>>,
 ) {
     loop {
-        tokio::time::sleep(ctx.config.maintenance_interval).await;
+        window.pause(ctx.config.maintenance_interval).await;
         if !window.open() {
             return;
         }
@@ -356,14 +406,14 @@ async fn maintenance_loop(
             Maintenance::Expire(secs) => ctx.signal.expire(secs).await,
         };
         let elapsed = started.elapsed();
-        let Some(at) = window.offset(started + elapsed) else {
-            continue;
-        };
         let mut stats = stats.lock().expect("the stats lock is not poisoned");
         stats.maintenance.passes += 1;
         match outcome {
             Ok(report) => {
-                stats.maintenance.latency.observe(at, elapsed);
+                stats
+                    .maintenance
+                    .latency
+                    .observe(window.offset(started), elapsed);
                 stats.maintenance.last = Some(report);
             }
             Err(message) => {
@@ -450,4 +500,149 @@ pub fn meets(
         "/query/latency_us/p99",
         objectives.query_p99,
     ) && error_rate <= objectives.max_error_rate
+}
+
+#[cfg(test)]
+mod tests {
+    use assert2::check;
+    use async_trait::async_trait;
+    use object_store::{
+        ObjectStore, ObjectStoreExt as _, PutPayload, memory::InMemory, path::Path,
+    };
+
+    use super::*;
+    use crate::support::{Stores, config::Config, err};
+
+    /// How long one fake operation runs between its two requests.
+    const STRADDLE: Duration = Duration::from_millis(100);
+
+    /// A signal whose every write is two puts and whose every query is two
+    /// listings, each pair [`STRADDLE`] apart. An operation that is in
+    /// progress at the end of the warm-up has issued one request before it
+    /// and one after it.
+    struct TwoRequests {
+        stores: Stores,
+    }
+
+    #[async_trait]
+    impl Signal for TwoRequests {
+        async fn write(&self, _tenant: &str, batch: Batch) -> Result<WriteOutcome, String> {
+            for half in ["a", "b"] {
+                let path = Path::from(format!("block-{}-{half}", batch.seq));
+                self.stores
+                    .write
+                    .put(&path, PutPayload::from_static(b"x"))
+                    .await
+                    .map_err(err)?;
+                if half == "a" {
+                    tokio::time::sleep(STRADDLE).await;
+                }
+            }
+            Ok(WriteOutcome::Accepted)
+        }
+
+        async fn query(
+            &self,
+            _tenant: &str,
+            _window: Duration,
+            _fresh: bool,
+        ) -> Result<u64, String> {
+            self.stores
+                .read
+                .list_with_delimiter(None)
+                .await
+                .map_err(err)?;
+            tokio::time::sleep(STRADDLE).await;
+            self.stores
+                .read
+                .list_with_delimiter(None)
+                .await
+                .map_err(err)?;
+            Ok(1)
+        }
+
+        async fn compact(&self) -> Result<Value, String> {
+            Ok(Value::Null)
+        }
+
+        async fn expire(&self, _retention_secs: u32) -> Result<Value, String> {
+            Ok(Value::Null)
+        }
+
+        fn limit(&self, _tenant: &str, _rows_per_sec: u32, _burst_rows: u64) {}
+
+        fn rate_limiter(&self) -> Value {
+            Value::Null
+        }
+    }
+
+    #[tokio::test]
+    async fn a_pause_ends_with_its_round() {
+        let window = Window::starting_now(Duration::from_millis(50));
+        window.pause(Duration::from_mins(1)).await;
+        check!(!window.open());
+        check!(window.from.elapsed() < Duration::from_secs(10));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_operation_that_spans_the_warmup_edge_is_not_measured_in_part() {
+        let backing: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let (stores, meters) = StoreMeters::wrap(&backing, "runner-test");
+        let ctx = Context {
+            signal: Arc::new(TwoRequests {
+                stores: stores.clone(),
+            }),
+            meters,
+            seq: Arc::new(AtomicI64::new(1)),
+            config: Arc::new(Config::from_env()),
+        };
+        // An unpaced writer and an unpaced reader each start an operation
+        // every STRADDLE, so one of each is in progress when the warm-up
+        // ends. A warm-up that is not a whole number of operations makes that
+        // so whatever the scheduling.
+        let plan = Plan {
+            writers: vec![Writers {
+                tenant: "soak",
+                count: 1,
+                series: 1,
+                paced: false,
+            }],
+            readers: vec![Readers {
+                tenant: "soak",
+                count: 1,
+                window: Duration::from_secs(1),
+                fresh: false,
+                interval: Duration::ZERO,
+            }],
+            maintenance: None,
+            primary: "soak",
+            warmup: STRADDLE * 3 / 2,
+            duration: STRADDLE * 3,
+        };
+
+        let entry = run(&ctx, &plan).await;
+
+        let side = |path: &str| {
+            let store = &entry["object_store"][path];
+            (
+                store["ops"].as_u64(),
+                store["total_requests"].as_u64(),
+                store["requests_per_op"].as_f64(),
+            )
+        };
+        let (write_ops, write_requests, write_ratio) = side("write");
+        let (read_ops, read_requests, read_ratio) = side("read");
+        check!(write_ops.is_some_and(|ops| ops > 0));
+        check!(write_requests == write_ops.map(|ops| ops * 2));
+        check!(write_ratio == Some(2.0));
+        check!(read_ops.is_some_and(|ops| ops > 0));
+        check!(read_requests == read_ops.map(|ops| ops * 2));
+        check!(read_ratio == Some(2.0));
+        check!(entry["ingest"]["accepted_batches"].as_u64() == write_ops);
+        check!(entry["ingest"]["latency_us"]["count"].as_u64() == write_ops);
+        check!(entry["query"]["latency_us"]["count"].as_u64() == read_ops);
+        // The warm-up ran past its nominal length to let its last operation
+        // end, and the entry says so.
+        check!(entry["warmup_seconds"].as_f64() >= Some(plan.warmup.as_secs_f64()));
+    }
 }
