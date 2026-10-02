@@ -147,7 +147,10 @@ impl RequestSecurity {
 impl<S: Send + Sync> FromRequestParts<S> for RequestSecurity {
     type Rejection = MissingPrincipal;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        Self::from_extensions(&parts.extensions)
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
+        std::future::ready(Self::from_extensions(&parts.extensions))
     }
 }

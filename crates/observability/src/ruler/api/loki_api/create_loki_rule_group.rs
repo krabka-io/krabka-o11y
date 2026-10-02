@@ -20,7 +20,7 @@ pub(crate) async fn create_loki_rule_group(
         match authorized_ruler_tenant(&state, &security, &headers, TenantErrorSurface::Ruler).await
         {
             Ok(tenant) => tenant,
-            Err(response) => return response,
+            Err(error) => return error.into_response(),
         };
     let Ok(rule_group) = parse_loki_rule_group(&body) else {
         return text_response(StatusCode::BAD_REQUEST, "unable to decoded rule group\n");

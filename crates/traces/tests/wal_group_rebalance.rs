@@ -161,7 +161,7 @@ async fn fill(bootstrap: &str, topic: &str) {
                     ..ProducerRecord::default()
                 })
                 .await;
-            assert!(let Ok(Ok(_)) = ack.await);
+            assert!(let Ok(_) = ack);
         }
     }
 }

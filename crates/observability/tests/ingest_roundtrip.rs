@@ -425,12 +425,13 @@ async fn create_wal_topic(bootstrap: &str, wal_topic: &str) {
     admin
         .create_topics(
             &[CreateTopicSpec {
+                replica_assignments: std::collections::BTreeMap::default(),
                 name: wal_topic.to_string(),
                 partitions: 1,
                 replicas: 1,
                 configs: BTreeMap::default(),
             }],
-            secs(10),
+            krabka_client_admin::TopicMutationOptions::with_timeout(secs(10)),
         )
         .await
         .expect("create observability wal topic");

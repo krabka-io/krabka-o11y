@@ -17,7 +17,7 @@ impl KafkaSink {
     /// Hands one record to the producer and returns the future for its ack.
     ///
     /// The two halves are separate because only the first decides order.
-    /// `Producer::send` appends the record to the partition accumulator, and
+    /// `Producer::enqueue` appends the record to the partition accumulator, and
     /// the returned future resolves when the broker acks it.
     async fn enqueue(
         &self,
@@ -34,11 +34,11 @@ impl KafkaSink {
         // span is active or OTLP is disabled.
         let ack = self
             .producer
-            .send(wal_producer_record(key, value, current_trace_headers()))
-            .await;
+            .enqueue(wal_producer_record(key, value, current_trace_headers()))
+            .await
+            .map_err(|error| ProduceError::Append(error.to_string()))?;
         Ok(async move {
             ack.await
-                .map_err(|error| ProduceError::Append(error.to_string()))?
                 .map_err(|error| ProduceError::Append(error.to_string()))?;
             Ok(())
         })

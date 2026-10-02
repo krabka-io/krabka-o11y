@@ -169,7 +169,7 @@ toolchains = use_extension("@rules_rs//rs/toolchains:module_extension.bzl", "too
 # Named rather than left as `default_rust_toolchains`, which
 # aspect_rules_lint_rust also claims: rules_rs refuses two configurations under
 # one repo name, and that module wants 1.92.0 / edition 2021 while this
-# repository is 1.97.1 / edition 2024. Both toolchains get registered; ours is
+# repository is 1.98.1 / edition 2024. Both toolchains get registered; ours is
 # registered from the root module, which is what makes it the one that resolves.
 toolchains.toolchain(
     name = "krabka_rust_toolchains",
@@ -182,9 +182,9 @@ toolchains.toolchain(
     # exactly this.
     rustfmt_version = "nightly/2026-08-14",
     # Matches rust-toolchain.toml. These had drifted apart -- Bazel built with
-    # 1.97.0 while Cargo used 1.97.1 -- which is precisely the split the "one
+    # 1.97.0 while Cargo used 1.98.1 -- which is precisely the split the "one
     # dependency source of truth" arrangement exists to avoid.
-    version = "1.97.1",
+    version = "1.98.1",
 )
 use_repo(toolchains, "default_rust_toolchains", "krabka_rust_toolchains")
 
@@ -255,6 +255,7 @@ SIBLING_MEMBERS = {
     "krabka-client-core": "crates/client-core",
     "krabka-client-producer": "crates/client-producer",
     "krabka-compression": "crates/compression",
+    "krabka-format": "crates/format",
     "krabka-ids": "crates/ids",
     "krabka-kraft-core": "crates/kraft-core",
     "krabka-log": "crates/log",

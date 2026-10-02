@@ -52,16 +52,14 @@ async fn takeover_fences_the_old_ruler_output_producer() {
     check!(second_token > first_token);
 
     let transaction = stale_producer.begin_transaction().await.unwrap();
-    let acknowledgement = stale_producer
-        .send(ProducerRecord {
-            topic: OUTPUT_TOPIC.to_owned(),
-            partition: Some(0),
-            key: Some(b"tenant-a".to_vec().into()),
-            value: Some(b"ALERTS".to_vec().into()),
-            headers: Vec::new(),
-            timestamp_ms: None,
-        })
-        .await;
+    let acknowledgement = stale_producer.send(ProducerRecord {
+        topic: OUTPUT_TOPIC.to_owned(),
+        partition: Some(0),
+        key: Some(b"tenant-a".to_vec().into()),
+        value: Some(b"ALERTS".to_vec().into()),
+        headers: Vec::new(),
+        timestamp_ms: None,
+    });
     let delivery = tokio::time::timeout(Duration::from_secs(20), acknowledgement)
         .await
         .expect("stale produce deadline");
@@ -126,12 +124,13 @@ async fn create_output_topic(bootstrap: &str) {
     let outcomes = admin
         .create_topics(
             &[CreateTopicSpec {
+                replica_assignments: std::collections::BTreeMap::default(),
                 name: OUTPUT_TOPIC.to_owned(),
                 partitions: 1,
                 replicas: 1,
                 configs: BTreeMap::default(),
             }],
-            secs(10),
+            krabka_client_admin::TopicMutationOptions::with_timeout(secs(10)),
         )
         .await
         .expect("create output topic");
