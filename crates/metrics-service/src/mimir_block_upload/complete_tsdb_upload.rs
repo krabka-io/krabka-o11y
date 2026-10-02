@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use krabka_metrics::{
     TsdbBlockFiles, TsdbBlockMeta, TsdbImportLimits, TsdbImportOutcome, TsdbImportTarget,
     TsdbPublishError, decode_tsdb_block, publish_tsdb_import, tsdb_block_sha256,
@@ -37,6 +39,8 @@ pub async fn complete_tsdb_upload(
 ) -> Result<StoredUploadState, String> {
     let limits = TsdbImportLimits::default();
     let failed = |message: String| Ok(StoredUploadState::new(UploadResult::Failed, Some(message)));
+    // Mimir `validateMaximumBlockSize` adds the size of every entry, also
+    // of an entry whose path is repeated.
     let declared = meta
         .thanos
         .files
@@ -52,19 +56,22 @@ pub async fn complete_tsdb_upload(
         ));
     }
 
-    let mut chunk_names: Vec<&str> = meta
+    // Mimir stores one object for each path, so a path that `thanos.files`
+    // lists twice names one file. The import reads each path once, in
+    // file-name order. A repeated chunk segment would otherwise change the
+    // content hash of the same samples.
+    let paths: BTreeSet<&str> = meta
         .thanos
         .files
         .iter()
         .map(|file| file.rel_path.as_str())
+        .collect();
+    let chunk_names: Vec<&str> = paths
+        .iter()
+        .copied()
         .filter(|path| path.starts_with("chunks/"))
         .collect();
-    chunk_names.sort_unstable();
-    let has_tombstones = meta
-        .thanos
-        .files
-        .iter()
-        .any(|file| file.rel_path == "tombstones");
+    let has_tombstones = paths.contains("tombstones");
     let (index, chunks, tombstones) =
         match uploaded_files(state, tenant, block, &chunk_names, has_tombstones).await {
             Ok(files) => files,

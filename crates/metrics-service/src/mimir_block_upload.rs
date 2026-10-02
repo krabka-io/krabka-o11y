@@ -37,8 +37,9 @@ struct UploadMeta {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct ThanosMeta {
     files: Vec<UploadFile>,
-    /// The external labels of the block. A Prometheus TSDB import checks the
-    /// tenant labels among them against the tenant of the request.
+    /// The external labels of the block. `start` accepts only the labels that
+    /// Mimir accepts. A Prometheus TSDB import checks the `__org_id__` label
+    /// against the tenant of the request.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     labels: BTreeMap<String, String>,
 }
@@ -206,9 +207,13 @@ pub(crate) async fn finish_block_upload(
         return internal(error);
     }
 
-    let saved = if uploaded_tsdb_index(&state, &tenant, &block).await {
-        // A store failure leaves the upload validating, so that a retry of
-        // this request imports the block again.
+    // A store failure leaves the upload validating, so that a retry of this
+    // request imports the block again.
+    let is_tsdb = match uploaded_tsdb_index(&state, &tenant, &block).await {
+        Ok(is_tsdb) => is_tsdb,
+        Err(error) => return internal(error),
+    };
+    let saved = if is_tsdb {
         match complete_tsdb_upload(&state, &tenant, &block, &meta).await {
             Ok(saved) => saved,
             Err(error) => return internal(error),
@@ -293,6 +298,7 @@ fn parse_meta(body: &[u8], block: &str) -> Result<UploadMeta, String> {
     let mut meta = serde_json::from_slice::<UploadMeta>(body)
         .map_err(|_| "malformed request body".to_owned())?;
     block.clone_into(&mut meta.ulid);
+    check_external_labels(&meta.thanos.labels)?;
     if meta.version != 1 {
         return Err("version must be 1".to_owned());
     }
@@ -316,6 +322,51 @@ fn parse_meta(body: &[u8], block: &str) -> Result<UploadMeta, String> {
     Ok(meta)
 }
 
+/// Checks the `thanos.labels` external labels of a block as Mimir
+/// `sanitizeMeta` does in `pkg/compactor/block_upload.go`.
+///
+/// Mimir keeps `__compactor_shard_id__` with a valid value and accepts an
+/// empty one. It accepts the deprecated `__org_id__`, `__ingester_id__` and
+/// `__shard_id__` labels. It rejects every other label. Mimir does not add an
+/// external label to the series of the block, and Krabka does not either.
+fn check_external_labels(labels: &BTreeMap<String, String>) -> Result<(), String> {
+    const COMPACTOR_SHARD_ID: &str = "__compactor_shard_id__";
+    const DEPRECATED: [&str; 3] = ["__org_id__", "__ingester_id__", "__shard_id__"];
+    for (name, value) in labels {
+        if name == COMPACTOR_SHARD_ID {
+            if !value.is_empty() && !valid_shard_id(value) {
+                return Err(format!(
+                    "invalid {COMPACTOR_SHARD_ID} external label: {value:?}"
+                ));
+            }
+        } else if !DEPRECATED.contains(&name.as_str()) {
+            return Err(format!("unsupported external label: {name}"));
+        }
+    }
+    Ok(())
+}
+
+/// Whether `value` is a shard ID `<index>_of_<count>` that Mimir
+/// `sharding.ParseShardIDLabelValue` accepts: both numbers are decimal, and
+/// `1 <= index <= count`.
+fn valid_shard_id(value: &str) -> bool {
+    // Go `strconv.ParseUint` accepts only decimal digits, and Rust
+    // `u64::from_str` also accepts a leading `+`, so the digits are checked
+    // first.
+    let number = |text: &str| {
+        (!text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| text.parse::<u64>().ok())
+            .flatten()
+    };
+    let mut parts = value.split('_');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(index), Some("of"), Some(count), None) => number(index)
+            .zip(number(count))
+            .is_some_and(|(index, count)| index >= 1 && index <= count),
+        _ => false,
+    }
+}
+
 /// Whether a block may hold a file at `path`.
 ///
 /// Mimir accepts `index` and `chunks/NNNNNN`. Krabka also accepts
@@ -336,15 +387,26 @@ fn upload_path(query: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-/// Whether the uploaded index of the block is a Prometheus TSDB index. An
-/// index that cannot be read goes to the native path, which reports the
-/// failure.
-async fn uploaded_tsdb_index(state: &MimirTenantAdminState, tenant: &str, block: &str) -> bool {
-    state
-        .store
-        .get_range(&upload_object_key(tenant, block, "files/index"), 0..4)
-        .await
-        .is_ok_and(|magic| magic.as_ref() == TSDB_INDEX_MAGIC)
+/// Whether the uploaded index of the block is a Prometheus TSDB index.
+///
+/// A missing index goes to the native path, which reports the failure.
+///
+/// # Errors
+///
+/// Returns the object store failure that stopped the read of the index, so
+/// that the caller keeps the upload validating and a retry classifies the
+/// block again.
+async fn uploaded_tsdb_index(
+    state: &MimirTenantAdminState,
+    tenant: &str,
+    block: &str,
+) -> Result<bool, String> {
+    let key = upload_object_key(tenant, block, "files/index");
+    match state.store.get_range(&key, 0..4).await {
+        Ok(magic) => Ok(magic.as_ref() == TSDB_INDEX_MAGIC),
+        Err(object_store::Error::NotFound { .. }) => Ok(false),
+        Err(error) => Err(format!("read {key}: {error}")),
+    }
 }
 
 async fn complete_native_upload(

@@ -17,19 +17,26 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     net::SocketAddr,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
 use assert2::{assert, check};
-use futures::TryStreamExt as _;
+use async_trait::async_trait;
+use futures::{TryStreamExt as _, stream::BoxStream};
 use krabka_metrics_service::{
     MimirTenantAdminState, RefreshingMetricBlockStore, mimir_tenant_admin_router,
     serve_prometheus_router,
 };
 use krabka_observability::server_security::ServerSecurity;
 use krabka_promql::{EngineOpts, PrometheusApiState, WalHead, prometheus_router};
-use object_store::{ObjectStore, memory::InMemory, path::Path};
+use object_store::{
+    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
+    PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
+};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use testcontainers::{
@@ -77,7 +84,10 @@ struct Krabka {
 
 impl Krabka {
     async fn start() -> TestResult<Self> {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        Self::start_with(Arc::new(InMemory::new())).await
+    }
+
+    async fn start_with(store: Arc<dyn ObjectStore>) -> TestResult<Self> {
         let head = WalHead::new();
         let query = Arc::new(RefreshingMetricBlockStore::new(
             Arc::clone(&store),
@@ -513,6 +523,219 @@ async fn an_invalid_prometheus_block_fails_and_leaves_no_index_entry() -> TestRe
             "case: {name}"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_repeated_file_path_is_read_once() -> TestResult {
+    let krabka = Krabka::start().await?;
+    krabka.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
+    let manifests = krabka.manifest_keys().await?;
+    let mut repeated = UploadBlock::fixture();
+    let chunks = repeated.declared[1].clone();
+    repeated.declared.push(chunks);
+
+    let check_body = krabka.upload(OTHER_ULID, &repeated).await?;
+
+    check!(check_body == json!({"result": "complete", "existingBlock": FIXTURE_ULID}));
+    check!(krabka.manifest_keys().await? == manifests);
+    Ok(())
+}
+
+#[tokio::test]
+async fn start_accepts_only_the_external_labels_that_mimir_accepts() -> TestResult {
+    let cases = [
+        (
+            "cluster",
+            "prod",
+            StatusCode::BAD_REQUEST,
+            "unsupported external label: cluster\n",
+        ),
+        (
+            "__tenant_id__",
+            TENANT,
+            StatusCode::BAD_REQUEST,
+            "unsupported external label: __tenant_id__\n",
+        ),
+        (
+            "__compactor_shard_id__",
+            "0_of_4",
+            StatusCode::BAD_REQUEST,
+            "invalid __compactor_shard_id__ external label: \"0_of_4\"\n",
+        ),
+        (
+            "__compactor_shard_id__",
+            "5_of_4",
+            StatusCode::BAD_REQUEST,
+            "invalid __compactor_shard_id__ external label: \"5_of_4\"\n",
+        ),
+        (
+            "__compactor_shard_id__",
+            "+1_of_4",
+            StatusCode::BAD_REQUEST,
+            "invalid __compactor_shard_id__ external label: \"+1_of_4\"\n",
+        ),
+        (
+            "__compactor_shard_id__",
+            "1-of-4",
+            StatusCode::BAD_REQUEST,
+            "invalid __compactor_shard_id__ external label: \"1-of-4\"\n",
+        ),
+        ("__compactor_shard_id__", "4_of_4", StatusCode::OK, ""),
+        ("__compactor_shard_id__", "", StatusCode::OK, ""),
+        ("__ingester_id__", "ingester-1", StatusCode::OK, ""),
+        ("__shard_id__", "1", StatusCode::OK, ""),
+    ];
+
+    for (name, value, status, body) in cases {
+        let krabka = Krabka::start().await?;
+        let mut block = UploadBlock::fixture();
+        block.labels.insert(name.to_owned(), value.to_owned());
+
+        let response = krabka
+            .post(
+                krabka.upload_url(FIXTURE_ULID, "start"),
+                block.meta(FIXTURE_ULID),
+            )
+            .await?;
+
+        check!(
+            response == (status, body.to_owned()),
+            "label: {name}={value:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn accepted_external_labels_are_not_added_to_the_imported_series() -> TestResult {
+    let krabka = Krabka::start().await?;
+    let mut block = UploadBlock::fixture();
+    block
+        .labels
+        .insert("__compactor_shard_id__".to_owned(), "1_of_2".to_owned());
+
+    let check_body = krabka.upload(FIXTURE_ULID, &block).await?;
+
+    check!(check_body == json!({"result": "complete"}));
+    check!(all_imported_samples(&krabka).await? == expected_series());
+    Ok(())
+}
+
+/// An in-memory store whose ranged reads fail while [`Self::fail_ranges`] is
+/// set.
+#[derive(Debug, Default)]
+struct RangeFailingStore {
+    inner: InMemory,
+    fail_ranges: AtomicBool,
+}
+
+impl std::fmt::Display for RangeFailingStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("RangeFailingStore")
+    }
+}
+
+#[async_trait]
+impl ObjectStore for RangeFailingStore {
+    async fn put_opts(
+        &self,
+        location: &Path,
+        payload: PutPayload,
+        options: PutOptions,
+    ) -> object_store::Result<PutResult> {
+        self.inner.put_opts(location, payload, options).await
+    }
+
+    async fn put_multipart_opts(
+        &self,
+        location: &Path,
+        options: PutMultipartOptions,
+    ) -> object_store::Result<Box<dyn MultipartUpload>> {
+        self.inner.put_multipart_opts(location, options).await
+    }
+
+    async fn get_opts(
+        &self,
+        location: &Path,
+        options: GetOptions,
+    ) -> object_store::Result<GetResult> {
+        if options.range.is_some() && self.fail_ranges.load(Ordering::SeqCst) {
+            return Err(object_store::Error::Generic {
+                store: "RangeFailingStore",
+                source: "the ranged read fails in the test".into(),
+            });
+        }
+        self.inner.get_opts(location, options).await
+    }
+
+    fn delete_stream(
+        &self,
+        locations: BoxStream<'static, object_store::Result<Path>>,
+    ) -> BoxStream<'static, object_store::Result<Path>> {
+        self.inner.delete_stream(locations)
+    }
+
+    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
+        self.inner.list(prefix)
+    }
+
+    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
+        self.inner.list_with_delimiter(prefix).await
+    }
+
+    async fn copy_opts(
+        &self,
+        from: &Path,
+        to: &Path,
+        options: CopyOptions,
+    ) -> object_store::Result<()> {
+        self.inner.copy_opts(from, to, options).await
+    }
+}
+
+#[tokio::test]
+async fn a_store_failure_on_the_index_probe_leaves_the_upload_validating() -> TestResult {
+    let store = Arc::new(RangeFailingStore::default());
+    let krabka = Krabka::start_with(store.clone()).await?;
+    let block = UploadBlock::fixture();
+    let (status, body) = krabka
+        .post(
+            krabka.upload_url(FIXTURE_ULID, "start"),
+            block.meta(FIXTURE_ULID),
+        )
+        .await?;
+    assert!(status == StatusCode::OK, "start: {body}");
+    for (path, bytes) in &block.uploaded {
+        let url = format!(
+            "{}?path={}",
+            krabka.upload_url(FIXTURE_ULID, "files"),
+            encode(path)
+        );
+        let (status, body) = krabka.post(url, bytes.clone()).await?;
+        assert!(status == StatusCode::OK, "file {path}: {body}");
+    }
+    store.fail_ranges.store(true, Ordering::SeqCst);
+
+    let (failed_status, _) = krabka
+        .post(krabka.upload_url(FIXTURE_ULID, "finish"), Vec::new())
+        .await?;
+    let during = krabka
+        .get_json(&krabka.upload_url(FIXTURE_ULID, "check"), &[])
+        .await?;
+    store.fail_ranges.store(false, Ordering::SeqCst);
+    let (retry_status, retry_body) = krabka
+        .post(krabka.upload_url(FIXTURE_ULID, "finish"), Vec::new())
+        .await?;
+    let after = krabka
+        .get_json(&krabka.upload_url(FIXTURE_ULID, "check"), &[])
+        .await?;
+
+    check!(failed_status == StatusCode::INTERNAL_SERVER_ERROR);
+    check!(during == json!({"result": "validating"}));
+    check!(retry_status == StatusCode::OK, "retry: {retry_body}");
+    check!(after == json!({"result": "complete"}));
+    check!(all_imported_samples(&krabka).await? == expected_series());
     Ok(())
 }
 
