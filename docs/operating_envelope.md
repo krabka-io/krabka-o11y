@@ -30,7 +30,7 @@ configured maximum or a partial run is never promoted.
 The scheduled scale soak writes `soak-report.json` with warm-up, duration,
 throughput, query quantiles, errors, RSS, and object-store cost. Criterion
 writes raw estimates, confidence intervals, runner metadata, duration, and
-`SHA256SUMS` below `benches/target/criterion`. Mutation sweeps preserve every
+`SHA256SUMS` below `benches/target/criterion`. Manual mutation sweeps preserve every
 shard log plus commit, toolchain, host, command, duration, and checksums.
 
 Object-store cost is counted in requests and bytes. `MeteredObjectStore` in
@@ -48,7 +48,10 @@ numeric baselines only after a quiet stable runner produces them.
 `tools/mutants-ratchet.py` rejects missing, silent, timed-out, or internally
 inconsistent shards before comparing survivor counts. A deliberate benchmark
 regression or new mutation survivor must fail before either baseline is
-reviewed.
+reviewed. `tools/mutants-record.py --check` runs on every pull request. It
+fails when a baseline number has no recorded run behind it, or when the record
+does not name its commit, toolchain, host shape, command, duration, and
+checksums.
 
 Until the stable-runner report covers every workload and all four signals,
 the supported numeric envelope remains unpublished. Raw shared-runner results

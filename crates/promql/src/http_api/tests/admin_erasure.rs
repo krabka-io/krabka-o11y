@@ -2,7 +2,6 @@ use krabka_blockstore::{ERASURE_REQUEST_PREFIX, Labels, list_erasure_requests};
 use krabka_observability::server_security::{ClientAuth, ServerSecurityArgs};
 use krabka_query_frontend::{CacheKey, ExecutionOptions, QueryCache};
 use object_store::memory::InMemory;
-use tower::ServiceExt as _;
 
 use super::*;
 use crate::AnnotatedQueryResult;

@@ -47,19 +47,87 @@ unable to report a target that measured nothing as a clean run.
 Numeric values in `tools/bench-baseline.txt` are valid only for the stable
 runner recorded beside them. Use `--record` on that runner to refresh a value.
 
+The exit code names the verdict, so a scheduled run can tell runner variance
+and a broken run from a real regression:
+
+  * 0: every gated benchmark is within its budget
+  * 1: a benchmark with a steady measurement is over its budget
+  * 2: the command line is wrong
+  * 3: the run is incomplete. An estimate is missing, unreadable, or not
+    listed in the baseline, so the run cannot support a verdict.
+  * 4: no benchmark regressed, but one or more measurements were too noisy to
+    gate on, or (in `--confirm`) a regression did not reproduce. This is
+    runner variance, not a finding.
+
+When classes mix, the lower row in this order wins: pass, noisy, regression,
+incomplete. `--json <path>` writes the same verdict in machine-readable form,
+with a `status` of `pass`, `noisy`, `regression`, `incomplete` or (from
+`--confirm`) `variance`, each benchmark's class, and the reasons. `-` writes it
+to standard output.
+
+`--confirm <verdict.json>` reruns only the benchmarks that a previous
+`--json` verdict called regressed, through `tools/bench.sh` into a separate
+Criterion directory, and gates those again. It exits 1 only when a
+regression reproduces, and 4 when none does. It reruns at most
+`--confirm-limit` benchmarks, the worst first, and it stops the whole rerun
+after `--confirm-timeout` seconds, which reads as incomplete. That keeps the
+scheduled job bounded even when a slow runner makes every benchmark regress.
+
 `--self-test` runs the checks against synthetic Criterion output and needs no
 benchmark run.
 """
 
 import argparse
+import contextlib
 import json
 import math
 import os
 import pathlib
+import re
+import signal
+import subprocess
 import sys
 import tempfile
+import time
 
 UNSEEDED = "unseeded"
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+EXIT_PASS = 0
+EXIT_REGRESSION = 1
+EXIT_USAGE = 2
+EXIT_INCOMPLETE = 3
+EXIT_NOISY = 4
+
+PASS = "pass"
+NOISY = "noisy"
+REGRESSION = "regression"
+INCOMPLETE = "incomplete"
+# Only `--confirm` gives this class: a regression that did not reproduce.
+VARIANCE = "variance"
+
+# Worst first: a run takes the class of its worst benchmark.
+RANK = [PASS, NOISY, VARIANCE, REGRESSION, INCOMPLETE]
+EXIT_CODES = {
+    PASS: EXIT_PASS,
+    NOISY: EXIT_NOISY,
+    VARIANCE: EXIT_NOISY,
+    REGRESSION: EXIT_REGRESSION,
+    INCOMPLETE: EXIT_INCOMPLETE,
+}
+
+# Where `--confirm` has `tools/bench.sh` write, so the first run's estimates
+# and its uploaded artifact stay as they are.
+CONFIRM_CRITERION = "benches/target/criterion-confirm"
+DEFAULT_CONFIRM_LIMIT = 8
+DEFAULT_CONFIRM_TIMEOUT = 900
+
+# A benchmark id, as `tools/bench-baseline.txt` spells one. `--confirm` puts
+# ids into a Criterion filter, which is a regular expression, so an id with any
+# other character is refused rather than escaped.
+BENCHMARK_ID = re.compile(r"^[A-Za-z0-9_./-]+$")
+GROUP = re.compile(r"benchmark_group\(\s*\"([^\"]+)\"")
 
 # `cargo bench` writes here. It is `benches/target`, not `//target`, because
 # the benchmarks are a workspace of their own -- see //benches/README.md.
@@ -85,6 +153,16 @@ def annotate(level, message):
         print(f"::{level}::{message}", flush=True)
     else:
         print(f"{level}: {message}", flush=True)
+
+
+def keep_stdout_for_json(destination):
+    """Sends every other line to standard error when the JSON goes to stdout.
+
+    `--json -` is for a pipe into another tool, and the annotations would
+    break that JSON.
+    """
+    if destination == "-":
+        sys.stdout = sys.stderr
 
 
 def estimate_files(criterion_root):
@@ -161,17 +239,17 @@ def read_baseline(path):
             continue
         fields = stripped.split()
         if len(fields) != 2:
-            raise SystemExit(f"{path}:{number}: expected `<benchmark> <ns>`: {line}")
+            raise UsageError(f"{path}:{number}: expected `<benchmark> <ns>`: {line}")
         name, allowed = fields
         if name in baseline:
-            raise SystemExit(f"{path}:{number}: {name} is listed twice")
+            raise UsageError(f"{path}:{number}: {name} is listed twice")
         if allowed == UNSEEDED:
             baseline[name] = None
         else:
             try:
                 baseline[name] = float(allowed)
             except ValueError:
-                raise SystemExit(
+                raise UsageError(
                     f"{path}:{number}: the budget must be nanoseconds or "
                     f"`{UNSEEDED}`: {line}"
                 ) from None
@@ -184,7 +262,10 @@ def under(name, prefix):
     Every benchmark here names its Criterion group after the `[[bench]]`
     target it lives in, so the first segment of an id is the target's name and
     `--bench` can narrow both halves of the comparison to one target's ids.
+    `--confirm` passes a set of ids instead, and then only those are read.
     """
+    if isinstance(prefix, (set, frozenset)):
+        return name in prefix
     return prefix is None or name == prefix or name.startswith(prefix + "/")
 
 
@@ -249,12 +330,25 @@ ARGS_BASELINE_HINT = "tools/bench-baseline.txt"
 
 
 def gate(measured, baseline, tolerance, noise_ceiling):
-    """Applies the ratchet. Returns True when the run may pass."""
-    passed = True
+    """Applies the ratchet. Returns each benchmark's class and reason.
+
+    A class is `pass`, `noisy` (the interval is too wide to gate on) or
+    `regression`. An `unseeded` benchmark reads as `pass`, since nothing gates
+    it.
+    """
+    classes = {}
     for name, numbers in sorted(measured.items()):
         mean = numbers["mean"]
         spread = numbers["spread"]
         allowed = baseline[name]
+        entry = {
+            "class": PASS,
+            "mean_ns": round(mean, 3),
+            "spread": round(spread, 6),
+            "baseline_ns": allowed,
+            "reason": None,
+        }
+        classes[name] = entry
 
         if allowed is None:
             annotate(
@@ -266,25 +360,31 @@ def gate(measured, baseline, tolerance, noise_ceiling):
             )
             continue
 
+        budget = allowed * tolerance
         if spread > noise_ceiling:
-            annotate(
-                "warning",
+            reason = (
                 f"{name}: {duration(mean)}, and Criterion's interval spans "
                 f"{spread * 100:.0f}% of it, over the {noise_ceiling * 100:.0f}% "
                 f"ceiling. The gate is skipped: this measurement cannot "
-                f"support a verdict in either direction.",
+                f"support a verdict in either direction."
             )
+            annotate("warning", reason)
+            # A noisy measurement under its budget is still a pass: noise
+            # cannot make a run look slower than it was by less than it was.
+            if mean > budget:
+                entry["class"] = NOISY
+                entry["reason"] = reason
             continue
 
-        budget = allowed * tolerance
         if mean > budget:
-            annotate(
-                "error",
+            reason = (
                 f"{name}: {duration(mean)}, and the baseline of "
                 f"{duration(allowed)} allows {duration(budget)} at "
-                f"{tolerance:g}x. That is {mean / allowed:.2f}x the baseline.",
+                f"{tolerance:g}x. That is {mean / allowed:.2f}x the baseline."
             )
-            passed = False
+            annotate("error", reason)
+            entry["class"] = REGRESSION
+            entry["reason"] = reason
         elif mean < allowed:
             annotate(
                 "notice",
@@ -298,21 +398,230 @@ def gate(measured, baseline, tolerance, noise_ceiling):
                 f"baseline of {duration(allowed)}.",
                 flush=True,
             )
-    return passed
+    return classes
 
 
-def run(criterion_root, baseline_path, only, record, tolerance, noise_ceiling):
-    baseline = read_baseline(baseline_path)
+def worst(statuses):
+    """The worst class in a collection, by RANK. An empty one is a pass."""
+    return max(statuses, key=RANK.index, default=PASS)
+
+
+def judge(criterion_root, baseline, only, tolerance, noise_ceiling):
+    """A run's verdict: its class, each benchmark's class, and the reasons."""
     measured, faults = read_run(criterion_root, baseline, only)
     for fault in faults:
         annotate("error", fault)
     if faults:
-        return 1
+        return {"status": INCOMPLETE, "benchmarks": {}, "reasons": faults}
+    classes = gate(measured, baseline, tolerance, noise_ceiling)
+    return {
+        "status": worst(entry["class"] for entry in classes.values()),
+        "benchmarks": classes,
+        "reasons": [entry["reason"] for entry in classes.values() if entry["reason"]],
+    }
+
+
+def write_json(verdict, destination):
+    """Writes a verdict to a path, or to standard output for `-`."""
+    text = json.dumps(verdict, indent=2, sort_keys=True) + "\n"
+    if destination == "-":
+        sys.__stdout__.write(text)
+        sys.__stdout__.flush()
+    else:
+        pathlib.Path(destination).write_text(text)
+
+
+def run(criterion_root, baseline_path, only, record, tolerance, noise_ceiling,
+        json_out=None):
+    baseline = read_baseline(baseline_path)
     if record:
+        measured, faults = read_run(criterion_root, baseline, only)
+        for fault in faults:
+            annotate("error", fault)
+        if faults:
+            return EXIT_INCOMPLETE
         for name, numbers in sorted(measured.items()):
             print(f"{name} {numbers['mean']:.0f}")
-        return 0
-    return 0 if gate(measured, baseline, tolerance, noise_ceiling) else 1
+        return EXIT_PASS
+    verdict = judge(criterion_root, baseline, only, tolerance, noise_ceiling)
+    if json_out:
+        write_json(dict(verdict, schema_version=1, tolerance=tolerance,
+                        noise_ceiling=noise_ceiling), json_out)
+    return EXIT_CODES[verdict["status"]]
+
+
+# --- confirming a regression -------------------------------------------------
+#
+# One run on a shared remote runner can land on a slow host. A second run of
+# only the regressed benchmarks tells that apart from a real regression: a
+# real one reproduces, and a slow host rarely lands twice.
+
+
+def bench_targets(benches_dir):
+    """Criterion group name to the `[[bench]]` target that defines it.
+
+    A group mostly shares its target's name, but not always: `index_load` is
+    a group in the `index_prune` target. The rerun names targets, so the map is
+    read out of the benchmark sources rather than guessed from the id.
+    """
+    targets = {}
+    for source in sorted(pathlib.Path(benches_dir).glob("*.rs")):
+        for group in GROUP.findall(source.read_text()):
+            targets[group] = source.stem
+    return targets
+
+
+def confirm_plan(previous, targets, limit):
+    """The benchmarks to rerun, as target to ids, and the ids left out.
+
+    The worst ratio first, so a limit keeps the benchmarks most likely to be
+    real. An id whose group no target defines, or whose name a regular
+    expression would misread, cannot be rerun and is reported as such.
+    """
+    regressed = [
+        (name, entry) for name, entry in previous.get("benchmarks", {}).items()
+        if entry.get("class") == REGRESSION
+    ]
+    regressed.sort(key=lambda item: -(item[1]["mean_ns"] / item[1]["baseline_ns"]))
+    plan, skipped, planned = {}, [], 0
+    for name, _ in regressed:
+        target = targets.get(name.split("/", 1)[0])
+        if target is None or not BENCHMARK_ID.match(name) or planned >= limit:
+            skipped.append(name)
+            continue
+        plan.setdefault(target, []).append(name)
+        planned += 1
+    return plan, skipped
+
+
+def rerun(plan, criterion_root, timeout, command=None):
+    """Reruns the planned ids through tools/bench.sh. Returns a fault or None.
+
+    One `tools/bench.sh` call per target, each with an anchored, exact filter
+    over that target's ids, and all into `criterion_root`. The first call
+    clears that directory and the later ones keep it. `timeout` bounds the
+    whole rerun, not each call.
+
+    Each call starts in its own process group. On the bound, the whole group
+    is stopped, so `cargo bench` and the benchmark binaries under
+    `tools/bench.sh` stop with it and write nothing more into `criterion_root`.
+    `command` replaces `tools/bench.sh <target>` in the self-test.
+    """
+    environment = dict(os.environ, CRITERION_HOME=str(pathlib.Path(criterion_root).resolve()))
+    deadline = time.monotonic() + timeout
+    first = True
+    for target, ids in sorted(plan.items()):
+        pattern = "^(" + "|".join(re.escape(name) for name in ids) + ")$"
+        environment["KRABKA_BENCH_FILTER"] = pattern
+        environment["KRABKA_BENCH_KEEP"] = "0" if first else "1"
+        first = False
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return f"the rerun passed its {timeout}s bound at {target}"
+        argv = command(target) if command else [str(ROOT / "tools" / "bench.sh"), target]
+        process = subprocess.Popen(argv, env=environment, cwd=ROOT, start_new_session=True)
+        try:
+            returncode = process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            stop_group(process)
+            return f"the rerun passed its {timeout}s bound at {target}"
+        finally:
+            if process.poll() is None:
+                stop_group(process)
+        if returncode != 0:
+            return f"the rerun of {target} exited {returncode}"
+    return None
+
+
+def stop_group(process, grace=10):
+    """Stops every process in the group that `process` leads, then reaps it."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, sig)
+        try:
+            process.wait(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def confirm(previous_path, criterion_root, baseline_path, tolerance,
+            noise_ceiling, limit, timeout, json_out=None, runner=rerun,
+            benches_dir=ROOT / "benches" / "benches"):
+    """Reruns the regressed benchmarks and gates only those again.
+
+    A regression that reproduces is `regression`, and one that does not is
+    `variance`. A first verdict that was not a regression passes through as
+    it was: there is nothing to confirm in it.
+
+    The rerun is gated with the `tolerance` and `noise_ceiling` the first
+    verdict records. `None` means "use the recorded value". A value that
+    differs from the recorded one is refused, because a rerun gated more
+    loosely than the first run calls a real regression variance.
+    """
+    previous = json.loads(pathlib.Path(previous_path).read_text())
+    status = previous.get("status")
+    if status not in RANK:
+        raise UsageError(f"{previous_path} has no verdict status this script wrote")
+    tolerance = recorded_threshold(previous_path, previous, "tolerance", tolerance,
+                                   DEFAULT_TOLERANCE)
+    noise_ceiling = recorded_threshold(previous_path, previous, "noise_ceiling",
+                                       noise_ceiling, DEFAULT_NOISE_CEILING)
+    if status != REGRESSION:
+        print(f"the first run reads `{status}`, so there is nothing to confirm", flush=True)
+        if json_out:
+            write_json(dict(previous, confirmed=False), json_out)
+        return EXIT_CODES[status]
+
+    plan, skipped = confirm_plan(previous, bench_targets(benches_dir), limit)
+    ids = {name for names in plan.values() for name in names}
+    for name in skipped:
+        annotate("warning", f"{name}: regressed on the first run and is not rerun")
+    verdict = {"status": INCOMPLETE, "benchmarks": {}, "reasons": []}
+    fault = runner(plan, criterion_root, timeout) if ids else "no regressed benchmark can be rerun"
+    if fault:
+        annotate("error", fault)
+        verdict["reasons"] = [fault]
+    else:
+        verdict = judge(criterion_root, read_baseline(baseline_path), frozenset(ids),
+                        tolerance, noise_ceiling)
+        if verdict["status"] in (PASS, NOISY):
+            verdict["status"] = VARIANCE
+            annotate(
+                "warning",
+                f"none of the {len(ids)} regressed benchmarks regressed again. "
+                f"The first run read runner variance, not a regression.",
+            )
+    # A skipped id stays unconfirmed. A reproduced regression is a finding
+    # whatever else was skipped, so only a run that would otherwise pass is
+    # held back by one.
+    if skipped and verdict["status"] == VARIANCE:
+        verdict["status"] = INCOMPLETE
+        verdict["reasons"].append(
+            f"{len(skipped)} regressed benchmarks were not rerun: {', '.join(skipped)}"
+        )
+    if json_out:
+        write_json(dict(verdict, schema_version=1, confirmed=True,
+                        rerun=sorted(ids), not_rerun=skipped), json_out)
+    return EXIT_CODES[verdict["status"]]
+
+
+def recorded_threshold(previous_path, previous, key, given, default):
+    """The threshold the first verdict used. Refuses a different given one."""
+    recorded = previous.get(key)
+    if recorded is None:
+        return default if given is None else given
+    if given is not None and given != recorded:
+        flag = "--" + key.replace("_", "-")
+        raise UsageError(
+            f"{previous_path} was gated with {key} {recorded}, and {flag} is {given}. "
+            f"Leave {flag} out to confirm with the recorded value."
+        )
+    return recorded
+
+
+class UsageError(Exception):
+    """A fault in what the caller named: a baseline, a verdict, a flag."""
 
 
 # --- self-test ---------------------------------------------------------------
@@ -385,21 +694,21 @@ def self_test():
             clean,
             inventory.format("1000000", "20000000"),
             None,
-            1,
+            EXIT_REGRESSION,
         ),
         (
             "a benchmark that stopped being registered",
             {"blockstore_write/parquet/1000": estimates(2_000_000.0)},
             both,
             None,
-            1,
+            EXIT_INCOMPLETE,
         ),
         (
             "a benchmark with no baseline line",
             clean,
             f"blockstore_write/parquet/1000 {UNSEEDED}",
             None,
-            1,
+            EXIT_INCOMPLETE,
         ),
         (
             "--bench narrows both halves to one target",
@@ -413,14 +722,14 @@ def self_test():
             {},
             f"blockstore_write/parquet/1000 {UNSEEDED}",
             None,
-            1,
+            EXIT_INCOMPLETE,
         ),
         (
             "a run with no benchmark and no inventory",
             {},
             "# nothing\n",
             None,
-            1,
+            EXIT_INCOMPLETE,
         ),
         (
             "an estimate of zero, which is what a benchmark that ran no "
@@ -428,38 +737,38 @@ def self_test():
             {"solo/case": estimates(0.0)},
             f"solo/case {UNSEEDED}",
             None,
-            1,
+            EXIT_INCOMPLETE,
         ),
         (
             "an estimates file with no mean",
             {"solo/case": json.dumps({"median": {"point_estimate": 1.0}})},
             f"solo/case {UNSEEDED}",
             None,
-            1,
+            EXIT_INCOMPLETE,
         ),
         (
             "an estimates file that is not JSON",
             {"solo/case": "<html>a proxy error</html>"},
             f"solo/case {UNSEEDED}",
             None,
-            1,
+            EXIT_INCOMPLETE,
         ),
         (
             "an estimate with no confidence interval",
             {"solo/case": json.dumps({"mean": {"point_estimate": 10.0}})},
             f"solo/case {UNSEEDED}",
             None,
-            1,
+            EXIT_INCOMPLETE,
         ),
         (
-            "a measurement too noisy to gate on passes rather than failing",
+            "a noisy measurement over its budget is noisy, not a regression",
             {"solo/case": estimates(1_000.0, spread=0.9)},
             "solo/case 100",
             None,
-            0,
+            EXIT_NOISY,
         ),
         (
-            "a noisy measurement is still gated when it is under its baseline",
+            "a noisy measurement under its baseline still passes",
             {"solo/case": estimates(1_000.0, spread=0.9)},
             "solo/case 100000",
             None,
@@ -471,6 +780,23 @@ def self_test():
             both,
             None,
             0,
+        ),
+        (
+            "a regression beside a noisy one is a regression",
+            {
+                "solo/fast": estimates(1_000.0),
+                "solo/noisy": estimates(1_000.0, spread=0.9),
+            },
+            "solo/fast 100\nsolo/noisy 100",
+            None,
+            EXIT_REGRESSION,
+        ),
+        (
+            "a missing estimate beside a regression is incomplete",
+            {"solo/fast": estimates(1_000.0)},
+            "solo/fast 100\nsolo/gone 100",
+            None,
+            EXIT_INCOMPLETE,
         ),
     ]
 
@@ -502,7 +828,7 @@ def self_test():
         baseline_path.write_text(f"solo/case 1\nsolo/case {UNSEEDED}\n")
         try:
             read_baseline(baseline_path)
-        except SystemExit:
+        except UsageError:
             print("  ok       a benchmark listed twice is refused", flush=True)
         else:
             failures += 1
@@ -524,8 +850,228 @@ def self_test():
             noise_ceiling=DEFAULT_NOISE_CEILING,
         )
 
-    print(f"{len(cases) + 1} cases, {failures} failed", flush=True)
+    failures += self_test_json()
+    failures += self_test_confirm()
+    failures += self_test_confirm_thresholds()
+    failures += self_test_rerun_bound()
+    print(f"{len(cases) + 1 + 1 + len(CONFIRM_CASES) + 1} cases, {failures} failed", flush=True)
     return 1 if failures else 0
+
+
+def self_test_json():
+    """The JSON verdict is what a scheduled confirm step reads, so it is
+    checked whole: one benchmark passes, one is noisy, one regressed."""
+    with tempfile.TemporaryDirectory() as scratch:
+        criterion = pathlib.Path(scratch) / "criterion"
+        criterion.mkdir()
+        write_run(criterion, {
+            "solo/fast": estimates(100.0),
+            "solo/noisy": estimates(1_000.0, spread=0.5),
+            "solo/slow": estimates(1_000.0),
+        })
+        baseline_path = pathlib.Path(scratch) / "baseline.txt"
+        baseline_path.write_text("solo/fast 100\nsolo/noisy 100\nsolo/slow 100\n")
+        out = pathlib.Path(scratch) / "verdict.json"
+        got = run(criterion, baseline_path, None, record=False,
+                  tolerance=DEFAULT_TOLERANCE, noise_ceiling=DEFAULT_NOISE_CEILING,
+                  json_out=out)
+        slow = (
+            "solo/slow: 1 us, and the baseline of 100 ns allows 150 ns at "
+            "1.5x. That is 10.00x the baseline."
+        )
+        noisy = (
+            "solo/noisy: 1 us, and Criterion's interval spans 50% of it, over "
+            "the 25% ceiling. The gate is skipped: this measurement cannot "
+            "support a verdict in either direction."
+        )
+        expected = {
+            "schema_version": 1,
+            "status": REGRESSION,
+            "tolerance": DEFAULT_TOLERANCE,
+            "noise_ceiling": DEFAULT_NOISE_CEILING,
+            "reasons": [noisy, slow],
+            "benchmarks": {
+                "solo/fast": {"class": PASS, "mean_ns": 100.0, "spread": 0.02,
+                              "baseline_ns": 100.0, "reason": None},
+                "solo/noisy": {"class": NOISY, "mean_ns": 1000.0, "spread": 0.5,
+                               "baseline_ns": 100.0, "reason": noisy},
+                "solo/slow": {"class": REGRESSION, "mean_ns": 1000.0, "spread": 0.02,
+                              "baseline_ns": 100.0, "reason": slow},
+            },
+        }
+        ok = got == EXIT_REGRESSION and json.loads(out.read_text()) == expected
+    print(f"  {'ok' if ok else 'FAILED':<8} the JSON verdict names each benchmark's class",
+          flush=True)
+    return 0 if ok else 1
+
+
+# Each case is (name, first verdict's status, the ids the rerun measures and
+# their means, the rerun's fault, the limit, expected exit, expected rerun).
+# The baseline is 100 ns for every id, so a mean of 1000 regresses.
+CONFIRM_CASES = [
+    ("a regression that reproduces fails", REGRESSION,
+     {"alpha/a": 1_000.0, "beta/b": 1_000.0}, None, 8, EXIT_REGRESSION,
+     {"alpha": ["alpha/a"], "beta_target": ["beta/b"]}),
+    ("a regression that does not reproduce is variance", REGRESSION,
+     {"alpha/a": 100.0, "beta/b": 100.0}, None, 8, EXIT_NOISY,
+     {"alpha": ["alpha/a"], "beta_target": ["beta/b"]}),
+    ("one of two reproducing still fails", REGRESSION,
+     {"alpha/a": 100.0, "beta/b": 1_000.0}, None, 8, EXIT_REGRESSION,
+     {"alpha": ["alpha/a"], "beta_target": ["beta/b"]}),
+    ("a rerun that times out is incomplete", REGRESSION,
+     {}, "the rerun passed its 900s bound at alpha", 8, EXIT_INCOMPLETE,
+     {"alpha": ["alpha/a"], "beta_target": ["beta/b"]}),
+    ("a rerun that measured nothing is incomplete", REGRESSION,
+     {}, None, 8, EXIT_INCOMPLETE,
+     {"alpha": ["alpha/a"], "beta_target": ["beta/b"]}),
+    ("the limit reruns the worst first, and the rest keep a pass incomplete",
+     REGRESSION, {"beta/b": 100.0}, None, 1, EXIT_INCOMPLETE,
+     {"beta_target": ["beta/b"]}),
+    ("the limit does not hide a regression that reproduces",
+     REGRESSION, {"beta/b": 1_000.0}, None, 1, EXIT_REGRESSION,
+     {"beta_target": ["beta/b"]}),
+    ("a first run that only read noisy has nothing to confirm", NOISY,
+     {}, None, 8, EXIT_NOISY, None),
+    ("a first run that was incomplete stays incomplete", INCOMPLETE,
+     {}, None, 8, EXIT_INCOMPLETE, None),
+]
+
+
+def self_test_confirm():
+    """`--confirm` against a fake rerun that writes the estimates it is told to."""
+    failures = 0
+    for name, status, means, fault, limit, expected, expected_plan in CONFIRM_CASES:
+        with tempfile.TemporaryDirectory() as scratch:
+            scratch = pathlib.Path(scratch)
+            # `beta` is a group in a target of another name, as `index_load`
+            # is a group in `index_prune`.
+            benches = scratch / "benches"
+            benches.mkdir()
+            (benches / "alpha.rs").write_text('c.benchmark_group("alpha");\n')
+            (benches / "beta_target.rs").write_text('c.benchmark_group(\n    "beta",\n);\n')
+            baseline_path = scratch / "baseline.txt"
+            baseline_path.write_text("alpha/a 100\nbeta/b 100\ngamma/c 100\n")
+            previous = scratch / "first.json"
+            previous.write_text(json.dumps({"status": status, "benchmarks": {
+                "alpha/a": {"class": REGRESSION, "mean_ns": 200.0, "baseline_ns": 100.0},
+                "beta/b": {"class": REGRESSION, "mean_ns": 900.0, "baseline_ns": 100.0},
+                "gamma/c": {"class": PASS, "mean_ns": 100.0, "baseline_ns": 100.0},
+            }}))
+            seen = []
+
+            def fake(plan, criterion_root, timeout, means=means, fault=fault, seen=seen):
+                seen.append({target: sorted(ids) for target, ids in plan.items()})
+                if fault:
+                    return fault
+                write_run(criterion_root, {i: estimates(m) for i, m in means.items()})
+                return None
+
+            criterion = scratch / "criterion-confirm"
+            criterion.mkdir()
+            got = confirm(previous, criterion, baseline_path, DEFAULT_TOLERANCE,
+                          DEFAULT_NOISE_CEILING, limit, DEFAULT_CONFIRM_TIMEOUT,
+                          runner=fake, benches_dir=benches)
+        plan = seen[0] if seen else None
+        ok = got == expected and plan == expected_plan
+        failures += 0 if ok else 1
+        print(f"  {'ok' if ok else 'FAILED':<8} exit {got}, expected {expected}, "
+              f"rerun {plan}: {name}", flush=True)
+
+    # A rerun filter is a regular expression, so every id in it is escaped
+    # and anchored, and a character outside the baseline's spelling is refused.
+    plan, skipped = confirm_plan(
+        {"benchmarks": {
+            "alpha/a.b": {"class": REGRESSION, "mean_ns": 2.0, "baseline_ns": 1.0},
+            "alpha/(x)": {"class": REGRESSION, "mean_ns": 3.0, "baseline_ns": 1.0},
+            "nowhere/a": {"class": REGRESSION, "mean_ns": 4.0, "baseline_ns": 1.0},
+        }},
+        {"alpha": "alpha"},
+        8,
+    )
+    ok = plan == {"alpha": ["alpha/a.b"]} and skipped == ["nowhere/a", "alpha/(x)"]
+    failures += 0 if ok else 1
+    print(f"  {'ok' if ok else 'FAILED':<8} an id no target defines, or a filter "
+          f"would misread, is not rerun", flush=True)
+    return failures
+
+
+def self_test_confirm_thresholds():
+    """`--confirm` gates the rerun with the thresholds the first verdict used."""
+    failures = 0
+    # The first run used --tolerance 1.2, so 130 against 100 regressed. The
+    # rerun measures 130 again, which the default 1.5 would pass.
+    cases = [
+        ("the recorded tolerance gates the rerun", None, EXIT_REGRESSION),
+        ("the same tolerance, given again, is accepted", 1.2, EXIT_REGRESSION),
+        ("a different tolerance is refused", 1.5, EXIT_USAGE),
+    ]
+    for name, given, expected in cases:
+        with tempfile.TemporaryDirectory() as scratch:
+            scratch = pathlib.Path(scratch)
+            benches = scratch / "benches"
+            benches.mkdir()
+            (benches / "alpha.rs").write_text('c.benchmark_group("alpha");\n')
+            baseline_path = scratch / "baseline.txt"
+            baseline_path.write_text("alpha/a 100\n")
+            previous = scratch / "first.json"
+            previous.write_text(json.dumps({
+                "status": REGRESSION, "tolerance": 1.2,
+                "noise_ceiling": DEFAULT_NOISE_CEILING,
+                "benchmarks": {"alpha/a": {"class": REGRESSION, "mean_ns": 130.0,
+                                           "baseline_ns": 100.0}},
+            }))
+
+            def fake(plan, criterion_root, timeout):
+                write_run(criterion_root, {"alpha/a": estimates(130.0)})
+                return None
+
+            criterion = scratch / "criterion-confirm"
+            criterion.mkdir()
+            try:
+                got = confirm(previous, criterion, baseline_path, given, None, 8,
+                              DEFAULT_CONFIRM_TIMEOUT, runner=fake, benches_dir=benches)
+            except UsageError:
+                got = EXIT_USAGE
+        ok = got == expected
+        failures += 0 if ok else 1
+        print(f"  {'ok' if ok else 'FAILED':<8} exit {got}, expected {expected}: {name}",
+              flush=True)
+    return failures
+
+
+def process_alive(pid):
+    """Whether `pid` runs. A zombie waiting for its reaper has stopped."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    stat = pathlib.Path(f"/proc/{pid}/stat")
+    with contextlib.suppress(OSError):
+        return stat.read_text().rsplit(")", 1)[1].split()[0] != "Z"
+    return True
+
+
+def self_test_rerun_bound():
+    """On the bound, the rerun stops the benchmark under the script, not only the script."""
+    with tempfile.TemporaryDirectory() as scratch:
+        pid_file = pathlib.Path(scratch) / "child.pid"
+        # The shell stands in for tools/bench.sh, and the `sleep` it starts
+        # stands in for `cargo bench`.
+        script = f'sleep 300 & echo $! > "{pid_file}"; wait'
+        fault = rerun({"alpha": ["alpha/a"]}, scratch, 1,
+                      command=lambda target: ["sh", "-c", script])
+        child = int(pid_file.read_text()) if pid_file.exists() else None
+        deadline = time.monotonic() + 10
+        while child is not None and process_alive(child) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        survived = child is not None and process_alive(child)
+        if survived:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(child, signal.SIGKILL)
+    ok = fault == "the rerun passed its 1s bound at alpha" and child is not None and not survived
+    print(f"  {'ok' if ok else 'FAILED':<8} a rerun past its bound stops the whole "
+          f"process group (fault {fault!r}, child {child}, survived {survived})", flush=True)
+    return 0 if ok else 1
 
 
 def main():
@@ -545,16 +1091,38 @@ def main():
         help="narrow to one `[[bench]]` target's ids, for a partial run",
     )
     parser.add_argument(
-        "--tolerance", type=float, default=DEFAULT_TOLERANCE,
-        help="how many times its baseline a benchmark may take (default 1.5)",
+        "--tolerance", type=float,
+        help="how many times its baseline a benchmark may take (default 1.5; "
+        "--confirm uses the verdict's)",
     )
     parser.add_argument(
-        "--noise-ceiling", type=float, default=DEFAULT_NOISE_CEILING,
-        help="interval width, over the mean, past which the gate is skipped",
+        "--noise-ceiling", type=float,
+        help="interval width, over the mean, past which the gate is skipped "
+        "(--confirm uses the verdict's)",
     )
     parser.add_argument(
         "--record", action="store_true",
         help="print the baseline lines this run would set, and gate nothing",
+    )
+    parser.add_argument(
+        "--json", metavar="PATH",
+        help="write the verdict as JSON to PATH, or to standard output for `-`",
+    )
+    parser.add_argument(
+        "--confirm", metavar="VERDICT",
+        help="rerun the benchmarks a --json verdict called regressed, and gate those",
+    )
+    parser.add_argument(
+        "--confirm-criterion", default=CONFIRM_CRITERION,
+        help="the Criterion output directory the confirming rerun writes",
+    )
+    parser.add_argument(
+        "--confirm-limit", type=int, default=DEFAULT_CONFIRM_LIMIT,
+        help="the most benchmarks a confirming rerun measures (default 8)",
+    )
+    parser.add_argument(
+        "--confirm-timeout", type=int, default=DEFAULT_CONFIRM_TIMEOUT,
+        help="seconds the whole rerun may take (default 900)",
     )
     parser.add_argument(
         "--self-test", action="store_true",
@@ -563,17 +1131,38 @@ def main():
     args = parser.parse_args()
     if args.self_test:
         return self_test()
-    if args.tolerance < 1.0:
+    keep_stdout_for_json(args.json)
+    if args.tolerance is not None and args.tolerance < 1.0:
         parser.error("--tolerance below 1.0 fails a benchmark that got faster")
+    if args.confirm and args.record:
+        parser.error("--confirm gates a rerun, and --record gates nothing")
+    if args.confirm_limit < 1 or args.confirm_timeout < 1:
+        parser.error("--confirm-limit and --confirm-timeout must be positive")
     ARGS_BASELINE_HINT = args.baseline
-    return run(
-        args.criterion,
-        args.baseline,
-        args.bench,
-        args.record,
-        args.tolerance,
-        args.noise_ceiling,
-    )
+    try:
+        if args.confirm:
+            return confirm(
+                args.confirm,
+                args.confirm_criterion,
+                args.baseline,
+                args.tolerance,
+                args.noise_ceiling,
+                args.confirm_limit,
+                args.confirm_timeout,
+                json_out=args.json,
+            )
+        return run(
+            args.criterion,
+            args.baseline,
+            args.bench,
+            args.record,
+            DEFAULT_TOLERANCE if args.tolerance is None else args.tolerance,
+            DEFAULT_NOISE_CEILING if args.noise_ceiling is None else args.noise_ceiling,
+            json_out=args.json,
+        )
+    except UsageError as error:
+        print(f"bench-ratchet.py: {error}", file=sys.stderr)
+        return EXIT_USAGE
 
 
 if __name__ == "__main__":

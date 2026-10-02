@@ -4,7 +4,7 @@
 #
 #     <crate> <survivors>
 #
-# The nightly sweep fails a crate whose survivor count is above the number
+# A sweep fails a crate whose survivor count is above the number
 # here. It passes a crate whose count is below, and asks for the number to be
 # lowered. Lower it in the same change that killed the mutants.
 #
@@ -14,18 +14,21 @@
 # with no number is still unable to report a killed shard as a clean sweep.
 #
 # `unseeded` crates have not completed a trustworthy full sweep since the
-# ratchet was written. A sweep is a nightly job of several hours, and a number
+# ratchet was written. A sweep is a manual job of several hours, and a number
 # written from a partial run would be a guess. Take a count only from a complete
 # run, which prints the line to check in:
 #
 #     tools/mutants-ratchet.py <crate> --record
 #
 # Recorded run metadata and artifact checksums live in
-# qualification/milestone-19-mutation-baselines.json.
+# qualification/milestone-19-mutation-baselines.json. Each number here must
+# match its record, and `tools/mutants-record.py --check` fails when they
+# differ. Record a new sweep with `tools/mutants-record.py --capture`; see
+# README.md, "Seeding a crate by hand".
 #
-blockstore       unseeded
+blockstore       145
 logql            91
-metrics          unseeded
+metrics          174
 metrics-service  119
 observability    unseeded
 pprof            86

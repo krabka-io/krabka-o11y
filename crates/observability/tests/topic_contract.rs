@@ -12,7 +12,9 @@ use std::{collections::BTreeMap, time::Duration};
 use assert2::{assert, check};
 use axum::body::Bytes;
 use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
-use krabka_client_admin::{AdminClient, CreateTopicSpec};
+use krabka_client_admin::{
+    AdminClient, ConfigResource, CreateTopicSpec, DescribeConfigsOptions, TopicMutationOptions,
+};
 use krabka_client_producer::{Producer, ProducerRecord, partition_for_key};
 use krabka_observability::{
     ServiceConfig,
@@ -73,8 +75,9 @@ async fn create_raw(bootstrap: &str, name: &str, partitions: i32, configs: &[(&s
                     .iter()
                     .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
                     .collect(),
+                ..Default::default()
             }],
-            secs(10),
+            TopicMutationOptions::with_timeout(secs(10)),
         )
         .await
         .expect("create topic");
@@ -95,15 +98,19 @@ async fn live_partitions(bootstrap: &str, name: &str) -> i32 {
 }
 
 async fn live_overrides(bootstrap: &str, name: &str) -> BTreeMap<String, String> {
+    let resource = ConfigResource::topic(name);
     admin(bootstrap)
         .await
-        .describe_configs(&[name])
+        .describe_configs(
+            std::slice::from_ref(&resource),
+            DescribeConfigsOptions::default(),
+        )
         .await
         .expect("describe configs")
-        .into_iter()
-        .find(|config| config.topic == name)
+        .remove(&resource)
         .expect("topic in describe configs")
-        .overrides
+        .expect("topic configs succeed")
+        .dynamic_overrides(&resource)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -360,18 +367,15 @@ async fn the_shard_a_key_lands_on_is_decided_by_the_topic_partition_count() {
     let mut landed = std::collections::BTreeSet::new();
     for series in 0_u32..24 {
         let key = Bytes::from(format!("tenant-a\0{series}").into_bytes());
-        let acknowledged = producer
-            .send(ProducerRecord {
-                topic: METRICS_WAL_TOPIC.to_string(),
-                key: Some(key.clone()),
-                value: Some(Bytes::from_static(b"sample")),
-                ..ProducerRecord::default()
-            })
-            .await;
+        let acknowledged = producer.send(ProducerRecord {
+            topic: METRICS_WAL_TOPIC.to_string(),
+            key: Some(key.clone()),
+            value: Some(Bytes::from_static(b"sample")),
+            ..ProducerRecord::default()
+        });
         let metadata = tokio::time::timeout(SEND_DEADLINE, acknowledged)
             .await
             .expect("the broker acknowledges the send")
-            .expect("the producer is still running")
             .expect("produce");
 
         check!(

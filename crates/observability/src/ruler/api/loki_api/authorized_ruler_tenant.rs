@@ -1,6 +1,6 @@
 use super::{
-    HeaderMap, HttpQueryError, IntoResponse, QuerierState, RequestSecurity, Response,
-    TenantErrorSurface, TenantId, resolve_single_tenant, tenant_header_value,
+    HeaderMap, HttpQueryError, QuerierState, RequestSecurity, TenantErrorSurface, TenantId,
+    resolve_single_tenant, tenant_header_value,
 };
 
 /// The one tenant a ruler request names, after the principal's grant and the
@@ -20,19 +20,17 @@ pub(crate) async fn authorized_ruler_tenant(
     security: &RequestSecurity,
     headers: &HeaderMap,
     surface: TenantErrorSurface,
-) -> Result<TenantId, Response> {
+) -> Result<TenantId, HttpQueryError> {
     let tenant = resolve_single_tenant(tenant_header_value(headers))
-        .map_err(|source| HttpQueryError::Tenant { source, surface }.into_response())?;
-    security
-        .authorize_tenant(&tenant)
-        .map_err(IntoResponse::into_response)?;
+        .map_err(|source| HttpQueryError::Tenant { source, surface })?;
+    security.authorize_tenant(&tenant)?;
     state
         .query_authorizer
         .check(&security.principal, &tenant)
         .await
         .map_err(|error| {
             security.record_read_refusal(&error);
-            HttpQueryError::from(error).into_response()
+            HttpQueryError::from(error)
         })?;
     Ok(tenant)
 }

@@ -14,7 +14,6 @@ use axum::{
 use krabka_blockstore::{LabelMatcher, Labels};
 use krabka_metrics::{Limits, NativeHistogram, OverridesProvider, ResetHint};
 use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
-use krabka_units::prelude::*;
 use tower::ServiceExt;
 
 use super::{request::unix_now_ms, *};

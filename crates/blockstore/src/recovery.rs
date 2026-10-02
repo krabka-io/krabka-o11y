@@ -449,7 +449,7 @@ fn digest(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
-    use object_store::{ObjectStoreExt as _, memory::InMemory};
+    use object_store::memory::InMemory;
 
     use super::*;
 

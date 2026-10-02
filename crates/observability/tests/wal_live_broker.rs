@@ -669,12 +669,13 @@ impl LiveBroker {
         admin
             .create_topics(
                 &[CreateTopicSpec {
+                    replica_assignments: std::collections::BTreeMap::default(),
                     name: live.topic.clone(),
                     partitions: 1,
                     replicas: 1,
                     configs: BTreeMap::default(),
                 }],
-                secs(10),
+                krabka_client_admin::TopicMutationOptions::with_timeout(secs(10)),
             )
             .await
             .expect("create the wal topic");
@@ -810,8 +811,6 @@ async fn produce_native_kafka_log(broker: &LiveBroker, timestamp_ns: &str, line:
             timestamp_ms: None,
         })
         .await
-        .await
-        .expect("native Kafka delivery channel")
         .expect("native Kafka produce");
     producer.flush().await.expect("flush the producer");
     producer.close().await.expect("close the producer");

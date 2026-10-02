@@ -5,7 +5,7 @@ impl From<krabka_pprof::FlameGraphDiff> for pb::querier::v1::FlameGraphDiff {
         let max_self = value
             .levels
             .iter()
-            .flat_map(|level| level.values.chunks_exact(7))
+            .flat_map(|level| level.values.as_chunks::<7>().0.iter())
             .fold(0, |max_self, bar| max_self.max(bar[2]).max(bar[5]));
         let total = value.left_ticks + value.right_ticks;
         Self {

@@ -174,7 +174,7 @@ mod tests {
             .expect("name exists");
         fg.levels
             .iter()
-            .flat_map(|level| level.values.chunks_exact(4))
+            .flat_map(|level| level.values.as_chunks::<4>().0.iter())
             .find(|chunk| chunk[3] == i64::try_from(name_index).expect("index fits i64"))
             .expect("bar exists")[2]
     }

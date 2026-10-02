@@ -39,6 +39,7 @@ pub fn desired_specs(topics: &[TopicContract], settings: &TopicSettings) -> Vec<
                 partitions: partitions.get(),
                 replicas: settings.replication_factor,
                 configs,
+                ..Default::default()
             }
         })
         .collect()
