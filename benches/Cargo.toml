@@ -128,10 +128,13 @@ harness = false
 [patch.crates-io]
 # Keep the RPC error small for async handlers under Rust 1.98.
 connectrpc-axum = { git = "https://github.com/krabka-io/connectrpc-axum", rev = "f554042b0af04be40d07ecee9cb2623dd6d56542" }
+connectrpc-axum-build = { git = "https://github.com/krabka-io/connectrpc-axum", rev = "f554042b0af04be40d07ecee9cb2623dd6d56542" }
+connectrpc-axum-core = { git = "https://github.com/krabka-io/connectrpc-axum", rev = "f554042b0af04be40d07ecee9cb2623dd6d56542" }
 object_store = { git = "https://github.com/apache/arrow-rs-object-store", rev = "994d60732c3379bc98982f5c4638996be0ee0d2f" }
 krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "505d7c890d46d3937f35e92753c65733f3bf4b88" }
 krabka-authz = { git = "https://github.com/krabka-io/krabka-broker", rev = "505d7c890d46d3937f35e92753c65733f3bf4b88" }
 krabka-broker = { git = "https://github.com/krabka-io/krabka-broker", rev = "505d7c890d46d3937f35e92753c65733f3bf4b88" }
+krabka-format = { git = "https://github.com/krabka-io/krabka-broker", rev = "505d7c890d46d3937f35e92753c65733f3bf4b88" }
 krabka-kraft-core = { git = "https://github.com/krabka-io/krabka-broker", rev = "505d7c890d46d3937f35e92753c65733f3bf4b88" }
 krabka-log = { git = "https://github.com/krabka-io/krabka-broker", rev = "505d7c890d46d3937f35e92753c65733f3bf4b88" }
 krabka-logfmt = { git = "https://github.com/krabka-io/krabka-broker", rev = "505d7c890d46d3937f35e92753c65733f3bf4b88" }

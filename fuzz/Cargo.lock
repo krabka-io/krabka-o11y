@@ -7911,6 +7911,16 @@ version = "0.2.3"
 source = "git+https://github.com/krabka-io/connectrpc-axum?rev=f554042b0af04be40d07ecee9cb2623dd6d56542#f554042b0af04be40d07ecee9cb2623dd6d56542"
 
 [[patch.unused]]
+name = "connectrpc-axum-build"
+version = "0.2.3"
+source = "git+https://github.com/krabka-io/connectrpc-axum?rev=f554042b0af04be40d07ecee9cb2623dd6d56542#f554042b0af04be40d07ecee9cb2623dd6d56542"
+
+[[patch.unused]]
+name = "connectrpc-axum-core"
+version = "0.2.1"
+source = "git+https://github.com/krabka-io/connectrpc-axum?rev=f554042b0af04be40d07ecee9cb2623dd6d56542#f554042b0af04be40d07ecee9cb2623dd6d56542"
+
+[[patch.unused]]
 name = "krabka-audit"
 version = "0.6.1"
 source = "git+https://github.com/krabka-io/krabka-broker?rev=505d7c890d46d3937f35e92753c65733f3bf4b88#505d7c890d46d3937f35e92753c65733f3bf4b88"
@@ -7929,6 +7939,11 @@ source = "git+https://github.com/krabka-io/krabka-broker?rev=505d7c890d46d3937f3
 name = "krabka-client-coordination"
 version = "0.4.0"
 source = "git+https://github.com/krabka-io/krabka-client-rs?rev=92a5f3df874fb9b89f4b0b51124c3ce1bfd6f9aa#92a5f3df874fb9b89f4b0b51124c3ce1bfd6f9aa"
+
+[[patch.unused]]
+name = "krabka-format"
+version = "0.6.1"
+source = "git+https://github.com/krabka-io/krabka-broker?rev=505d7c890d46d3937f35e92753c65733f3bf4b88#505d7c890d46d3937f35e92753c65733f3bf4b88"
 
 [[patch.unused]]
 name = "krabka-kraft-core"

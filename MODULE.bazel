@@ -246,6 +246,9 @@ crate.from_cargo(
 # tools/check-sibling-members.sh keeps this dict and the [patch.crates-io] table
 # in Cargo.toml in step with the siblings at the pinned revisions.
 SIBLING_MEMBERS = {
+    "connectrpc-axum": "connectrpc-axum",
+    "connectrpc-axum-build": "connectrpc-axum-build",
+    "connectrpc-axum-core": "connectrpc-axum-core",
     "krabka-audit": "crates/audit",
     "krabka-authz": "crates/authz",
     "krabka-broker": "crates/broker",
