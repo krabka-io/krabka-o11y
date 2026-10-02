@@ -106,6 +106,11 @@ with an environment variable:
 takes precedence. A lifecycle report records the endpoint host as
 `endpoint_host`, or `null` for the provider default.
 
+Each report also records `provider`, the URL scheme, and `cloud`, the client
+that `object_store` picks for the URL: `aws`, `gcs`, `azure` or `other`. An
+`https://` URL can name an S3 or an Azure endpoint, so `object_store` picks the
+client from the host.
+
 ## Retry and throttling
 
 Two retry layers apply, and each has its own bound:
@@ -182,7 +187,8 @@ These suites cover other lifecycle paths in memory only:
 The workflow copies the reports and test logs into one directory and writes
 `SHA256SUMS` over them. `tools/object-store-evidence.py` then fails the run
 when a file does not match its checksum, a case or signal is missing, a
-lifecycle step did not run, or a request or byte count is zero. The directory
+lifecycle step did not run, or a request or byte count is zero. It also fails
+the run when the `cloud` of a report is not the selected provider. The directory
 is kept as one artifact named with provider and commit.
 
 ## Run against a provider

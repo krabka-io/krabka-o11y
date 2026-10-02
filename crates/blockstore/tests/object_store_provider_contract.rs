@@ -7,12 +7,12 @@ mod faults;
 
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Instant};
 
-use assert2::assert;
+use assert2::{assert, check};
 use futures::{StreamExt as _, TryStreamExt as _, stream};
 use krabka_blockstore::{MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation};
 use object_store::{
-    Error, ObjectStore, ObjectStoreExt as _, PutMode, UpdateVersion, integration, path::Path,
-    prefix::PrefixStore,
+    Error, ObjectStore, ObjectStoreExt as _, ObjectStoreScheme, PutMode, UpdateVersion,
+    integration, path::Path, prefix::PrefixStore,
 };
 use serde_json::json;
 use url::Url;
@@ -116,6 +116,19 @@ fn endpoint_host() -> Option<String> {
         .and_then(|endpoint| endpoint.host_str().map(str::to_owned))
 }
 
+/// The cloud whose client serves `url`: `aws`, `gcs` or `azure`.
+///
+/// `object_store` picks the client from the scheme, and for an `https://` URL
+/// from the host. The URL scheme alone does not name the cloud.
+fn cloud(url: &Url) -> &'static str {
+    match ObjectStoreScheme::parse(url) {
+        Ok((ObjectStoreScheme::AmazonS3, _)) => "aws",
+        Ok((ObjectStoreScheme::GoogleCloudStorage, _)) => "gcs",
+        Ok((ObjectStoreScheme::MicrosoftAzure, _)) => "azure",
+        _ => "other",
+    }
+}
+
 fn report_path() -> Option<PathBuf> {
     std::env::var_os("KRABKA_OBJECT_STORE_CONTRACT_REPORT")
         .map(PathBuf::from)
@@ -212,6 +225,7 @@ async fn supported_provider_satisfies_the_object_store_contract() {
         "kind": "contract",
         "commit": std::env::var("KRABKA_CONTRACT_COMMIT").unwrap_or_else(|_| "unknown".into()),
         "provider": url.scheme(),
+        "cloud": cloud(&url),
         "bucket": url.host_str(),
         "endpoint_host": endpoint_host(),
         "duration_seconds": started.elapsed().as_secs_f64(),
@@ -237,5 +251,36 @@ async fn supported_provider_satisfies_the_object_store_contract() {
     if let Some(path) = report_path() {
         std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap())
             .expect("the contract report writes");
+    }
+}
+
+#[test]
+fn the_report_names_the_cloud_whose_client_serves_the_url() {
+    let cases = [
+        ("s3://bucket/krabka-contract/run", "aws"),
+        ("s3a://bucket/krabka-contract/run", "aws"),
+        (
+            "https://s3.us-east-1.amazonaws.com/bucket/krabka-contract/run",
+            "aws",
+        ),
+        (
+            "https://account.r2.cloudflarestorage.com/bucket/krabka-contract/run",
+            "aws",
+        ),
+        ("gs://bucket/krabka-contract/run", "gcs"),
+        ("az://container/krabka-contract/run", "azure"),
+        (
+            "abfss://container@account.dfs.core.windows.net/run",
+            "azure",
+        ),
+        (
+            "https://account.blob.core.windows.net/container/krabka-contract/run",
+            "azure",
+        ),
+        ("https://example.com/krabka-contract/run", "other"),
+        ("file:///tmp/krabka-contract/run", "other"),
+    ];
+    for (url, want) in cases {
+        check!(cloud(&Url::parse(url).unwrap()) == want, "{url}");
     }
 }

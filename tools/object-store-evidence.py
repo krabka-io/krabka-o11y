@@ -12,7 +12,7 @@ fail: Bazel reports a pass with no report written. This script turns each such
 silent gap into a named failure:
 
   * every file in the directory has a SHA256SUMS line, and every line matches
-  * the contract report names the provider and commit of the run
+  * every report names the cloud and commit of the run
   * the contract report lists every required provider case
   * the contract listed more objects than one provider page holds
   * one lifecycle report per signal, each with its required steps
@@ -35,12 +35,15 @@ import pathlib
 import sys
 import tempfile
 
-# The `provider` field is the URL scheme `object_store` parsed. An `https://`
-# URL names an S3 or Azure endpoint by its host.
+# The URL schemes of each cloud. The `provider` field of a report is the URL
+# scheme. An `https://` URL can name an S3 or an Azure endpoint, so it does not
+# identify a cloud. The `cloud` field does: the report writer records the
+# client `object_store` picks for the URL, from the scheme or the `https://`
+# host. The scheme sets are disjoint, and so are the cloud names.
 PROVIDER_SCHEMES = {
-    "aws": {"s3", "s3a", "https"},
+    "aws": {"s3", "s3a"},
     "gcs": {"gs"},
-    "azure": {"az", "adl", "azure", "abfs", "abfss", "https"},
+    "azure": {"az", "adl", "azure", "abfs", "abfss"},
 }
 
 # The provider cases the contract must run. See `docs/object_store_contract.md`.
@@ -140,7 +143,9 @@ def check_common(name, report, kind, provider, commit):
         problems.append(f"{name}: schema_version is not 1")
     if report.get("kind") != kind:
         problems.append(f"{name}: kind is {report.get('kind')!r}, not {kind!r}")
-    if report.get("provider") not in PROVIDER_SCHEMES[provider]:
+    if report.get("cloud") != provider:
+        problems.append(f"{name}: cloud {report.get('cloud')!r} is not {provider!r}")
+    if report.get("provider") not in PROVIDER_SCHEMES[provider] | {"https"}:
         problems.append(
             f"{name}: provider {report.get('provider')!r} is not a {provider} scheme"
         )
@@ -283,6 +288,7 @@ def contract_report(**overrides):
         "kind": "contract",
         "commit": "abc123",
         "provider": "s3",
+        "cloud": "aws",
         "bucket": "krabka-qualification",
         "endpoint_host": None,
         "duration_seconds": 12.5,
@@ -318,6 +324,7 @@ def lifecycle_report(signal, **overrides):
         "kind": "lifecycle",
         "commit": "abc123",
         "provider": "s3",
+        "cloud": "aws",
         "bucket": "krabka-qualification",
         "endpoint_host": None,
         "signal": signal,
@@ -372,6 +379,16 @@ def with_file(name, contents):
     return files
 
 
+def every_report(**fields):
+    """The clean evidence, with `fields` set in every JSON report."""
+    return {
+        name: json.dumps(dict(json.loads(body), **fields))
+        if name.endswith(".json")
+        else body
+        for name, body in clean_evidence().items()
+    }
+
+
 def self_test():
     clean = clean_evidence()
     metrics = "object-store-lifecycle-metrics-block_lifecycle.json"
@@ -389,8 +406,8 @@ def self_test():
     cases = [
         ("a complete run", clean, True, None, "aws", 0),
         (
-            "an https URL is an S3 scheme too",
-            with_file(CONTRACT, json.dumps(contract_report(provider="https"))),
+            "an https URL to an S3 host",
+            every_report(provider="https", bucket="s3.us-east-1.amazonaws.com"),
             True,
             None,
             "aws",
@@ -398,18 +415,88 @@ def self_test():
         ),
         (
             "an Azure run",
-            {
-                name: json.dumps(dict(json.loads(body), provider="az"))
-                if name.endswith(".json")
-                else body
-                for name, body in clean.items()
-            },
+            every_report(provider="az", cloud="azure"),
+            True,
+            None,
+            "azure",
+            0,
+        ),
+        (
+            "an https URL to an Azure host",
+            every_report(
+                provider="https",
+                cloud="azure",
+                bucket="account.blob.core.windows.net",
+            ),
             True,
             None,
             "azure",
             0,
         ),
         ("a run from another provider", clean, True, None, "gcs", 1),
+        ("an AWS run checked as Azure", clean, True, None, "azure", 1),
+        (
+            "an AWS run that used an https URL to an Azure host",
+            every_report(
+                provider="https",
+                cloud="azure",
+                bucket="account.blob.core.windows.net",
+            ),
+            True,
+            None,
+            "aws",
+            1,
+        ),
+        (
+            "an Azure run that used an https URL to an S3 host",
+            every_report(provider="https", bucket="s3.us-east-1.amazonaws.com"),
+            True,
+            None,
+            "azure",
+            1,
+        ),
+        (
+            "an https URL to a host that is not a cloud store",
+            every_report(provider="https", cloud="other", bucket="example.com"),
+            True,
+            None,
+            "aws",
+            1,
+        ),
+        (
+            "an Azure scheme with an AWS cloud",
+            every_report(provider="az"),
+            True,
+            None,
+            "aws",
+            1,
+        ),
+        (
+            "a report with no cloud",
+            with_file(CONTRACT, json.dumps(contract_report(cloud=None))),
+            True,
+            None,
+            "aws",
+            1,
+        ),
+        (
+            "a lifecycle report from another cloud",
+            with_file(
+                "object-store-lifecycle-traces-block_lifecycle.json",
+                json.dumps(
+                    lifecycle_report(
+                        "traces",
+                        provider="https",
+                        cloud="azure",
+                        bucket="account.blob.core.windows.net",
+                    )
+                ),
+            ),
+            True,
+            None,
+            "aws",
+            1,
+        ),
         ("no SHA256SUMS", clean, False, None, "aws", 1),
         ("a file changed after it was hashed", clean, True, tamper, "aws", 1),
         (

@@ -18,7 +18,8 @@ use std::{
 
 use krabka_blockstore::{MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation};
 use object_store::{
-    ObjectStore, ObjectStoreExt as _, memory::InMemory, path::Path, prefix::PrefixStore,
+    ObjectStore, ObjectStoreExt as _, ObjectStoreScheme, memory::InMemory, path::Path,
+    prefix::PrefixStore,
 };
 use serde_json::json;
 use url::Url;
@@ -139,6 +140,7 @@ impl LifecycleStore {
             "commit": std::env::var("KRABKA_CONTRACT_COMMIT")
                 .unwrap_or_else(|_| "unknown".into()),
             "provider": url.scheme(),
+            "cloud": cloud(url),
             "bucket": url.host_str(),
             "endpoint_host": endpoint_host(),
             "signal": self.signal,
@@ -239,6 +241,19 @@ fn endpoint_host() -> Option<String> {
         .find_map(|name| std::env::var(name).ok())
         .and_then(|raw| Url::parse(&raw).ok())
         .and_then(|endpoint| endpoint.host_str().map(str::to_owned))
+}
+
+/// The cloud whose client serves `url`: `aws`, `gcs` or `azure`.
+///
+/// `object_store` picks the client from the scheme, and for an `https://` URL
+/// from the host. The URL scheme alone does not name the cloud.
+fn cloud(url: &Url) -> &'static str {
+    match ObjectStoreScheme::parse(url) {
+        Ok((ObjectStoreScheme::AmazonS3, _)) => "aws",
+        Ok((ObjectStoreScheme::GoogleCloudStorage, _)) => "gcs",
+        Ok((ObjectStoreScheme::MicrosoftAzure, _)) => "azure",
+        _ => "other",
+    }
 }
 
 fn report_dir() -> Option<PathBuf> {
