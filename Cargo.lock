@@ -4513,9 +4513,9 @@ dependencies = [
  "mutants",
  "num-traits",
  "object_store 0.13.2",
- "opentelemetry 0.32.0",
+ "opentelemetry 0.33.0",
  "opentelemetry-proto 0.32.0",
- "opentelemetry_sdk 0.32.1",
+ "opentelemetry_sdk 0.33.0",
  "parquet",
  "prometheus-client",
  "proptest",
@@ -4545,7 +4545,7 @@ dependencies = [
  "tonic",
  "tower",
  "tracing",
- "tracing-opentelemetry 0.33.0",
+ "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
  "x509-parser",
@@ -4909,7 +4909,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-core",
- "tracing-opentelemetry 0.34.0",
+ "tracing-opentelemetry",
  "tracing-subscriber",
 ]
 
@@ -4934,7 +4934,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.20",
  "tracing",
- "tracing-opentelemetry 0.34.0",
+ "tracing-opentelemetry",
 ]
 
 [[package]]
@@ -4992,9 +4992,9 @@ dependencies = [
  "krabka-units",
  "num-traits",
  "object_store 0.13.2",
- "opentelemetry 0.32.0",
+ "opentelemetry 0.33.0",
  "opentelemetry-proto 0.32.0",
- "opentelemetry_sdk 0.32.1",
+ "opentelemetry_sdk 0.33.0",
  "parquet",
  "prometheus-client",
  "prost 0.14.4",
@@ -5021,7 +5021,7 @@ dependencies = [
  "tonic-prost-build",
  "tower",
  "tracing",
- "tracing-opentelemetry 0.33.0",
+ "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
  "wincode",
@@ -9129,20 +9129,6 @@ dependencies = [
  "log",
  "once_cell",
  "tracing-core",
-]
-
-[[package]]
-name = "tracing-opentelemetry"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adbc64cba7137545b8044cb1fe9814f7aacf3c6b5f9b45be8bb5db538befdb26"
-dependencies = [
- "js-sys",
- "opentelemetry 0.32.0",
- "tracing",
- "tracing-core",
- "tracing-subscriber",
- "web-time",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@ use assert2::{assert, check};
 use krabka_broker::{Broker, BrokerConfig};
 use krabka_client_admin::{AdminClient, CreateTopicSpec};
 use krabka_client_coordination::{BrokerTransport, LeaseConfig, MemberId, Role};
-use krabka_client_producer::ProducerRecord;
+use krabka_client_producer::{ProducerError, ProducerRecord};
 use krabka_metrics_service::{RulerLeaseState, advance_ruler_lease};
 use krabka_units::secs;
 
@@ -37,6 +37,20 @@ async fn takeover_fences_the_old_ruler_output_producer() {
     let first_token =
         active_token(advance(&first, &role, &first_member, None, config, now_ms).await);
     let stale_producer = first.bound_producer(&role).await.unwrap();
+    let transaction = stale_producer.begin_transaction().await.unwrap();
+    let acknowledgement = stale_producer.send(ProducerRecord {
+        topic: OUTPUT_TOPIC.to_owned(),
+        partition: Some(0),
+        key: Some(b"tenant-a".to_vec().into()),
+        value: Some(b"ALERTS".to_vec().into()),
+        headers: Vec::new(),
+        timestamp_ms: None,
+    });
+    let delivery = tokio::time::timeout(Duration::from_secs(20), acknowledgement)
+        .await
+        .expect("produce deadline");
+    check!(delivery.is_ok(), "the broker stages the uncommitted record");
+
     advance(&second, &role, &second_member, None, config, now_ms).await;
     let second_token = active_token(
         advance(
@@ -50,24 +64,10 @@ async fn takeover_fences_the_old_ruler_output_producer() {
         .await,
     );
     check!(second_token > first_token);
-
-    let transaction = stale_producer.begin_transaction().await.unwrap();
-    let acknowledgement = stale_producer.send(ProducerRecord {
-        topic: OUTPUT_TOPIC.to_owned(),
-        partition: Some(0),
-        key: Some(b"tenant-a".to_vec().into()),
-        value: Some(b"ALERTS".to_vec().into()),
-        headers: Vec::new(),
-        timestamp_ms: None,
-    });
-    let delivery = tokio::time::timeout(Duration::from_secs(20), acknowledgement)
-        .await
-        .expect("stale produce deadline");
-    check!(delivery.is_ok(), "the broker stages the uncommitted record");
     let commit = transaction.commit().await;
     assert!(
-        commit.is_err(),
-        "stale output transaction unexpectedly committed"
+        matches!(&commit, Err(error) if matches!(error.source, ProducerError::FencedProducer)),
+        "stale output transaction was not fenced: {commit:?}"
     );
 }
 

@@ -103,15 +103,15 @@ object = { version = "0.40", default-features = false, features = ["read_core", 
 # auto-merged renovate bump #644 did to main. Move it only together with the
 # datafusion rev; the renovate rule below holds it to enforce that.
 object_store = { version = "0.13", features = ["aws", "azure", "gcp"] }
-# Slice 42: OTLP distributed tracing. opentelemetry-otlp 0.32 lines up with
-# the tonic 0.14 / prost 0.14 / reqwest 0.13 stack already in the dep graph.
-opentelemetry = { version = "0.32", default-features = false, features = ["trace", "logs"] }
+# Keep the tracing SDK aligned with krabka-trace-context so propagators and
+# subscriber span contexts use the same OpenTelemetry types.
+opentelemetry = { version = "0.33", default-features = false, features = ["trace", "logs"] }
 # Slice KIP-714: prost-generated OTLP MetricsData / MetricsService types
-# (opentelemetry 0.32 stack). `gen-tonic` exposes the OTLP gRPC service traits the
+# (OTLP wire types 0.32). `gen-tonic` exposes the OTLP gRPC service traits the
 # metrics distributor implements; `gen-tonic-messages` + `trace` serve the traces
 # signal; `tonic-prost` carries the prost codec for tonic 0.14.
 opentelemetry-proto = { version = "0.32", default-features = false, features = ["gen-tonic", "gen-tonic-messages", "metrics", "trace", "with-serde"] }
-opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "logs"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "logs"] }
 # `zstd` is the codec `BlockWriter` writes every block with, and it has to be
 # named here. Cargo unions features across the graph, so datafusion's own
 # `parquet` dependency happens to turn it on and a `cargo test` run passes
@@ -176,7 +176,7 @@ tonic-prost = "0.14"
 tonic-prost-build = "0.14"
 tower = "0.5"
 tracing = "0.1"
-tracing-opentelemetry = { version = "0.33", default-features = false }
+tracing-opentelemetry = { version = "0.34", default-features = false }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 url = "2"
 # wincode + serde-wincode replace bincode for serde-derived wire shapes.
