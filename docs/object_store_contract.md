@@ -51,7 +51,10 @@ gives `RangedReadMismatch`. A failed listing or read gives `ObjectStore` with
 the probe step.
 
 The full probe writes one object below `<prefix>/.krabka-probe/` and deletes
-it after the probe, pass or fail. The write credential therefore needs put,
+it after the probe, pass or fail. A create that fails with an unclear result,
+such as a lost connection, can still write the object, so the probe also
+deletes the key then. After `AlreadyExists` it keeps the object, because
+another writer owns it. The write credential therefore needs put,
 get, list and delete on that sub-prefix. The full probe checks these semantics
 in order:
 

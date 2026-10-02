@@ -40,6 +40,12 @@ enum Quirk {
     ShortRange,
     /// Fails every listing, as a credential without list permission does.
     ListingRefused,
+    /// Commits a create, then fails it, as a connection that drops after the
+    /// store accepts the request does.
+    CreateCommittedThenLost,
+    /// Fails a create with `AlreadyExists` because another writer created the
+    /// key first.
+    CreateRaced,
 }
 
 #[derive(Debug)]
@@ -81,6 +87,13 @@ fn permission_denied(location: &Path) -> ObjectStoreError {
     }
 }
 
+fn connection_lost() -> ObjectStoreError {
+    ObjectStoreError::Generic {
+        store: "QuirkyStore",
+        source: "the connection closed before the response".into(),
+    }
+}
+
 fn not_implemented(operation: &str) -> ObjectStoreError {
     ObjectStoreError::NotImplemented {
         operation: operation.to_string(),
@@ -102,6 +115,19 @@ impl ObjectStore for QuirkyStore {
         match (self.quirk, &options.mode) {
             (Quirk::CreateUnsupported, PutMode::Create) => {
                 return Err(not_implemented("put_opts with PutMode::Create"));
+            }
+            (Quirk::CreateCommittedThenLost, PutMode::Create) => {
+                self.inner.put_opts(location, payload, options).await?;
+                return Err(connection_lost());
+            }
+            (Quirk::CreateRaced, PutMode::Create) => {
+                self.inner
+                    .put_opts(location, "another writer".into(), options)
+                    .await?;
+                return Err(ObjectStoreError::AlreadyExists {
+                    path: location.to_string(),
+                    source: "another writer created it".into(),
+                });
             }
             (Quirk::CreateIgnored, PutMode::Create)
             | (Quirk::UpdateIgnored, PutMode::Update(_)) => options.mode = PutMode::Overwrite,
@@ -282,6 +308,42 @@ async fn the_probe_names_the_first_semantic_a_store_is_missing() {
         check!(
             store.keys().await.is_empty(),
             "{quirk:?}: the probe leaves no object behind"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_failed_create_keeps_its_error_and_deletes_only_an_object_the_probe_wrote() {
+    // Each case is the quirk, the error the probe returns, and how many
+    // objects stay in the store.
+    let cases = [
+        (
+            Quirk::CreateCommittedThenLost,
+            "Generic QuirkyStore error: the connection closed before the response",
+            0,
+        ),
+        (
+            Quirk::CreateRaced,
+            "already exists: another writer created it",
+            1,
+        ),
+    ];
+    for (quirk, want_error, want_left) in cases {
+        let store = QuirkyStore::new(quirk);
+
+        let result = verify_object_store_semantics(
+            &store,
+            &Path::from("tenant-data"),
+            ConditionalUpdateRequirement::Required,
+        )
+        .await;
+
+        assert!(let Err(ObjectStoreSemanticsError::ObjectStore { step, source }) = result);
+        let error = source.to_string();
+        check!(
+            (step, error.ends_with(want_error), store.keys().await.len())
+                == ("create a probe object", true, want_left),
+            "{quirk:?}: {error}"
         );
     }
 }

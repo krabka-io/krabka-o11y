@@ -32,8 +32,11 @@ fn probe_key(prefix: &Path) -> Path {
 /// before a role serves or consumes anything.
 ///
 /// The probe writes one object below `prefix/.krabka-probe/` and deletes it
-/// afterwards, whether the probe passes or fails. It checks five things, in
-/// this order:
+/// afterwards, whether the probe passes or fails. A create that fails can
+/// still have written the object, for example when the connection drops after
+/// the store commits it, so the probe also deletes the key then. It does not
+/// delete the key after `AlreadyExists`, because then the object belongs to
+/// another writer. It checks five things, in this order:
 ///
 /// 1. **Create-if-absent.** A create succeeds, and a second create to the same
 ///    key fails with `AlreadyExists`. Index snapshots and backups claim a key
@@ -63,8 +66,22 @@ pub async fn verify_object_store_semantics(
     requirement: ConditionalUpdateRequirement,
 ) -> Result<ObjectStoreCapabilities, ObjectStoreSemanticsError> {
     let key = probe_key(prefix);
-    let created = create_if_absent(store, &key).await?;
-    let outcome = probe_created_object(store, prefix, &key, created, requirement).await;
+    let outcome = match store
+        .put_opts(
+            &key,
+            PutPayload::from_static(PROBE_PAYLOAD),
+            PutMode::Create.into(),
+        )
+        .await
+    {
+        Ok(created) => probe_created_object(store, prefix, &key, created, requirement).await,
+        // The store refused the create, so the probe owns no object to delete.
+        Err(
+            error @ (ObjectStoreError::AlreadyExists { .. }
+            | ObjectStoreError::NotImplemented { .. }),
+        ) => return Err(create_error(store, error)),
+        Err(error) => Err(create_error(store, error)),
+    };
     if outcome.is_err() {
         // Best effort: the error being returned is the one worth reporting.
         drop(store.delete(&key).await);
@@ -78,28 +95,17 @@ pub async fn verify_object_store_semantics(
     Ok(capabilities)
 }
 
-async fn create_if_absent(
-    store: &dyn ObjectStore,
-    key: &Path,
-) -> Result<PutResult, ObjectStoreSemanticsError> {
-    match store
-        .put_opts(
-            key,
-            PutPayload::from_static(PROBE_PAYLOAD),
-            PutMode::Create.into(),
-        )
-        .await
-    {
-        Ok(created) => Ok(created),
-        Err(ObjectStoreError::NotImplemented { .. }) => {
-            Err(ObjectStoreSemanticsError::CreateIfAbsentUnsupported {
+fn create_error(store: &dyn ObjectStore, error: ObjectStoreError) -> ObjectStoreSemanticsError {
+    match error {
+        ObjectStoreError::NotImplemented { .. } => {
+            ObjectStoreSemanticsError::CreateIfAbsentUnsupported {
                 store: store.to_string(),
-            })
+            }
         }
-        Err(source) => Err(ObjectStoreSemanticsError::ObjectStore {
+        source => ObjectStoreSemanticsError::ObjectStore {
             step: "create a probe object",
             source,
-        }),
+        },
     }
 }
 
