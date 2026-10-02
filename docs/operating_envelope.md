@@ -106,6 +106,9 @@ entries report `rate_limiter.status` as `not_applied` and no rejected rows.
 
 The top level of the report names the run:
 
+- `run_id`, from `KRABKA_SOAK_RUN_ID`. When that is unset, the harness makes
+  one from the commit, the start time, and the process ID, so each run has its
+  own
 - `commit`, from `KRABKA_SOAK_COMMIT`, and `image_digest`, from
   `KRABKA_SOAK_IMAGE_DIGEST`
 - `minio_image`, with the reference and the local image ID
@@ -149,8 +152,10 @@ Without `--structural`, the tool compares the report with
 by more than `--tolerance`. The default tolerance is 1.5. The gated metrics
 are the write and query p99, the accepted rows for each second, the peak
 resident memory, the write and read requests for each operation, and the
-recovery time. When the latency `cv` is above `--noise-ceiling` or null, the
-tool skips the latency and throughput verdicts for that entry and prints why.
+recovery time. For `restart`, the read requests for each operation are the
+object-store reads for each recovery attempt. When the latency `cv` is above
+`--noise-ceiling` or null, the tool skips the latency and throughput verdicts
+for that entry and prints why.
 It never skips the memory, request, or recovery verdicts. The baseline is also
 the inventory: a baseline line without a value, and a value without a
 baseline line, both fail. Every line reads `unseeded` today, so only the
@@ -158,13 +163,18 @@ inventory applies.
 
 ### Envelope computation
 
-`tools/soak-gate.py --envelope` reads three or more reports from the same
-dataset, shape, objectives, and host. For each signal it gives the highest
-burst level and the highest cardinality step at which every run met every
-objective. It also gives the minimum, mean, and CV of the accepted rows for
-each second at that level. When no run failed at the top level, the result is
-a lower bound, and the tool says so. Only a `saturated` result can become a
-published limit.
+`tools/soak-gate.py --envelope` reads three or more reports. Each report must
+have its own `run_id`, so one run cannot count as two. The reports must also
+have the same dataset, shape, and objectives, and the same build and
+platform. The build is the `commit`, `image_digest`, `minio_image`, and
+`rustc`. The platform is the full `host` object. The tool refuses reports
+that differ, and it names the fields that differ.
+
+For each signal, the tool gives the highest burst level and the highest
+cardinality step at which every run met every objective. It also gives the
+minimum, mean, and CV of the accepted rows for each second at that level.
+When no run failed at the top level, the result is a lower bound, and the
+tool says so. Only a `saturated` result can become a published limit.
 
 ### Stable-runner qualification
 

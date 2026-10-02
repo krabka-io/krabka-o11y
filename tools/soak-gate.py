@@ -38,7 +38,8 @@ number fails when it moves against that number by more than `--tolerance`:
   * `accepted_rows_per_sec`: fails below baseline / tolerance
   * `peak_rss_kib`: fails above baseline x tolerance
   * `write_requests_per_op`, `read_requests_per_op`: fail above
-    baseline x tolerance
+    baseline x tolerance. In the `restart` phase, the read ratio is the
+    object-store reads for each recovery attempt
   * `recovery_seconds`: fails above baseline x tolerance
 
 The default tolerance is 1.5, for the same reason `tools/bench-ratchet.py`
@@ -57,11 +58,15 @@ does not list fails. A line that reads `unseeded` skips the ratchet only.
 
 `--record` prints the baseline lines that one report would set.
 
-`--envelope` reads three or more reports from the same shape and prints, per
-signal, the highest burst level and the highest cardinality step where every
-run met every objective, with the accepted rate across the runs. That is the
-measured saturation point. When no run reached a failing level, the result is
-a lower bound, not a limit, and the output says so.
+`--envelope` reads three or more reports and prints, per signal, the highest
+burst level and the highest cardinality step where every run met every
+objective, with the accepted rate across the runs. That is the measured
+saturation point. When no run reached a failing level, the result is a lower
+bound, not a limit, and the output says so. The reports must come from
+different runs, so each must have its own `run_id`. They must also name the
+same dataset, shape and objectives, and the same build and platform: commit,
+image digest, MinIO image, `rustc`, CPU count, memory, OS, architecture and
+runner.
 
 `--self-test` runs every check against synthetic reports and needs no soak.
 """
@@ -106,6 +111,10 @@ WRITE_PHASES = {
 }
 # Phases with a steady reader loop. `restart` reports recovery instead.
 QUERY_PHASES = set(PHASES) - {"restart"}
+# Phases whose object-store reads are gated. `restart` has no query-latency
+# summary, but each recovery attempt reads the store, so its reads for each
+# attempt are gated too.
+READ_PHASES = QUERY_PHASES | {"restart"}
 STEPPED_PHASES = {"burst": "writers", "high_cardinality": "series_per_batch"}
 
 # How far a metric may move against its baseline before the run fails.
@@ -301,6 +310,7 @@ def metrics_of(entry):
         values["write_requests_per_op"] = dig(entry, "object_store", "write", "requests_per_op")
     if phase in QUERY_PHASES:
         values["query_p99_us"] = dig(entry, "query", "latency_us", "p99")
+    if phase in READ_PHASES:
         values["read_requests_per_op"] = dig(entry, "object_store", "read", "requests_per_op")
     if phase == "restart":
         values["recovery_seconds"] = dig(entry, "recovery_seconds")
@@ -424,13 +434,22 @@ def ratchet(report, baseline, tolerance, noise_ceiling, baseline_name):
 
 
 def comparable(report):
-    """The parts of a report that must match across the runs of one envelope."""
+    """The parts of a report that must match across the runs of one envelope.
+
+    The workload is the dataset, the shape and the objectives. The build is
+    the commit, the image digest, the MinIO image and `rustc`. The platform is
+    the whole `host` object: CPU count, memory, OS, architecture and runner. A
+    run that differs in any of them measures a different envelope.
+    """
     return {
         "dataset": report.get("dataset"),
         "shape": report.get("shape"),
         "objectives": report.get("objectives"),
-        "cpus": dig(report, "host", "cpus"),
-        "memory_kib": dig(report, "host", "memory_kib"),
+        "commit": report.get("commit"),
+        "image_digest": report.get("image_digest"),
+        "minio_image": report.get("minio_image"),
+        "rustc": report.get("rustc"),
+        "host": report.get("host"),
     }
 
 
@@ -446,19 +465,34 @@ def envelope(reports):
             f"--envelope needs {MIN_ENVELOPE_RUNS} or more runs, and it has "
             f"{len(reports)}"
         ]
+    first_seen = {}
+    for index, report in enumerate(reports, 1):
+        run_id = report.get("run_id")
+        if run_id in first_seen:
+            faults.append(
+                f"run {index} has the run ID {run_id!r} of run "
+                f"{first_seen[run_id]}. One run passed twice cannot show "
+                f"variance between runs."
+            )
+        else:
+            first_seen[run_id] = index
     reference = comparable(reports[0])
     for index, report in enumerate(reports[1:], 2):
-        if comparable(report) != reference:
+        different = [
+            field for field, value in comparable(report).items()
+            if value != reference[field]
+        ]
+        if different:
             faults.append(
-                f"run {index} used a different dataset, shape, objectives or "
-                f"host from run 1, so the runs do not measure one envelope"
+                f"run {index} has a different {', '.join(different)} from "
+                f"run 1, so the runs do not measure one envelope"
             )
     if faults:
         return None, faults
 
     result = {
         "runs": len(reports),
-        "commits": sorted({str(report.get("commit")) for report in reports}),
+        "commit": reports[0].get("commit"),
         "run_ids": [report.get("run_id") for report in reports],
         "signals": {},
     }
@@ -610,7 +644,11 @@ def synthetic_report():
         "schema_version": SCHEMA_VERSION,
         "run_id": "synthetic",
         "commit": "0" * 40,
-        "host": {"cpus": 4, "memory_kib": 16_000_000},
+        "image_digest": None,
+        "minio_image": {"ref": "minio:synthetic", "id": "sha256:" + "1" * 64},
+        "rustc": "rustc 1.97.1",
+        "host": {"cpus": 4, "memory_kib": 16_000_000, "os": "linux",
+                 "arch": "x86_64", "runner": "synthetic"},
         "dataset": {"seed": 267},
         "shape": {"phase_seconds": 12.0, "warmup_seconds": 3.0},
         "objectives": {"max_error_rate": 0.0},
@@ -627,6 +665,14 @@ def mutated(change):
     report = synthetic_report()
     change(report)
     return report
+
+
+def runs(*reports):
+    """Copies of `reports`, each with its own run ID, as separate runs have."""
+    copies = json.loads(json.dumps(reports))
+    for index, report in enumerate(copies, 1):
+        report["run_id"] = f"synthetic-{index}"
+    return copies
 
 
 def baseline_text(report, overrides=None, drop=(), extra=()):
@@ -694,6 +740,10 @@ def self_test():
          baseline_text(clean, {"profiles/compaction/read_requests_per_op": 1.0}), 1),
         ("recovery over the tolerance", "gate", [clean],
          baseline_text(clean, {"metrics/restart/recovery_seconds": 0.1}), 1),
+        ("restart reads for each attempt over the tolerance", "gate", [clean],
+         baseline_text(clean, {"logs/restart/read_requests_per_op": 1.0}), 1),
+        ("a restart read ratio with no baseline line", "gate", [clean],
+         baseline_text(clean, drop={"traces/restart/read_requests_per_op"}), 1),
         ("a noisy phase skips its latency verdict", "gate",
          [mutated(set_path("metrics", "steady", ["ingest", "latency_us", "cv"], 0.9))],
          baseline_text(clean, {p99: 5000}), 0),
@@ -746,13 +796,13 @@ def self_test():
             entry["levels"] = [s for s in entry["levels"] if s["level"] <= level]
         return mutated(change)
 
-    result, faults = envelope([clean, clean, clean])
+    result, faults = envelope(runs(clean, clean, clean))
     check(
         "three runs that never failed give a lower bound at the top level",
         not faults and result["signals"]["metrics"]["burst"]["level"] == 8
         and result["signals"]["metrics"]["burst"]["bound"] == "lower",
     )
-    result, faults = envelope([clean, failing_at(4), clean])
+    result, faults = envelope(runs(clean, failing_at(4), clean))
     burst = result["signals"]["metrics"]["burst"] if result else {}
     check(
         "one run failing at 4 writers sets the envelope at 2",
@@ -760,17 +810,33 @@ def self_test():
         and burst.get("bound") == "saturated"
         and burst.get("accepted_rows_per_sec_min") == 2000.0,
     )
-    result, faults = envelope([clean, failing_at(1, "logs"), clean])
+    result, faults = envelope(runs(clean, failing_at(1, "logs"), clean))
     check(
         "a run failing at the first level gives no envelope",
         not faults and result["signals"]["logs"]["burst"]["level"] is None
         and result["signals"]["logs"]["burst"]["bound"] == "none",
     )
-    _, faults = envelope([clean, clean])
+    _, faults = envelope(runs(clean, clean))
     check("two runs are refused", bool(faults))
-    other = mutated(lambda r: r["dataset"].update(seed=1))
-    _, faults = envelope([clean, clean, other])
-    check("runs over different datasets are refused", bool(faults))
+    _, faults = envelope([clean, clean, clean])
+    check("one report passed three times is refused", bool(faults))
+    _, faults = envelope([*runs(clean, clean), mutated(lambda r: r.update(run_id="synthetic-1"))])
+    check("two reports with one run ID are refused", bool(faults))
+    # Each case changes one part of the workload, build or platform in the
+    # third run. A run that differs in any of them measures another envelope.
+    for name, change in [
+        ("dataset", lambda r: r["dataset"].update(seed=1)),
+        ("commit", lambda r: r.update(commit="f" * 40)),
+        ("image digest", lambda r: r.update(image_digest="sha256:" + "2" * 64)),
+        ("MinIO image", lambda r: r["minio_image"].update(id="sha256:" + "3" * 64)),
+        ("rustc", lambda r: r.update(rustc="rustc 1.98.0")),
+        ("runner", lambda r: r["host"].update(runner="another")),
+        ("OS", lambda r: r["host"].update(os="macos")),
+        ("architecture", lambda r: r["host"].update(arch="aarch64")),
+        ("CPU count", lambda r: r["host"].update(cpus=8)),
+    ]:
+        _, faults = envelope(runs(clean, clean, mutated(change)))
+        check(f"runs with a different {name} are refused", bool(faults))
 
     # A duplicated line is a baseline nobody can reason about, and it is the
     # one input that raises rather than returning an exit code.
@@ -795,6 +861,15 @@ def self_test():
         with contextlib.redirect_stdout(io.StringIO()):
             got = run([report_path], "gate", recorded, DEFAULT_TOLERANCE, DEFAULT_NOISE_CEILING)
         check("a recorded baseline reads back and passes its own report", got == 0)
+
+    # The checked-in baseline is the inventory a real report is held to. The
+    # synthetic report has every entry the soak writes, so the two must list
+    # the same metrics.
+    checked_in = read_baseline(pathlib.Path(__file__).resolve().parent / "soak-baseline.txt")
+    check(
+        "tools/soak-baseline.txt lists exactly the metrics a complete report measures",
+        checked_in.keys() == measured(clean).keys(),
+    )
 
     total = len(cases) + checks
     print(f"{total} cases, {failures} failed", flush=True)

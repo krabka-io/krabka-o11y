@@ -60,6 +60,7 @@ logs/noisy_tenant/read_requests_per_op unseeded
 logs/noisy_tenant/write_p99_us unseeded
 logs/noisy_tenant/write_requests_per_op unseeded
 logs/restart/peak_rss_kib unseeded
+logs/restart/read_requests_per_op unseeded
 logs/restart/recovery_seconds unseeded
 logs/steady/accepted_rows_per_sec unseeded
 logs/steady/peak_rss_kib unseeded
@@ -101,6 +102,7 @@ metrics/noisy_tenant/read_requests_per_op unseeded
 metrics/noisy_tenant/write_p99_us unseeded
 metrics/noisy_tenant/write_requests_per_op unseeded
 metrics/restart/peak_rss_kib unseeded
+metrics/restart/read_requests_per_op unseeded
 metrics/restart/recovery_seconds unseeded
 metrics/steady/accepted_rows_per_sec unseeded
 metrics/steady/peak_rss_kib unseeded
@@ -142,6 +144,7 @@ profiles/noisy_tenant/read_requests_per_op unseeded
 profiles/noisy_tenant/write_p99_us unseeded
 profiles/noisy_tenant/write_requests_per_op unseeded
 profiles/restart/peak_rss_kib unseeded
+profiles/restart/read_requests_per_op unseeded
 profiles/restart/recovery_seconds unseeded
 profiles/steady/accepted_rows_per_sec unseeded
 profiles/steady/peak_rss_kib unseeded
@@ -183,6 +186,7 @@ traces/noisy_tenant/read_requests_per_op unseeded
 traces/noisy_tenant/write_p99_us unseeded
 traces/noisy_tenant/write_requests_per_op unseeded
 traces/restart/peak_rss_kib unseeded
+traces/restart/read_requests_per_op unseeded
 traces/restart/recovery_seconds unseeded
 traces/steady/accepted_rows_per_sec unseeded
 traces/steady/peak_rss_kib unseeded
