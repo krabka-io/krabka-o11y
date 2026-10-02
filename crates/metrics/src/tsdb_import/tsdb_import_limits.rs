@@ -12,6 +12,11 @@ pub struct TsdbImportLimits {
     pub max_series: u64,
     pub max_labels_per_series: u64,
     pub max_chunks_per_series: u64,
+    /// The chunks that the index lists for all series of the block. The
+    /// decoder checks it while it reads the index, before it keeps the chunk
+    /// list of a series. Each chunk holds at least one sample, so a block
+    /// within [`Self::max_samples`] holds at most that many chunks.
+    pub max_chunks: u64,
     /// The float and histogram samples of the whole block, before tombstones.
     pub max_samples: u64,
     /// The spans, buckets or custom bounds of one histogram side.
@@ -26,6 +31,7 @@ impl Default for TsdbImportLimits {
             max_series: 1_000_000,
             max_labels_per_series: 256,
             max_chunks_per_series: 100_000,
+            max_chunks: 25_000_000,
             max_samples: 25_000_000,
             max_histogram_buckets: 1 << 16,
         }

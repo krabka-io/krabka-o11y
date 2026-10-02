@@ -13,6 +13,11 @@ use super::{
 /// series strictly sorted by labels, label names strictly sorted within a
 /// series, chunk references non-decreasing, and chunk time ranges ordered and
 /// disjoint.
+///
+/// The chunk count of each series goes into a block-wide total before the
+/// function reads the chunks of that series. A block over
+/// [`TsdbImportLimits::max_chunks`] therefore stops the read before the kept
+/// chunk lists grow past that bound.
 pub fn read_series(
     index: &[u8],
     toc: &IndexToc,
@@ -29,7 +34,7 @@ pub fn read_series(
         .ok_or(TsdbImportError::Truncated { section: SECTION })?;
     let mut series = Vec::<IndexSeries>::new();
     let mut position = start;
-    let mut last_chunk_reference = 0_u64;
+    let mut cursor = ChunkCursor::default();
     while position < end {
         let aligned = position.next_multiple_of(16).min(end);
         if region[position..aligned].iter().any(|byte| *byte != 0) {
@@ -52,13 +57,7 @@ pub fn read_series(
                 section: format!("index series {reference}"),
             });
         }
-        let entry = parse_entry(
-            content,
-            reference,
-            symbols,
-            limits,
-            &mut last_chunk_reference,
-        )?;
+        let entry = parse_entry(content, reference, symbols, limits, &mut cursor)?;
         if series
             .last()
             .is_some_and(|last| last.labels >= entry.labels)
@@ -73,12 +72,21 @@ pub fn read_series(
     Ok(series)
 }
 
+/// The chunk state that one series entry carries to the next.
+#[derive(Default)]
+struct ChunkCursor {
+    /// The reference of the last chunk read, in any series.
+    last_reference: u64,
+    /// The chunks that the entries read so far declare.
+    total: u64,
+}
+
 fn parse_entry(
     content: &[u8],
     reference: u64,
     symbols: &[String],
     limits: &TsdbImportLimits,
-    last_chunk_reference: &mut u64,
+    cursor: &mut ChunkCursor,
 ) -> Result<IndexSeries, TsdbImportError> {
     let mut reader = ByteReader::new(content, "index series entry");
     let label_count = reader.uvarint()?;
@@ -115,6 +123,8 @@ fn parse_entry(
         chunk_count,
         limits.max_chunks_per_series,
     )?;
+    cursor.total = cursor.total.saturating_add(chunk_count);
+    TsdbImportLimits::check("chunks", cursor.total, limits.max_chunks)?;
     let chunk_count = usize::try_from(chunk_count).unwrap_or(usize::MAX);
     let mut chunks = Vec::<ChunkMeta>::with_capacity(chunk_count.min(reader.remaining()));
     let invalid = |reason: String| TsdbImportError::InvalidChunk {
@@ -157,13 +167,13 @@ fn parse_entry(
         if max_time < min_time {
             return Err(invalid(format!("chunk {index} ends before it starts")));
         }
-        if chunk_reference < *last_chunk_reference {
+        if chunk_reference < cursor.last_reference {
             return Err(invalid(format!(
                 "chunk reference {chunk_reference:#x} is below the previous reference {:#x}",
-                *last_chunk_reference
+                cursor.last_reference
             )));
         }
-        *last_chunk_reference = chunk_reference;
+        cursor.last_reference = chunk_reference;
         chunks.push(ChunkMeta {
             min_time,
             max_time,

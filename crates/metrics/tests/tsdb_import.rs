@@ -347,6 +347,15 @@ fn corrupt_fixture_blocks_fail_with_a_specific_error() {
             },
         },
         CorruptionCase {
+            name: "block-wide chunk limit",
+            corrupt: |_, _, limits| limits.max_chunks = 34,
+            expected: TsdbImportError::LimitExceeded {
+                limit: "chunks",
+                value: 35,
+                max: 34,
+            },
+        },
+        CorruptionCase {
             name: "series limit",
             corrupt: |_, _, limits| limits.max_series = 6,
             expected: TsdbImportError::LimitExceeded {
