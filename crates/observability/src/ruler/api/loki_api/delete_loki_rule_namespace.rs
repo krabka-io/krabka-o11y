@@ -21,7 +21,7 @@ pub(crate) async fn delete_loki_rule_namespace(
         match authorized_ruler_tenant(&state, &security, &headers, TenantErrorSurface::Ruler).await
         {
             Ok(tenant) => tenant,
-            Err(response) => return response,
+            Err(error) => return error.into_response(),
         };
     let resources = vec![
         resource(RESOURCE_TENANT, tenant.as_str()),

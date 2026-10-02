@@ -204,12 +204,13 @@ mod tests {
         admin
             .create_topics(
                 &[CreateTopicSpec {
+                    replica_assignments: std::collections::BTreeMap::default(),
                     name: LOGS_WAL_TOPIC.to_string(),
                     partitions: 1,
                     replicas: 1,
                     configs: BTreeMap::from([("retention.ms".to_string(), "900000".to_string())]),
                 }],
-                krabka_units::secs(5),
+                krabka_client_admin::TopicMutationOptions::with_timeout(krabka_units::secs(5)),
             )
             .await
             .expect("create the logs WAL topic");

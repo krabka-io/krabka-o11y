@@ -18,7 +18,7 @@ impl TokenDigest {
             return None;
         }
         let mut digest = [0_u8; 32];
-        for (byte, pair) in digest.iter_mut().zip(hex.chunks_exact(2)) {
+        for (byte, pair) in digest.iter_mut().zip(hex.as_chunks::<2>().0.iter()) {
             *byte =
                 (Self::lowercase_hex_value(pair[0])? << 4) | Self::lowercase_hex_value(pair[1])?;
         }

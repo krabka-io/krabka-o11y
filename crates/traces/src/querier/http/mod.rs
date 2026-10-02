@@ -431,7 +431,6 @@ mod tests {
     use object_store::{buffered::BufWriter, memory::InMemory, path::Path};
     use opentelemetry_proto::tonic::trace::v1::TracesData;
     use parquet::{arrow::AsyncArrowWriter, file::properties::WriterProperties};
-    use prost::Message as _;
     use serde_json::{Value, json};
     use tower::ServiceExt;
     use url::Url;

@@ -7,6 +7,15 @@
 #   tools/bench.sh --quick index_prune pprof_merge
 #   tools/bench.sh index_prune
 #
+# Three environment variables narrow a run further. //tools/bench-ratchet.py
+# `--confirm` sets them to rerun only the benchmarks that regressed:
+#
+#   KRABKA_BENCH_FILTER  a Criterion filter, a regular expression over ids
+#   CRITERION_HOME       the output directory, in place of
+#                        benches/target/criterion
+#   KRABKA_BENCH_KEEP=1  keep the output directory instead of clearing it,
+#                        so several calls add to one set of estimates
+#
 # The nightly `bench` job in //.github/workflows/ci.yml runs this script, so a
 # local run and a CI run use the same flags and report the same way -- the same
 # arrangement //tools/fuzz.sh has with the `fuzz` job.
@@ -89,14 +98,22 @@ cargo bench --manifest-path "${manifest}" --locked "${build[@]}" --no-run
 # and CI restores `target` from a cache, so the staleness survives the runner.
 # Clearing the directory first means every estimate the ratchet reads was
 # produced by this run.
-criterion_dir="$(dirname "${manifest}")/target/criterion"
-rm -rf "${criterion_dir}"
+criterion_dir="${CRITERION_HOME:-$(dirname "${manifest}")/target/criterion}"
+if [ "${KRABKA_BENCH_KEEP:-0}" != "1" ]; then
+  rm -rf "${criterion_dir}"
+fi
+
+filter=()
+if [ -n "${KRABKA_BENCH_FILTER:-}" ]; then
+  filter=("${KRABKA_BENCH_FILTER}")
+fi
 
 failed=()
 for bench in "${benches[@]}"; do
   echo
   echo "=== ${bench}: ${sample_size} samples, ${measurement_time}s each ==="
   if ! cargo bench --manifest-path "${manifest}" --locked --bench "${bench}" -- \
+    "${filter[@]}" \
     --sample-size "${sample_size}" \
     --measurement-time "${measurement_time}" \
     --warm-up-time "${warm_up_time}"; then
@@ -111,8 +128,8 @@ if [ "${#failed[@]}" -ne 0 ]; then
   exit 1
 fi
 echo "all ${#benches[@]} benchmarks ran"
-echo "estimates under benches/target/criterion, report at"
-echo "  benches/target/criterion/report/index.html"
+echo "estimates under ${criterion_dir}, report at"
+echo "  ${criterion_dir}/report/index.html"
 echo
 echo "the verdict is tools/bench-ratchet.py, which reads those estimates"
 
@@ -122,6 +139,7 @@ metadata="$criterion_dir/run.metadata.txt"
   printf 'started_at=%s\n' "$started_at"
   printf 'duration_seconds=%d\n' "$((SECONDS - started_seconds))"
   printf 'command=%s\n' "${command% }"
+  printf 'filter=%s\n' "${KRABKA_BENCH_FILTER:-}"
   printf 'sample_size=%s\n' "$sample_size"
   printf 'measurement_time_seconds=%s\n' "$measurement_time"
   printf 'warm_up_time_seconds=%s\n' "$warm_up_time"

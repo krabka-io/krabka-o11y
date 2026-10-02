@@ -54,7 +54,7 @@ The scoped command excludes ignored container suites.
 
 ## Mutation Coverage
 
-The scheduled target is `bazel test //crates/logql:logql_mutants`.
+The manual target is `bazel test //crates/logql:logql_mutants`.
 
 Its reviewed baseline is 91 survivors from a complete 12-shard run. The exact
 commit, command, runner, duration, and artifact checksums are recorded in

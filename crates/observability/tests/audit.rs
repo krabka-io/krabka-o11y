@@ -234,12 +234,13 @@ async fn create_audit_topic(bootstrap: &str) {
     admin
         .create_topics(
             &[CreateTopicSpec {
+                replica_assignments: std::collections::BTreeMap::default(),
                 name: AUDIT_TOPIC.to_string(),
                 partitions: 2,
                 replicas: 1,
                 configs: BTreeMap::default(),
             }],
-            secs(10),
+            krabka_client_admin::TopicMutationOptions::with_timeout(secs(10)),
         )
         .await
         .expect("create the audit topic");

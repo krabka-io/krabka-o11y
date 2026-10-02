@@ -1,5 +1,5 @@
 use assert2::assert;
-use krabka_units::{convert::TimeExt as _, millis};
+use krabka_units::millis;
 use tokio_util::sync::CancellationToken;
 
 use super::*;

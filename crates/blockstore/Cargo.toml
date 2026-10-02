@@ -27,7 +27,8 @@ parquet = { workspace = true }
 datafusion = { workspace = true }
 derive_more = { workspace = true }
 hex = { workspace = true }
-krabka-object-store = { version = "0.4.0" }
+# DataFusion and Parquet share object_store 0.13; keep their helper compatible.
+krabka-object-store = { git = "https://github.com/krabka-io/krabka-broker", rev = "19ea5bfac23c4858d5d6aed99890014fd0fa23d3", version = "0.4.0" }
 krabka-o11y-verified = { path = "../verified", version = "0.4.0" }
 krabka-units = { workspace = true }
 object_store = { workspace = true }

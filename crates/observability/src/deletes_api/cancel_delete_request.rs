@@ -11,7 +11,7 @@ pub(crate) async fn cancel_delete_request(
 ) -> Response {
     let tenant = match authorized_delete_tenant(&state, &security, &headers).await {
         Ok(tenant) => tenant,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     match execute_cancel_delete_request(&state, &security, &tenant, raw_query.as_deref()) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),

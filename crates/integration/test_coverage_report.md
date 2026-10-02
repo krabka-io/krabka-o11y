@@ -54,7 +54,7 @@ The scoped command excludes ignored container suites.
 
 ## Mutation Coverage
 
-This crate has no scheduled mutation target.
+This crate has no mutation target.
 
 ## Test Infrastructure
 

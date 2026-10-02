@@ -1,3 +1,5 @@
+use axum::response::IntoResponse as _;
+
 use super::{
     HeaderMap, Path, QuerierState, RequestSecurity, Response, State, StatusCode,
     TenantErrorSurface, authorized_ruler_tenant, loki_yaml_response,
@@ -14,7 +16,7 @@ pub(crate) async fn loki_rule_namespace(
         match authorized_ruler_tenant(&state, &security, &headers, TenantErrorSurface::Ruler).await
         {
             Ok(tenant) => tenant,
-            Err(response) => return response,
+            Err(error) => return error.into_response(),
         };
     let rules = state
         .rules
