@@ -42,6 +42,8 @@ pub enum ServiceConfigError {
     #[error(transparent)]
     ObjectStore(#[from] object_store::Error),
     #[error(transparent)]
+    ObjectStoreSemantics(#[from] krabka_blockstore::ObjectStoreSemanticsError),
+    #[error(transparent)]
     DeleteRequests(#[from] LogDeleteRequestStoreError),
     #[error(transparent)]
     Rules(#[from] LokiRuleStoreError),

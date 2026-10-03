@@ -1,10 +1,13 @@
 //! Level compaction of metric blocks that are already in object storage: what
 //! merges, what never does, and the order a pass applies its result in.
 
+#[path = "../../blockstore/tests/support/lifecycle_store.rs"]
+mod lifecycle_store;
+
 use std::{
     collections::BTreeMap,
     sync::Arc,
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use arrow::{
@@ -15,22 +18,25 @@ use assert2::{assert, check};
 use krabka_blockstore::{
     BlockLevel, BlockTimestampUnit, BlockWriter, CompactionPolicy, DEFAULT_BLOCK_READ_MAX,
     ERASURE_REQUEST_PREFIX, ErasureRequest, LabelMatcher, Labels, LifecycleError, MatchOp,
-    StorageAuditOptions, StorageSignal, audit_store, list_erasure_requests, put_erasure_request,
-    read_block,
+    OrphanSweepStats, StorageAuditOptions, StorageSignal, audit_store, list_erasure_requests,
+    put_erasure_request, read_block,
 };
 use krabka_metrics::{
     BucketSpan, ClockReadingPayload, ClockReadingRow, CompactionIndexManifest,
     CompactionManifestError, CompactionObjectPlan, CompactionRetentionError,
-    CompactionRetentionStats, CompactionSeriesLabels, DeferredBlockDeletions, ExemplarRow,
-    FloatRow, MetadataRow, MetricBlockKind, MetricCompactionPass, NativeHistogram,
-    NativeHistogramRow, ObjectStoreCompactionIndexSink, ResetHint, TenantCompactionRows,
-    compact_metric_blocks_once, decode_float_samples, decode_native_histograms,
-    enforce_compaction_retention, list_compaction_manifests, plan_metric_compactions,
+    CompactionRetentionPhase, CompactionRetentionStats, CompactionSeriesLabels,
+    DeferredBlockDeletions, ExemplarRow, FloatRow, MetadataRow, MetricBlockKind,
+    MetricCompactionPass, NativeHistogram, NativeHistogramRow, ObjectStoreCompactionIndexSink,
+    ResetHint, TenantCompactionRows, compact_metric_blocks_once, decode_float_samples,
+    decode_native_histograms, enforce_compaction_retention, list_compaction_manifests,
+    plan_metric_compactions,
     wire::{ClockSourceKind, ClockSyncState, DecodedClockReading, UnixNanos},
     write_compacted_tenant_blocks,
 };
 use krabka_units::{Time, hours, secs};
 use object_store::{ObjectStore, ObjectStoreExt, memory::InMemory, path::Path};
+
+use self::lifecycle_store::{LifecycleStep, LifecycleStore};
 
 /// A wall-clock instant well inside the range every unit can express.
 const NOW_MS: i64 = 1_700_000_000_000;
@@ -831,4 +837,113 @@ async fn the_storage_audit_reads_the_manifests_the_compactor_writes() {
 
     check!(report.findings == Vec::new());
     check!(report.objects_unclassified == 0);
+}
+
+/// One day of epoch milliseconds.
+const DAY_MS: i64 = 86_400_000;
+
+/// A block goes through every stage of its life on the store the environment
+/// names, and a restarted process finds what the last one left.
+///
+/// The orphan sweep dates an object by the store's `last_modified`, so this
+/// test runs on the wall clock and not on `NOW_MS`. By default the store is in
+/// memory. See `docs/object_store_contract.md` to run it against a provider.
+#[tokio::test]
+async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
+    let mut lifecycle = LifecycleStore::open("metrics", "block_lifecycle");
+    let store = lifecycle.store();
+    let wall = SystemTime::now();
+    let wall_ms = i64::try_from(
+        wall.duration_since(UNIX_EPOCH)
+            .expect("the clock is after the epoch")
+            .as_millis(),
+    )
+    .expect("an epoch time");
+    // The start of the current day, so both of tenant-a's blocks share one
+    // compaction window whatever the hour.
+    let today = wall_ms - wall_ms % DAY_MS;
+
+    // Flush: two level-zero blocks for tenant-a, and one a week old for
+    // tenant-b that retention will expire.
+    let first = write_float_block(&store, "tenant-a", 1, &[(7, today, 1.0)]).await;
+    let second = write_float_block(&store, "tenant-a", 3, &[(7, today + 1_000, 2.0)]).await;
+    let expired = write_float_block(&store, "tenant-b", 5, &[(9, today - 7 * DAY_MS, 3.0)]).await;
+    let orphan = Path::from("metrics/tenant-a/float/orphaned-by-a-crashed-writer.parquet");
+    store
+        .put(&orphan, "never indexed".into())
+        .await
+        .expect("plant an orphan");
+
+    // Compaction: one pass merges, and the next deletes the inputs.
+    let mut deferred = DeferredBlockDeletions::new();
+    let merging = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    assert!(merging.outputs.len() == 1);
+    let merged = merging.outputs[0].clone();
+    let sweeping = run_pass(&store, policy(8, 1_000_000, 4), &mut deferred).await;
+    check!(sweeping.blocks_deleted.deleted == 2);
+    for input in [&first, &second] {
+        check!(!exists(&store, &input.block_key).await);
+    }
+
+    // Query: the merged block holds both samples.
+    let merged_samples = vec![(7, today, 1.0), (7, today + 1_000, 2.0)];
+    check!(samples_in(&store, &merged.block_key).await == merged_samples);
+
+    // Restart: the manifests in the store are the whole index, so a new
+    // process lists them again.
+    let store = lifecycle.restart();
+    check!(
+        list_compaction_manifests(&store)
+            .await
+            .expect("list manifests after a restart")
+            == vec![merged.clone(), expired.clone()]
+    );
+    check!(samples_in(&store, &merged.block_key).await == merged_samples);
+
+    // Retention and orphan reconciliation, two hours on, so the orphan is past
+    // its grace and tenant-a's merged block is still inside its window.
+    let stats =
+        enforce_compaction_retention(&store, wall + Duration::from_hours(2), &Windows(hours(72)))
+            .await
+            .expect("enforce retention");
+    check!(
+        stats
+            == CompactionRetentionStats {
+                manifests_scanned: 2,
+                manifests_retired: CompactionRetentionPhase {
+                    deleted: 1,
+                    ..CompactionRetentionPhase::default()
+                },
+                blocks_deleted: CompactionRetentionPhase {
+                    deleted: 1,
+                    ..CompactionRetentionPhase::default()
+                },
+                orphans: OrphanSweepStats {
+                    listed: 3,
+                    live: 2,
+                    deleted: 1,
+                    ..OrphanSweepStats::default()
+                },
+            }
+    );
+    check!(!exists(&store, &expired.block_key).await);
+    check!(!exists(&store, orphan.as_ref()).await);
+    check!(
+        list_compaction_manifests(&store)
+            .await
+            .expect("list manifests")
+            == vec![merged.clone()]
+    );
+    check!(samples_in(&store, &merged.block_key).await == merged_samples);
+
+    lifecycle
+        .finish(&[
+            LifecycleStep::Flush,
+            LifecycleStep::Compaction,
+            LifecycleStep::Query,
+            LifecycleStep::Restart,
+            LifecycleStep::Retention,
+            LifecycleStep::OrphanReconciliation,
+        ])
+        .await;
 }

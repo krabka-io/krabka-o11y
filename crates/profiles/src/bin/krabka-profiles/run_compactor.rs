@@ -31,6 +31,7 @@ pub(crate) async fn run_compactor(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_gate = readiness.gate("object-store");
     let configured = build_object_store(&cli.object_store_url, metrics.object_store.clone())
+        .await
         .map_err(|e| format!("object store: {e}"))?;
     object_store_gate.mark_ready();
     let index_key = cli.index_object_key.clone();

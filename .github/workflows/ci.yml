@@ -278,6 +278,16 @@ jobs:
       # point: the `bench` job below is nightly, and a ratchet developed only
       # against it would be checked once a day.
       - run: tools/bench-ratchet.py --self-test
+      # //tools/object-store-evidence.py gates the manual `object-store
+      # contract` workflow, which needs provider credentials. Its `--self-test`
+      # checks synthetic evidence, so a fault shows on the pull request.
+      - run: tools/object-store-evidence.py --self-test
+      # //tools/soak-gate.py reads the operating-envelope soak's report. Its
+      # `--self-test` drives the structural check, the baseline ratchet and the
+      # envelope computation against synthetic reports, so it needs no soak:
+      # the soak is a scheduled job, and a gate checked only there would be
+      # checked once a day.
+      - run: tools/soak-gate.py --self-test
       # //tools/mutants-record.py checks the two Milestone 19 records under
       # //qualification. Each record must name the commit, toolchain, host
       # shape, command, duration and checksums of its run, and each number in
@@ -849,11 +859,12 @@ jobs:
         suite:
           - name: object_store
             target: //crates/observability:scale_object_store_docker_test
-          # The soak. Same tag and same container as the suite above, its own
+          # The operating-envelope soak: all four signals through eight phases
+          # each. Same tag and same container as the suite above, its own
           # runner because it holds a wall-clock budget of its own and would
           # otherwise spend the other suite's.
           - name: soak
-            target: //crates/observability:soak_ingest_query_docker_test
+            target: //crates/integration:soak_envelope_docker_test
     steps:
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
@@ -864,6 +875,18 @@ jobs:
       - run: |
           bazel test --config=scale ${{ matrix.suite.target }} \
             --test_env=KRABKA_SOAK_COMMIT=${GITHUB_SHA}
+      # A shared runner's numbers are too noisy to ratchet, so this step
+      # checks the shape of the report only: every signal, every phase, every
+      # field. The regression gate is `tools/soak-gate.py --baseline` on the
+      # stable runner; see //docs/operating_envelope.md.
+      - name: soak report
+        if: matrix.suite.name == 'soak'
+        run: |
+          outputs=bazel-testlogs/crates/integration/soak_envelope_docker_test/test.outputs
+          if [ ! -f "${outputs}/soak-report.json" ] && [ -f "${outputs}/outputs.zip" ]; then
+            unzip -o "${outputs}/outputs.zip" soak-report.json -d "${outputs}"
+          fi
+          tools/soak-gate.py --structural "${outputs}/soak-report.json"
       - name: evidence manifest
         if: always()
         run: |

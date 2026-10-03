@@ -84,17 +84,40 @@ impl AsyncFileReader for ObjectStoreReader {
 }
 
 impl MetadataSuffixFetch for &mut ObjectStoreReader {
+    /// Reads the last `suffix` bytes of the object.
+    ///
+    /// Azure Blob Storage has no suffix range, and its client refuses one with
+    /// `NotSupported` before it sends a request. The reader then asks for the
+    /// object size and reads a bounded range instead. That is one more
+    /// request per footer, and the footer cache absorbs it.
     fn fetch_suffix(&mut self, suffix: usize) -> BoxFuture<'_, parquet::errors::Result<Bytes>> {
         let options = GetOptions {
             range: Some(GetRange::Suffix(suffix as u64)),
             ..Default::default()
         };
         async move {
-            let result = self
-                .store
-                .get_opts(&self.path, options)
-                .await
-                .map_err(to_parquet_error)?;
+            let result = match self.store.get_opts(&self.path, options).await {
+                Ok(result) => result,
+                Err(object_store::Error::NotSupported { .. }) => {
+                    let size = match &self.cached {
+                        Some(cached) => cached.meta.size,
+                        None => {
+                            self.store
+                                .head(&self.path)
+                                .await
+                                .map_err(to_parquet_error)?
+                                .size
+                        }
+                    };
+                    let range = size.saturating_sub(suffix as u64)..size;
+                    return self
+                        .store
+                        .get_range(&self.path, range)
+                        .await
+                        .map_err(to_parquet_error);
+                }
+                Err(error) => return Err(to_parquet_error(error)),
+            };
             result.bytes().await.map_err(to_parquet_error)
         }
         .boxed()

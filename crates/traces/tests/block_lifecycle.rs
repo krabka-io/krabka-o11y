@@ -7,7 +7,15 @@
 //! the store holds afterwards, because the object set is what a querier and an
 //! operator's storage bill both read.
 
-use std::{collections::BTreeSet, fmt::Write as _, sync::Arc, time::SystemTime};
+#[path = "../../blockstore/tests/support/lifecycle_store.rs"]
+mod lifecycle_store;
+
+use std::{
+    collections::BTreeSet,
+    fmt::Write as _,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use assert2::check;
 use futures::StreamExt as _;
@@ -29,6 +37,8 @@ use object_store::{
     ObjectStore, ObjectStoreExt as _, PutPayload, local::LocalFileSystem, memory::InMemory,
     path::Path,
 };
+
+use self::lifecycle_store::{LifecycleStep, LifecycleStore};
 
 const DAY_NS: i64 = 24 * 60 * 60 * 1_000_000_000;
 
@@ -460,4 +470,138 @@ fn the_default_window_is_tempos_and_covers_the_tenants_no_file_names() {
 
     check!(provider.for_tenant("unlisted").block_retention == hours(336));
     check!(provider.expires_any_blocks());
+}
+
+/// A block goes through every stage of its life on the store the environment
+/// names, and a restarted process finds what the last one left.
+///
+/// The orphan sweep dates an object by the store's `last_modified`, so this
+/// test runs on the wall clock and not on `NOW_NS`. By default the store is in
+/// memory. See `docs/object_store_contract.md` to run it against a provider.
+#[tokio::test]
+async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
+    const KEY: &str = "index/traces.json";
+    let mut lifecycle = LifecycleStore::open("traces", "block_lifecycle");
+    let store = lifecycle.store();
+    let wall = SystemTime::now();
+    let now_ns = i64::try_from(
+        wall.duration_since(UNIX_EPOCH)
+            .expect("the clock is after the epoch")
+            .as_nanos(),
+    )
+    .expect("an epoch time");
+
+    // Flush: two blocks for tenant-a, and one a month old for tenant-b that
+    // retention will expire.
+    let writer = BlockWriter::new(store.clone());
+    let mut index = TraceIndex::new();
+    let first = write_block(&writer, &mut index, "tenant-a", 1, now_ns, 10).await;
+    let second = write_block(&writer, &mut index, "tenant-a", 2, now_ns, 20).await;
+    let old = write_block(&writer, &mut index, "tenant-b", 3, now_ns - 30 * DAY_NS, 30).await;
+    index
+        .save_latest_snapshot(&store, KEY)
+        .await
+        .expect("the flush snapshot saves");
+
+    // Compaction: tenant-a's two blocks merge, and the inputs go once the
+    // index no longer names them.
+    let pass = compact_once(store.clone(), &writer, &mut index, "", wide_policy())
+        .await
+        .expect("the pass compacts");
+    check!(pass.outputs.len() == 1);
+    let merged = pass.outputs[0].object_key.clone();
+    let mut retired = pass.retired_inputs.clone();
+    retired.sort();
+    let mut inputs = vec![first, second];
+    inputs.sort();
+    check!(retired == inputs);
+    index
+        .save_latest_snapshot(&store, KEY)
+        .await
+        .expect("the compaction snapshot saves");
+    check!(
+        delete_trace_blocks(&store, &pass.retired_inputs).await
+            == BlockDeletionReport {
+                blocks_deleted: 2,
+                ..BlockDeletionReport::default()
+            }
+    );
+
+    // Restart: a new process loads the index the last one saved.
+    let store = lifecycle.restart();
+    let mut index = TraceIndex::load_latest_snapshot(&store, KEY)
+        .await
+        .expect("the snapshot loads after a restart");
+    let mut live = vec![merged.clone(), old.clone()];
+    live.sort();
+    check!(indexed_block_keys(&index) == live);
+
+    // Query: the merged block holds both traces.
+    let rows: usize = read_block(store.clone(), &merged)
+        .await
+        .expect("the merged block reads")
+        .iter()
+        .map(arrow::record_batch::RecordBatch::num_rows)
+        .sum();
+    check!(rows == 2);
+
+    // Retention: tenant-b's block is past its window, and tenant-a's is not.
+    let expired = expire_trace_blocks(
+        &mut index,
+        UnixNano(now_ns),
+        &windows(&[("tenant-a", days(14)), ("tenant-b", days(14))]),
+    );
+    check!(
+        expired
+            == vec![ExpiredBlock {
+                tenant: "tenant-b".to_string(),
+                object_key: old.clone(),
+            }]
+    );
+    index
+        .save_latest_snapshot(&store, KEY)
+        .await
+        .expect("the retention snapshot saves");
+    check!(
+        delete_trace_blocks(&store, std::slice::from_ref(&old)).await
+            == BlockDeletionReport {
+                blocks_deleted: 1,
+                ..BlockDeletionReport::default()
+            }
+    );
+
+    // Orphan reconciliation: an object no index names goes once it is past
+    // its grace.
+    let orphan = format!("{TRACE_BLOCK_OBJECT_PREFIX}/tenant-a/00007/orphaned.parquet");
+    store
+        .put(&Path::from(orphan.as_str()), PutPayload::from_static(b"x"))
+        .await
+        .expect("the orphan is written");
+    check!(
+        sweep(
+            &store,
+            KEY,
+            &index,
+            wall + 2 * DEFAULT_BLOCK_SWEEP_GRACE.to_std()
+        )
+        .await
+            == OrphanSweepStats {
+                listed: 2,
+                live: 1,
+                deleted: 1,
+                ..OrphanSweepStats::default()
+            }
+    );
+    check!(keys_under(&store, TRACE_BLOCK_OBJECT_PREFIX).await == BTreeSet::from([merged]));
+
+    lifecycle
+        .finish(&[
+            LifecycleStep::Flush,
+            LifecycleStep::Compaction,
+            LifecycleStep::Restart,
+            LifecycleStep::Query,
+            LifecycleStep::Retention,
+            LifecycleStep::OrphanReconciliation,
+        ])
+        .await;
 }

@@ -23,6 +23,7 @@ mod matcher;
 mod merge;
 mod metrics;
 mod nested_set;
+mod object_store_semantics;
 mod path_escape;
 mod persisted_format;
 mod profile_block;
@@ -105,6 +106,11 @@ pub use metrics::{
     MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreOperationLabel,
 };
 pub use nested_set::{NestedSet, SpanNode, assign_nested_set};
+pub use object_store_semantics::{
+    ConditionalUpdateRequirement, OBJECT_STORE_PROBE_PREFIX, ObjectStoreAccess,
+    ObjectStoreCapabilities, ObjectStoreSemanticsError, verify_object_store_access,
+    verify_object_store_read_access, verify_object_store_semantics,
+};
 pub use path_escape::{escape_object_path_segment, unescape_object_path_segment};
 pub use persisted_format::{
     PERSISTED_BLOCK_FORMAT_KEY, PERSISTED_BLOCK_FORMAT_VERSION, validate_persisted_block_format,

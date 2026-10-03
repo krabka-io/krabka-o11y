@@ -3,17 +3,24 @@
 //! The URL must point below `krabka-contract/`; every object below that prefix
 //! is deleted. See `docs/object_store_contract.md` for credentials and usage.
 
+mod faults;
+
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Instant};
 
-use assert2::assert;
+use assert2::{assert, check};
 use futures::{StreamExt as _, TryStreamExt as _, stream};
 use krabka_blockstore::{MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation};
 use object_store::{
-    Error, ObjectStore, ObjectStoreExt as _, PutMode, UpdateVersion, integration, path::Path,
-    prefix::PrefixStore,
+    Error, ObjectStore, ObjectStoreExt as _, ObjectStoreScheme, PutMode, UpdateVersion,
+    integration, path::Path, prefix::PrefixStore,
 };
 use serde_json::json;
 use url::Url;
+
+use self::faults::{
+    ChecksumOutcome, StaleListingOutcome, ThrottlingOutcome, checksum_mismatch, stale_listing,
+    throttling,
+};
 
 const OBJECTS_OVER_ONE_S3_PAGE: usize = 1_005;
 
@@ -85,16 +92,41 @@ async fn gcs_conditional_puts(store: &dyn ObjectStore) {
             .await,
         Err(Error::Precondition { .. })
     ));
-    assert!(matches!(
+    assert!(
         store
             .put_opts(
                 &path,
                 "e".into(),
                 PutMode::Update(UpdateVersion::from(updated)).into(),
             )
-            .await,
-        Ok(_)
-    ));
+            .await
+            .is_ok()
+    );
+}
+
+/// The host of the endpoint override, or `None` for the provider's default.
+///
+/// The URL host of `s3://`, `gs://` and `az://` names a bucket or container,
+/// so an S3-compatible store is only visible here.
+fn endpoint_host() -> Option<String> {
+    ["AWS_ENDPOINT", "AWS_ENDPOINT_URL", "AZURE_STORAGE_ENDPOINT"]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok())
+        .and_then(|raw| Url::parse(&raw).ok())
+        .and_then(|endpoint| endpoint.host_str().map(str::to_owned))
+}
+
+/// The cloud whose client serves `url`: `aws`, `gcs` or `azure`.
+///
+/// `object_store` picks the client from the scheme, and for an `https://` URL
+/// from the host. The URL scheme alone does not name the cloud.
+fn cloud(url: &Url) -> &'static str {
+    match ObjectStoreScheme::parse(url) {
+        Ok((ObjectStoreScheme::AmazonS3, _)) => "aws",
+        Ok((ObjectStoreScheme::GoogleCloudStorage, _)) => "gcs",
+        Ok((ObjectStoreScheme::MicrosoftAzure, _)) => "azure",
+        _ => "other",
+    }
 }
 
 fn report_path() -> Option<PathBuf> {
@@ -151,6 +183,14 @@ async fn supported_provider_satisfies_the_object_store_contract() {
         integration::get_nonexistent_object(&store, None).await,
         Err(Error::NotFound { .. })
     ));
+    // The injected faults run over the provider, so the retry, decode and
+    // sweep paths meet its real latency, timestamps and listing order.
+    assert!(throttling(Arc::clone(&store)).await == ThrottlingOutcome::absorbed());
+    delete_all(&store).await;
+    assert!(checksum_mismatch(Arc::clone(&store)).await == ChecksumOutcome::surfaced());
+    delete_all(&store).await;
+    assert!(stale_listing(Arc::clone(&store)).await == StaleListingOutcome::nothing_lost());
+    delete_all(&store).await;
 
     stream::iter(0..OBJECTS_OVER_ONE_S3_PAGE)
         .map(|number| {
@@ -182,13 +222,28 @@ async fn supported_provider_satisfies_the_object_store_contract() {
     }
     let report = json!({
         "schema_version": 1,
+        "kind": "contract",
         "commit": std::env::var("KRABKA_CONTRACT_COMMIT").unwrap_or_else(|_| "unknown".into()),
         "provider": url.scheme(),
-        "endpoint_host": url.host_str(),
+        "cloud": cloud(&url),
+        "bucket": url.host_str(),
+        "endpoint_host": endpoint_host(),
         "duration_seconds": started.elapsed().as_secs_f64(),
         "pagination_objects": OBJECTS_OVER_ONE_S3_PAGE,
         "listing_convergence_attempts": listing_attempts,
         "deletion_convergence_attempts": deletion_attempts,
+        // Each case above ran and passed, or the test panicked before this.
+        "cases": [
+            "conditional_writes",
+            "multipart",
+            "pagination",
+            "stale_listing",
+            "checksum_mismatch",
+            "throttling",
+            "deletion",
+        ],
+        "requests_total": operations.values().sum::<u64>(),
+        "transferred_bytes_total": transferred_bytes.values().sum::<u64>(),
         "operations": operations,
         "transferred_bytes": transferred_bytes,
     });
@@ -196,5 +251,36 @@ async fn supported_provider_satisfies_the_object_store_contract() {
     if let Some(path) = report_path() {
         std::fs::write(path, serde_json::to_vec_pretty(&report).unwrap())
             .expect("the contract report writes");
+    }
+}
+
+#[test]
+fn the_report_names_the_cloud_whose_client_serves_the_url() {
+    let cases = [
+        ("s3://bucket/krabka-contract/run", "aws"),
+        ("s3a://bucket/krabka-contract/run", "aws"),
+        (
+            "https://s3.us-east-1.amazonaws.com/bucket/krabka-contract/run",
+            "aws",
+        ),
+        (
+            "https://account.r2.cloudflarestorage.com/bucket/krabka-contract/run",
+            "aws",
+        ),
+        ("gs://bucket/krabka-contract/run", "gcs"),
+        ("az://container/krabka-contract/run", "azure"),
+        (
+            "abfss://container@account.dfs.core.windows.net/run",
+            "azure",
+        ),
+        (
+            "https://account.blob.core.windows.net/container/krabka-contract/run",
+            "azure",
+        ),
+        ("https://example.com/krabka-contract/run", "other"),
+        ("file:///tmp/krabka-contract/run", "other"),
+    ];
+    for (url, want) in cases {
+        check!(cloud(&Url::parse(url).unwrap()) == want, "{url}");
     }
 }
