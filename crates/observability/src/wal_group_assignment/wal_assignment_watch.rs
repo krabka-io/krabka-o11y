@@ -86,6 +86,19 @@ async fn bounded(query: impl Future<Output = bool>) -> bool {
         .unwrap_or(false)
 }
 
+/// The records that a member polled and has not reported as applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Unapplied {
+    /// Every polled record was applied.
+    None,
+    /// The poll loop still holds records. Only [`WalAssignmentWatch::observe_applied`]
+    /// clears them.
+    Held,
+    /// A revocation came while the loop held records, so the loop fenced
+    /// them. No apply reports fenced records, so the broker may settle them.
+    Fenced,
+}
+
 /// Reports every change to one consumer group member's partition assignment.
 ///
 /// Build one beside the consumer, then call [`Self::observe`] once per poll
@@ -99,7 +112,7 @@ pub struct WalAssignmentWatch {
     owned: BTreeSet<(String, i32)>,
     first_observation: bool,
     catch_up: Option<ReadinessGate>,
-    unapplied_records: bool,
+    unapplied: Unapplied,
     caught_up_after_apply: bool,
 }
 
@@ -116,7 +129,7 @@ impl WalAssignmentWatch {
             owned: BTreeSet::new(),
             first_observation: true,
             catch_up: None,
-            unapplied_records: false,
+            unapplied: Unapplied::None,
             caught_up_after_apply: false,
         }
     }
@@ -159,6 +172,9 @@ impl WalAssignmentWatch {
         }
         for (topic, partition) in &change.revoked {
             self.metrics.record_partition_revoked(topic, *partition);
+        }
+        if self.unapplied == Unapplied::Held && change.strands_buffered_records() {
+            self.unapplied = Unapplied::Fenced;
         }
 
         if change.strands_buffered_records() {
@@ -203,14 +219,18 @@ impl WalAssignmentWatch {
         let assigned = consumer.assignment().await;
         let change = self.observe(&assigned);
         let mut at_log_end = self.at_log_end(consumer, &assigned).await;
-        self.caught_up_after_apply |= at_log_end && (has_records || self.unapplied_records);
-        self.unapplied_records |= has_records;
-        if !has_records && self.unapplied_records && self.group_committed(consumer, &assigned).await
+        self.caught_up_after_apply |=
+            at_log_end && (has_records || self.unapplied != Unapplied::None);
+        if has_records {
+            self.unapplied = Unapplied::Held;
+        }
+        if self.may_settle_fenced_records(has_records)
+            && self.group_committed(consumer, &assigned).await
         {
-            // Every record up to the log end is durable, so nothing this
-            // member counted as unapplied is still owed. A rebalance may have
-            // fenced those records, and then no apply ever reports them.
-            self.unapplied_records = false;
+            // A rebalance fenced the records this member counted as
+            // unapplied, so no apply reports them. Every record up to the log
+            // end is durable, so nothing is still owed.
+            self.unapplied = Unapplied::None;
             at_log_end = true;
         }
         self.record_recovery(&assigned, at_log_end);
@@ -261,12 +281,22 @@ impl WalAssignmentWatch {
         bounded(group_committed_log_end(consumer, assigned)).await
     }
 
+    /// Whether an empty poll may ask the broker to settle unapplied records.
+    ///
+    /// Only records that a revocation fenced qualify. Records that the loop
+    /// still holds must wait for [`Self::observe_applied`]: a log that
+    /// retention emptied looks fully committed, but the loop has not written
+    /// those records yet.
+    fn may_settle_fenced_records(&self, has_records: bool) -> bool {
+        !has_records && self.unapplied == Unapplied::Fenced
+    }
+
     fn gate_closed(&self) -> bool {
         self.catch_up.as_ref().is_some_and(|gate| !gate.is_ready())
     }
 
     fn record_applied(&mut self, assigned: &[(String, i32)], at_log_end: bool) {
-        self.unapplied_records = false;
+        self.unapplied = Unapplied::None;
         let caught_up_after_apply = std::mem::take(&mut self.caught_up_after_apply);
         self.record_recovery(assigned, at_log_end);
         if caught_up_after_apply && let Some(gate) = &self.catch_up {
@@ -275,7 +305,7 @@ impl WalAssignmentWatch {
     }
 
     fn record_recovery(&self, assigned: &[(String, i32)], at_log_end: bool) {
-        let caught_up = at_log_end && !self.unapplied_records;
+        let caught_up = at_log_end && self.unapplied == Unapplied::None;
         self.metrics.record_assignment(assigned, caught_up);
         if let Some(gate) = &self.catch_up
             && caught_up
@@ -296,6 +326,40 @@ mod recovery_tests {
     use super::*;
 
     #[test]
+    fn only_records_fenced_by_a_revocation_may_be_settled_by_the_broker() {
+        let wal = |partition| ("wal".to_string(), partition);
+        // Each case: the assignment after the batch was polled, whether the
+        // batch was applied before that, and whether the broker may settle it.
+        let cases = [
+            ("held, no rebalance", vec![wal(0), wal(1)], false, false),
+            (
+                "held, partition gained",
+                vec![wal(0), wal(1), wal(2)],
+                false,
+                false,
+            ),
+            ("held, partition revoked", vec![wal(0)], false, true),
+            ("applied, partition revoked", vec![wal(0)], true, false),
+        ];
+        for (name, after, applied, expected) in cases {
+            let metrics = WalConsumerMetrics::unregistered();
+            let gate = crate::RoleReadiness::new().gate("wal-catch-up");
+            let mut watch = WalAssignmentWatch::with_catch_up(metrics, gate);
+            watch.observe(&[wal(0), wal(1)]);
+            watch.unapplied = Unapplied::Held;
+            if applied {
+                watch.record_applied(&[wal(0), wal(1)], false);
+            }
+            watch.observe(&after);
+            assert2::check!(
+                watch.may_settle_fenced_records(false) == expected,
+                "case {name}"
+            );
+            assert2::check!(!watch.may_settle_fenced_records(true), "case {name}");
+        }
+    }
+
+    #[test]
     fn log_end_is_not_ready_until_the_fetched_batch_is_applied() {
         let metrics = WalConsumerMetrics::unregistered();
         let readiness = crate::RoleReadiness::new();
@@ -303,12 +367,12 @@ mod recovery_tests {
         let mut watch = WalAssignmentWatch::with_catch_up(metrics.clone(), gate.clone());
         let assigned = [("wal".to_string(), 0)];
 
-        watch.unapplied_records = true;
+        watch.unapplied = Unapplied::Held;
         watch.record_recovery(&assigned, true);
         assert2::check!(!gate.is_ready());
         assert2::check!(!metrics.recovery_status().caught_up);
 
-        watch.unapplied_records = false;
+        watch.unapplied = Unapplied::None;
         watch.record_recovery(&assigned, true);
         assert2::check!(gate.is_ready());
         assert2::check!(metrics.recovery_status().caught_up);
@@ -322,7 +386,7 @@ mod recovery_tests {
         let mut watch = WalAssignmentWatch::with_catch_up(metrics.clone(), gate.clone());
         let assigned = [("wal".to_string(), 0)];
 
-        watch.unapplied_records = true;
+        watch.unapplied = Unapplied::Held;
         watch.caught_up_after_apply = true;
         watch.record_applied(&assigned, false);
 
