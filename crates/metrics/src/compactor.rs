@@ -2963,7 +2963,7 @@ pub use compaction_consumer_poll_error::CompactionConsumerPollError;
 pub use compaction_consumer_record_error::CompactionConsumerRecordError;
 pub use compaction_index_error::CompactionIndexError;
 #[cfg_attr(test, mutants::skip)]
-use compaction_index_key::compaction_index_key;
+pub(crate) use compaction_index_key::compaction_index_key;
 pub use compaction_index_manifest::CompactionIndexManifest;
 pub use compaction_index_sink::CompactionIndexSink;
 pub use compaction_loop_config::CompactionLoopConfig;
@@ -3033,7 +3033,7 @@ pub use run_compactor_consumer_loop::run_compactor_consumer_loop;
 pub use run_compactor_consumer_loop_with_clock::run_compactor_consumer_loop_with_clock;
 pub use run_compactor_loop::run_compactor_loop;
 pub use run_compactor_loop_with_clock::run_compactor_loop_with_clock;
-use series_labels_for_kind::series_labels_for_kind;
+pub(crate) use series_labels_for_kind::series_labels_for_kind;
 pub use system_compaction_clock::SystemCompactionClock;
 pub use tenant_batches::TenantBatches;
 pub use tenant_compaction_rows::TenantCompactionRows;

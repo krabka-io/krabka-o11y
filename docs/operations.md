@@ -6,6 +6,8 @@ See the [object-store contract](object_store_contract.md) and
 [operating envelope](operating_envelope.md) for provider qualification and
 capacity evidence. See [disaster recovery](disaster_recovery.md) for the
 checksummed tenant backup, audit, and restore procedure.
+See [migrating Prometheus TSDB blocks](prometheus_tsdb_migration.md) to import
+historical Prometheus data.
 
 ## Configuration
 

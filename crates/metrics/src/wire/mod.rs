@@ -17,6 +17,7 @@ pub use decoded::{
     DecodedExemplar, DecodedMetadata, DecodedSample, DecodedSeries, WireError, WireFormat,
     negotiate, snappy_block_decode,
 };
+pub(crate) use histogram::validate_spans_and_counts;
 pub use histogram::{v1_histogram_to_native, v2_histogram_to_native};
 pub use remote_read::{
     DEFAULT_MAX_READ_DECOMPRESSED, RemoteReadError, decode_read_request,
