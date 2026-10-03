@@ -3921,6 +3921,7 @@ dependencies = [
  "refined_type",
  "regex",
  "serde",
+ "serde-wincode",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",

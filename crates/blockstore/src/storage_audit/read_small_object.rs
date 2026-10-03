@@ -1,4 +1,6 @@
-use super::{Arc, Bytes, MAX_STATE_OBJECT_BYTES, ObjectStore, Path, StorageAuditError};
+use super::{
+    Arc, Bytes, MAX_STATE_OBJECT_BYTES, ObjectStore, StorageAuditError, read_capped_object,
+};
 
 /// Reads a small state object, or `None` when it is gone.
 ///
@@ -10,9 +12,5 @@ pub async fn read_small_object(
     store: &Arc<dyn ObjectStore>,
     key: &str,
 ) -> Result<Option<Bytes>, StorageAuditError> {
-    match krabka_object_store::read_capped(store, &Path::from(key), MAX_STATE_OBJECT_BYTES).await {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(krabka_object_store::ObjectStoreError::NotFound(_)) => Ok(None),
-        Err(error) => Err(StorageAuditError::ObjectStore(error.to_string())),
-    }
+    read_capped_object(store, key, MAX_STATE_OBJECT_BYTES).await
 }

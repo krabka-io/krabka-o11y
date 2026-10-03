@@ -70,7 +70,8 @@ enum Command {
         /// Unindexed objects younger than this are pending, not orphans.
         #[arg(long, value_parser = krabka_units::parse::non_negative_time, default_value = "1h")]
         grace: Time,
-        /// Decode every row of every block, not only the footers.
+        /// Decode every row of every block, not only the footers, and the
+        /// symbol table of every live profiles block.
         #[arg(long)]
         verify_data: bool,
         #[arg(long, default_value = "index/traces.json")]

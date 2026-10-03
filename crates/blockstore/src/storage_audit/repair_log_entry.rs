@@ -1,13 +1,15 @@
 use super::{
-    Deserialize, RepairAction, RepairOutcome, STORAGE_AUDIT_SCHEMA_VERSION, Serialize,
-    StorageAuditError, StorageFindingKind, StorageSignal,
+    Deserialize, RepairAction, RepairLogPhase, RepairOutcome, STORAGE_AUDIT_SCHEMA_VERSION,
+    Serialize, StorageAuditError, StorageFindingKind, StorageSignal,
 };
 
 /// One line of the repair audit log.
 ///
-/// The log is JSON Lines. A repair appends one line per action, in the order
-/// it acts, and flushes each line before it moves on. The log of a run that
-/// stopped half way therefore says exactly which objects that run deleted.
+/// The log is JSON Lines. A repair appends one `outcome` line per action, in
+/// the order it acts, and syncs each line before it moves on. Before a
+/// delete, it also appends and syncs an `intent` line for the object. The
+/// delete starts only after that sync. A run that stopped half way therefore
+/// leaves an `intent` line for every object it may have deleted.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RepairLogEntry {
     /// [`STORAGE_AUDIT_SCHEMA_VERSION`] of the build that wrote the line.
@@ -17,14 +19,16 @@ pub struct RepairLogEntry {
     pub applied: bool,
     pub tenant: String,
     pub signal: StorageSignal,
+    pub phase: RepairLogPhase,
     pub kind: StorageFindingKind,
     pub path: String,
-    pub outcome: RepairOutcome,
+    /// What the repair did. `None` on an `intent` line.
+    pub outcome: Option<RepairOutcome>,
     pub detail: Option<String>,
 }
 
 impl RepairLogEntry {
-    /// The log line for `action`.
+    /// The `outcome` line for `action`.
     #[must_use]
     pub fn new(
         run_started_at_secs: u64,
@@ -39,10 +43,35 @@ impl RepairLogEntry {
             applied,
             tenant: tenant.to_string(),
             signal,
+            phase: RepairLogPhase::Outcome,
             kind: action.kind,
             path: action.path.clone(),
-            outcome: action.outcome,
+            outcome: Some(action.outcome),
             detail: action.detail.clone(),
+        }
+    }
+
+    /// The `intent` line that an applied repair writes before it deletes
+    /// `path`.
+    #[must_use]
+    pub fn intent(
+        run_started_at_secs: u64,
+        tenant: &str,
+        signal: StorageSignal,
+        kind: StorageFindingKind,
+        path: &str,
+    ) -> Self {
+        Self {
+            schema_version: STORAGE_AUDIT_SCHEMA_VERSION,
+            run_started_at_secs,
+            applied: true,
+            tenant: tenant.to_string(),
+            signal,
+            phase: RepairLogPhase::Intent,
+            kind,
+            path: path.to_string(),
+            outcome: None,
+            detail: None,
         }
     }
 

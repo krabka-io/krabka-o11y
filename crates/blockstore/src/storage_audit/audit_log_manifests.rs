@@ -15,7 +15,7 @@ use super::{
 /// of its tenant's shard manifests names it. A manifest that does not decode
 /// makes its tenant unknown, and the global manifest makes every tenant
 /// unknown. A shard catalog that names a shard manifest the store does not
-/// hold is `dangling_index_entry`.
+/// hold is `dangling_index_entry`, and it makes its tenant unknown too.
 ///
 /// A tenant with blocks and no manifest of any kind is
 /// `unreadable_manifest`, and its tenant is unknown. A store audited at the
@@ -54,7 +54,13 @@ pub async fn audit_log_manifests(
                     .await
                 {
                     Ok(ranges) => {
-                        findings.extend(missing_shards(inventory, tenant, key, &ranges));
+                        let missing = missing_shards(inventory, tenant, key, &ranges);
+                        // A missing shard can be the only manifest that names
+                        // a live block, so no block of the tenant is an orphan.
+                        if !missing.is_empty() {
+                            live.unknown_tenants.insert(tenant.to_string());
+                        }
+                        findings.extend(missing);
                         continue;
                     }
                     Err(error) => Err(error),

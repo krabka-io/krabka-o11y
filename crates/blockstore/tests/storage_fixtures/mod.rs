@@ -5,7 +5,7 @@
 //! the signal, so the audit classifies them as it would in production.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -19,10 +19,14 @@ use futures::StreamExt as _;
 use krabka_blockstore::{
     BlockDescriptor, BlockIndex, BlockKey, BlockLevel, BlockMeta, BlockWriter, COL_FINGERPRINT,
     COL_TIMESTAMP, LabelIndex, Labels, LogBlockIndex, LogRow, ProfileIndex, ShardedTraceBloom,
-    StorageSignal, TimeRange, TraceBlockStats, TraceIndex, labels, write_log_block_to_object_store,
+    StorageSignal, TimeRange, TraceBlockStats, TraceIndex, labels,
+    log_tenant_index_shard_manifest_object_path, write_log_block_to_object_store,
     write_tenant_log_index_manifest_to_object_store,
+    write_tenant_log_index_shard_catalog_to_object_store,
 };
 use object_store::{ObjectStore, ObjectStoreExt as _, PutPayload, memory::InMemory, path::Path};
+use serde::Serialize;
+use serde_wincode::{SerdeCompat, wincode::Serialize as _};
 
 pub const TRACE_INDEX: &str = "index/traces.json";
 pub const PROFILE_INDEX: &str = "index/profiles.json";
@@ -57,6 +61,75 @@ pub fn sidecar_key(signal: StorageSignal, block: &str) -> String {
         StorageSignal::Metrics => format!("{}.index", block.trim_end_matches(".parquet")),
         _ => format!("{block}.symdb"),
     }
+}
+
+// The block kind of a metrics manifest. The codec writes a variant as its
+// index, and `Float` is the first variant of `MetricBlockKind`.
+#[derive(Serialize)]
+enum MetricKind {
+    Float,
+}
+
+// A metrics `.index` manifest in the field order of `CompactionIndexManifest`.
+#[derive(Serialize)]
+struct MetricsManifest<'a> {
+    tenant: &'a str,
+    kind: MetricKind,
+    block_key: &'a str,
+    index_key: &'a str,
+    level: u32,
+    first_offset: i64,
+    last_offset: i64,
+    row_count: usize,
+    min_ts: i64,
+    max_ts: i64,
+    fingerprints: Vec<u64>,
+    series: Vec<(u64, Labels)>,
+}
+
+// The bytes of a metrics `.index` manifest that names `tenant`, `block_key`
+// and `index_key`.
+pub fn metrics_manifest(tenant: &str, block_key: &str, index_key: &str) -> Vec<u8> {
+    let manifest = MetricsManifest {
+        tenant,
+        kind: MetricKind::Float,
+        block_key,
+        index_key,
+        level: 0,
+        first_offset: 0,
+        last_offset: 9,
+        row_count: 1,
+        min_ts: 10,
+        max_ts: 10,
+        fingerprints: vec![7],
+        series: vec![(7, Labels::from_pairs([("__name__", "up")]))],
+    };
+    SerdeCompat::<MetricsManifest>::serialize(&manifest).unwrap()
+}
+
+// The bytes of an empty `.symdb` symbol table, in the field order of
+// `SymbolDb`.
+pub fn symbol_table() -> Vec<u8> {
+    type Shape = (
+        Vec<String>,
+        Vec<(u32, u32, u32, i64)>,
+        Vec<(u64, u32, Vec<(u32, i32)>)>,
+        Vec<(u64, u64, u64, u32, u32, u8)>,
+        HashMap<u64, Vec<(i32, i32)>>,
+    );
+    let empty: Shape = (
+        vec![String::new()],
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        HashMap::new(),
+    );
+    SerdeCompat::<Shape>::serialize(&empty).unwrap()
+}
+
+// The tenant segment of a block key.
+pub fn key_tenant(key: &str) -> &str {
+    key.split('/').nth(1).unwrap()
 }
 
 fn log_key(tenant: &str, first: i64, last: i64) -> BlockKey {
@@ -113,9 +186,9 @@ fn parse_log_key(key: &str) -> BlockKey {
     log_key(tenant, first.parse().unwrap(), last.parse().unwrap())
 }
 
-pub async fn put_bytes(store: &Arc<dyn ObjectStore>, key: &str, bytes: &'static [u8]) {
+pub async fn put_bytes(store: &Arc<dyn ObjectStore>, key: &str, bytes: impl AsRef<[u8]>) {
     store
-        .put(&Path::from(key), PutPayload::from_static(bytes))
+        .put(&Path::from(key), PutPayload::from(bytes.as_ref().to_vec()))
         .await
         .unwrap();
 }
@@ -134,7 +207,9 @@ pub async fn publish(
     match signal {
         StorageSignal::Metrics => {
             for key in with_sidecar {
-                put_bytes(store, &sidecar_key(signal, key), b"index").await;
+                let sidecar = sidecar_key(signal, key);
+                let manifest = metrics_manifest(key_tenant(key), key, &sidecar);
+                put_bytes(store, &sidecar, manifest).await;
             }
         }
         StorageSignal::Traces => {
@@ -162,7 +237,7 @@ pub async fn publish(
                 }
             }
             for key in with_sidecar {
-                put_bytes(store, &sidecar_key(signal, key), b"symbols").await;
+                put_bytes(store, &sidecar_key(signal, key), symbol_table()).await;
             }
             index
                 .save_latest_snapshot(store, PROFILE_INDEX)
@@ -251,4 +326,55 @@ pub async fn listed_keys(store: &Arc<dyn ObjectStore>) -> Vec<String> {
         .await;
     keys.sort();
     keys
+}
+
+// The faults below each add a block of tenant `t` or `u` to a healthy store
+// of their signal. Each block is live: a reader can reach it. An audit that
+// misreads the index calls it an orphan, and a repair then deletes it.
+
+// A logs block that only a shard manifest names, and a shard catalog that
+// names that shard manifest, which the store does not hold. Returns the key
+// of the shard manifest and of the block.
+pub async fn missing_shard(store: &Arc<dyn ObjectStore>) -> (String, String) {
+    let block = block_key(StorageSignal::Logs, "t", 10, 19);
+    put_block(store, StorageSignal::Logs, &block).await;
+    let range = TimeRange::new(10, 19).unwrap();
+    write_tenant_log_index_shard_catalog_to_object_store(
+        store.as_ref(),
+        &Path::default(),
+        "t",
+        &[range],
+    )
+    .await
+    .unwrap();
+    let shard = log_tenant_index_shard_manifest_object_path(&Path::default(), "t", range);
+    (shard.to_string(), block)
+}
+
+// A metrics block whose manifest has an upper-case `.INDEX` extension, which
+// the metrics loaders read. Returns the key of the block.
+pub async fn upper_case_manifest(store: &Arc<dyn ObjectStore>) -> String {
+    let block = block_key(StorageSignal::Metrics, "t", 10, 19);
+    put_block(store, StorageSignal::Metrics, &block).await;
+    let manifest = format!("{}.INDEX", block.trim_end_matches(".parquet"));
+    put_bytes(store, &manifest, metrics_manifest("t", &block, &manifest)).await;
+    block
+}
+
+// A traces or profiles block of tenant `u` that the index of tenant `t`
+// names, and the index of `u` does not. Returns the key of the block.
+pub async fn foreign_entry(store: &Arc<dyn ObjectStore>, signal: StorageSignal) -> String {
+    let foreign = block_key(signal, "u", 10, 19);
+    put_block(store, signal, &foreign).await;
+    let t_blocks = [block_key(signal, "t", 0, 9), foreign.clone()];
+    let u_blocks = [block_key(signal, "u", 0, 9)];
+    let sidecars = t_blocks.iter().chain(&u_blocks).cloned().collect();
+    publish(
+        store,
+        signal,
+        &[("t", &t_blocks), ("u", &u_blocks)],
+        &sidecars,
+    )
+    .await;
+    foreign
 }

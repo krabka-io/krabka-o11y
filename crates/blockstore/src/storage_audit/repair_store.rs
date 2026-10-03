@@ -1,7 +1,7 @@
 use super::{
     Arc, BTreeMap, ObjectMeta, ObjectStore, ObjectStoreExt, RepairAction, RepairLogEntry,
-    RepairOptions, RepairOutcome, RepairReport, StorageAuditError, StorageFinding, UNIX_EPOCH,
-    Write, audit_inventory, instrument, is_older_than_grace,
+    RepairLogWriter, RepairOptions, RepairOutcome, RepairReport, StorageAuditError, StorageFinding,
+    UNIX_EPOCH, audit_inventory, instrument, is_older_than_grace,
 };
 
 /// Deletes the orphans that an audit of one tenant finds, and nothing else.
@@ -17,21 +17,26 @@ use super::{
 /// delete, so the grace window is what keeps a live writer safe, as it does
 /// for [`reconcile_orphans`](crate::reconcile_orphans).
 ///
-/// Each action goes to `audit_log` as one JSON line, flushed before the
-/// next action. A second run finds nothing left to do, and a run that
-/// stopped half way continues where it stopped.
+/// Each action goes to `audit_log` as one `outcome` line, synced before the
+/// next action. Before each delete, the repair writes and syncs an `intent`
+/// line for the object, and it starts the delete only after that. A crash
+/// after the delete therefore leaves the `intent` line as the record of it.
+/// A second run finds nothing left to do, and a run that stopped half way
+/// continues where it stopped.
 ///
 /// # Errors
 /// Returns [`StorageAuditError::InvalidScope`] for a scope that
 /// [`RepairOptions::validate`] refuses, any error of
 /// [`audit_store`](super::audit_store), and
-/// [`StorageAuditError::AuditLog`] when the log does not take a line. A
-/// failed delete is not an error: the report counts it as `failed`.
+/// [`StorageAuditError::AuditLog`] when the log does not take a line. The
+/// repair stops at that line. When the line is an `intent` line, the repair
+/// did not delete the object. A failed delete is not an error: the report
+/// counts it as `failed`.
 #[instrument(level = "info", skip_all, err, fields(tenant = %options.tenant, signal = %options.signal))]
 pub async fn repair_store(
     store: &Arc<dyn ObjectStore>,
     options: &RepairOptions,
-    audit_log: &mut dyn Write,
+    audit_log: &mut dyn RepairLogWriter,
 ) -> Result<RepairReport, StorageAuditError> {
     options.validate()?;
     let audit_options = options.audit_options();
@@ -44,7 +49,15 @@ pub async fn repair_store(
     let mut actions = Vec::with_capacity(planned.len());
     for (path, finding) in &planned {
         let action = if options.apply {
-            apply_one(store, finding, inventory.meta(path), options).await
+            apply_one(
+                store,
+                finding,
+                inventory.meta(path),
+                options,
+                started,
+                audit_log,
+            )
+            .await?
         } else {
             RepairAction {
                 kind: finding.kind,
@@ -94,41 +107,69 @@ async fn apply_one(
     finding: &StorageFinding,
     listed: Option<&ObjectMeta>,
     options: &RepairOptions,
-) -> RepairAction {
+    started: u64,
+    audit_log: &mut dyn RepairLogWriter,
+) -> Result<RepairAction, StorageAuditError> {
     let (outcome, detail) = match listed {
         None => (RepairOutcome::AlreadyAbsent, None),
-        Some(listed) => recheck_and_delete(store, listed, options).await,
+        Some(listed) => {
+            if let Err(skipped) = recheck(store, listed, options).await {
+                skipped
+            } else {
+                let intent = RepairLogEntry::intent(
+                    started,
+                    &options.tenant,
+                    options.signal,
+                    finding.kind,
+                    &finding.path,
+                );
+                write_log_line(audit_log, &intent)?;
+                delete(store, listed).await
+            }
+        }
     };
-    RepairAction {
+    Ok(RepairAction {
         kind: finding.kind,
         path: finding.path.clone(),
         outcome,
         detail,
-    }
+    })
 }
 
-async fn recheck_and_delete(
+/// Reads the head of the object again. Returns `Ok` when the object is as
+/// the audit listed it and old enough to delete, and the outcome to record
+/// otherwise.
+async fn recheck(
     store: &Arc<dyn ObjectStore>,
     listed: &ObjectMeta,
     options: &RepairOptions,
-) -> (RepairOutcome, Option<String>) {
+) -> Result<(), (RepairOutcome, Option<String>)> {
     let current = match store.head(&listed.location).await {
         Ok(current) => current,
-        Err(object_store::Error::NotFound { .. }) => return (RepairOutcome::AlreadyAbsent, None),
-        Err(error) => return (RepairOutcome::Failed, Some(error.to_string())),
+        Err(object_store::Error::NotFound { .. }) => {
+            return Err((RepairOutcome::AlreadyAbsent, None));
+        }
+        Err(error) => return Err((RepairOutcome::Failed, Some(error.to_string()))),
     };
     if current.e_tag != listed.e_tag || current.last_modified != listed.last_modified {
-        return (
+        return Err((
             RepairOutcome::SkippedChanged,
             Some("the object changed after the audit".to_string()),
-        );
+        ));
     }
     if !is_older_than_grace(&current, options.grace, options.now) {
-        return (
+        return Err((
             RepairOutcome::SkippedChanged,
             Some("the object is inside the grace window".to_string()),
-        );
+        ));
     }
+    Ok(())
+}
+
+async fn delete(
+    store: &Arc<dyn ObjectStore>,
+    listed: &ObjectMeta,
+) -> (RepairOutcome, Option<String>) {
     match store.delete(&listed.location).await {
         Ok(()) => (RepairOutcome::Deleted, None),
         Err(object_store::Error::NotFound { .. }) => (RepairOutcome::AlreadyAbsent, None),
@@ -137,7 +178,7 @@ async fn recheck_and_delete(
 }
 
 fn write_log_line(
-    audit_log: &mut dyn Write,
+    audit_log: &mut dyn RepairLogWriter,
     entry: &RepairLogEntry,
 ) -> Result<(), StorageAuditError> {
     let mut line = serde_json::to_vec(entry)
@@ -145,6 +186,6 @@ fn write_log_line(
     line.push(b'\n');
     audit_log
         .write_all(&line)
-        .and_then(|()| audit_log.flush())
+        .and_then(|()| audit_log.sync())
         .map_err(|error| StorageAuditError::AuditLog(error.to_string()))
 }

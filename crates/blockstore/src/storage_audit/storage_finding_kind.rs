@@ -20,13 +20,21 @@ pub enum StorageFindingKind {
     /// An index, manifest or sidecar entry that names an object the store
     /// does not hold.
     DanglingIndexEntry,
+    /// An index entry or manifest that disagrees with where it is stored or
+    /// with what it names: an index of one tenant that names a block of
+    /// another tenant, or a metrics `.index` manifest that names another
+    /// index key, block or tenant than its key.
+    IndexMismatch,
     /// A block whose Parquet footer or data does not decode.
     CorruptBlock,
+    /// A sidecar of a live block that does not decode: a profiles `.symdb`
+    /// symbol table.
+    CorruptSidecar,
     /// A block or manifest stamped with a format version this build does not
     /// read.
     UnsupportedFormat,
     /// An index manifest that does not decode, or that is absent while blocks
-    /// wait on it.
+    /// wait on it. A metrics `.index` manifest that does not decode is one.
     UnreadableManifest,
     /// A delete or erasure request that does not decode.
     UnreadableDeleteState,
@@ -42,10 +50,12 @@ pub enum StorageFindingKind {
 
 impl StorageFindingKind {
     /// Every kind, in serialized-name order.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 14] = [
         Self::ChecksumMismatch,
         Self::CorruptBlock,
+        Self::CorruptSidecar,
         Self::DanglingIndexEntry,
+        Self::IndexMismatch,
         Self::MissingSidecar,
         Self::Orphan,
         Self::OrphanSidecar,
@@ -67,6 +77,8 @@ impl StorageFindingKind {
             Self::MissingSidecar => "missing_sidecar",
             Self::DanglingIndexEntry => "dangling_index_entry",
             Self::CorruptBlock => "corrupt_block",
+            Self::CorruptSidecar => "corrupt_sidecar",
+            Self::IndexMismatch => "index_mismatch",
             Self::UnsupportedFormat => "unsupported_format",
             Self::UnreadableManifest => "unreadable_manifest",
             Self::UnreadableDeleteState => "unreadable_delete_state",

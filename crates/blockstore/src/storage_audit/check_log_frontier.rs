@@ -7,10 +7,11 @@ use super::{
 /// partition.
 ///
 /// A frontier offset above the last offset of every retained block of its
-/// partition is `stale_frontier`. The querier trusts the frontier to say
-/// which WAL records are in blocks, so it hides records from the hot tail
-/// that no block holds. A batch that the delete filters emptied does this
-/// legally, which is why the kind is a warning.
+/// partition is `stale_frontier`. So is a `compacted_through_ns` after the
+/// newest record time of every retained block. The querier trusts the
+/// frontier to say which WAL records are in blocks, so it hides records from
+/// the hot tail that no block holds. A batch that the delete filters emptied
+/// does this legally, which is why the kind is a warning.
 ///
 /// # Errors
 /// Returns [`StorageAuditError::ObjectStore`] when the read fails for a
@@ -49,31 +50,48 @@ pub async fn check_log_frontier(
         );
     }
     let mut last_offsets: BTreeMap<i32, i64> = BTreeMap::new();
+    let mut newest_ns: Option<i64> = None;
     for (_, listed) in inventory.blocks(StorageSignal::Logs) {
-        if let Some(block) = listed.object.block()
-            && let (Some(partition), Some((_, last))) = (block.partition, block.offsets)
-        {
+        let Some(block) = listed.object.block() else {
+            continue;
+        };
+        if let (Some(partition), Some((_, last))) = (block.partition, block.offsets) {
             let entry = last_offsets.entry(partition).or_insert(last);
             *entry = (*entry).max(last);
         }
+        if let Some((_, end_ns)) = block.time_range {
+            newest_ns = Some(newest_ns.map_or(end_ns, |newest| newest.max(end_ns)));
+        }
     }
-    Ok(frontier
+    let stale = |detail: String| {
+        StorageFinding::new(
+            StorageFindingKind::StaleFrontier,
+            StorageSignal::Logs,
+            None,
+            LOG_FRONTIER_PATH,
+            detail,
+        )
+    };
+    let mut findings: Vec<StorageFinding> = frontier
         .partition_offsets
         .iter()
         .filter_map(|(partition, frontier_offset)| {
             let last = last_offsets.get(partition)?;
             (frontier_offset > last).then(|| {
-                StorageFinding::new(
-                    StorageFindingKind::StaleFrontier,
-                    StorageSignal::Logs,
-                    None,
-                    LOG_FRONTIER_PATH,
-                    format!(
-                        "partition {partition} is compacted through offset {frontier_offset}, \
-                         and its newest block ends at offset {last}"
-                    ),
-                )
+                stale(format!(
+                    "partition {partition} is compacted through offset {frontier_offset}, \
+                     and its newest block ends at offset {last}"
+                ))
             })
         })
-        .collect())
+        .collect();
+    if let Some(newest) = newest_ns
+        && frontier.compacted_through_ns > newest
+    {
+        findings.push(stale(format!(
+            "the frontier is compacted through {} ns, and the newest block ends at {newest} ns",
+            frontier.compacted_through_ns
+        )));
+    }
+    Ok(findings)
 }

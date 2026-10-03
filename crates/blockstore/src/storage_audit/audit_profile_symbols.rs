@@ -1,6 +1,7 @@
 use super::{
-    LiveBlockSet, ObjectRole, StorageAuditOptions, StorageFinding, StorageFindingKind,
-    StorageInventory, StorageSignal, is_older_than_grace,
+    Arc, LiveBlockSet, ObjectRole, ObjectStore, StorageAuditError, StorageAuditOptions,
+    StorageFinding, StorageFindingKind, StorageInventory, StorageSignal, check_symbol_table,
+    is_older_than_grace,
 };
 
 /// Checks profile blocks against their `.symdb` symbol tables.
@@ -10,11 +11,23 @@ use super::{
 /// cannot be symbolized: `missing_sidecar`. A symbol table whose block is
 /// gone, or whose block is an old orphan, is `orphan_sidecar` once it is old
 /// too, and `pending` before.
-pub fn audit_profile_symbols(
+///
+/// With `verify_data`, the audit also decodes the symbol table of each live
+/// block in scope. A symbol table that does not decode is `corrupt_sidecar`:
+/// the querier cannot symbolize the block. The decode reads the whole
+/// object, as `verify_data` does for blocks. A damaged symbol table does not
+/// change which blocks are live, so a plain audit and a repair do not need
+/// it.
+///
+/// # Errors
+/// Returns [`StorageAuditError::ObjectStore`] when a read fails for a reason
+/// other than absence.
+pub async fn audit_profile_symbols(
+    store: &Arc<dyn ObjectStore>,
     inventory: &StorageInventory,
     live: &LiveBlockSet,
     options: &StorageAuditOptions,
-) -> Vec<StorageFinding> {
+) -> Result<Vec<StorageFinding>, StorageAuditError> {
     let mut findings = Vec::new();
     let old = |key: &str| {
         inventory
@@ -63,10 +76,21 @@ pub fn audit_profile_symbols(
                         key,
                         format!("the index names this block and `{symbols}` is gone"),
                     ));
+                } else if options.verify_data
+                    && options.covers_tenant(tenant.as_deref())
+                    && let Some(detail) = check_symbol_table(store, &symbols).await?
+                {
+                    findings.push(StorageFinding::new(
+                        StorageFindingKind::CorruptSidecar,
+                        StorageSignal::Profiles,
+                        tenant,
+                        symbols,
+                        detail,
+                    ));
                 }
             }
             _ => {}
         }
     }
-    findings
+    Ok(findings)
 }

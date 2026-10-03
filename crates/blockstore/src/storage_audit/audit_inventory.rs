@@ -58,7 +58,7 @@ async fn audit_signal(
     findings.extend(find_wal_overlaps(inventory, signal));
     match signal {
         StorageSignal::Metrics => {
-            findings.extend(audit_metrics_objects(inventory, options));
+            findings.extend(audit_metrics_objects(store, inventory, options).await?);
             findings.extend(audit_delete_state(store, inventory).await?);
         }
         StorageSignal::Logs => {
@@ -90,7 +90,7 @@ async fn audit_signal(
                 "index snapshot",
             ));
             if signal == StorageSignal::Profiles {
-                findings.extend(audit_profile_symbols(inventory, &live, options));
+                findings.extend(audit_profile_symbols(store, inventory, &live, options).await?);
             }
         }
     }

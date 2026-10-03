@@ -11,7 +11,11 @@ use super::{
 /// - that every block has a Parquet footer this build reads, and with
 ///   `verify_data`, rows that decode;
 /// - that the index names every block, and that every block it names exists;
-/// - the sidecars: metrics `.index` files and profiles `.symdb` files;
+/// - that every metrics `.index` manifest decodes and names its own key,
+///   block and tenant;
+/// - that every live profiles block has its `.symdb` symbol table, and with
+///   `verify_data`, that the symbol table decodes;
+/// - that the index of each tenant names only blocks of that tenant;
 /// - that the trace and profile snapshot payloads match their checksums;
 /// - that the logs manifests and shard catalogs decode and agree with the
 ///   store;

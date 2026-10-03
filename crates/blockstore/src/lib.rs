@@ -148,10 +148,10 @@ pub use span_schema::{
     span_block_decl, span_block_schema, span_block_schema_with_promoted_attrs,
 };
 pub use storage_audit::{
-    RepairAction, RepairLogEntry, RepairOptions, RepairOutcome, RepairReport,
-    STORAGE_AUDIT_SCHEMA_VERSION, StorageAuditError, StorageAuditOptions, StorageAuditReport,
-    StorageAuditScope, StorageFinding, StorageFindingKind, StorageFindingSeverity, StorageSignal,
-    audit_store, repair_store,
+    RepairAction, RepairLogEntry, RepairLogPhase, RepairLogWriter, RepairOptions, RepairOutcome,
+    RepairReport, STORAGE_AUDIT_SCHEMA_VERSION, StorageAuditError, StorageAuditOptions,
+    StorageAuditReport, StorageAuditScope, StorageFinding, StorageFindingKind,
+    StorageFindingSeverity, StorageSignal, audit_store, repair_store,
 };
 pub use store::{BlockScan, BlockStore, ScanReport, ScanTableRequest};
 pub use tenant::{

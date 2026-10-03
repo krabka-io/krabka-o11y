@@ -11,6 +11,7 @@ mod storage_fixtures;
 use std::{
     collections::BTreeSet,
     fmt,
+    io::{self, Write},
     sync::{Arc, Mutex},
     time::SystemTime,
 };
@@ -18,18 +19,18 @@ use std::{
 use assert2::{assert, check};
 use futures::{StreamExt as _, stream::BoxStream};
 use krabka_blockstore::{
-    DEFAULT_BLOCK_SWEEP_GRACE, ProfileIndex, RepairAction, RepairLogEntry, RepairOptions,
-    RepairOutcome, RepairReport, StorageAuditError, StorageAuditOptions, StorageFindingKind,
-    StorageSignal, TraceIndex, audit_store, read_tenant_log_index_manifest_from_object_store,
-    reconcile_orphans, repair_store,
+    DEFAULT_BLOCK_SWEEP_GRACE, ProfileIndex, RepairAction, RepairLogEntry, RepairLogPhase,
+    RepairLogWriter, RepairOptions, RepairOutcome, RepairReport, StorageAuditError,
+    StorageAuditOptions, StorageFindingKind, StorageSignal, TraceIndex, audit_store,
+    read_tenant_log_index_manifest_from_object_store, reconcile_orphans, repair_store,
 };
 use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
     ObjectStoreExt as _, PutMultipartOptions, PutOptions, PutPayload, PutResult, path::Path,
 };
 use storage_fixtures::{
-    PROFILE_INDEX, TRACE_INDEX, block_key, healthy, later, listed_keys, put_block, put_bytes,
-    sidecar_key, store,
+    PROFILE_INDEX, TRACE_INDEX, block_key, foreign_entry, healthy, later, listed_keys,
+    missing_shard, put_block, put_bytes, sidecar_key, store, upper_case_manifest,
 };
 
 #[derive(Clone, Debug)]
@@ -150,6 +151,42 @@ fn interfering(
     (Arc::clone(&store) as Arc<dyn ObjectStore>, store)
 }
 
+// A log that takes `lines` lines and refuses every line after them. The
+// repair writes each line with one call.
+struct FailingLog {
+    lines: Vec<u8>,
+    left: usize,
+}
+
+impl Write for FailingLog {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.left == 0 {
+            return Err(io::Error::other("the disk is full"));
+        }
+        self.left -= 1;
+        self.lines.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl RepairLogWriter for FailingLog {
+    fn sync(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn entries(log: &[u8]) -> Vec<RepairLogEntry> {
+    String::from_utf8(log.to_vec())
+        .unwrap()
+        .lines()
+        .map(|line| RepairLogEntry::from_json_line(line).unwrap())
+        .collect()
+}
+
 fn options(tenant: &str, signal: StorageSignal, apply: bool) -> RepairOptions {
     let kinds = BTreeSet::from([
         StorageFindingKind::Orphan,
@@ -175,15 +212,10 @@ async fn repair(
 ) -> (RepairReport, Vec<RepairLogEntry>) {
     let mut log = Vec::new();
     let mut report = repair_store(store, options, &mut log).await.unwrap();
-    let entries: Vec<_> = String::from_utf8(log)
-        .unwrap()
-        .lines()
-        .map(|line| RepairLogEntry::from_json_line(line).unwrap())
-        .collect();
     for action in &mut report.actions {
         action.detail = None;
     }
-    (report, entries)
+    (report, entries(&log))
 }
 
 fn report(
@@ -291,10 +323,17 @@ async fn a_plan_deletes_nothing_and_logs_every_planned_action() {
         check!(listed_keys(&store).await == before, "{signal}");
         let logged: Vec<_> = log
             .iter()
-            .map(|entry| (entry.applied, entry.tenant.as_str(), entry.signal))
+            .map(|entry| {
+                (
+                    entry.applied,
+                    entry.tenant.as_str(),
+                    entry.signal,
+                    entry.phase,
+                )
+            })
             .collect();
         check!(
-            logged == vec![(false, "t", signal); planned.len()],
+            logged == vec![(false, "t", signal, RepairLogPhase::Outcome); planned.len()],
             "{signal}"
         );
     }
@@ -324,11 +363,26 @@ async fn an_applied_repair_deletes_only_the_tenants_orphans_and_is_idempotent() 
         check!(listed_keys(&store).await == remaining, "{signal}");
         let logged: Vec<_> = log
             .iter()
-            .map(|entry| (entry.kind, entry.path.clone(), entry.outcome))
+            .map(|entry| (entry.phase, entry.kind, entry.path.clone(), entry.outcome))
             .collect();
         let expected: Vec<_> = orphans
             .iter()
-            .map(|action| (action.kind, action.path.clone(), action.outcome))
+            .flat_map(|action| {
+                [
+                    (
+                        RepairLogPhase::Intent,
+                        action.kind,
+                        action.path.clone(),
+                        None,
+                    ),
+                    (
+                        RepairLogPhase::Outcome,
+                        action.kind,
+                        action.path.clone(),
+                        Some(action.outcome),
+                    ),
+                ]
+            })
             .collect();
         check!(logged == expected, "{signal}");
     }
@@ -395,6 +449,97 @@ async fn an_object_that_another_sweep_deleted_first_counts_as_absent() {
     check!(raced == report(true, StorageSignal::Logs, 1, expected));
     check!(!raced.has_failures());
     check!(!listed_keys(&inner).await.contains(&target));
+}
+
+#[tokio::test]
+async fn a_repair_that_cannot_log_its_intent_deletes_nothing() {
+    let store = store();
+    let orphans = damaged(&store, StorageSignal::Traces).await;
+    let before = listed_keys(&store).await;
+    let mut log = FailingLog {
+        lines: Vec::new(),
+        left: 0,
+    };
+
+    let refused = repair_store(&store, &options("t", StorageSignal::Traces, true), &mut log).await;
+
+    assert!(let Err(StorageAuditError::AuditLog(_)) = refused);
+    check!(log.lines.is_empty());
+    check!(listed_keys(&store).await == before);
+    check!(before.contains(&orphans[0].path));
+}
+
+#[tokio::test]
+async fn a_delete_whose_outcome_is_not_logged_keeps_its_intent_line() {
+    let store = store();
+    let orphans = damaged(&store, StorageSignal::Traces).await;
+    let mut log = FailingLog {
+        lines: Vec::new(),
+        left: 1,
+    };
+
+    let stopped = repair_store(&store, &options("t", StorageSignal::Traces, true), &mut log).await;
+
+    assert!(let Err(StorageAuditError::AuditLog(_)) = stopped);
+    let intent = RepairLogEntry::intent(
+        entries(&log.lines)[0].run_started_at_secs,
+        "t",
+        StorageSignal::Traces,
+        StorageFindingKind::Orphan,
+        &orphans[0].path,
+    );
+    check!(entries(&log.lines) == vec![intent]);
+    check!(!listed_keys(&store).await.contains(&orphans[0].path));
+}
+
+#[derive(Clone, Copy, Debug)]
+enum LiveFault {
+    MissingShard,
+    UpperCaseManifest,
+    ForeignIndexEntry(StorageSignal),
+}
+
+// A live block that an audit can mistake for an orphan, and the signal of
+// the repair that must leave it.
+async fn live_fault(store: &Arc<dyn ObjectStore>, fault: LiveFault) -> (StorageSignal, String) {
+    match fault {
+        LiveFault::MissingShard => {
+            healthy(store, StorageSignal::Logs, &["t", "u"]).await;
+            (StorageSignal::Logs, missing_shard(store).await.1)
+        }
+        LiveFault::UpperCaseManifest => {
+            healthy(store, StorageSignal::Metrics, &["t", "u"]).await;
+            (StorageSignal::Metrics, upper_case_manifest(store).await)
+        }
+        LiveFault::ForeignIndexEntry(signal) => {
+            healthy(store, signal, &["t", "u"]).await;
+            (signal, foreign_entry(store, signal).await)
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_repair_of_either_tenant_never_deletes_a_block_that_a_reader_can_reach() {
+    for fault in [
+        LiveFault::MissingShard,
+        LiveFault::UpperCaseManifest,
+        LiveFault::ForeignIndexEntry(StorageSignal::Traces),
+        LiveFault::ForeignIndexEntry(StorageSignal::Profiles),
+    ] {
+        let store = store();
+        let (signal, live) = live_fault(&store, fault).await;
+        let before = listed_keys(&store).await;
+
+        let mut reports = Vec::new();
+        for tenant in ["t", "u"] {
+            let (report, _) = repair(&store, &options(tenant, signal, true)).await;
+            reports.push(report.actions);
+        }
+
+        check!(reports == [Vec::new(), Vec::new()], "{fault:?}");
+        check!(listed_keys(&store).await == before, "{fault:?}");
+        check!(before.contains(&live), "{fault:?}");
+    }
 }
 
 #[test]

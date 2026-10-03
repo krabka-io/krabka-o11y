@@ -28,8 +28,9 @@ use parquet::{
     file::{metadata::KeyValue, properties::WriterProperties},
 };
 use storage_fixtures::{
-    PROFILE_INDEX, TRACE_INDEX, block_key, healthy, later, listed_keys, publish, put_block,
-    put_bytes, sidecar_key, store,
+    PROFILE_INDEX, TRACE_INDEX, block_key, foreign_entry, healthy, later, listed_keys,
+    metrics_manifest, missing_shard, publish, put_block, put_bytes, sidecar_key, store,
+    upper_case_manifest,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -50,6 +51,14 @@ enum Fault {
     CorruptDeleteMarker,
     ForeignErasureRequest,
     StaleFrontier,
+    StaleFrontierTime,
+    FrontierWithoutTime,
+    MissingShard,
+    UpperCaseManifest,
+    TruncatedManifest,
+    MisplacedManifest,
+    CorruptSymbols,
+    ForeignIndexEntry,
 }
 
 const TENANTS: [&str; 2] = ["t", "u"];
@@ -232,21 +241,105 @@ async fn inject(
                 &key,
             )]
         }
-        Fault::StaleFrontier => {
-            let frontier = "index/logs/compaction-frontier.json";
-            put_bytes(
-                store,
-                frontier,
-                br#"{"version":1,"compacted_through_ns":0,"partition_offsets":{"0":50}}"#,
-            )
-            .await;
+        Fault::StaleFrontier | Fault::StaleFrontierTime | Fault::FrontierWithoutTime => {
+            inject_frontier_fault(store, fault).await
+        }
+        Fault::MissingShard
+        | Fault::UpperCaseManifest
+        | Fault::TruncatedManifest
+        | Fault::MisplacedManifest
+        | Fault::CorruptSymbols
+        | Fault::ForeignIndexEntry => inject_liveness_fault(store, signal, fault).await,
+    }
+}
+
+// Each fixture block of the logs signal covers record times 10 to 19 ns.
+async fn inject_frontier_fault(store: &Arc<dyn ObjectStore>, fault: Fault) -> Vec<StorageFinding> {
+    let frontier = "index/logs/compaction-frontier.json";
+    let (bytes, kind): (&[u8], _) = match fault {
+        Fault::StaleFrontier => (
+            br#"{"version":1,"compacted_through_ns":0,"partition_offsets":{"0":50}}"#,
+            StorageFindingKind::StaleFrontier,
+        ),
+        Fault::StaleFrontierTime => (
+            br#"{"version":1,"compacted_through_ns":20,"partition_offsets":{"0":9}}"#,
+            StorageFindingKind::StaleFrontier,
+        ),
+        Fault::FrontierWithoutTime => (
+            br#"{"version":1,"partition_offsets":{"0":9}}"#,
+            StorageFindingKind::UnreadableManifest,
+        ),
+        _ => unreachable!("{fault:?} is not a frontier fault"),
+    };
+    put_bytes(store, frontier, bytes).await;
+    vec![finding(kind, StorageSignal::Logs, None, frontier)]
+}
+
+// Faults that an audit must not mistake for orphans. No case expects an
+// `orphan` finding.
+async fn inject_liveness_fault(
+    store: &Arc<dyn ObjectStore>,
+    signal: StorageSignal,
+    fault: Fault,
+) -> Vec<StorageFinding> {
+    let t = Some("t");
+    let block = block_key(signal, "t", 0, 9);
+    let manifest = sidecar_key(signal, &block);
+    match fault {
+        Fault::MissingShard => {
+            let (shard, _) = missing_shard(store).await;
             vec![finding(
-                StorageFindingKind::StaleFrontier,
+                StorageFindingKind::DanglingIndexEntry,
                 signal,
-                None,
-                frontier,
+                t,
+                &shard,
             )]
         }
+        Fault::UpperCaseManifest => {
+            upper_case_manifest(store).await;
+            Vec::new()
+        }
+        Fault::TruncatedManifest => {
+            let bytes = metrics_manifest("t", &block, &manifest);
+            put_bytes(store, &manifest, &bytes[..bytes.len() / 2]).await;
+            vec![finding(
+                StorageFindingKind::UnreadableManifest,
+                signal,
+                t,
+                &manifest,
+            )]
+        }
+        Fault::MisplacedManifest => {
+            let other = block_key(signal, "t", 10, 19);
+            put_block(store, signal, &other).await;
+            let bytes = metrics_manifest("t", &other, &sidecar_key(signal, &other));
+            put_bytes(store, &manifest, bytes).await;
+            vec![finding(
+                StorageFindingKind::IndexMismatch,
+                signal,
+                t,
+                &manifest,
+            )]
+        }
+        Fault::CorruptSymbols => {
+            put_bytes(store, &manifest, b"\xff\xff").await;
+            vec![finding(
+                StorageFindingKind::CorruptSidecar,
+                signal,
+                t,
+                &manifest,
+            )]
+        }
+        Fault::ForeignIndexEntry => {
+            let foreign = foreign_entry(store, signal).await;
+            vec![finding(
+                StorageFindingKind::IndexMismatch,
+                signal,
+                t,
+                &foreign,
+            )]
+        }
+        _ => unreachable!("{fault:?} is not a liveness fault"),
     }
 }
 
@@ -374,6 +467,15 @@ fn cases() -> Vec<(StorageSignal, Fault)> {
         (StorageSignal::Metrics, Fault::CorruptDeleteMarker),
         (StorageSignal::Metrics, Fault::ForeignErasureRequest),
         (StorageSignal::Logs, Fault::StaleFrontier),
+        (StorageSignal::Logs, Fault::StaleFrontierTime),
+        (StorageSignal::Logs, Fault::FrontierWithoutTime),
+        (StorageSignal::Logs, Fault::MissingShard),
+        (StorageSignal::Metrics, Fault::UpperCaseManifest),
+        (StorageSignal::Metrics, Fault::TruncatedManifest),
+        (StorageSignal::Metrics, Fault::MisplacedManifest),
+        (StorageSignal::Profiles, Fault::CorruptSymbols),
+        (StorageSignal::Traces, Fault::ForeignIndexEntry),
+        (StorageSignal::Profiles, Fault::ForeignIndexEntry),
     ]);
     for signal in [
         StorageSignal::Logs,
@@ -401,6 +503,7 @@ async fn each_injected_fault_produces_its_diagnosis() {
         if matches!(fault, Fault::YoungBlock) {
             options.now = SystemTime::now();
         }
+        options.verify_data = matches!(fault, Fault::CorruptSymbols);
         let listed = listed_keys(&store).await.len();
 
         let mut report = audit_store(&store, &options).await.unwrap();
@@ -507,6 +610,7 @@ async fn keys_outside_every_grammar_are_counted_and_not_reported() {
 async fn verify_data_is_recorded_and_reads_every_row() {
     let store = store();
     healthy(&store, StorageSignal::Metrics, &TENANTS).await;
+    healthy(&store, StorageSignal::Profiles, &TENANTS).await;
     let mut options = StorageAuditOptions::new(later());
     options.verify_data = true;
 
@@ -514,6 +618,30 @@ async fn verify_data_is_recorded_and_reads_every_row() {
 
     check!(report.scope.verify_data);
     check!(report.findings.is_empty());
+}
+
+#[tokio::test]
+async fn only_verify_data_decodes_symbol_tables() {
+    let store = store();
+    let expected = inject(&store, StorageSignal::Profiles, Fault::CorruptSymbols).await;
+    let listed = listed_keys(&store).await.len();
+    for verify_data in [false, true] {
+        let mut options = StorageAuditOptions::new(later());
+        options.verify_data = verify_data;
+
+        let mut report = audit_store(&store, &options).await.unwrap();
+
+        for finding in &mut report.findings {
+            finding.detail.clear();
+        }
+        let wanted = if verify_data {
+            expected.clone()
+        } else {
+            Vec::new()
+        };
+        let wanted = StorageAuditReport::new(options.scope(), listed, 0, wanted);
+        check!(report == wanted, "verify_data {verify_data}");
+    }
 }
 
 #[test]
@@ -549,7 +677,9 @@ fn finding_kind_names_are_stable() {
             == [
                 "checksum_mismatch",
                 "corrupt_block",
+                "corrupt_sidecar",
                 "dangling_index_entry",
+                "index_mismatch",
                 "missing_sidecar",
                 "orphan",
                 "orphan_sidecar",

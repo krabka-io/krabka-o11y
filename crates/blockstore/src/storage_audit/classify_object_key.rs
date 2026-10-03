@@ -28,6 +28,7 @@ pub fn classify_object_key(key: &str, options: &StorageAuditOptions) -> Option<C
     }
     let segments: Vec<&str> = key.split('/').collect();
     match segments.as_slice() {
+        ["metrics", rest @ ..] if is_metrics_index(key) => Some(metrics_index(key, rest)),
         ["metrics", tenant, rest @ ..] => metrics_object(tenant, rest),
         ["mimir-block-uploads", tenant, _, ..] => {
             tenant_object(StorageSignal::Metrics, tenant, ObjectRole::Staging)
@@ -112,6 +113,35 @@ fn snapshot_index_object(
     .then(shared)
 }
 
+/// Whether `key` is a metrics `.index` manifest, by the rule of the metrics
+/// loaders: `list_compaction_manifests` in `krabka-metrics` and the querier's
+/// manifest listing in `krabka-metrics-service`. Each one reads every key
+/// under the metrics prefix whose extension is `index` in any ASCII case.
+fn is_metrics_index(key: &str) -> bool {
+    std::path::Path::new(key)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("index"))
+}
+
+/// The manifest at `key`. `rest` follows the `metrics` segment. Its first
+/// segment is the tenant when another segment follows it.
+fn metrics_index(key: &str, rest: &[&str]) -> ClassifiedObject {
+    let tenant = match rest {
+        [tenant, _, ..] => {
+            Some(unescape_object_path_segment(tenant).unwrap_or_else(|| (*tenant).to_string()))
+        }
+        _ => None,
+    };
+    let stem = &key[..key.len() - ".index".len()];
+    ClassifiedObject::new(
+        StorageSignal::Metrics,
+        tenant,
+        ObjectRole::MetricsIndex {
+            block: format!("{stem}.parquet"),
+        },
+    )
+}
+
 fn metrics_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
     let (lane, partition, file) = match rest {
         ["uploaded", file] => ("uploaded", None, *file),
@@ -124,22 +154,15 @@ fn metrics_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
         _ => return None,
     };
     let compacted = rest.contains(&"compacted");
-    let role = if let Some(stem) = file.strip_suffix(".parquet") {
-        ObjectRole::Block(BlockShape {
-            partition,
-            lane: lane.to_string(),
-            offsets: (!compacted && lane != "uploaded")
-                .then(|| offset_range(stem))
-                .flatten(),
-        })
-    } else {
-        let stem = file.strip_suffix(".index")?;
-        let mut block = vec!["metrics", tenant];
-        block.extend_from_slice(&rest[..rest.len() - 1]);
-        ObjectRole::MetricsIndex {
-            block: format!("{}/{stem}.parquet", block.join("/")),
-        }
-    };
+    let stem = file.strip_suffix(".parquet")?;
+    let role = ObjectRole::Block(BlockShape {
+        partition,
+        lane: lane.to_string(),
+        offsets: (!compacted && lane != "uploaded")
+            .then(|| offset_range(stem))
+            .flatten(),
+        time_range: None,
+    });
     tenant_object(StorageSignal::Metrics, tenant, role)
 }
 
@@ -151,6 +174,7 @@ fn traces_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
                 partition: None,
                 lane: String::new(),
                 offsets: None,
+                time_range: None,
             }
         }
         [partition, file] => {
@@ -160,6 +184,7 @@ fn traces_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
                 partition: Some(partition.parse().ok()?),
                 lane: String::new(),
                 offsets: Some(offset_range(offsets)?),
+                time_range: None,
             }
         }
         _ => return None,
@@ -185,6 +210,7 @@ fn profiles_object(key: &str, tenant: &str, rest: &[&str]) -> Option<ClassifiedO
                 partition: None,
                 lane: String::new(),
                 offsets: None,
+                time_range: None,
             }
         }
         [partition, file] => {
@@ -197,6 +223,7 @@ fn profiles_object(key: &str, tenant: &str, rest: &[&str]) -> Option<ClassifiedO
                 partition: Some(partition.parse().ok()?),
                 lane: String::new(),
                 offsets: Some(offset_range(&format!("{first}-{last}"))?),
+                time_range: None,
             }
         }
         _ => return None,
@@ -219,11 +246,12 @@ fn logs_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
         [partition, offsets, time] => {
             let partition = partition.strip_prefix("partition=")?.parse().ok()?;
             let offsets = offset_range(offsets.strip_prefix("offsets=")?)?;
-            time.strip_prefix("time=")?.strip_suffix(".parquet")?;
+            let time = time.strip_prefix("time=")?.strip_suffix(".parquet")?;
             ObjectRole::Block(BlockShape {
                 partition: Some(partition),
                 lane: String::new(),
                 offsets: Some(offsets),
+                time_range: offset_range(time),
             })
         }
         _ => return None,

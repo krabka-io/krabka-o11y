@@ -76,7 +76,8 @@ krabka-storage-admin audit-store \
 ```
 
 Omit `--signal` and `--tenant` to audit every signal and tenant. Add
-`--verify-data` to read every row of every block, not only the footer. The
+`--verify-data` to read every row of every block, not only the footer, and to
+decode the `.symdb` symbol table of every live profiles block. The
 report is JSON with `schema_version: 1`. Each finding has a `kind`, a
 `signal`, a `tenant`, a `path`, a `severity`, and a `repairable` flag. The
 `detail` text is for a person and is not a stable contract. The command exits
@@ -88,21 +89,27 @@ unsuccessfully when a finding has the `damage` severity.
 | `orphan_sidecar` | damage | A profiles `.symdb` sidecar whose block is absent. Repairable. |
 | `pending` | warning | An unnamed block inside the grace window. A writer can still publish it. |
 | `missing_sidecar` | damage | A live block without its sidecar. |
-| `dangling_index_entry` | damage | An index, manifest, or metrics `.index` sidecar names a block that the store does not hold. |
+| `dangling_index_entry` | damage | An index, manifest, or metrics `.index` manifest names a block or shard manifest that the store does not hold. |
+| `index_mismatch` | damage | An index of one tenant names a block of another tenant, or a metrics `.index` manifest names another index key, block, or tenant than its key. |
 | `corrupt_block` | damage | A block that does not decode as Parquet. |
+| `corrupt_sidecar` | damage | A profiles `.symdb` symbol table of a live block that does not decode. Only `--verify-data` reports it. |
 | `unsupported_format` | damage | A block or manifest with a future format version. |
-| `unreadable_manifest` | damage | An index snapshot or logs manifest that does not decode, or blocks with no index. |
+| `unreadable_manifest` | damage | An index snapshot, logs manifest, logs compaction frontier, or metrics `.index` manifest that does not decode, or blocks with no index. |
 | `unreadable_delete_state` | damage | A deletion marker or erasure request that does not decode, or that names another tenant. |
 | `checksum_mismatch` | damage | An index shard payload whose content hash is not the one its manifest records. |
 | `wal_overlap` | warning | Two blocks of one tenant cover overlapping WAL offsets of one partition. |
-| `stale_frontier` | warning | The logs compaction frontier is ahead of the blocks that the store holds. |
+| `stale_frontier` | warning | The logs compaction frontier is ahead of the blocks that the store holds: a partition offset after the last offset of every block of that partition, or a `compacted_through_ns` after the newest record time of every block. |
 
 The audit decides liveness as the owning service does. A metrics block is
-live when its `.index` sidecar exists. A logs block is live when the global,
-tenant, or shard manifest names it. A traces or profiles block is live when
-the latest index snapshot names it. When the audit cannot read the index of a
-tenant, it reports no orphans for that tenant, so a broken index never makes
-live blocks look like orphans.
+live when an `.index` manifest names it. The audit decodes each manifest, and
+it accepts the `.index` extension in any letter case, as the metrics loaders
+do. A logs block is live when the global, tenant, or shard manifest names it.
+A traces or profiles block is live when the latest index snapshot names it,
+in the index of any tenant. When the audit cannot read the index of a tenant,
+it reports no orphans for that tenant, so a broken index never makes live
+blocks look like orphans. A logs shard catalog that names a missing shard
+manifest, and an `index_mismatch` finding, also stop orphan findings for the
+tenant.
 
 `repair` is report-first. It needs an explicit tenant, one signal, and an
 allowlist of finding kinds. Only `orphan` and `orphan_sidecar` are
@@ -134,12 +141,21 @@ these rules:
   the next object. The command then exits unsuccessfully.
 
 A second run with the same scope finds nothing to do, and a run that stopped
-part of the way continues from where it stopped. Each action goes to
-`--audit-log` as one JSON line, flushed before the next action, and the file
-is opened for append. Each line records the run start time, the scope, the
-kind, the path, and the outcome: `planned`, `deleted`, `already_absent`,
-`skipped_changed`, or `failed`. Keep the audit report, the repair report, and
-the audit log together.
+part of the way continues from where it stopped. The repair appends to
+`--audit-log` as JSON lines, and it syncs each line to disk before it
+continues. Each line records the run start time, the scope, a `phase`, the
+kind, and the path:
+
+- Before each delete, the repair writes an `intent` line with no outcome. It
+  starts the delete only after that line is on disk. If the repair cannot
+  write the line, it stops with an error and does not delete the object.
+- After each action, the repair writes an `outcome` line with the outcome:
+  `planned`, `deleted`, `already_absent`, `skipped_changed`, or `failed`.
+
+An `intent` line with no `outcome` line for the same path after it marks an
+object that a stopped run may have deleted. Run `audit-store` to see if the
+object is still there. Keep the audit report, the repair report, and the
+audit log together.
 
 After an applied repair, run `audit-store` again for the same tenant and
 signal, and run the lifecycle and query suites of the signal before you
