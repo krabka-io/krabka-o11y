@@ -5,12 +5,15 @@
 //! committed consumer-group offset on them. `docs/disaster_recovery.md` is the
 //! procedure. Every mutating command needs `--apply`.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use clap::{Parser, Subcommand};
 use krabka_blockstore::{
-    DeploymentBackupPlan, DeploymentPart, audit_deployment_backup, backup_deployment,
-    restore_deployment_backup,
+    DeploymentBackupPlan, DeploymentPart, RecoveryError, audit_deployment_backup,
+    backup_deployment, restore_deployment_backup,
 };
 use krabka_observability::{
     recovery_cut::{KafkaBrokerState, deployment_drained_groups},
@@ -21,6 +24,10 @@ use krabka_observability::{
 use object_store::{ObjectStore, local::LocalFileSystem, parse_url_opts, prefix::PrefixStore};
 use serde::Serialize;
 use url::Url;
+
+use self::failure::failure;
+
+mod failure;
 
 #[derive(Debug, Parser)]
 #[command(name = "krabka-o11y-recovery")]
@@ -127,7 +134,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             };
             let result = backup_deployment(&broker.state()?, &open_store(&backup_url)?, &plan)
                 .await
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| failure(error, report.as_deref()))?;
             emit(&result, report)
         }
         Command::Audit { backup_url, report } => {
@@ -159,7 +166,7 @@ async fn run(cli: Cli) -> Result<(), String> {
                 &open_parts(&parts, Some(&backup_url))?,
             )
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| failure(error, report.as_deref()))?;
             emit(&result, report)
         }
     }
@@ -219,14 +226,22 @@ fn require_apply(apply: bool, operation: &str) -> Result<(), String> {
 }
 
 fn emit<T: Serialize>(value: &T, path: Option<PathBuf>) -> Result<(), String> {
-    let mut bytes = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
-    bytes.push(b'\n');
     if let Some(path) = path {
-        std::fs::write(path, bytes).map_err(|error| error.to_string())
+        write_report(value, &path)
     } else {
-        print!("{}", String::from_utf8_lossy(&bytes));
+        print!("{}", String::from_utf8_lossy(&report_bytes(value)?));
         Ok(())
     }
+}
+
+fn write_report<T: Serialize>(value: &T, path: &Path) -> Result<(), String> {
+    std::fs::write(path, report_bytes(value)?).map_err(|error| error.to_string())
+}
+
+fn report_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
+    let mut bytes = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    Ok(bytes)
 }
 
 #[cfg(test)]

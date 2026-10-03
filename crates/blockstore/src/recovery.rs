@@ -155,8 +155,12 @@ pub enum RecoveryError {
     /// The broker could not be read.
     #[error("broker state could not be read: {0}")]
     Broker(String),
-    /// The broker does not hold the state that the cut recorded.
-    #[error("{operation} refused because the broker state differs from the cut")]
+    /// The broker does not hold the state that the cut recorded. The message
+    /// names every finding.
+    #[error(
+        "{operation} refused because the broker state differs from the cut: {}",
+        findings_text(findings)
+    )]
     BrokerMismatch {
         operation: &'static str,
         findings: Vec<BrokerFinding>,
@@ -967,6 +971,15 @@ fn refuse_broker_findings(
     }
 }
 
+/// The findings of a broker mismatch, separated by `; `.
+fn findings_text(findings: &[BrokerFinding]) -> String {
+    findings
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 fn json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, RecoveryError> {
     Ok(serde_json::to_vec_pretty(value)?)
 }
@@ -1216,6 +1229,44 @@ mod tests {
                 .unwrap();
             check!(after == case.target_after, "{}", case.name);
         }
+    }
+
+    #[test]
+    fn a_broker_mismatch_names_every_finding() {
+        let error = RecoveryError::BrokerMismatch {
+            operation: "restore",
+            findings: vec![
+                BrokerFinding::WalOffset {
+                    topic: "__krabka_metrics_wal".into(),
+                    partition: 0,
+                    expected: Some(42),
+                    actual: Some(0),
+                },
+                BrokerFinding::GroupOffset {
+                    group: "krabka-metrics-block-builder".into(),
+                    topic: "__krabka_metrics_wal".into(),
+                    partition: 1,
+                    expected: Some(7),
+                    actual: None,
+                },
+                BrokerFinding::UndrainedGroup {
+                    group: "krabka-traces-block-builder".into(),
+                    topic: "__krabka_traces_wal".into(),
+                    partition: 2,
+                    committed: None,
+                    wal_next_offset: 9,
+                },
+            ],
+        };
+        check!(
+            error.to_string()
+                == "restore refused because the broker state differs from the cut: \
+                    wal_offset __krabka_metrics_wal:0 expected 42 actual 0; \
+                    group_offset krabka-metrics-block-builder __krabka_metrics_wal:1 expected 7 \
+                    actual none; \
+                    undrained_group krabka-traces-block-builder __krabka_traces_wal:2 committed \
+                    none wal_next_offset 9"
+        );
     }
 }
 
