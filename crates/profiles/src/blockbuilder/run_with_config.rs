@@ -74,7 +74,8 @@ pub async fn run_with_config(
             ProfilesError::Block(format!("profile index load failed: {error}"))
         })?,
     };
-    let rebalance = WalRebalanceListener::new(config.wal_topic.clone());
+    let rebalance =
+        WalRebalanceListener::new(config.wal_topic.clone()).rewinding_fenced_partitions();
     let mut consumer = tokio::select! {
         biased;
         () = shutdown.cancelled() => return Ok(()),
