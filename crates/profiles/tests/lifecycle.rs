@@ -16,7 +16,7 @@ use assert2::{assert, check};
 use krabka_blockstore::{
     BlockDeletionReport, BlockIndex as _, BlockLevel, BlockMeta, BlockTimestampUnit,
     CompactionPolicy, DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, Labels, ObjectStoreMetrics,
-    OrphanSweepStats, ProfileIndex,
+    OrphanSweepStats, ProfileIndex, StorageAuditOptions, StorageSignal, audit_store,
 };
 use krabka_pprof::{EngineOpts, FlameEngine};
 use krabka_profiles::{
@@ -500,6 +500,24 @@ async fn the_retention_cutoff_is_counted_in_milliseconds() {
             "{name}"
         );
     }
+}
+
+/// The storage audit restates the symbol database shape, because the block
+/// store cannot depend on the profile crates. A symbol database that the
+/// block builder writes must decode there, or an audit with `verify_data`
+/// reports every live block as damaged.
+#[tokio::test]
+async fn the_storage_audit_reads_the_symbol_databases_the_block_builder_writes() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let (_index, _expired, _live) = one_expired_and_one_live(&store).await;
+    let mut options = StorageAuditOptions::new(SystemTime::now() + Duration::from_hours(2));
+    options.signal = Some(StorageSignal::Profiles);
+    options.verify_data = true;
+
+    let report = audit_store(&store, &options).await.expect("the audit runs");
+
+    check!(report.findings == Vec::new());
+    check!(report.objects_unclassified == 0);
 }
 
 /// A block goes through every stage of its life on the store the environment

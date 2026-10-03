@@ -18,6 +18,7 @@ replacement object.
 | blockstore | trace index shards | binary shard version 1 | exact version; rebuilt from retained blocks when required |
 | blockstore | profile index and symbol shards | binary shard version 1 | exact version; symbol data is immutable per block |
 | blockstore | index snapshot manifests | JSON version 1 | exact version; snapshots are replaceable from shards |
+| blockstore | storage audit report, repair report, and repair audit log (JSONL of `intent` and `outcome` lines) | JSON `schema_version: 1` | exact version; readers reject another version before a repair acts |
 | logs | block/index manifests, shard catalogs, and compaction frontier | JSON version 1 | exact version; atomic replacement |
 | metrics | compaction index manifests and block-kind keys | JSON/versioned key version 1 | exact version; source blocks and WAL remain authoritative |
 | metrics | Prometheus TSDB import records and block-ULID bindings | JSON `version: 1`, required | version 1 or earlier; a later or absent version stops the import before it writes |

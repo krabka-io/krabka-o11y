@@ -173,3 +173,104 @@ An imported block is an ordinary metric block with an ordinary manifest. The
 import records are under `mimir-block-uploads/<tenant>/` in the metrics store.
 The `metrics` part copies that whole store, so the cut holds them, and a
 restored cluster does not import the same block again.
+
+## Offline audit and repair
+
+`audit-store` reads a live store in place. It lists every object under the
+store URL, classifies each key by the grammar of the signal that owns it, and
+checks the blocks, sidecars, indexes, manifests, symbols, delete state,
+checksums, and the WAL offset bounds that block keys refer to. It does not
+write or delete an object:
+
+```bash
+krabka-storage-admin audit-store \
+  --store-url s3://krabka-o11y \
+  --signal profiles --tenant tenant-a \
+  --report store-audit.json
+```
+
+Omit `--signal` and `--tenant` to audit every signal and tenant. Add
+`--verify-data` to read every row of every block, not only the footer, and to
+decode the `.symdb` symbol table of every live profiles block. The
+report is JSON with `schema_version: 1`. Each finding has a `kind`, a
+`signal`, a `tenant`, a `path`, a `severity`, and a `repairable` flag. The
+`detail` text is for a person and is not a stable contract. The command exits
+unsuccessfully when a finding has the `damage` severity.
+
+| Kind | Severity | Meaning |
+| --- | --- | --- |
+| `orphan` | damage | A block older than the grace window that no index names. Repairable. |
+| `orphan_sidecar` | damage | A profiles `.symdb` sidecar whose block is absent. Repairable. |
+| `pending` | warning | An unnamed block inside the grace window. A writer can still publish it. |
+| `missing_sidecar` | damage | A live block without its sidecar. |
+| `dangling_index_entry` | damage | An index, manifest, or metrics `.index` manifest names a block or shard manifest that the store does not hold. |
+| `index_mismatch` | damage | An index of one tenant names a block of another tenant, or a metrics `.index` manifest names another index key, block, or tenant than its key. |
+| `corrupt_block` | damage | A block that does not decode as Parquet. |
+| `corrupt_sidecar` | damage | A profiles `.symdb` symbol table of a live block that does not decode. Only `--verify-data` reports it. |
+| `unsupported_format` | damage | A block or manifest with a future format version. |
+| `unreadable_manifest` | damage | An index snapshot, logs manifest, logs compaction frontier, or metrics `.index` manifest that does not decode, or blocks with no index. |
+| `unreadable_delete_state` | damage | A deletion marker or erasure request that does not decode, or that names another tenant. |
+| `checksum_mismatch` | damage | An index shard payload whose content hash is not the one its manifest records. |
+| `wal_overlap` | warning | Two blocks of one tenant cover overlapping WAL offsets of one partition. |
+| `stale_frontier` | warning | The logs compaction frontier is ahead of the blocks that the store holds: a partition offset after the last offset of every block of that partition, or a `compacted_through_ns` after the newest record time of every block. |
+
+The audit decides liveness as the owning service does. A metrics block is
+live when an `.index` manifest names it. The audit decodes each manifest, and
+it accepts the `.index` extension in any letter case, as the metrics loaders
+do. A logs block is live when the global, tenant, or shard manifest names it.
+A traces or profiles block is live when the latest index snapshot names it,
+in the index of any tenant. When the audit cannot read the index of a tenant,
+it reports no orphans for that tenant, so a broken index never makes live
+blocks look like orphans. A logs shard catalog that names a missing shard
+manifest, and an `index_mismatch` finding, also stop orphan findings for the
+tenant.
+
+`repair` is report-first. It needs an explicit tenant, one signal, and an
+allowlist of finding kinds. Only `orphan` and `orphan_sidecar` are
+repairable; every other kind needs a person. Without `--apply` it only plans:
+
+```bash
+krabka-storage-admin repair \
+  --store-url s3://krabka-o11y \
+  --tenant tenant-a --signal profiles \
+  --finding-kind orphan --finding-kind orphan_sidecar \
+  --audit-log repair-audit.jsonl --report repair-plan.json
+```
+
+Read the plan, then run the same command with `--apply`. The repair obeys
+these rules:
+
+- It audits the tenant again at the start of the run. It does not act on an
+  old report.
+- It acts only on findings whose tenant is exactly `--tenant`. It never acts
+  on shared state such as a fleet-wide index or the logs frontier.
+- Before each delete it reads the object head again. It keeps the object when
+  the entity tag or modification time changed after the audit listed it, or
+  when the object is no longer older than `--grace` (default `1h`). The
+  object store has no conditional delete, so the grace window is what keeps a
+  writer that can still publish the object safe. Use a grace that is longer
+  than the slowest block publication.
+- An object that is already absent counts as `already_absent`, not as a
+  failure. A delete that fails counts as `failed`, and the run continues with
+  the next object. The command then exits unsuccessfully.
+
+A second run with the same scope finds nothing to do, and a run that stopped
+part of the way continues from where it stopped. The repair appends to
+`--audit-log` as JSON lines, and it syncs each line to disk before it
+continues. Each line records the run start time, the scope, a `phase`, the
+kind, and the path:
+
+- Before each delete, the repair writes an `intent` line with no outcome. It
+  starts the delete only after that line is on disk. If the repair cannot
+  write the line, it stops with an error and does not delete the object.
+- After each action, the repair writes an `outcome` line with the outcome:
+  `planned`, `deleted`, `already_absent`, `skipped_changed`, or `failed`.
+
+An `intent` line with no `outcome` line for the same path after it marks an
+object that a stopped run may have deleted. Run `audit-store` to see if the
+object is still there. Keep the audit report, the repair report, and the
+audit log together.
+
+After an applied repair, run `audit-store` again for the same tenant and
+signal, and run the lifecycle and query suites of the signal before you
+return the tenant to service.

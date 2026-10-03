@@ -18,7 +18,8 @@ use assert2::{assert, check};
 use krabka_blockstore::{
     BlockLevel, BlockTimestampUnit, BlockWriter, CompactionPolicy, DEFAULT_BLOCK_READ_MAX,
     ERASURE_REQUEST_PREFIX, ErasureRequest, LabelMatcher, Labels, LifecycleError, MatchOp,
-    OrphanSweepStats, list_erasure_requests, put_erasure_request, read_block,
+    OrphanSweepStats, StorageAuditOptions, StorageSignal, audit_store, list_erasure_requests,
+    put_erasure_request, read_block,
 };
 use krabka_metrics::{
     BucketSpan, ClockReadingPayload, ClockReadingRow, CompactionIndexManifest,
@@ -818,6 +819,24 @@ async fn two_native_histogram_blocks_merge_into_one() {
                 (7, NOW_MS + 1_000, histogram(5.0)),
             ]
     );
+}
+
+/// The storage audit restates the manifest shape, because the block store
+/// cannot depend on this crate. A manifest that the compactor writes must
+/// decode there, or the audit reports every metrics tenant as damaged.
+#[tokio::test]
+async fn the_storage_audit_reads_the_manifests_the_compactor_writes() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    write_float_block(&store, "tenant-a", 0, &[(7, NOW_MS, 1.0)]).await;
+    write_float_block(&store, "tenant/b", 2, &[(8, NOW_MS, 2.0)]).await;
+    let mut options = StorageAuditOptions::new(SystemTime::now() + Duration::from_hours(2));
+    options.signal = Some(StorageSignal::Metrics);
+    options.verify_data = true;
+
+    let report = audit_store(&store, &options).await.expect("the audit runs");
+
+    check!(report.findings == Vec::new());
+    check!(report.objects_unclassified == 0);
 }
 
 /// One day of epoch milliseconds.
