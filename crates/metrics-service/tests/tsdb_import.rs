@@ -28,11 +28,12 @@ use assert2::{assert, check};
 use async_trait::async_trait;
 use futures::{TryStreamExt as _, stream::BoxStream};
 use krabka_metrics_service::{
-    MimirTenantAdminState, RefreshingMetricBlockStore, mimir_tenant_admin_router,
-    serve_prometheus_router,
+    DEFAULT_UNBOUNDED_COMPATIBILITY_LOOKBACK, MimirTenantAdminState, RefreshingMetricBlockStore,
+    mimir_tenant_admin_router, serve_prometheus_router,
 };
 use krabka_observability::server_security::ServerSecurity;
 use krabka_promql::{EngineOpts, PrometheusApiState, WalHead, prometheus_router};
+use krabka_units::prelude::*;
 use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
     PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
@@ -49,11 +50,15 @@ use tsdb_fixture::{
     FIXTURE_MAX_TIME, FIXTURE_MIN_TIME, FIXTURE_ULID, FixtureFiles, expected_samples, fixture_files,
 };
 
+use self::crashing_store::{CrashPoint, CrashingStore};
+
 // This suite uses only `normalize`, which the other differential suites share.
 #[allow(dead_code)]
 #[path = "../../metrics/tests/support/diff_corpus.rs"]
 mod diff_corpus;
 
+#[path = "../../metrics/tests/support/crashing_store.rs"]
+mod crashing_store;
 #[path = "../../metrics/tests/support/tsdb_fixture.rs"]
 mod tsdb_fixture;
 
@@ -68,6 +73,10 @@ const STALE_NAN_BITS: u64 = 0x7ff0_0000_0000_0002;
 /// of its own.
 const CONTAINER_START_TIMEOUT: Duration = Duration::from_mins(2);
 const PROMETHEUS_PORT: u16 = 9090;
+/// A lookback for requests without a time range that reaches the 2025
+/// fixture block. Cardinality routes and `/api/v1/status/tsdb` take no time
+/// range, so Krabka reads only the blocks inside this lookback.
+const FIXTURE_LOOKBACK: Time = days(100 * 365);
 /// The features of the `diff_prometheus` oracle. With them on, Prometheus
 /// annotates `rate` as Krabka does.
 const PROMETHEUS_FEATURES: &str = "native-histograms,promql-experimental-functions,\
@@ -88,13 +97,22 @@ impl Krabka {
     }
 
     async fn start_with(store: Arc<dyn ObjectStore>) -> TestResult<Self> {
+        Self::start_with_lookback(store, DEFAULT_UNBOUNDED_COMPATIBILITY_LOOKBACK).await
+    }
+
+    /// Starts Krabka with `lookback` as the window of a request that has no
+    /// time range, as `--unbounded-compatibility-lookback` sets it.
+    async fn start_with_lookback(store: Arc<dyn ObjectStore>, lookback: Time) -> TestResult<Self> {
         let head = WalHead::new();
-        let query = Arc::new(RefreshingMetricBlockStore::new(
-            Arc::clone(&store),
-            "memory:///".parse()?,
-            MANIFEST_PREFIX,
-            head.clone(),
-        ));
+        let query = Arc::new(
+            RefreshingMetricBlockStore::new(
+                Arc::clone(&store),
+                "memory:///".parse()?,
+                MANIFEST_PREFIX,
+                head.clone(),
+            )
+            .with_unbounded_compatibility_lookback(lookback),
+        );
         let api = PrometheusApiState::new(Arc::clone(&query), EngineOpts::default());
         let router = prometheus_router(Arc::new(api)).merge(mimir_tenant_admin_router(
             MimirTenantAdminState::new(Arc::clone(&store), query, head),
@@ -739,6 +757,71 @@ async fn a_store_failure_on_the_index_probe_leaves_the_upload_validating() -> Te
     Ok(())
 }
 
+#[tokio::test]
+async fn a_query_during_a_stopped_import_reads_all_samples_or_none() -> TestResult {
+    // The write where the process stops, and whether the samples are live
+    // after the stop.
+    let cases = [
+        ("/float.index", 1, false),
+        ("/native-histograms.index", 1, false),
+        ("/_published", 1, false),
+        ("/by-sha256/", 2, true),
+    ];
+
+    for (key_part, occurrence, live) in cases {
+        let store = Arc::new(CrashingStore::default());
+        let krabka = Krabka::start_with(store.clone()).await?;
+        let block = UploadBlock::fixture();
+        let (status, body) = krabka
+            .post(
+                krabka.upload_url(FIXTURE_ULID, "start"),
+                block.meta(FIXTURE_ULID),
+            )
+            .await?;
+        assert!(status == StatusCode::OK, "start: {body}");
+        for (path, bytes) in &block.uploaded {
+            let url = format!(
+                "{}?path={}",
+                krabka.upload_url(FIXTURE_ULID, "files"),
+                encode(path)
+            );
+            let (status, body) = krabka.post(url, bytes.clone()).await?;
+            assert!(status == StatusCode::OK, "file {path}: {body}");
+        }
+        store.crash_at(Some(CrashPoint {
+            key_part: key_part.to_owned(),
+            occurrence,
+        }));
+
+        let (stopped_status, _) = krabka
+            .post(krabka.upload_url(FIXTURE_ULID, "finish"), Vec::new())
+            .await?;
+        let during = all_imported_samples(&krabka).await?;
+        store.crash_at(None);
+        let (retry_status, retry_body) = krabka
+            .post(krabka.upload_url(FIXTURE_ULID, "finish"), Vec::new())
+            .await?;
+        let after = krabka
+            .get_json(&krabka.upload_url(FIXTURE_ULID, "check"), &[])
+            .await?;
+
+        let case = format!("{key_part} #{occurrence}");
+        check!(
+            stopped_status == StatusCode::INTERNAL_SERVER_ERROR,
+            "case: {case}"
+        );
+        let expected = if live { expected_series() } else { Vec::new() };
+        check!(during == expected, "case: {case}");
+        check!(retry_status == StatusCode::OK, "case: {case}: {retry_body}");
+        check!(after == json!({"result": "complete"}), "case: {case}");
+        check!(
+            all_imported_samples(&krabka).await? == expected_series(),
+            "case: {case}"
+        );
+    }
+    Ok(())
+}
+
 async fn start_prometheus(
     files: &FixtureFiles,
 ) -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
@@ -777,18 +860,49 @@ async fn start_prometheus(
     .await??)
 }
 
-/// The query requests that the differential sends to both APIs, as a path and
-/// its parameters.
-fn differential_requests() -> Vec<(String, Vec<(&'static str, String)>)> {
+/// One request of the differential: a path and its parameters.
+type Request = (String, Vec<(&'static str, String)>);
+
+/// The offsets from the block start at which the differential reads
+/// `imported_deleted` near its tombstone, each with a 5m window.
+///
+/// The tombstone deletes `[1749997800000, 1749998700000]`. The series has
+/// chunks that end at `1749997785000` and `1749999585000`. Prometheus v3.14.0
+/// panics with "index out of range [2] with length 2" when a query window
+/// `[mint, maxt]` meets four conditions. A chunk that the query reads starts
+/// before `mint`, a chunk that it reads ends after `maxt`, the tombstone
+/// starts after `mint`, and the tombstone ends at or after `maxt`. For an
+/// instant query with a 5m lookback, a local Prometheus v3.14.0 failed at
+/// each offset in `[300000, 1780000]` and `[1800000, 2080000]`, on a 5s grid.
+/// `/api/v1/query`, `/api/v1/query_range` and `/api/v1/series` all fail so.
+///
+/// This is a Prometheus bug, not a malformed block. Prometheus wrote these
+/// tombstones itself, through `delete_series`. The panic is in
+/// `Intervals.Add`, at `tsdb/tombstones/tombstones.go:379` of
+/// `github.com/prometheus/prometheus v0.314.0`. `blockBaseSeriesSet.Next`, at
+/// `tsdb/querier.go:647`, calls it to trim the chunks to the window. The
+/// front trim puts `[MinInt64, mint-1]` before the tombstone. Then the back
+/// trim adds `[maxt+1, MaxInt64]`, and its open-ended branch sets
+/// `maxi := len(in)`. But `maxi` counts from `mini`, which is 1 here, so
+/// `in[maxi+mini-1]` is `in[2]`. Commit 80b7f73d26, in v2.45.0, added that
+/// branch. v0.315.0 and the development branch of 2026-10-02 still have it.
+///
+/// The same Prometheus answered each offset here without the panic. Krabka
+/// does not have the bug, so an in-process test compares windows that crash
+/// Prometheus with the samples that the Prometheus TSDB library reads.
+const TOMBSTONE_OFFSETS: [i64; 8] = [
+    290_000, 1_790_000, 1_795_000, 2_100_000, 2_400_000, 2_700_000, 2_720_000, 3_000_000,
+];
+
+/// The query requests that the differential sends to both APIs.
+fn differential_requests() -> Vec<Request> {
     let start = FIXTURE_MIN_TIME;
     let end = FIXTURE_MAX_TIME;
     // Each time names a feature of the block: plain samples, the first
     // samples after the tombstoned range, the counter stale marker, the
-    // histogram stale markers, and the end of the block. Prometheus v3.14.0
-    // fails a query that reads a chunk the tombstone overlaps with "index out
-    // of range [2] with length 2", so no time here puts that chunk inside a
-    // lookback window. The in-process tests check the tombstoned series
-    // against the Prometheus TSDB library instead.
+    // histogram stale markers, and the end of the block. Each window here
+    // starts before the block or ends after the tombstone, so no window meets
+    // the conditions of the Prometheus panic in `TOMBSTONE_OFFSETS`.
     let instants = [
         start + 100_000,
         start + 3_000_000,
@@ -856,7 +970,192 @@ fn differential_requests() -> Vec<(String, Vec<(&'static str, String)>)> {
     requests.push(("/api/v1/series".to_owned(), series));
     requests.push(("/api/v1/labels".to_owned(), range.clone()));
     requests.push(("/api/v1/label/instance/values".to_owned(), range));
+    requests.extend(tombstone_requests());
+    requests.extend(histogram_requests());
+    requests.extend(cardinality_requests());
+    requests.extend(metadata_and_exemplar_requests());
     requests
+}
+
+fn instant(query: &str, time: i64) -> Request {
+    (
+        "/api/v1/query".to_owned(),
+        vec![("query", query.to_owned()), ("time", seconds(time))],
+    )
+}
+
+fn range_query(query: &str, start: i64, end: i64, step: &str) -> Request {
+    (
+        "/api/v1/query_range".to_owned(),
+        vec![
+            ("query", query.to_owned()),
+            ("start", seconds(start)),
+            ("end", seconds(end)),
+            ("step", step.to_owned()),
+        ],
+    )
+}
+
+fn matched(path: &str, selector: &str, start: i64, end: i64) -> Request {
+    (
+        path.to_owned(),
+        vec![
+            ("match[]", selector.to_owned()),
+            ("start", seconds(start)),
+            ("end", seconds(end)),
+        ],
+    )
+}
+
+/// Requests for `imported_deleted` before, in and after its tombstone, at
+/// windows that do not hit the Prometheus panic of [`TOMBSTONE_OFFSETS`].
+fn tombstone_requests() -> Vec<Request> {
+    let start = FIXTURE_MIN_TIME;
+    let queries = [
+        "imported_deleted",
+        "timestamp(imported_deleted)",
+        "rate(imported_deleted[5m])",
+        "count_over_time(imported_deleted[5m])",
+        "last_over_time(imported_deleted[5m])",
+        "imported_deleted[5m]",
+    ];
+    let mut requests = Vec::new();
+    for offset in TOMBSTONE_OFFSETS {
+        for query in queries {
+            requests.push(instant(query, start + offset));
+        }
+    }
+    // Each window starts after the first chunk ends, at 1749997785000.
+    for (from, to, step) in [(2_100_000, 7_200_000, "60"), (2_100_000, 2_600_000, "15")] {
+        for query in &queries[..4] {
+            requests.push(range_query(query, start + from, start + to, step));
+        }
+    }
+    for (from, to) in [(1_900_000, 2_600_000), (2_100_000, 2_600_000)] {
+        for path in [
+            "/api/v1/series",
+            "/api/v1/labels",
+            "/api/v1/label/job/values",
+        ] {
+            requests.push(matched(path, "imported_deleted", start + from, start + to));
+        }
+    }
+    requests
+}
+
+/// Histogram functions over the integer, float and custom-bucket histograms.
+fn histogram_requests() -> Vec<Request> {
+    let start = FIXTURE_MIN_TIME;
+    let queries = [
+        "histogram_avg(imported_hist)",
+        "histogram_stddev(imported_float_hist)",
+        "histogram_stdvar(imported_nhcb)",
+        "histogram_count(imported_nhcb)",
+        "histogram_sum(imported_nhcb)",
+        "histogram_quantile(0.5, imported_float_hist)",
+        "histogram_fraction(0, 0.5, imported_nhcb)",
+        "histogram_quantile(0.99, sum(rate(imported_nhcb[5m])))",
+        "sum(imported_hist)",
+        "increase(imported_hist[30m])",
+    ];
+    let mut requests = Vec::new();
+    for time in [start + 100_000, start + 4_510_000, FIXTURE_MAX_TIME - 1] {
+        for query in queries {
+            requests.push(instant(query, time));
+        }
+    }
+    for query in [
+        "histogram_sum(imported_float_hist)",
+        "histogram_quantile(0.5, imported_nhcb)",
+    ] {
+        requests.push(range_query(query, start, FIXTURE_MAX_TIME, "60"));
+    }
+    requests
+}
+
+/// The cardinality that Prometheus answers from a block.
+///
+/// Prometheus gives `/api/v1/status/tsdb` from the head only, so it reports
+/// no series for a served block. Krabka gives that route from the blocks
+/// inside its lookback, and its `headStats` has other fields, so the
+/// differential leaves the route out. `count` over the series and the
+/// discovery routes give the cardinality that both read from the block.
+fn cardinality_requests() -> Vec<Request> {
+    let start = FIXTURE_MIN_TIME;
+    let end = FIXTURE_MAX_TIME;
+    let mut requests = Vec::new();
+    for time in [start + 100_000, start + 4_510_000, end - 1] {
+        for query in [
+            r#"count by (__name__) ({__name__=~"imported_.+"})"#,
+            r#"count by (job) ({__name__=~"imported_.+"})"#,
+            "count(count by (instance) (imported_gauge))",
+        ] {
+            requests.push(instant(query, time));
+        }
+    }
+    requests.push(range_query(
+        r#"count({__name__=~"imported_.+"})"#,
+        start,
+        end,
+        "300",
+    ));
+    requests.push(matched("/api/v1/labels", "imported_deleted", start, end));
+    requests.push(matched(
+        "/api/v1/label/__name__/values",
+        "imported_gauge",
+        start,
+        end,
+    ));
+    requests.push((
+        "/api/v1/label/__name__/values".to_owned(),
+        vec![("start", seconds(start)), ("end", seconds(end))],
+    ));
+    requests
+}
+
+/// A TSDB block holds no metric metadata and no exemplars, so Prometheus
+/// serving the block answers both routes empty.
+fn metadata_and_exemplar_requests() -> Vec<Request> {
+    let range = [
+        ("start", seconds(FIXTURE_MIN_TIME)),
+        ("end", seconds(FIXTURE_MAX_TIME)),
+    ];
+    let mut requests = vec![
+        ("/api/v1/metadata".to_owned(), Vec::new()),
+        (
+            "/api/v1/metadata".to_owned(),
+            vec![("metric", "imported_gauge".to_owned())],
+        ),
+    ];
+    for selector in ["imported_hist", r#"{__name__=~"imported_.+"}"#] {
+        let mut params = vec![("query", selector.to_owned())];
+        params.extend(range.iter().cloned());
+        requests.push(("/api/v1/query_exemplars".to_owned(), params));
+    }
+    requests
+}
+
+/// Sends each differential request to Prometheus at `prometheus_base` and to
+/// `krabka`, and returns a description of each request whose answers differ.
+async fn differential_mismatches(
+    prometheus_base: &str,
+    krabka: &Krabka,
+) -> TestResult<Vec<String>> {
+    let mut mismatches = Vec::new();
+    for (path, params) in differential_requests() {
+        let upstream = krabka
+            .get_json(&format!("{prometheus_base}{path}"), &params)
+            .await?;
+        let imported = krabka
+            .get_json(&format!("{}{path}", krabka.base), &params)
+            .await?;
+        if diff_corpus::normalize(&upstream) != diff_corpus::normalize(&imported) {
+            mismatches.push(format!(
+                "{path} {params:?}\nprometheus: {upstream}\nkrabka: {imported}"
+            ));
+        }
+    }
+    Ok(mismatches)
 }
 
 #[tokio::test]
@@ -874,20 +1173,7 @@ async fn an_imported_block_answers_queries_as_prometheus_serving_the_block() -> 
         .await?;
     assert!(check_body == json!({"result": "complete"}));
 
-    let mut mismatches = Vec::new();
-    for (path, params) in differential_requests() {
-        let upstream = krabka
-            .get_json(&format!("{prometheus_base}{path}"), &params)
-            .await?;
-        let imported = krabka
-            .get_json(&format!("{}{path}", krabka.base), &params)
-            .await?;
-        if diff_corpus::normalize(&upstream) != diff_corpus::normalize(&imported) {
-            mismatches.push(format!(
-                "{path} {params:?}\nprometheus: {upstream}\nkrabka: {imported}"
-            ));
-        }
-    }
+    let mismatches = differential_mismatches(&prometheus_base, &krabka).await?;
 
     assert!(
         mismatches.is_empty(),
@@ -895,5 +1181,294 @@ async fn an_imported_block_answers_queries_as_prometheus_serving_the_block() -> 
         mismatches.len(),
         mismatches.join("\n\n")
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_differential_request_succeeds_on_the_imported_block() -> TestResult {
+    let krabka = Krabka::start().await?;
+    krabka.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
+
+    let mut failures = Vec::new();
+    for (path, params) in differential_requests() {
+        let response = krabka
+            .get_json(&format!("{}{path}", krabka.base), &params)
+            .await?;
+        if response["status"] != "success" {
+            failures.push(format!("{path} {params:?}: {response}"));
+        }
+    }
+
+    check!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_imported_block_has_no_metadata_and_no_exemplars() -> TestResult {
+    // The answers of Prometheus v3.14.0 serving the fixture block, with the
+    // differential's feature flags.
+    let empty_metadata = json!({"status": "success", "data": {}});
+    let empty_exemplars = json!({"status": "success", "data": []});
+    let krabka = Krabka::start().await?;
+    krabka.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
+
+    for (path, params) in metadata_and_exemplar_requests() {
+        let response = krabka
+            .get_json(&format!("{}{path}", krabka.base), &params)
+            .await?;
+        let expected = if path == "/api/v1/metadata" {
+            &empty_metadata
+        } else {
+            &empty_exemplars
+        };
+
+        check!(&response == expected, "{path} {params:?}");
+    }
+    Ok(())
+}
+
+/// The samples of `imported_deleted` that the Prometheus TSDB library reads,
+/// in the left-open window `(time - 5m, time]` of a range selector.
+fn expected_deleted_window(time: i64) -> Vec<(i64, u64)> {
+    let deleted = BTreeMap::from([
+        ("__name__".to_owned(), "imported_deleted".to_owned()),
+        ("job".to_owned(), "fixture".to_owned()),
+    ]);
+    expected_series()
+        .into_iter()
+        .find(|(labels, _, _)| *labels == deleted)
+        .expect("the fixture holds imported_deleted")
+        .1
+        .into_iter()
+        .filter(|(t, _)| *t > time - 300_000 && *t <= time)
+        .collect()
+}
+
+#[tokio::test]
+async fn the_tombstoned_series_matches_prometheus_where_prometheus_panics() -> TestResult {
+    // Offsets from the block start whose 5m window makes Prometheus v3.14.0
+    // panic, as `TOMBSTONE_OFFSETS` explains: before the tombstone, at its
+    // start, and inside it. The Prometheus TSDB library reads the block
+    // without the PromQL trim, so its samples are the reference here.
+    let offsets = [
+        300_000, 1_000_000, 1_780_000, 1_800_000, 1_900_000, 2_080_000,
+    ];
+    let krabka = Krabka::start().await?;
+    krabka.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
+
+    for offset in offsets {
+        let time = FIXTURE_MIN_TIME + offset;
+        let response = krabka
+            .get_json(
+                &format!("{}/api/v1/query", krabka.base),
+                &[
+                    ("query", "imported_deleted[5m]".to_owned()),
+                    ("time", seconds(time)),
+                ],
+            )
+            .await?;
+        let expected = expected_deleted_window(time);
+        let actual: Vec<(i64, u64)> = matrix_series(&response)
+            .into_iter()
+            .flat_map(|(_, floats, _)| floats)
+            .collect();
+
+        check!(actual == expected, "offset {offset}");
+    }
+    Ok(())
+}
+
+/// The answers of the cardinality routes when Krabka reads no series.
+fn empty_cardinality(path: &str) -> Value {
+    match path {
+        "/api/v1/cardinality/label_names" => {
+            json!({"label_values_count_total": 0, "label_names_count": 0, "cardinality": []})
+        }
+        "/api/v1/cardinality/label_values" => json!({"series_count_total": 0, "labels": []}),
+        _ => json!({"data": []}),
+    }
+}
+
+#[tokio::test]
+async fn cardinality_routes_count_the_imported_block_inside_the_lookback() -> TestResult {
+    // These are Grafana Mimir routes. Mimir reads them from the ingester head
+    // only, so after the same upload Mimir gives no series. These routes take
+    // no time range, so Krabka reads the blocks inside the unbounded
+    // compatibility lookback. With the default lookback of one hour, the 2025
+    // block is outside it, and Krabka gives no series as Mimir does. With a
+    // lookback that reaches the block, Krabka counts its series. The values
+    // are hand-computed from the seven series of the fixture.
+    let only_job = |name: &str| json!({"__name__": name, "job": "fixture"});
+    let with_instance = |name: &str, instance: &str| json!({"__name__": name, "instance": instance, "job": "fixture"});
+    let histogram_metric = |metric: &str, buckets: u64| {
+        json!({
+            "metric": metric, "series_count": 1, "bucket_count": buckets,
+            "avg_bucket_count": f64::from(u32::try_from(buckets).expect("a small count")),
+            "min_bucket_count": buckets, "max_bucket_count": buckets,
+        })
+    };
+    let selector = vec![("selector", r#"{job="fixture"}"#.to_owned())];
+    let cases = [
+        (
+            "/api/v1/cardinality/label_names",
+            vec![],
+            json!({
+                "label_values_count_total": 9,
+                "label_names_count": 3,
+                "cardinality": [
+                    {"label_name": "__name__", "label_values_count": 6},
+                    {"label_name": "instance", "label_values_count": 2},
+                    {"label_name": "job", "label_values_count": 1},
+                ],
+            }),
+        ),
+        (
+            "/api/v1/cardinality/label_values",
+            vec![
+                ("label_names[]", "instance".to_owned()),
+                ("label_names[]", "job".to_owned()),
+            ],
+            json!({
+                "series_count_total": 7,
+                "labels": [
+                    {
+                        "label_name": "job",
+                        "label_values_count": 1,
+                        "series_count": 7,
+                        "cardinality": [{"label_value": "fixture", "series_count": 7}],
+                    },
+                    {
+                        "label_name": "instance",
+                        "label_values_count": 2,
+                        "series_count": 3,
+                        "cardinality": [
+                            {"label_value": "i1", "series_count": 2},
+                            {"label_value": "zürich", "series_count": 1},
+                        ],
+                    },
+                ],
+            }),
+        ),
+        (
+            "/api/v1/cardinality/active_series",
+            selector.clone(),
+            json!({"data": [
+                with_instance("imported_counter_total", "i1"),
+                only_job("imported_deleted"),
+                only_job("imported_float_hist"),
+                with_instance("imported_gauge", "i1"),
+                with_instance("imported_gauge", "zürich"),
+                only_job("imported_hist"),
+                only_job("imported_nhcb"),
+            ]}),
+        ),
+        (
+            "/api/v1/cardinality/active_native_histogram_metrics",
+            selector,
+            // The buckets of the last sample of each series: two positive,
+            // four positive and two negative, and four custom buckets.
+            json!({"data": [
+                histogram_metric("imported_float_hist", 2),
+                histogram_metric("imported_hist", 6),
+                histogram_metric("imported_nhcb", 4),
+            ]}),
+        ),
+    ];
+    let recent = Krabka::start().await?;
+    recent.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
+    let reaching = Krabka::start_with_lookback(Arc::new(InMemory::new()), FIXTURE_LOOKBACK).await?;
+    reaching
+        .upload(FIXTURE_ULID, &UploadBlock::fixture())
+        .await?;
+
+    for (path, params, expected) in cases {
+        let outside = recent
+            .get_json(&format!("{}{path}", recent.base), &params)
+            .await?;
+        let inside = reaching
+            .get_json(&format!("{}{path}", reaching.base), &params)
+            .await?;
+
+        check!(outside == empty_cardinality(path), "{path}");
+        check!(inside == expected, "{path}");
+    }
+    Ok(())
+}
+
+/// The `/api/v1/status/tsdb` data of `krabka`, without `headStats`.
+async fn tsdb_status_lists(krabka: &Krabka) -> TestResult<Value> {
+    let response = krabka
+        .get_json(&format!("{}/api/v1/status/tsdb", krabka.base), &[])
+        .await?;
+    assert!(response["status"] == "success", "{response}");
+    let mut data = response["data"].clone();
+    data.as_object_mut()
+        .expect("the TSDB status is an object")
+        .remove("headStats");
+    Ok(data)
+}
+
+#[tokio::test]
+async fn tsdb_status_counts_the_imported_block_inside_the_lookback() -> TestResult {
+    // Prometheus gives these lists from its head only. Prometheus v3.14.0
+    // serving the fixture block gives four empty lists. Krabka gives the
+    // same with the default lookback of one hour, because the 2025 block is
+    // outside it. With a lookback that reaches the block, Krabka gives the
+    // lists that Prometheus gives when the generator writes the same seven
+    // series into its head. The one difference is `memoryInBytesByLabelName`:
+    // Prometheus counts one more byte for the length of each label name and
+    // value, and gives 181, 84 and 41.
+    //
+    // The differential does not compare this route. `headStats` describes the
+    // Prometheus head, which Krabka does not have, and Krabka gives
+    // `numSamples` where Prometheus gives `numLabelPairs`.
+    let stat = |name: &str, value: u64| json!({"name": name, "value": value});
+    let empty = json!({
+        "seriesCountByMetricName": [],
+        "labelValueCountByLabelName": [],
+        "memoryInBytesByLabelName": [],
+        "seriesCountByLabelValuePair": [],
+    });
+    let counted = json!({
+        "seriesCountByMetricName": [
+            stat("imported_gauge", 2),
+            stat("imported_counter_total", 1),
+            stat("imported_deleted", 1),
+            stat("imported_float_hist", 1),
+            stat("imported_hist", 1),
+            stat("imported_nhcb", 1),
+        ],
+        "labelValueCountByLabelName": [
+            stat("__name__", 6),
+            stat("instance", 2),
+            stat("job", 1),
+        ],
+        // The UTF-8 bytes of each label name and value, over the series.
+        "memoryInBytesByLabelName": [
+            stat("__name__", 167),
+            stat("job", 70),
+            stat("instance", 35),
+        ],
+        "seriesCountByLabelValuePair": [
+            stat("job=fixture", 7),
+            stat("__name__=imported_gauge", 2),
+            stat("instance=i1", 2),
+            stat("__name__=imported_counter_total", 1),
+            stat("__name__=imported_deleted", 1),
+            stat("__name__=imported_float_hist", 1),
+            stat("__name__=imported_hist", 1),
+            stat("__name__=imported_nhcb", 1),
+            stat("instance=zürich", 1),
+        ],
+    });
+    let recent = Krabka::start().await?;
+    recent.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
+    let reaching = Krabka::start_with_lookback(Arc::new(InMemory::new()), FIXTURE_LOOKBACK).await?;
+    reaching
+        .upload(FIXTURE_ULID, &UploadBlock::fixture())
+        .await?;
+
+    check!(tsdb_status_lists(&recent).await? == empty);
+    check!(tsdb_status_lists(&reaching).await? == counted);
     Ok(())
 }

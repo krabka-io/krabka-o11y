@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
+    time::{Duration, SystemTime},
 };
 
 use assert2::{assert, check};
@@ -8,12 +9,14 @@ use async_trait::async_trait;
 use futures::{TryStreamExt as _, stream::BoxStream};
 use krabka_blockstore::BlockLevel;
 use krabka_metrics::{
-    CompactionIndexManifest, CompactionSeriesLabels, DecodedTsdbBlock, MetricBlockKind,
-    TsdbBlockFiles, TsdbBlockMeta, TsdbImportLimits, TsdbImportObject, TsdbImportOutcome,
-    TsdbImportRecord, TsdbImportTarget, TsdbPublishError, decode_float_samples,
-    decode_native_histograms, decode_tsdb_block, list_compaction_manifests, publish_tsdb_import,
-    tsdb_block_sha256,
+    CompactionIndex, CompactionIndexListing, CompactionIndexManifest, CompactionSeriesLabels,
+    DecodedTsdbBlock, MetricBlockKind, TsdbBlockFiles, TsdbBlockMeta, TsdbImportLimits,
+    TsdbImportObject, TsdbImportOutcome, TsdbImportRecord, TsdbImportTarget, TsdbPublishError,
+    decode_float_samples, decode_native_histograms, decode_tsdb_block,
+    enforce_compaction_retention, list_compaction_index, list_compaction_manifests,
+    publish_tsdb_import, tsdb_block_sha256,
 };
+use krabka_units::{Time, secs};
 use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
     ObjectStoreExt as _, PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory,
@@ -21,6 +24,10 @@ use object_store::{
 };
 use tsdb_fixture::{FIXTURE_MAX_TIME, FIXTURE_MIN_TIME, FIXTURE_ULID, fixture_files};
 
+use self::crashing_store::{CrashPoint, CrashingStore};
+
+#[path = "support/crashing_store.rs"]
+mod crashing_store;
 #[path = "support/tsdb_fixture.rs"]
 mod tsdb_fixture;
 
@@ -77,9 +84,17 @@ async fn all_keys(store: &dyn ObjectStore) -> BTreeSet<String> {
     keys
 }
 
+fn import_directory(ulid: &str, sha256: &str) -> String {
+    format!("metrics/{TENANT}/uploaded/{ulid}-{}", &sha256[..16])
+}
+
 fn object_keys(ulid: &str, sha256: &str, kind: &str) -> (String, String) {
-    let stem = format!("metrics/{TENANT}/uploaded/{ulid}-{}/{kind}", &sha256[..16]);
+    let stem = format!("{}/{kind}", import_directory(ulid, sha256));
     (format!("{stem}.parquet"), format!("{stem}.index"))
+}
+
+fn marker_key(ulid: &str, sha256: &str) -> String {
+    format!("{}/_published", import_directory(ulid, sha256))
 }
 
 fn expected_record(ulid: &str, sha256: &str, block: &DecodedTsdbBlock) -> TsdbImportRecord {
@@ -394,23 +409,28 @@ async fn a_failed_publication_leaves_no_index_entry_and_a_retry_completes_it() {
     let record = expected_record(FIXTURE_ULID, &sha256, &block);
     let binding = format!("{RECORD_PREFIX}/{TENANT}/{FIXTURE_ULID}/import.json");
     let committed = format!("{RECORD_PREFIX}/{TENANT}/by-sha256/{sha256}.json");
-    let blocks = [
-        record.objects[0].block_key.clone(),
-        record.objects[1].block_key.clone(),
-    ];
-    // The refused write, and the objects that stay after the failure.
+    let committed_keys = |indexes: usize| {
+        [binding.clone(), committed.clone()]
+            .into_iter()
+            .chain(record.objects.iter().map(|object| object.block_key.clone()))
+            .chain(
+                record.objects[..indexes]
+                    .iter()
+                    .map(|object| object.index_key.clone()),
+            )
+            .collect::<BTreeSet<_>>()
+    };
+    // The refused write, and the objects that stay after the failure. The
+    // manifests of a committed import stay, but no query reads them before
+    // the marker exists.
     let cases = [
         ("/import.json".to_owned(), BTreeSet::new()),
         ("/float.parquet".to_owned(), BTreeSet::new()),
         ("/native-histograms.parquet".to_owned(), BTreeSet::new()),
         (format!("/{sha256}.json"), BTreeSet::new()),
-        (
-            "/native-histograms.index".to_owned(),
-            [binding, committed]
-                .into_iter()
-                .chain(blocks)
-                .collect::<BTreeSet<_>>(),
-        ),
+        ("/float.index".to_owned(), committed_keys(0)),
+        ("/native-histograms.index".to_owned(), committed_keys(1)),
+        ("/_published".to_owned(), committed_keys(2)),
     ];
 
     for (refused, remaining) in cases {
@@ -471,8 +491,8 @@ async fn an_import_that_stopped_between_its_manifests_is_finished_by_the_next_im
             .await
             .expect("the first import publishes");
         // Leave the state of a process that stopped after the float manifest:
-        // the record is not published, and the other block and its manifest
-        // are gone.
+        // the record is not published, and the marker, the other block and
+        // its manifest are gone.
         let unpublished = TsdbImportRecord {
             published: false,
             ..record.clone()
@@ -484,12 +504,19 @@ async fn an_import_that_stopped_between_its_manifests_is_finished_by_the_next_im
             )
             .await
             .expect("seed the record");
-        for key in [&record.objects[1].block_key, &record.objects[1].index_key] {
+        for key in [
+            &record.objects[1].block_key,
+            &record.objects[1].index_key,
+            &marker_key(FIXTURE_ULID, &sha256),
+        ] {
             store
                 .delete(&Path::from(key.as_str()))
                 .await
                 .expect("delete the object");
         }
+        let hidden = list_compaction_manifests(&store)
+            .await
+            .expect("list manifests");
 
         let outcome = publish_tsdb_import(&store, target(ulid, &sha256), &block)
             .await
@@ -504,6 +531,7 @@ async fn an_import_that_stopped_between_its_manifests_is_finished_by_the_next_im
             .iter()
             .map(|object| expected_manifest(object, &block))
             .collect();
+        check!(hidden.is_empty(), "ULID: {ulid}");
         check!(manifests == expected_manifests, "ULID: {ulid}");
     }
 }
@@ -532,7 +560,10 @@ async fn a_published_import_is_not_restored_after_compaction_removed_its_manifes
         .expect("the repeated import answers");
 
     check!(outcome == TsdbImportOutcome::AlreadyImported(record));
-    check!(keys_under(store.as_ref(), MANIFEST_PREFIX).await.is_empty());
+    check!(
+        keys_under(store.as_ref(), MANIFEST_PREFIX).await
+            == BTreeSet::from([marker_key(FIXTURE_ULID, &sha256)])
+    );
 }
 
 #[tokio::test]
@@ -589,4 +620,313 @@ async fn an_invalid_target_is_rejected_before_any_write() {
             "target: {case:?}"
         );
     }
+}
+
+/// One retention window for every tenant.
+struct Windows(Time);
+
+impl krabka_blockstore::RetentionWindows for Windows {
+    fn block_retention(&self, _tenant: &str) -> Time {
+        self.0
+    }
+}
+
+/// A time after the orphan sweep grace of every object that a test writes
+/// now.
+fn after_the_sweep_grace() -> SystemTime {
+    SystemTime::now() + Duration::from_hours(2)
+}
+
+async fn missing_blocks(store: &Arc<dyn ObjectStore>) -> Vec<String> {
+    let index = list_compaction_index(store).await.expect("list the index");
+    let mut missing = Vec::new();
+    for manifest in index.live.iter().chain(&index.pending) {
+        if store
+            .head(&Path::from(manifest.block_key.as_str()))
+            .await
+            .is_err()
+        {
+            missing.push(manifest.block_key.clone());
+        }
+    }
+    missing
+}
+
+#[tokio::test]
+async fn an_import_that_stops_at_any_write_is_live_whole_or_not_at_all() {
+    let (block, sha256) = fixture_block(true);
+    let record = expected_record(FIXTURE_ULID, &sha256, &block);
+    let all_manifests: Vec<_> = record
+        .objects
+        .iter()
+        .map(|object| expected_manifest(object, &block))
+        .collect();
+    // The write where the process stops, and whether the import is live after
+    // the stop.
+    let cases = [
+        ("/import.json", 1, false),
+        ("/float.parquet", 1, false),
+        ("/native-histograms.parquet", 1, false),
+        ("/by-sha256/", 1, false),
+        ("/float.index", 1, false),
+        ("/native-histograms.index", 1, false),
+        ("/_published", 1, false),
+        ("/by-sha256/", 2, true),
+    ];
+
+    for (key_part, occurrence, live) in cases {
+        let crashing = Arc::new(CrashingStore::default());
+        let store: Arc<dyn ObjectStore> = crashing.clone();
+        crashing.crash_at(Some(CrashPoint {
+            key_part: key_part.to_owned(),
+            occurrence,
+        }));
+
+        let stopped = publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block).await;
+
+        let case = format!("{key_part} #{occurrence}");
+        check!(crashing.crashed(), "case: {case}");
+        check!(stopped.is_err(), "case: {case}");
+        let expected = if live {
+            all_manifests.clone()
+        } else {
+            Vec::new()
+        };
+        check!(
+            list_compaction_manifests(&store)
+                .await
+                .expect("list manifests")
+                == expected,
+            "case: {case}"
+        );
+
+        // Another process sweeps orphans after the grace period, then a retry
+        // finishes the import.
+        crashing.crash_at(None);
+        enforce_compaction_retention(&store, after_the_sweep_grace(), &Windows(secs(0)))
+            .await
+            .expect("sweep orphans");
+        check!(missing_blocks(&store).await.is_empty(), "case: {case}");
+        let retry = publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
+            .await
+            .expect("the retry publishes");
+
+        check!(
+            retry == TsdbImportOutcome::Imported(record.clone()),
+            "case: {case}"
+        );
+        check!(
+            list_compaction_manifests(&store)
+                .await
+                .expect("list manifests")
+                == all_manifests,
+            "case: {case}"
+        );
+        check!(missing_blocks(&store).await.is_empty(), "case: {case}");
+    }
+}
+
+#[tokio::test]
+async fn retention_and_the_orphan_sweep_keep_an_unpublished_import() {
+    let (block, sha256) = fixture_block(true);
+    let record = expected_record(FIXTURE_ULID, &sha256, &block);
+    let crashing = Arc::new(CrashingStore::default());
+    let store: Arc<dyn ObjectStore> = crashing.clone();
+    crashing.crash_at(Some(CrashPoint {
+        key_part: "/_published".to_owned(),
+        occurrence: 1,
+    }));
+    publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
+        .await
+        .expect_err("the process stops before the marker");
+    crashing.crash_at(None);
+    let before = keys_under(store.as_ref(), MANIFEST_PREFIX).await;
+
+    // A one-second window expires every live block of the fixture.
+    let stats = enforce_compaction_retention(&store, after_the_sweep_grace(), &Windows(secs(1)))
+        .await
+        .expect("enforce retention");
+
+    check!(stats.manifests_scanned == 0);
+    check!(stats.orphans.deleted == 0);
+    check!(keys_under(store.as_ref(), MANIFEST_PREFIX).await == before);
+    let pending = list_compaction_index(&store)
+        .await
+        .expect("list the index")
+        .pending;
+    let expected: Vec<_> = record
+        .objects
+        .iter()
+        .map(|object| expected_manifest(object, &block))
+        .collect();
+    check!(pending == expected);
+}
+
+#[tokio::test]
+async fn an_import_that_stopped_after_its_marker_is_not_published_again() {
+    let (block, sha256) = fixture_block(true);
+    let record = expected_record(FIXTURE_ULID, &sha256, &block);
+    let crashing = Arc::new(CrashingStore::default());
+    let store: Arc<dyn ObjectStore> = crashing.clone();
+    crashing.crash_at(Some(CrashPoint {
+        key_part: "/by-sha256/".to_owned(),
+        occurrence: 2,
+    }));
+    publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
+        .await
+        .expect_err("the process stops before the record is published");
+    crashing.crash_at(None);
+    // Compaction merges the live blocks into other blocks and deletes them
+    // with their manifests.
+    for object in &record.objects {
+        for key in [&object.block_key, &object.index_key] {
+            store
+                .delete(&Path::from(key.as_str()))
+                .await
+                .expect("delete the object");
+        }
+    }
+
+    let outcome = publish_tsdb_import(&store, target(OTHER_ULID, &sha256), &block)
+        .await
+        .expect("the next import marks the record published");
+
+    check!(outcome == TsdbImportOutcome::AlreadyImported(record));
+    check!(
+        keys_under(store.as_ref(), MANIFEST_PREFIX).await
+            == BTreeSet::from([marker_key(FIXTURE_ULID, &sha256)])
+    );
+}
+
+#[test]
+fn a_listing_hides_the_manifests_of_an_import_directory_without_a_marker() {
+    const PUBLISHED: &str = "metrics/tenant-a/uploaded/01M3MJXM7R4M5X4Q4CKHW5Q8N0-62593eb43039a3ec";
+    const PENDING: &str = "metrics/tenant-a/uploaded/01M3MJXM7R4M5X4Q4CKHW5Q8N1-62593eb43039a3ec";
+    let keys = [
+        format!("{PUBLISHED}/_published"),
+        format!("{PUBLISHED}/float.index"),
+        format!("{PUBLISHED}/float.parquet"),
+        format!("{PUBLISHED}/native-histograms.INDEX"),
+        format!("{PENDING}/float.index"),
+        format!("{PENDING}/native-histograms.index"),
+        // Not import directories: a native block upload, a block-builder
+        // block, and directories whose name is not `<ULID>-<16 hex digits>`.
+        "metrics/tenant-a/uploaded/01M3MJXM7R4M5X4Q4CKHW5Q8N2.index".to_owned(),
+        "metrics/tenant-a/float/00000000000000000042-00000000000000000099.index".to_owned(),
+        "metrics/tenant-a/uploaded/01m3mjxm7r4m5x4q4ckhw5q8n0-62593eb43039a3ec/float.index"
+            .to_owned(),
+        "metrics/tenant-a/uploaded/01M3MJXM7R4M5X4Q4CKHW5Q8N0-62593EB43039A3EC/float.index"
+            .to_owned(),
+        "metrics/tenant-a/other/01M3MJXM7R4M5X4Q4CKHW5Q8N0-62593eb43039a3ec/float.index".to_owned(),
+        // A marker outside an import directory is not a marker.
+        "metrics/tenant-a/float/_published".to_owned(),
+    ];
+
+    let listing = CompactionIndexListing::new(keys.to_vec(), String::as_str);
+
+    check!(
+        listing
+            == CompactionIndexListing {
+                live: vec![
+                    format!("{PUBLISHED}/float.index"),
+                    format!("{PUBLISHED}/native-histograms.INDEX"),
+                    keys[6].clone(),
+                    keys[7].clone(),
+                    keys[8].clone(),
+                    keys[9].clone(),
+                    keys[10].clone(),
+                ],
+                pending: vec![
+                    format!("{PENDING}/float.index"),
+                    format!("{PENDING}/native-histograms.index"),
+                ],
+                markers: vec![format!("{PUBLISHED}/_published")],
+            }
+    );
+}
+
+#[test]
+fn the_tenant_keys_name_live_and_pending_objects_and_markers_of_one_tenant() {
+    let manifest = |tenant: &str, stem: &str| CompactionIndexManifest {
+        tenant: tenant.to_owned(),
+        kind: MetricBlockKind::Float,
+        block_key: format!("{stem}.parquet"),
+        index_key: format!("{stem}.index"),
+        level: BlockLevel::INGESTED,
+        first_offset: 0,
+        last_offset: 0,
+        row_count: 1,
+        min_ts: 0,
+        max_ts: 0,
+        fingerprints: Vec::new(),
+        series: Vec::new(),
+    };
+    let index = CompactionIndex {
+        live: vec![
+            manifest(TENANT, "metrics/tenant-a/float/live"),
+            manifest("tenant-b", "metrics/tenant-b/float/live"),
+        ],
+        pending: vec![manifest(TENANT, "metrics/tenant-a/uploaded/pending/float")],
+        markers: vec![
+            "metrics/tenant-a/uploaded/published/_published".to_owned(),
+            "metrics/tenant-a-2/uploaded/published/_published".to_owned(),
+        ],
+    };
+
+    let keys = index.tenant_keys(TENANT);
+
+    check!(
+        keys == [
+            "metrics/tenant-a/float/live.index",
+            "metrics/tenant-a/float/live.parquet",
+            "metrics/tenant-a/uploaded/pending/float.index",
+            "metrics/tenant-a/uploaded/pending/float.parquet",
+            "metrics/tenant-a/uploaded/published/_published",
+        ]
+    );
+}
+
+/// The storage audit reads the store that an import writes. A published
+/// import must audit clean, and the repair must find nothing to delete in an
+/// import that stopped before it published: a retry still needs those objects.
+#[tokio::test]
+async fn the_storage_audit_reports_no_damage_or_orphan_in_an_import() {
+    use krabka_blockstore::{StorageAuditOptions, StorageSignal, audit_store};
+
+    let (block, sha256) = fixture_block(true);
+    let audit = |store: Arc<dyn ObjectStore>| async move {
+        let mut options = StorageAuditOptions::new(SystemTime::now() + Duration::from_hours(2));
+        options.signal = Some(StorageSignal::Metrics);
+        audit_store(&store, &options).await.expect("the audit runs")
+    };
+
+    let published: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    publish_tsdb_import(&published, target(FIXTURE_ULID, &sha256), &block)
+        .await
+        .expect("the import publishes");
+    let report = audit(published).await;
+    check!(
+        report.findings == Vec::new(),
+        "published: {:#?}",
+        report.findings
+    );
+
+    let crashing = Arc::new(CrashingStore::default());
+    let stopped: Arc<dyn ObjectStore> = crashing.clone();
+    crashing.crash_at(Some(CrashPoint {
+        key_part: "/_published".to_owned(),
+        occurrence: 1,
+    }));
+    check!(
+        publish_tsdb_import(&stopped, target(FIXTURE_ULID, &sha256), &block)
+            .await
+            .is_err()
+    );
+    crashing.crash_at(None);
+    let report = audit(stopped).await;
+    check!(
+        report.findings.iter().all(|finding| !finding.repairable),
+        "stopped: {:#?}",
+        report.findings
+    );
 }

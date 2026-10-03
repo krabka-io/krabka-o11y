@@ -4212,6 +4212,7 @@ dependencies = [
  "async-trait",
  "axum",
  "bytes",
+ "flate2",
  "futures",
  "hex",
  "krabka-blockstore",

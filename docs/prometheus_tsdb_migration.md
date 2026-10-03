@@ -11,7 +11,7 @@ This guide moves historical data from a Prometheus server into Krabka. Krabka im
 | Native histograms | Schemas -4 to 8, and custom buckets (schema -53) | Integer and float histograms, gauge histograms, and counter-reset hints. |
 | Stale markers | Yes | A stale histogram becomes a float stale marker. The query path then hides the series as Prometheus does. |
 | `tombstones` | Format version 1 | The import drops every deleted sample. Mimir rejects a block that has this file, so this is a Krabka extension. |
-| Exemplars and metric metadata | No | A TSDB block does not hold them. |
+| Exemplars and metric metadata | Not applicable | A TSDB block does not hold them. See [Metadata and exemplars](#metadata-and-exemplars). |
 
 The import validates the whole block before it writes anything:
 
@@ -35,9 +35,11 @@ The import validates the whole block before it writes anything:
 
 ## Atomicity and re-import
 
-An upload that fails leaves no index entry. The import writes the Parquet blocks first, then one import record, then the `.index` manifests that make the blocks queryable. The import record is the commit point. Before the record exists, a failure deletes what the import wrote. After the record exists, a retry completes the import.
+An upload that fails leaves no index entry. The import writes the Parquet blocks first, then one import record, then the `.index` manifests, then a publication marker. The import record is the commit point. Before the record exists, a failure deletes what the import wrote. After the record exists, a retry completes the import.
 
-The manifests do not become live at the same time. A block with float and native-histogram samples has two manifests, and the import writes the float manifest first. A query that runs between the two writes can return the float samples without the histogram samples. If the querier stops between the two writes, `check` gives `validating`, and the float samples stay queryable without the histogram samples. Send `finish` again. The retry writes the missing manifest. An upload of the same content under a new ULID also writes it.
+The import writes the blocks and manifests of a block into one directory, `metrics/<tenant>/uploaded/<ULID>-<hash>/`. The hash part is the first 16 hex digits of the content hash. Queries, compaction and retention do not read a manifest in that directory until the directory holds the empty object `_published`. The import writes `_published` after all the manifests, so a query returns all the samples of the block or none of them. A block with float and native-histogram samples has two manifests, and they become queryable at the same time.
+
+If the querier stops after the commit point, `check` gives `validating`, and no sample of the block is queryable. Send `finish` again. The retry writes the missing objects and `_published`. An upload of the same content under a new ULID also completes the import. Until a retry, the orphan sweep keeps the blocks and manifests of the import, and retention does not delete them.
 
 The import is idempotent by content. The content hash is a SHA-256 over the `index`, each chunk segment and the `tombstones` file.
 
@@ -149,7 +151,38 @@ for q in 'count({__name__=~".+"})' \
 done
 ```
 
-The `tsdb_import` suite in `crates/metrics-service` does this comparison against the pinned Prometheus image. It covers instant queries, range queries, `rate`, `increase`, the histogram functions, `/api/v1/series` and the label endpoints.
+The `tsdb_import` suite in `crates/metrics-service` does this comparison against the pinned Prometheus image. It covers instant queries, range queries, `rate`, `increase`, the histogram functions, the tombstoned series, cardinality through `count` and the discovery endpoints, `/api/v1/series`, the label endpoints, `/api/v1/metadata` and `/api/v1/query_exemplars`.
+
+### Metadata and exemplars
+
+A TSDB block holds no metric metadata and no exemplars. Prometheus v3.14.0, which is `github.com/prometheus/prometheus v0.314.0`, shows this in its source:
+
+- `LeveledCompactor.write` in `tsdb/compact.go` writes only `chunks/`, `index`, `meta.json` and `tombstones`.
+- The index table of contents, `TOC` in `tsdb/index/index.go`, has only symbols, series, label indices and postings. A series entry holds labels and chunk references.
+- `BlockMeta` in `tsdb/block.go` holds the ULID, the time range, the stats, the compaction data and the version.
+- Exemplars are in a ring buffer in the head. `DB.ExemplarQuerier` in `tsdb/db.go` reads only `db.head.exemplars`. The WAL has exemplar and metadata records, but compaction does not copy them into a block.
+- `/api/v1/metadata` reads the metadata of the active scrape targets, in `API.metricMetadata` of `web/api/v1/api.go`.
+
+`github.com/prometheus/prometheus v0.307.0`, the version of the reference dumper, has the same code. So Prometheus that serves only the block answers `{"status":"success","data":{}}` for `/api/v1/metadata` and `{"status":"success","data":[]}` for `/api/v1/query_exemplars`. Krabka gives the same answers after the import.
+
+### Cardinality
+
+Prometheus gives `/api/v1/status/tsdb` from its head only. For a persisted block, Prometheus gives a head with no series and four empty lists. Krabka counts the series of its blocks. `/api/v1/status/tsdb` and the Grafana Mimir routes `/api/v1/cardinality/label_names`, `/api/v1/cardinality/label_values`, `/api/v1/cardinality/active_series` and `/api/v1/cardinality/active_native_histogram_metrics` take no time range. For such a request, Krabka reads only the blocks inside `--unbounded-compatibility-lookback`, by default one hour. An imported block is usually older than that, so these routes do not count it. This agrees with Prometheus and Mimir, which read these routes from the head. To count the imported series, start the querier with a lookback that reaches the block.
+
+To compare the cardinality of the block with Prometheus, use `count` and the discovery endpoints with a time range:
+
+```bash
+curl -fsS -H "X-Scope-OrgID: $TENANT" "$KRABKA/api/v1/query" \
+  --data-urlencode 'query=count by (__name__) ({__name__=~".+"})' --data-urlencode time=$T
+curl -fsS -H "X-Scope-OrgID: $TENANT" "$KRABKA/api/v1/label/__name__/values" \
+  --data-urlencode start=$START --data-urlencode end=$END
+```
+
+### Tombstones and Prometheus v2.45.0 and later
+
+Prometheus v2.45.0 and later, up to at least v3.15.0, can fail a query of a series that has a tombstone. The error is `unexpected error: runtime error: index out of range [2] with length 2`. `/api/v1/series` closes the connection. Krabka does not have this problem. If you verify a block with tombstones against Prometheus, expect this error. It is not a sign of a damaged block.
+
+Prometheus fails when four conditions are true for one series and one query window. A chunk that the query reads starts before the window, and a chunk that it reads ends after the window. The tombstone starts after the start of the window, and it ends at or after the end of the window. Prometheus trims the chunks to the window. It puts the front trim interval before the tombstone, then adds the back trim interval. `Intervals.Add` in `tsdb/tombstones/tombstones.go` then reads past the end of the list, at line 379 of v0.314.0. Its open-ended branch sets `maxi := len(in)`, but `maxi` counts from `mini`. Commit `80b7f73d26` added that branch. The `tsdb_import` suite records the windows that fail with the pinned image.
 
 ## Rollback
 
@@ -158,7 +191,7 @@ To remove one imported block, delete its objects in this order. The manifests go
 1. Read the content hash from `mimir-block-uploads/<tenant>/<ULID>/import.json`. The field is `sha256`.
 2. Read the import record `mimir-block-uploads/<tenant>/by-sha256/<sha256>.json`. Its `objects` list names each `index_key` and `block_key`.
 3. Delete each `index_key`. After the cold-index cache interval, 30 seconds by default, queries do not return the block.
-4. Delete each `block_key`.
+4. Delete each `block_key`, then the `_published` object in the same directory.
 5. Delete the import record, then `mimir-block-uploads/<tenant>/<ULID>/`.
 
 Do not delete the import record while the samples are live. Without the record, a new upload of the same block imports the samples again.
@@ -168,4 +201,4 @@ Compaction can merge an imported block with other blocks of the tenant. Then the
 - Delete the series with the Prometheus `POST /api/v1/admin/tsdb/delete_series` API, when the admin API is on. Give the block's time range as `start` and `end`.
 - Delete the whole tenant with `POST /compactor/delete_tenant`. This also deletes every upload of the tenant.
 
-A rollback of the Krabka binary to v0.4 keeps the imported data queryable. The imported blocks and manifests use the same formats as the blocks that the block builder writes. The v0.4 binary does not read the import record or the binding. It rejects a new Prometheus TSDB upload, and it does not change the imported blocks.
+A deployment backup holds the import records and the bindings, because the `metrics` part copies the whole metrics bucket. After a restore, an upload of an imported block does not import it again. See [Disaster Recovery](disaster_recovery.md).

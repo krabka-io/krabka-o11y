@@ -1,6 +1,8 @@
+use krabka_metrics::CompactionIndexListing;
+
 use super::{
     Arc, BTreeMap, BTreeSet, CompactionIndexManifest, MetricsServiceError, ObjectStore,
-    ObjectStoreExt, Path, StdPath, TryStreamExt,
+    ObjectStoreExt, Path, TryStreamExt,
 };
 
 #[tracing::instrument(
@@ -20,15 +22,9 @@ pub(crate) async fn load_compaction_manifests_filtered_with_cache(
     let mut objects = store.list(prefix.as_ref()).try_collect::<Vec<_>>().await?;
     objects.sort_by(|left, right| left.location.cmp(&right.location));
 
-    let objects = objects
-        .into_iter()
-        .filter(|object| {
-            let key = object.location.as_ref();
-            StdPath::new(key)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("index"))
-        })
-        .collect::<Vec<_>>();
+    // The manifests of a TSDB import stay hidden until the same listing holds
+    // the publication marker of the import.
+    let objects = CompactionIndexListing::new(objects, |object| object.location.as_ref()).live;
     let live_keys = objects
         .iter()
         .map(|object| object.location.as_ref().to_string())

@@ -29,8 +29,8 @@ enum ReadError {
 /// # Errors
 ///
 /// Returns the object store failure that stopped the import. The import
-/// leaves no manifest of its own, so a retry of the same upload imports the
-/// block again.
+/// leaves no live manifest of its own, so a retry of the same upload imports
+/// the block again.
 pub async fn complete_tsdb_upload(
     state: &MimirTenantAdminState,
     tenant: &str,

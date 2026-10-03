@@ -9,6 +9,11 @@ const KEY_HASH_DIGITS: usize = 16;
 /// uploads of one ULID with different content therefore never write the same
 /// object, and two uploads of the same ULID and content write the same rows to
 /// the same object.
+///
+/// The blocks and manifests of one import share the directory
+/// `<manifest_prefix>/<tenant>/uploaded/<ULID>-<hash>/`. The publication
+/// marker in that directory makes its manifests live. See
+/// [`CompactionIndexListing`](crate::CompactionIndexListing).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TsdbImportKeys {
     records: String,
@@ -16,6 +21,9 @@ pub struct TsdbImportKeys {
 }
 
 impl TsdbImportKeys {
+    /// The name of the publication marker in an import directory.
+    pub const PUBLISHED_MARKER: &str = "_published";
+
     pub fn new(tenant: &str, manifest_prefix: &str, record_prefix: &str) -> Self {
         let tenant = escape_object_path_segment(tenant);
         Self {
@@ -36,14 +44,48 @@ impl TsdbImportKeys {
 
     /// The Parquet block and `.index` manifest keys of one import object.
     pub fn object(&self, ulid: &str, sha256: &str, kind: MetricBlockKind) -> (String, String) {
-        let digits = sha256.get(..KEY_HASH_DIGITS).unwrap_or(sha256);
         let block_key = format!(
-            "{}/uploaded/{ulid}-{digits}/{}.parquet",
-            self.objects,
+            "{}/{}.parquet",
+            self.directory(ulid, sha256),
             kind.object_path()
         );
         let index_key = compaction_index_key(&block_key);
         (block_key, index_key)
+    }
+
+    /// The marker whose creation makes every manifest of one import live.
+    pub fn published_marker(&self, ulid: &str, sha256: &str) -> Path {
+        Path::from(format!(
+            "{}/{}",
+            self.directory(ulid, sha256),
+            Self::PUBLISHED_MARKER
+        ))
+    }
+
+    /// Whether `directory` has the shape of an import directory: a parent
+    /// that ends with an `uploaded` segment, then `<ULID>-<hash>` with a
+    /// 26-character upper-case ULID and 16 lower-case hex digits.
+    pub fn is_import_directory(directory: &str) -> bool {
+        let Some((parent, name)) = directory.rsplit_once('/') else {
+            return false;
+        };
+        let Some((ulid, digits)) = name.split_once('-') else {
+            return false;
+        };
+        parent.ends_with("/uploaded")
+            && ulid.len() == 26
+            && ulid
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || byte.is_ascii_uppercase())
+            && digits.len() == KEY_HASH_DIGITS
+            && digits
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }
+
+    fn directory(&self, ulid: &str, sha256: &str) -> String {
+        let digits = sha256.get(..KEY_HASH_DIGITS).unwrap_or(sha256);
+        format!("{}/uploaded/{ulid}-{digits}", self.objects)
     }
 }
 

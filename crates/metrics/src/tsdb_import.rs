@@ -12,8 +12,8 @@
 //!
 //! [`publish_tsdb_import`] writes the decoded rows as metric blocks, then
 //! creates the import record of the block content as the commit point, then
-//! makes the blocks live one manifest at a time. [`tsdb_block_sha256`] names
-//! that content.
+//! writes the manifests, then makes all of them live with one publication
+//! marker. [`tsdb_block_sha256`] names that content.
 
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -77,6 +77,7 @@ mod u64_to_f64;
 mod validate_postings;
 mod xor_state;
 
+pub(crate) use self::tsdb_import_keys::TsdbImportKeys;
 use self::{
     bit_reader::BitReader, byte_reader::ByteReader, checked_section::checked_section,
     chunk_encoding::ChunkEncoding, chunk_error::ChunkError, chunk_meta::ChunkMeta,
@@ -88,8 +89,7 @@ use self::{
     import_commit::ImportCommit, index_series::IndexSeries, index_toc::IndexToc,
     put_import_json::put_import_json, read_import_json::read_import_json, read_series::read_series,
     read_symbols::read_symbols, stale_histogram::stale_histogram, tombstones::Tombstones,
-    tsdb_import_keys::TsdbImportKeys, u64_to_f64::u64_to_f64, validate_postings::validate_postings,
-    xor_state::XorState,
+    u64_to_f64::u64_to_f64, validate_postings::validate_postings, xor_state::XorState,
 };
 pub use self::{
     decode_tsdb_block::decode_tsdb_block, decoded_tsdb_block::DecodedTsdbBlock,

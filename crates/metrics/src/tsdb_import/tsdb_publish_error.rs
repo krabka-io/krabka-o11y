@@ -15,7 +15,9 @@ pub enum TsdbPublishError {
         uploaded: String,
     },
 
-    #[error("import record {key} has version {version}, and this build reads up to {supported}")]
+    #[error(
+        "import record {key} has version {version}, and this build reads only version {supported}"
+    )]
     UnsupportedRecordVersion {
         key: String,
         version: u32,

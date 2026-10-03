@@ -2,7 +2,7 @@ use super::{
     Arc, BTreeSet, BlockDeletion, BlockTimestampUnit, COMPACTION_OBJECT_PREFIX,
     CompactionCandidate, CompactionIndexManifest, CompactionRetentionError,
     CompactionRetentionStats, DEFAULT_BLOCK_SWEEP_GRACE, ObjectStore, RetentionWindows, SystemTime,
-    UNIX_EPOCH, delete_blocks, list_compaction_manifests, plan_expired_blocks, reconcile_orphans,
+    UNIX_EPOCH, delete_blocks, list_compaction_index, plan_expired_blocks, reconcile_orphans,
 };
 
 /// Retires the index entries of the metric blocks that fall outside their
@@ -51,15 +51,21 @@ pub async fn enforce_compaction_retention(
         .and_then(|since| i64::try_from(since.as_millis()).ok())
         .unwrap_or(i64::MIN);
 
-    let manifests = list_compaction_manifests(store).await?;
+    let index = list_compaction_index(store).await?;
+    let manifests = index.live;
 
     // Both objects of every block, and not the blocks alone. A live set that
     // named only the blocks would leave every manifest unnamed, and the
     // orphan sweep would then delete the index itself: every block still
-    // there, and no query able to find one.
+    // there, and no query able to find one. The set also names the manifests
+    // and blocks of an unpublished TSDB import, which a retry publishes, and
+    // the publication markers, which keep a published import from a second
+    // publication. Retention does not expire an unpublished import.
     let live_keys: BTreeSet<String> = manifests
         .iter()
+        .chain(&index.pending)
         .flat_map(|manifest| [manifest.block_key.clone(), manifest.index_key.clone()])
+        .chain(index.markers)
         .collect();
 
     let candidates: Vec<CompactionCandidate> = manifests

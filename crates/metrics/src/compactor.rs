@@ -33,7 +33,7 @@ use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerError, ConsumerR
 use krabka_ids::{Offset, PartitionIndex};
 use krabka_telemetry::propagation::{TRACEPARENT, set_remote_parent};
 use krabka_units::prelude::*;
-use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
+use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt, PutPayload, path::Path};
 use serde::{Deserialize, Serialize};
 use tracing::Instrument as _;
 
@@ -52,6 +52,7 @@ use crate::{
         CCOL_STRATUM, CCOL_SYNC_STATE, CCOL_UNCERTAINTY_NANOS, CCOL_UNSYNCHRONIZED,
         COL_FINGERPRINT, COL_TIMESTAMP, clock_reading_schema, exemplar_schema, metadata_schema,
     },
+    tsdb_import::TsdbImportKeys,
     wal::{ClockReadingPayload, SamplePayload, WalError, WalExemplar, WalRecord},
     wire::{GnssFix, UnixNanos},
 };
@@ -2872,8 +2873,10 @@ mod compaction_consumer_committer;
 mod compaction_consumer_poll;
 mod compaction_consumer_poll_error;
 mod compaction_consumer_record_error;
+mod compaction_index;
 mod compaction_index_error;
 mod compaction_index_key;
+mod compaction_index_listing;
 mod compaction_index_manifest;
 mod compaction_index_sink;
 mod compaction_loop_config;
@@ -2915,6 +2918,8 @@ mod exemplar_row;
 mod float_row;
 mod flush_buffer;
 mod flush_buffer_with_consumer;
+mod list_compaction_index;
+mod list_compaction_index_objects;
 mod list_compaction_manifests;
 mod materialize_metric_erasure_requests;
 mod merge_metric_blocks;
@@ -2935,6 +2940,7 @@ mod poll_compactor_once;
 mod process_compaction_partition_window;
 mod process_compaction_record_batch;
 mod process_compaction_record_batch_with_consumer;
+mod read_compaction_manifests;
 mod run_compactor_consumer_loop;
 mod run_compactor_consumer_loop_with_clock;
 mod run_compactor_loop;
@@ -2969,9 +2975,11 @@ pub use compaction_consumer_committer::CompactionConsumerCommitter;
 pub use compaction_consumer_poll::CompactionConsumerPoll;
 pub use compaction_consumer_poll_error::CompactionConsumerPollError;
 pub use compaction_consumer_record_error::CompactionConsumerRecordError;
+pub use compaction_index::CompactionIndex;
 pub use compaction_index_error::CompactionIndexError;
 #[cfg_attr(test, mutants::skip)]
 pub(crate) use compaction_index_key::compaction_index_key;
+pub use compaction_index_listing::CompactionIndexListing;
 pub use compaction_index_manifest::CompactionIndexManifest;
 pub use compaction_index_sink::CompactionIndexSink;
 pub use compaction_loop_config::CompactionLoopConfig;
@@ -3017,6 +3025,8 @@ use exemplar_row::exemplar_row;
 pub use float_row::FloatRow;
 use flush_buffer::flush_buffer;
 use flush_buffer_with_consumer::flush_buffer_with_consumer;
+pub use list_compaction_index::list_compaction_index;
+use list_compaction_index_objects::list_compaction_index_objects;
 pub use list_compaction_manifests::list_compaction_manifests;
 use materialize_metric_erasure_requests::materialize_metric_erasure_requests;
 use merge_metric_blocks::merge_metric_blocks;
@@ -3037,6 +3047,7 @@ pub use poll_compactor_once::poll_compactor_once;
 pub use process_compaction_partition_window::process_compaction_partition_window;
 pub use process_compaction_record_batch::process_compaction_record_batch;
 use process_compaction_record_batch_with_consumer::process_compaction_record_batch_with_consumer;
+use read_compaction_manifests::read_compaction_manifests;
 pub use run_compactor_consumer_loop::run_compactor_consumer_loop;
 pub use run_compactor_consumer_loop_with_clock::run_compactor_consumer_loop_with_clock;
 pub use run_compactor_loop::run_compactor_loop;

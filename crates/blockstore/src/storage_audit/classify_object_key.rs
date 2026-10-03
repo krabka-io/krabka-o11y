@@ -144,7 +144,12 @@ fn metrics_index(key: &str, rest: &[&str]) -> ClassifiedObject {
 
 fn metrics_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
     let (lane, partition, file) = match rest {
-        ["uploaded", file] => ("uploaded", None, *file),
+        // A Prometheus TSDB import writes its blocks and its `_published`
+        // marker in a directory of their own, `uploaded/<ulid>-<hash>/`.
+        ["uploaded", _, "_published"] => {
+            return tenant_object(StorageSignal::Metrics, tenant, ObjectRole::Staging);
+        }
+        ["uploaded", file] | ["uploaded", _, file] => ("uploaded", None, *file),
         [kind, file] if METRIC_KINDS.contains(kind) => (*kind, None, *file),
         [kind, "compacted", file] if METRIC_KINDS.contains(kind) => (*kind, None, *file),
         [kind, partition, file] if METRIC_KINDS.contains(kind) => {

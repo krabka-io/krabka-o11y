@@ -8,6 +8,8 @@ exports_files(["Cargo.toml"])
 crate_library(name = "integration")
 
 crate_tests(
+    # The Prometheus TSDB block that `backup_restore` uploads before the cut.
+    data = ["//crates/metrics:tsdb_fixture"],
     docker = {
         "alloy_client": ["alloy"],
         "prometheus_client": ["prometheus"],
@@ -19,6 +21,12 @@ crate_tests(
     docker_variants = {
         "alloy_client": {"previous": {"alloy": "alloy_previous"}},
         "prometheus_client": {"previous": {"prometheus": "prometheus_previous"}},
+    },
+    # `backup_restore` reaches the fixture reader of //crates/metrics with
+    # `#[path]`; naming it here puts it at that same relative path inside the
+    # sandbox.
+    extra_srcs = {
+        "backup_restore": ["//crates/metrics:tests/support/tsdb_fixture.rs"],
     },
     lib = "integration",
     # The library holds no code to mutate -- it is the `//!` doc that says why
