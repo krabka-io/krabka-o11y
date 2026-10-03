@@ -26,6 +26,10 @@
 //! belongs in that signal's own crate, where it stays close to the code it
 //! covers and inside that crate's mutation sweep.
 //!
+//! A deployment-wide property also belongs here. `backup_restore` takes one
+//! consistent cut of every signal and the broker, and restores it into an
+//! empty deployment. No single signal crate can see the whole cut.
+//!
 //! # How the suites are wired
 //!
 //! In process, not in containers. `bazel test //...` filters out `docker`-tagged
