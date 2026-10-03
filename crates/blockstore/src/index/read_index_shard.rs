@@ -14,22 +14,22 @@ pub(crate) async fn read_index_shard(
     path: &Path,
     max_bytes: ByteSize,
 ) -> Result<Bytes> {
-    match krabka_object_store::read_capped(store, path, max_bytes.bytes_u64()).await {
+    match krabka_object_store::v013::read_capped(store, path, max_bytes.bytes_u64()).await {
         Ok(bytes) => Ok(bytes),
         Err(error) => Err(match error {
-            krabka_object_store::ObjectStoreError::TooLarge {
+            krabka_object_store::v013::ObjectStoreError::TooLarge {
                 size, max_bytes, ..
             } => BlockStoreError::InvalidBlock(format!(
                 "index shard `{path}` is {size} bytes, exceeds cap of {max_bytes} bytes"
             )),
-            krabka_object_store::ObjectStoreError::Backend(message)
-            | krabka_object_store::ObjectStoreError::InvalidConfig(message) => {
+            krabka_object_store::v013::ObjectStoreError::Backend(message)
+            | krabka_object_store::v013::ObjectStoreError::InvalidConfig(message) => {
                 BlockStoreError::ObjectStore(message)
             }
-            krabka_object_store::ObjectStoreError::Io(error) => {
+            krabka_object_store::v013::ObjectStoreError::Io(error) => {
                 BlockStoreError::ObjectStore(error.to_string())
             }
-            not_found @ krabka_object_store::ObjectStoreError::NotFound(_) => {
+            not_found @ krabka_object_store::v013::ObjectStoreError::NotFound(_) => {
                 // A shard the listing named and the read could not find was
                 // deleted between the two, which a concurrent save does. Report
                 // it rather than answering from a partial index.
@@ -41,8 +41,8 @@ pub(crate) async fn read_index_shard(
             // Write-side variants: `read_capped` cannot raise them, but they
             // are part of the enum, so surface them like any other backend
             // failure rather than widening the read path.
-            conflict @ (krabka_object_store::ObjectStoreError::AlreadyExists(_)
-            | krabka_object_store::ObjectStoreError::Precondition { .. }) => {
+            conflict @ (krabka_object_store::v013::ObjectStoreError::AlreadyExists(_)
+            | krabka_object_store::v013::ObjectStoreError::Precondition { .. }) => {
                 BlockStoreError::ObjectStore(conflict.to_string())
             }
         }),

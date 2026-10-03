@@ -10,9 +10,11 @@ pub async fn read_capped_object(
     key: &str,
     max_bytes: ByteSize,
 ) -> Result<Option<Bytes>, StorageAuditError> {
-    match krabka_object_store::read_capped(store, &Path::from(key), max_bytes.bytes_u64()).await {
+    match krabka_object_store::v013::read_capped(store, &Path::from(key), max_bytes.bytes_u64())
+        .await
+    {
         Ok(bytes) => Ok(Some(bytes)),
-        Err(krabka_object_store::ObjectStoreError::NotFound(_)) => Ok(None),
+        Err(krabka_object_store::v013::ObjectStoreError::NotFound(_)) => Ok(None),
         Err(error) => Err(StorageAuditError::ObjectStore(error.to_string())),
     }
 }
