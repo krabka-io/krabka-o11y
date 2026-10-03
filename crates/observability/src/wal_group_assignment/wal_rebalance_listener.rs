@@ -7,18 +7,13 @@ use async_trait::async_trait;
 use krabka_client_consumer::{Consumer, ConsumerRebalanceListener, RebalanceListenerError};
 
 /// Records partitions revoked while [`Consumer::poll`] applies a rebalance.
-///
-/// The listener also rewinds a revoked partition that the group gives back to
-/// this member in the same rebalance. An eager rebalance revokes every
-/// partition and then assigns most of them again. The poll loop fences the
-/// buffered records of each revoked partition, but the client keeps the fetch
-/// position of a partition that it gets back. Without a rewind, the member
-/// never reads the fenced records again, and its next commit moves past them.
 #[derive(Clone, Debug)]
 pub struct WalRebalanceListener {
     topic: String,
     revoked: Arc<Mutex<BTreeSet<i32>>>,
-    rewind: Arc<Mutex<BTreeSet<i32>>>,
+    /// The partitions to rewind, or `None` while rewinding is off. Clones
+    /// share it, so a role can turn it on after the consumer took its clone.
+    rewind: Arc<Mutex<Option<BTreeSet<i32>>>>,
 }
 
 impl WalRebalanceListener {
@@ -29,6 +24,25 @@ impl WalRebalanceListener {
             revoked: Arc::default(),
             rewind: Arc::default(),
         }
+    }
+
+    /// The same listener, which also rewinds a revoked partition that the
+    /// group gives back to this member in the same rebalance.
+    ///
+    /// An eager rebalance revokes every partition and then assigns most of
+    /// them again. A poll loop that fences the buffered records of each
+    /// revoked partition loses them: the client keeps the fetch position of a
+    /// partition that it gets back, so the member does not read the fenced
+    /// records again, and its next commit moves past them. The rewind seeks
+    /// such a partition back to the group's committed offset.
+    ///
+    /// Use this only for a consumer that fences revoked partitions and
+    /// commits what it applies. A consumer that never commits would rewind to
+    /// the log start and read the whole retained WAL again.
+    #[must_use]
+    pub fn rewinding_fenced_partitions(self) -> Self {
+        lock(&self.rewind).get_or_insert_default();
+        self
     }
 
     /// Drains the partitions whose buffered, uncommitted records must be replayed.
@@ -42,7 +56,7 @@ impl WalRebalanceListener {
     }
 }
 
-fn lock(partitions: &Mutex<BTreeSet<i32>>) -> std::sync::MutexGuard<'_, BTreeSet<i32>> {
+fn lock<T>(partitions: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     partitions
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -60,8 +74,9 @@ impl ConsumerRebalanceListener for WalRebalanceListener {
             .filter(|(topic, _)| topic == &self.topic)
             .map(|(_, partition)| *partition)
             .collect();
-        for record in [&self.revoked, &self.rewind] {
-            lock(record).extend(revoked.iter().copied());
+        lock(&self.revoked).extend(revoked.iter().copied());
+        if let Some(rewind) = lock(&self.rewind).as_mut() {
+            rewind.extend(revoked);
         }
         Ok(())
     }
@@ -74,7 +89,9 @@ impl ConsumerRebalanceListener for WalRebalanceListener {
         // Read the set now and clear it only at the end. A cancelled `poll`
         // can drop this callback at an await, and the client then runs it
         // again with the same partitions.
-        let rewind = lock(&self.rewind).clone();
+        let Some(rewind) = lock(&self.rewind).clone() else {
+            return Ok(());
+        };
         let returned: Vec<(String, i32)> = partitions
             .iter()
             .filter(|(topic, partition)| topic == &self.topic && rewind.contains(partition))
@@ -83,7 +100,9 @@ impl ConsumerRebalanceListener for WalRebalanceListener {
         if !returned.is_empty() {
             self.rewind_to_committed(consumer, returned).await?;
         }
-        lock(&self.rewind).retain(|partition| !rewind.contains(partition));
+        if let Some(pending) = lock(&self.rewind).as_mut() {
+            pending.retain(|partition| !rewind.contains(partition));
+        }
         Ok(())
     }
 }
@@ -103,14 +122,14 @@ impl WalRebalanceListener {
                 Some(offset) => {
                     consumer
                         .seek(partition.0, partition.1, offset.offset)
-                        .await?
+                        .await?;
                 }
                 None => never_committed.push(partition),
             }
         }
         // A partition with no commit replays from the log start. The roles
-        // that register this listener all reset to the earliest offset, so
-        // that is where a fresh member starts too.
+        // that rewind all reset to the earliest offset, so that is where a
+        // fresh member starts too.
         if !never_committed.is_empty() {
             consumer.seek_to_beginning(&never_committed).await?;
         }
