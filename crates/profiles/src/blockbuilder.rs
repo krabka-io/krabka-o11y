@@ -47,6 +47,15 @@ mod tests {
     use super::*;
     use crate::wal::{ProfileRecord, WalMapping, WalSample, WalSymbolSet};
 
+    fn format_headers() -> Vec<krabka_client_consumer::Header> {
+        vec![krabka_client_consumer::Header {
+            key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
+            value: Some(Bytes::from_static(
+                krabka_observability::persisted_format::PERSISTED_FORMAT_VERSION,
+            )),
+        }]
+    }
+
     fn rec(name: &str, value: i64) -> ProfileRecord {
         ProfileRecord {
             tenant: "t".into(),
@@ -340,7 +349,7 @@ mod tests {
             timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: Some(value),
-            headers: Vec::new(),
+            headers: format_headers(),
         }
     }
 }

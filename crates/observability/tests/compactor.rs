@@ -486,7 +486,7 @@ async fn compactor_does_not_commit_offset_for_invalid_kafka_wal_payload() {
             partition: PartitionIndex(2),
             offset: Offset(42),
             timestamp_ms: None,
-            headers: Vec::new(),
+            headers: vec![kafka_header("krabka-format-version", "1")],
         }],
     )
     .await
@@ -560,7 +560,7 @@ async fn compactor_does_not_commit_polled_batch_when_decode_fails() {
         partition: PartitionIndex(3),
         offset: Offset(42),
         timestamp_ms: None,
-        headers: Vec::new(),
+        headers: vec![kafka_header("krabka-format-version", "1")],
     }]]);
 
     let error = compact_next_kafka_wal_batch_to_object_store(

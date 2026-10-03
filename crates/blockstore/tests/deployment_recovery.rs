@@ -13,11 +13,10 @@ use std::{
 use assert2::{assert, check};
 use async_trait::async_trait;
 use krabka_blockstore::{
-    AuditFinding, AuditReport, BACKUP_MANIFEST_PATH, BackupManifest, BackupObject, BrokerFinding,
-    BrokerSnapshot, BrokerState, CUT_MANIFEST_PATH, CutPart, DeploymentBackupPlan, DeploymentCut,
-    DeploymentPart, DrainedGroup, GroupOffset, RecoveryError, RestoreReport, TenantId, WalOffset,
-    audit_deployment_backup, backup_deployment, load_backup_manifest, restore_backup,
-    restore_deployment_backup,
+    AuditFinding, AuditReport, BACKUP_MANIFEST_PATH, BrokerFinding, BrokerSnapshot, BrokerState,
+    CUT_MANIFEST_PATH, CutPart, DeploymentBackupPlan, DeploymentCut, DeploymentPart, DrainedGroup,
+    GroupOffset, RecoveryError, TenantId, WalOffset, audit_deployment_backup, backup_deployment,
+    create_backup, restore_backup, restore_deployment_backup,
 };
 use object_store::{ObjectStore, ObjectStoreExt as _, memory::InMemory, path::Path as ObjectPath};
 use sha2::{Digest as _, Sha256};
@@ -534,7 +533,7 @@ async fn a_cut_records_the_parts_that_the_operator_omitted() {
 }
 
 #[tokio::test]
-async fn a_cut_written_without_omitted_parts_still_audits() {
+async fn a_cut_without_omitted_parts_is_refused() {
     let backup = store();
     backup_deployment(
         &ScriptedBroker::new([snapshot(3, 3)]),
@@ -565,9 +564,10 @@ async fn a_cut_written_without_omitted_parts_still_audits() {
     )
     .await;
 
-    let audit = audit_deployment_backup(&backup).await.expect("audit");
-    check!(audit.cut.omitted_parts == Vec::<String>::new());
-    assert!(audit.parts.values().all(AuditReport::is_clean));
+    let error = audit_deployment_backup(&backup)
+        .await
+        .expect_err("a cut without omitted_parts is refused");
+    assert!(matches!(error, RecoveryError::Json(_)));
 }
 
 #[tokio::test]
@@ -584,80 +584,54 @@ async fn a_second_backup_into_a_sealed_root_is_refused() {
     assert!(matches!(error, RecoveryError::MixedSet(_)));
 }
 
-/// A manifest written by the v0.4 release, byte for byte as that writer
-/// encoded it.
-fn version_1_manifest(objects: &[BackupObject]) -> serde_json::Value {
-    serde_json::json!({
-        "schema_version": 1,
-        "tenant": "tenant-a",
-        "cut_id": "cut-2027-02-01",
-        "wal_offsets": [{"topic": WAL_TOPIC, "partition": 0, "next_offset": 42}],
-        "objects": objects,
-    })
-}
-
 #[tokio::test]
-async fn a_version_1_backup_still_restores_and_a_future_version_is_refused_before_a_write() {
-    let objects = vec![BackupObject {
-        path: "blocks/a.parquet".into(),
-        size: 5,
-        sha256: sha256(b"block"),
-    }];
-    let expected = BackupManifest {
-        schema_version: 1,
-        tenant: Some(TenantId::new("tenant-a").expect("tenant")),
-        part: None,
-        cut_id: "cut-2027-02-01".into(),
-        wal_offsets: vec![WalOffset {
+async fn a_manifest_of_another_version_is_refused_before_a_write() {
+    let source = store();
+    put(&source, "blocks/a.parquet", b"block").await;
+    let backup = store();
+    create_backup(
+        Arc::clone(&source),
+        Arc::clone(&backup),
+        TenantId::new("tenant-a").expect("tenant"),
+        "cut-2027-02-01".into(),
+        vec![WalOffset {
             topic: WAL_TOPIC.into(),
             partition: 0,
             next_offset: 42,
         }],
-        objects: objects.clone(),
-    };
+    )
+    .await
+    .expect("backup");
+    let written: serde_json::Value = serde_json::from_slice(
+        &backup
+            .get(&ObjectPath::from(BACKUP_MANIFEST_PATH))
+            .await
+            .expect("manifest")
+            .bytes()
+            .await
+            .expect("manifest bytes"),
+    )
+    .expect("manifest JSON");
+    check!(written["schema_version"] == serde_json::json!(1));
 
-    for (version, accepted) in [(1, true), (3, false)] {
-        let backup = store();
-        put(&backup, "blocks/a.parquet", b"block").await;
-        let mut manifest = version_1_manifest(&objects);
+    for version in [0, 2] {
+        let mut manifest = written.clone();
         manifest["schema_version"] = version.into();
         put(
             &backup,
             BACKUP_MANIFEST_PATH,
-            &serde_json::to_vec_pretty(&manifest).expect("json"),
+            &serde_json::to_vec_pretty(&manifest).expect("JSON"),
         )
         .await;
         let target = store();
 
         let restored = restore_backup(Arc::clone(&backup), Arc::clone(&target)).await;
-        if accepted {
-            check!(load_backup_manifest(backup.as_ref()).await.ok() == Some(expected.clone()));
-            let report = restored.expect("a version 1 set restores");
-            check!(
-                report
-                    == RestoreReport {
-                        created: 1,
-                        already_present: 0,
-                        audit: AuditReport {
-                            schema_version: 1,
-                            tenant: Some(TenantId::new("tenant-a").expect("tenant")),
-                            part: None,
-                            cut_id: "cut-2027-02-01".into(),
-                            manifest_sha256: report.audit.manifest_sha256.clone(),
-                            read_only: true,
-                            findings: vec![],
-                        },
-                    }
-            );
-            // The digest is of the manifest as the v0.4 writer encoded it.
-            check!(
-                report.audit.manifest_sha256
-                    == sha256(&serde_json::to_vec_pretty(&expected).expect("json"))
-            );
-        } else {
-            assert!(matches!(restored, Err(RecoveryError::InvalidManifest(_))));
-            check!(paths(&target).await.is_empty(), "version {version}");
-        }
+
+        assert!(
+            matches!(restored, Err(RecoveryError::InvalidManifest(_))),
+            "version {version}"
+        );
+        check!(paths(&target).await.is_empty(), "version {version}");
     }
 }
 

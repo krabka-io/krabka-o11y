@@ -3,7 +3,10 @@ pub const PERSISTED_FORMAT_HEADER: &str = "krabka-format-version";
 pub const PERSISTED_FORMAT_VERSION: &[u8] = b"1";
 
 #[derive(Debug, thiserror::Error, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum PersistedFormatError {
+    #[error("persisted format header is missing")]
+    Missing,
     #[error("persisted format header appears more than once")]
     Duplicate,
     #[error("persisted format header has no value")]
@@ -12,11 +15,15 @@ pub enum PersistedFormatError {
     Unsupported(String),
 }
 
-/// Accepts legacy records without a header as version 1 and rejects unknown
-/// versions before callers decode or mutate state.
+/// Checks the format version header of a Krabka-owned durable record.
+///
+/// The header is required. It must appear once and exactly match the version
+/// that this build writes. Callers check it before they decode a record or
+/// change state.
 ///
 /// # Errors
-/// Returns an error when the version header is malformed or unsupported.
+/// Returns an error when the version header is absent, malformed, or
+/// unsupported.
 pub fn validate_persisted_format<'a>(
     headers: impl IntoIterator<Item = (&'a str, Option<&'a [u8]>)>,
 ) -> Result<(), PersistedFormatError> {
@@ -30,7 +37,8 @@ pub fn validate_persisted_format<'a>(
         }
     }
     match version {
-        None | Some(Some(PERSISTED_FORMAT_VERSION)) => Ok(()),
+        Some(Some(PERSISTED_FORMAT_VERSION)) => Ok(()),
+        None => Err(PersistedFormatError::Missing),
         Some(None) => Err(PersistedFormatError::MissingValue),
         Some(Some(value)) => Err(PersistedFormatError::Unsupported(
             String::from_utf8_lossy(value).into_owned(),
@@ -45,14 +53,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn legacy_and_current_are_supported_but_future_is_not() {
-        check!(validate_persisted_format([]).is_ok());
-        check!(
-            validate_persisted_format([(PERSISTED_FORMAT_HEADER, Some(b"1".as_slice()))]).is_ok()
-        );
-        check!(
-            validate_persisted_format([(PERSISTED_FORMAT_HEADER, Some(b"2".as_slice()))])
-                == Err(PersistedFormatError::Unsupported("2".to_string()))
-        );
+    fn only_the_current_version_is_supported() {
+        struct Case {
+            name: &'static str,
+            values: Vec<Option<&'static [u8]>>,
+            expected: Result<(), PersistedFormatError>,
+        }
+
+        let cases = [
+            Case {
+                name: "current",
+                values: vec![Some(b"1")],
+                expected: Ok(()),
+            },
+            Case {
+                name: "absent",
+                values: vec![],
+                expected: Err(PersistedFormatError::Missing),
+            },
+            Case {
+                name: "future",
+                values: vec![Some(b"2")],
+                expected: Err(PersistedFormatError::Unsupported("2".to_string())),
+            },
+            Case {
+                name: "no value",
+                values: vec![None],
+                expected: Err(PersistedFormatError::MissingValue),
+            },
+            Case {
+                name: "duplicate",
+                values: vec![Some(b"1"), Some(b"1")],
+                expected: Err(PersistedFormatError::Duplicate),
+            },
+        ];
+        for case in cases {
+            let headers = case
+                .values
+                .iter()
+                .map(|value| (PERSISTED_FORMAT_HEADER, *value));
+            check!(
+                validate_persisted_format(headers) == case.expected,
+                "{}",
+                case.name
+            );
+        }
     }
 }

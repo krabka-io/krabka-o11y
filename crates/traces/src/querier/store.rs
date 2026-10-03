@@ -690,6 +690,17 @@ mod tests {
         Arc::new(ArcSwap::from_pointee(index))
     }
 
+    // Every block writer stamps the block format version, and every reader
+    // refuses a block without it.
+    fn versioned_block_properties() -> parquet::file::properties::WriterPropertiesBuilder {
+        WriterProperties::builder().set_key_value_metadata(Some(vec![
+            parquet::file::metadata::KeyValue::new(
+                krabka_blockstore::PERSISTED_BLOCK_FORMAT_KEY.to_string(),
+                Some(krabka_blockstore::PERSISTED_BLOCK_FORMAT_VERSION.to_string()),
+            ),
+        ]))
+    }
+
     #[test]
     fn integer_matchers_distinguish_equal_and_unequal_values() {
         let expected = MatchValue::Int(7);
@@ -2013,7 +2024,7 @@ mod tests {
             vec!["POST".into()],
         )])
         .unwrap();
-        let props = WriterProperties::builder()
+        let props = versioned_block_properties()
             .set_max_row_group_row_count(Some(1))
             .set_write_batch_size(1)
             .build();
@@ -2124,7 +2135,7 @@ mod tests {
             &promoted,
         )
         .unwrap();
-        let props = WriterProperties::builder()
+        let props = versioned_block_properties()
             .set_max_row_group_row_count(Some(1))
             .set_write_batch_size(1)
             .build();
@@ -2236,8 +2247,12 @@ mod tests {
             object_store.clone(),
             Path::from("blocks/tenant-a-row-groups.parquet"),
         );
-        let mut writer =
-            AsyncArrowWriter::try_new(object_writer, span_block_schema(), None).unwrap();
+        let mut writer = AsyncArrowWriter::try_new(
+            object_writer,
+            span_block_schema(),
+            Some(versioned_block_properties().build()),
+        )
+        .unwrap();
         writer.write(&batch).await.unwrap();
         writer.close().await.unwrap();
 

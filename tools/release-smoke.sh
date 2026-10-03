@@ -1,20 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-new_image=${1:?usage: release-smoke.sh NEW_IMAGE [OLD_IMAGE] [EVIDENCE_DIR]}
-old_image=${2:-}
-evidence_dir=${3:-qualification/evidence/release-smoke}
+image=${1:?usage: release-smoke.sh IMAGE [EVIDENCE_DIR]}
+evidence_dir=${2:-qualification/evidence/release-smoke}
 compose_file=deploy/compose/docker-compose.yaml
 project="krabka-release-${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-1}"
 tenant=release-smoke
-base_marker="release-${GITHUB_SHA:-local}-$(date +%s)"
-marker=${base_marker}
-services=(
-  metrics-distributor metrics-block-builder metrics-querier
-  logs-distributor logs-block-builder logs-querier
-  traces-distributor traces-block-builder traces-querier
-  profiles-distributor profiles-block-builder profiles-querier
-)
+marker="release-${GITHUB_SHA:-local}-$(date +%s)"
 
 mkdir -p "${evidence_dir}"
 compose=(docker compose --project-name "${project}" -f "${compose_file}")
@@ -44,11 +36,11 @@ image_digest() {
 
 normalize_local_image() {
   local image_id
-  if [[ ${new_image} == krabka-o11y:dev ]] && ! docker image inspect "${new_image}" >/dev/null 2>&1; then
+  if [[ ${image} == krabka-o11y:dev ]] && ! docker image inspect "${image}" >/dev/null 2>&1; then
     image_id=$(docker image ls --filter reference=krabka-o11y:dev --format '{{.ID}}' | sed -n '1p')
     test -n "${image_id}"
-    new_image=localhost/krabka-o11y:dev
-    docker tag "${image_id}" "${new_image}"
+    image=localhost/krabka-o11y:dev
+    docker tag "${image_id}" "${image}"
   fi
 }
 
@@ -147,50 +139,17 @@ start_stack() {
 }
 
 normalize_local_image
-if ! docker image inspect "${new_image}" >/dev/null 2>&1; then
-  docker pull --platform linux/amd64 "${new_image}" >/dev/null
+if ! docker image inspect "${image}" >/dev/null 2>&1; then
+  docker pull --platform linux/amd64 "${image}" >/dev/null
 fi
-new_id=$(image_id "${new_image}")
-new_digest=$(image_digest "${new_image}" "${KRABKA_NEW_IMAGE_DIGEST:-}")
-printf 'image=%s\ndigest=%s\nimage_id=%s\n' "${new_image}" "${new_digest}" "${new_id}" \
-  >"${evidence_dir}/new-image.txt"
+id=$(image_id "${image}")
+digest=$(image_digest "${image}" "${KRABKA_IMAGE_DIGEST:-}")
+printf 'image=%s\ndigest=%s\nimage_id=%s\n' "${image}" "${digest}" "${id}" \
+  >"${evidence_dir}/image.txt"
 
-if [[ -n ${old_image} ]]; then
-  docker pull --platform linux/amd64 "${old_image}" >/dev/null
-  old_id=$(image_id "${old_image}")
-  old_digest=$(image_digest "${old_image}")
-  printf 'image=%s\ndigest=%s\nimage_id=%s\n' "${old_image}" "${old_digest}" "${old_id}" \
-    >"${evidence_dir}/old-image.txt"
-  start_stack "${old_image}"
-  send_corpus
-  query_corpus old
-  export KRABKA_O11Y_IMAGE=${new_image}
-  step=0
-  for service in "${services[@]}"; do
-    step=$((step + 1))
-    "${compose[@]}" up -d --no-deps --force-recreate --wait --wait-timeout 300 "${service}"
-    wait_stack_ready
-    marker="${base_marker}-upgrade-${step}"
-    send_corpus
-    query_corpus "upgrade-${service}"
-  done
-  export KRABKA_O11Y_IMAGE=${old_image}
-  step=0
-  for service in "${services[@]}"; do
-    step=$((step + 1))
-    "${compose[@]}" up -d --no-deps --force-recreate --wait --wait-timeout 300 "${service}"
-    wait_stack_ready
-    marker="${base_marker}-rollback-${step}"
-    send_corpus
-    query_corpus "rollback-${service}"
-  done
-  marker=${base_marker}
-  query_corpus rollback-pre-upgrade
-else
-  start_stack "${new_image}"
-  send_corpus
-  query_corpus clean
-fi
+start_stack "${image}"
+send_corpus
+query_corpus clean
 
 "${compose[@]}" ps --format json >"${evidence_dir}/compose.json"
 find "${evidence_dir}" -maxdepth 1 -type f ! -name SHA256SUMS -print0 |

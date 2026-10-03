@@ -90,8 +90,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn future_block_format_is_rejected_before_rows_are_read() {
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    async fn a_missing_or_future_block_format_is_rejected_before_rows_are_read() {
+        struct Case {
+            name: &'static str,
+            marker: Option<&'static str>,
+            message: &'static str,
+        }
+
         let schema = Arc::new(Schema::new(vec![
             Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
             Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
@@ -104,23 +109,44 @@ mod tests {
             ],
         )
         .unwrap();
-        let props = WriterProperties::builder()
-            .set_key_value_metadata(Some(vec![parquet::file::metadata::KeyValue::new(
-                crate::PERSISTED_BLOCK_FORMAT_KEY.to_string(),
-                Some("2".to_string()),
-            )]))
-            .build();
-        let object_writer = BufWriter::new(store.clone(), Path::from("future.parquet"));
-        let mut writer = AsyncArrowWriter::try_new(object_writer, schema, Some(props)).unwrap();
-        writer.write(&batch).await.unwrap();
-        writer.close().await.unwrap();
+        let cases = [
+            Case {
+                name: "a block without a version marker",
+                marker: None,
+                message: "unsupported persisted block format version: the marker is missing",
+            },
+            Case {
+                name: "a block of a future version",
+                marker: Some("2"),
+                message: "unsupported persisted block format version `2`",
+            },
+        ];
+        for case in cases {
+            let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+            let metadata = case.marker.map(|version| {
+                vec![parquet::file::metadata::KeyValue::new(
+                    crate::PERSISTED_BLOCK_FORMAT_KEY.to_string(),
+                    Some(version.to_string()),
+                )]
+            });
+            let props = WriterProperties::builder()
+                .set_key_value_metadata(metadata)
+                .build();
+            let object_writer = BufWriter::new(store.clone(), Path::from("block.parquet"));
+            let mut writer =
+                AsyncArrowWriter::try_new(object_writer, schema.clone(), Some(props)).unwrap();
+            writer.write(&batch).await.unwrap();
+            writer.close().await.unwrap();
 
-        let error = read_block(store, "future.parquet")
-            .await
-            .expect_err("future format must not be decoded");
-        assert2::assert!(
-            matches!(error, BlockStoreError::InvalidBlock(message) if message.contains("version `2`"))
-        );
+            let error = read_block(store, "block.parquet")
+                .await
+                .expect_err("the block must not be decoded");
+            assert2::check!(
+                matches!(&error, BlockStoreError::InvalidBlock(message) if message == case.message),
+                "{}: {error}",
+                case.name
+            );
+        }
     }
 
     /// `read_block_row_groups` is the default-cap wrapper the query path calls,
@@ -236,6 +262,10 @@ mod tests {
         let props = WriterProperties::builder()
             .set_max_row_group_row_count(Some(1))
             .set_write_batch_size(1)
+            .set_key_value_metadata(Some(vec![parquet::file::metadata::KeyValue::new(
+                crate::PERSISTED_BLOCK_FORMAT_KEY.to_string(),
+                Some(crate::PERSISTED_BLOCK_FORMAT_VERSION.to_string()),
+            )]))
             .build();
         let mut writer =
             AsyncArrowWriter::try_new(object_writer, schema.clone(), Some(props)).unwrap();
@@ -488,6 +518,10 @@ mod tests {
         let props = WriterProperties::builder()
             .set_max_row_group_row_count(Some(1))
             .set_write_batch_size(1)
+            .set_key_value_metadata(Some(vec![parquet::file::metadata::KeyValue::new(
+                crate::PERSISTED_BLOCK_FORMAT_KEY.to_string(),
+                Some(crate::PERSISTED_BLOCK_FORMAT_VERSION.to_string()),
+            )]))
             .build();
         let mut writer =
             AsyncArrowWriter::try_new(object_writer, schema.clone(), Some(props)).unwrap();

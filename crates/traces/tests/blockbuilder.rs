@@ -77,6 +77,15 @@ fn rec(
     }
 }
 
+fn format_headers() -> Vec<krabka_client_consumer::Header> {
+    vec![krabka_client_consumer::Header {
+        key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
+        value: Some(Bytes::from_static(
+            krabka_observability::persisted_format::PERSISTED_FORMAT_VERSION,
+        )),
+    }]
+}
+
 fn consumer_record(partition: i32, offset: i64, record: &SpanRecord) -> ConsumerRecord {
     ConsumerRecord {
         topic: "__krabka_traces_wal".into(),
@@ -87,7 +96,7 @@ fn consumer_record(partition: i32, offset: i64, record: &SpanRecord) -> Consumer
         timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
         key: None,
         value: Some(Bytes::from(record.encode().unwrap())),
-        headers: Vec::new(),
+        headers: format_headers(),
     }
 }
 
@@ -193,7 +202,7 @@ fn decode_consumer_records_groups_by_partition_and_tracks_offsets() {
             timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: None,
-            headers: Vec::new(),
+            headers: format_headers(),
         },
     ])
     .unwrap();

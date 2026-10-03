@@ -58,6 +58,15 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
+    fn format_headers() -> Vec<krabka_client_consumer::Header> {
+        vec![krabka_client_consumer::Header {
+            key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
+            value: Some(Bytes::from_static(
+                krabka_observability::persisted_format::PERSISTED_FORMAT_VERSION,
+            )),
+        }]
+    }
+
     // Every request reaches the handlers through the authentication layer, as
     // it does on a served listener. With no credentials file, the layer marks
     // each request unauthenticated and lets it through.
@@ -412,7 +421,7 @@ mod tests {
             timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: value.map(Bytes::from),
-            headers: Vec::new(),
+            headers: format_headers(),
         }
     }
 

@@ -67,6 +67,14 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+    fn format_headers() -> Vec<krabka_client_consumer::Header> {
+        vec![krabka_client_consumer::Header {
+            key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
+            value: Some(Bytes::from_static(
+                krabka_observability::persisted_format::PERSISTED_FORMAT_VERSION,
+            )),
+        }]
+    }
 
     /// A monotonic clock the test drives, so an idle timeout can be reached
     /// without a real wait.
@@ -1582,7 +1590,7 @@ overrides:
             timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: value.map(Bytes::from),
-            headers: Vec::new(),
+            headers: format_headers(),
         }
     }
 

@@ -636,21 +636,3 @@ async fn empty_object_store_prefix_stays_in_its_cache_namespace() {
     assert!(QueryCache::sweep(&cache).await.unwrap() == 1);
     assert!(store.get(&Path::from("unrelated")).await.is_ok());
 }
-
-#[tokio::test]
-async fn object_store_sweep_removes_the_pre_tenant_layout() {
-    let store = Arc::new(object_store::memory::InMemory::new());
-    let legacy = Path::from("query-cache/6b6579.json");
-    store
-        .put(&legacy, PutPayload::from("obsolete"))
-        .await
-        .unwrap();
-    let cache =
-        ObjectStoreCache::<usize>::new(store.clone(), "query-cache", Duration::from_millis(10));
-
-    assert!(QueryCache::sweep(&cache).await.unwrap() == 1);
-    assert!(matches!(
-        store.get(&legacy).await,
-        Err(object_store::Error::NotFound { .. })
-    ));
-}

@@ -16,7 +16,7 @@ WORKFLOW = ROOT / ".github/workflows/qualification.yml"
 SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 RUN_URL = re.compile(r"https://github\.com/[^/]+/[^/]+/actions/runs/[0-9]+")
-REQUIRED_GATES = {"ordinary", "differential", "clients", "kubernetes", "ha", "scale", "migration", "recovery", "security"}
+REQUIRED_GATES = {"ordinary", "differential", "clients", "kubernetes", "ha", "scale", "recovery", "security"}
 
 
 def fail(message):

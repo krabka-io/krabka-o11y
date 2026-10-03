@@ -14,7 +14,7 @@ pub struct DeploymentCut {
     pub broker: BrokerSnapshot,
     pub parts: Vec<CutPart>,
     /// The parts that the operator declared the deployment does not have,
-    /// sorted. No part of the cut has one of these names.
-    #[serde(default)]
+    /// sorted. No part of the cut has one of these names. The field is
+    /// required, and an empty list omits nothing.
     pub omitted_parts: Vec<String>,
 }
