@@ -14,14 +14,14 @@ known divergences, and out-of-scope behavior.
 ## Release envelope
 
 - The [operating envelope](../operating_envelope.md) defines supported scale and latency bounds.
-- The [persisted-format contract](../persisted_formats.md) and [v0.4.0 release procedure](v0.4.0.md) define upgrade and rollback behavior.
+- The [persisted-format contract](../persisted_formats.md) lists the version of each persisted format. Persisted formats have no backward-compatibility requirement, so the [v0.4.0 release procedure](v0.4.0.md) defines a clean install, not an upgrade or a rollback.
 - The [disaster-recovery runbook](../disaster_recovery.md) defines consistent backup, audit, and restore cuts.
 - The demo qualification is pinned to `krabka-io/krabka-o11y-demo` commit `73789644829c67107e9056b7f9718472ce2c089d` and [successful run 35083910051](https://github.com/krabka-io/krabka-o11y-demo/actions/runs/35083910051).
 
 ## Qualification evidence
 
 `qualification/milestone-21.json` declares ordinary, differential, client,
-Kubernetes, HA, scale, migration, recovery, and security gates. Each matrix job
+Kubernetes, HA, scale, recovery, and security gates. Each matrix job
 writes its exact command, commit, result count, duration, skipped and flaky
 counts, immutable run URL, and checksum. The report job promotes the draft only
 when every declared command has matching passing evidence and no command is
