@@ -50,7 +50,6 @@ crate_tests(
         "grafana_integration": ["grafana"],
         "loki_differential": ["loki"],
         "scale_object_store": ["minio"],
-        "soak_ingest_query": ["minio"],
     },
     docker_variants = {
         "grafana_e2e": {
@@ -88,8 +87,5 @@ crate_tests(
     # have budgets this suite would take on its own. //.bazelrc selects it with
     # `--config=scale`, and the `scale` job in //.github/workflows/ci.yml runs
     # that on a schedule.
-    scale = [
-        "scale_object_store",
-        "soak_ingest_query",
-    ],
+    scale = ["scale_object_store"],
 )
