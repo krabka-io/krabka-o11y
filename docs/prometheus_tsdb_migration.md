@@ -201,4 +201,4 @@ Compaction can merge an imported block with other blocks of the tenant. Then the
 - Delete the series with the Prometheus `POST /api/v1/admin/tsdb/delete_series` API, when the admin API is on. Give the block's time range as `start` and `end`.
 - Delete the whole tenant with `POST /compactor/delete_tenant`. This also deletes every upload of the tenant.
 
-A rollback of the Krabka binary to v0.4 keeps the imported data queryable. The imported blocks and manifests use the same formats as the blocks that the block builder writes. The v0.4 binary does not read the import record, the binding or `_published`. It also reads the manifests of an import that is not published, so it can return part of the samples of such a block. It rejects a new Prometheus TSDB upload, and it does not change the imported blocks.
+A deployment backup holds the import records and the bindings, because the `metrics` part copies the whole metrics bucket. After a restore, an upload of an imported block does not import it again. See [Disaster Recovery](disaster_recovery.md).
