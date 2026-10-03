@@ -885,3 +885,48 @@ fn the_tenant_keys_name_live_and_pending_objects_and_markers_of_one_tenant() {
         ]
     );
 }
+
+/// The storage audit reads the store that an import writes. A published
+/// import must audit clean, and the repair must find nothing to delete in an
+/// import that stopped before it published: a retry still needs those objects.
+#[tokio::test]
+async fn the_storage_audit_reports_no_damage_or_orphan_in_an_import() {
+    use krabka_blockstore::{StorageAuditOptions, StorageSignal, audit_store};
+
+    let (block, sha256) = fixture_block(true);
+    let audit = |store: Arc<dyn ObjectStore>| async move {
+        let mut options = StorageAuditOptions::new(SystemTime::now() + Duration::from_hours(2));
+        options.signal = Some(StorageSignal::Metrics);
+        audit_store(&store, &options).await.expect("the audit runs")
+    };
+
+    let published: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    publish_tsdb_import(&published, target(FIXTURE_ULID, &sha256), &block)
+        .await
+        .expect("the import publishes");
+    let report = audit(published).await;
+    check!(
+        report.findings == Vec::new(),
+        "published: {:#?}",
+        report.findings
+    );
+
+    let crashing = Arc::new(CrashingStore::default());
+    let stopped: Arc<dyn ObjectStore> = crashing.clone();
+    crashing.crash_at(Some(CrashPoint {
+        key_part: "/_published".to_owned(),
+        occurrence: 1,
+    }));
+    check!(
+        publish_tsdb_import(&stopped, target(FIXTURE_ULID, &sha256), &block)
+            .await
+            .is_err()
+    );
+    crashing.crash_at(None);
+    let report = audit(stopped).await;
+    check!(
+        report.findings.iter().all(|finding| !finding.repairable),
+        "stopped: {:#?}",
+        report.findings
+    );
+}
