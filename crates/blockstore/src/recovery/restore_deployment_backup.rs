@@ -1,7 +1,8 @@
 use super::{
-    Arc, BTreeMap, BTreeSet, BrokerState, DeploymentPart, DeploymentRestoreReport, ObjectStore,
-    RecoveryError, audit_deployment_backup, audit_recovery_target, compare_snapshots,
-    copy_restored_part, load_backup_manifest, part_store, refuse_broker_findings, refuse_unsafe,
+    Arc, BTreeMap, BTreeSet, BrokerState, COPY_CHUNK_BYTES, DeploymentPart,
+    DeploymentRestoreReport, ObjectStore, RecoveryError, audit_deployment_backup,
+    audit_recovery_target, compare_snapshots, copy_restored_part, load_backup_manifest, part_store,
+    refuse_broker_findings, refuse_unsafe,
 };
 
 /// Restores every part of a deployment backup set into empty targets.
@@ -68,7 +69,8 @@ pub async fn restore_deployment_backup(
 
     let mut parts = BTreeMap::new();
     for (target, (source, manifest)) in targets.iter().zip(&manifests) {
-        let report = copy_restored_part(source, target.store.as_ref(), manifest).await?;
+        let report =
+            copy_restored_part(source, target.store.as_ref(), manifest, COPY_CHUNK_BYTES).await?;
         parts.insert(target.name.clone(), report);
     }
     Ok(DeploymentRestoreReport {

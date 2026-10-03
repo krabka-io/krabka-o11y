@@ -1,5 +1,5 @@
 use super::{
-    Arc, BTreeMap, BrokerState, CUT_MANIFEST_PATH, CUT_SCHEMA_VERSION, CutPart,
+    Arc, BTreeMap, BrokerState, COPY_CHUNK_BYTES, CUT_MANIFEST_PATH, CUT_SCHEMA_VERSION, CutPart,
     DeploymentBackupPlan, DeploymentBackupReport, DeploymentCut, ObjectPath, ObjectStore,
     RecoveryError, check_drained_groups, compare_snapshots, create_part_backup, digest,
     get_optional, json_bytes, load_backup_manifest_with_digest, part_store, put_create_or_equal,
@@ -64,6 +64,7 @@ pub async fn backup_deployment(
             Some(part.name.clone()),
             plan.cut_id.clone(),
             before.wal_offsets.clone(),
+            COPY_CHUNK_BYTES,
         )
         .await?;
         let (manifest, manifest_sha256) = load_backup_manifest_with_digest(&target)
@@ -97,15 +98,12 @@ pub async fn backup_deployment(
     };
     validate_cut(&cut)?;
     let bytes = json_bytes(&cut)?;
-    let _ = put_create_or_equal(
-        backup.as_ref(),
-        &ObjectPath::from(CUT_MANIFEST_PATH),
-        &bytes,
-    )
-    .await?;
+    let cut_sha256 = digest(&bytes);
+    let _ =
+        put_create_or_equal(backup.as_ref(), &ObjectPath::from(CUT_MANIFEST_PATH), bytes).await?;
     Ok(DeploymentBackupReport {
         cut,
-        cut_sha256: digest(&bytes),
+        cut_sha256,
         parts: reports,
     })
 }

@@ -22,8 +22,8 @@ use std::{
 use async_trait::async_trait;
 use futures::TryStreamExt as _;
 use object_store::{
-    ObjectStore, ObjectStoreExt as _, PutMode, PutOptions, PutPayload, path::Path as ObjectPath,
-    prefix::PrefixStore,
+    ObjectStore, ObjectStoreExt as _, PutMode, PutOptions, PutPayload, WriteMultipart,
+    path::Path as ObjectPath, prefix::PrefixStore,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -43,6 +43,11 @@ pub const CUT_MANIFEST_PATH: &str = "krabka-recovery/cut.json";
 const PARTS_PREFIX: &str = "parts";
 /// The deployment cut version that writers stamp and readers accept.
 const CUT_SCHEMA_VERSION: u32 = 1;
+/// The largest object that a copy holds in memory. A larger object goes to
+/// the target in multipart parts of this size.
+const COPY_CHUNK_BYTES: usize = 8 * 1024 * 1024;
+/// The most multipart parts that one copy uploads at a time.
+const COPY_PARTS_IN_FLIGHT: usize = 4;
 
 /// The next offset to consume for one WAL partition at the backup cut.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -181,10 +186,13 @@ pub async fn create_backup(
         None,
         cut_id,
         wal_offsets,
+        COPY_CHUNK_BYTES,
     )
     .await
 }
 
+/// Copies `source` into `backup` and writes its manifest. An object larger
+/// than `chunk` bytes goes to `backup` in parts of `chunk` bytes.
 async fn create_part_backup(
     source: &dyn ObjectStore,
     backup: &dyn ObjectStore,
@@ -192,6 +200,7 @@ async fn create_part_backup(
     part: Option<String>,
     cut_id: String,
     mut wal_offsets: Vec<WalOffset>,
+    chunk: usize,
 ) -> Result<RestoreReport, RecoveryError> {
     wal_offsets.sort();
     let manifest = BackupManifest {
@@ -214,12 +223,12 @@ async fn create_part_backup(
 
     let before = audit_backup(backup, &manifest).await?;
     refuse_unsafe("backup", &before, true)?;
-    let (created, already_present) = copy_manifest_objects(source, backup, &manifest).await?;
-    let manifest_bytes = manifest_bytes(&manifest)?;
+    let (created, already_present) =
+        copy_manifest_objects(source, backup, &manifest, chunk).await?;
     let _ = put_create_or_equal(
         backup,
         &ObjectPath::from(BACKUP_MANIFEST_PATH),
-        &manifest_bytes,
+        manifest_bytes(&manifest)?,
     )
     .await?;
     let audit = audit_backup(backup, &manifest).await?;
@@ -342,15 +351,22 @@ pub async fn restore_backup(
     refuse_unsafe("restore source", &source_audit, false)?;
     let before = audit_recovery_target(target.as_ref(), &manifest).await?;
     refuse_unsafe("restore target", &before, true)?;
-    copy_restored_part(backup.as_ref(), target.as_ref(), &manifest).await
+    copy_restored_part(
+        backup.as_ref(),
+        target.as_ref(),
+        &manifest,
+        COPY_CHUNK_BYTES,
+    )
+    .await
 }
 
 async fn copy_restored_part(
     backup: &dyn ObjectStore,
     target: &dyn ObjectStore,
     manifest: &BackupManifest,
+    chunk: usize,
 ) -> Result<RestoreReport, RecoveryError> {
-    let (created, already_present) = copy_manifest_objects(backup, target, manifest).await?;
+    let (created, already_present) = copy_manifest_objects(backup, target, manifest, chunk).await?;
     let audit = audit_recovery_target(target, manifest).await?;
     refuse_unsafe("restore target", &audit, false)?;
     Ok(RestoreReport {
@@ -407,35 +423,64 @@ async fn inventory(
         if ignore_completion_marker && path.as_ref() == BACKUP_MANIFEST_PATH {
             continue;
         }
-        let bytes = store.get(&path).await?.bytes().await?;
+        let (size, sha256) = object_digest(store, &path).await?;
         objects.push(BackupObject {
             path: path.to_string(),
-            size: u64::try_from(bytes.len()).map_err(|_| {
-                RecoveryError::InvalidManifest(format!("object `{path}` is too large to inventory"))
-            })?,
-            sha256: digest(&bytes),
+            size,
+            sha256,
         });
     }
     Ok(objects)
 }
 
+/// The size and SHA-256 of one object. The object is read as a stream, so
+/// memory does not grow with its size.
+async fn object_digest(
+    store: &dyn ObjectStore,
+    path: &ObjectPath,
+) -> Result<(u64, String), RecoveryError> {
+    let mut stream = store.get(path).await?.into_stream();
+    let mut hasher = Sha256::new();
+    let mut size = 0_u64;
+    while let Some(chunk) = stream.try_next().await? {
+        hasher.update(&chunk);
+        size += chunk_len(&chunk, path)?;
+    }
+    Ok((size, hex::encode(hasher.finalize())))
+}
+
+fn chunk_len(chunk: &[u8], path: &ObjectPath) -> Result<u64, RecoveryError> {
+    u64::try_from(chunk.len()).map_err(|_| {
+        RecoveryError::InvalidManifest(format!("object `{path}` is too large to inventory"))
+    })
+}
+
+/// Copies every manifest object from `source` to `target`, and returns the
+/// counts of created and already present objects.
+///
+/// An object of `chunk` bytes or less is held in memory, checked against the
+/// manifest, and written with create-if-absent semantics. A larger object is
+/// streamed into a multipart upload of `chunk`-byte parts. The upload is
+/// completed only when the streamed bytes match the manifest, so a changed
+/// source writes nothing.
 async fn copy_manifest_objects(
     source: &dyn ObjectStore,
     target: &dyn ObjectStore,
     manifest: &BackupManifest,
+    chunk: usize,
 ) -> Result<(usize, usize), RecoveryError> {
     let mut created = 0;
     let mut already_present = 0;
     for object in &manifest.objects {
         let path = ObjectPath::from(object.path.clone());
-        let bytes = source.get(&path).await?.bytes().await?;
-        if u64::try_from(bytes.len()).ok() != Some(object.size) || digest(&bytes) != object.sha256 {
-            return Err(RecoveryError::InvalidManifest(format!(
-                "source object `{}` changed after the cut was recorded",
-                object.path
-            )));
-        }
-        if put_create_or_equal(target, &path, &bytes).await? {
+        let fits_in_chunk = usize::try_from(object.size).is_ok_and(|size| size <= chunk);
+        let was_created = if fits_in_chunk {
+            let bytes = read_checked(source, &path, object).await?;
+            put_create_or_equal(target, &path, bytes).await?
+        } else {
+            stream_create_or_equal(source, target, &path, object, chunk).await?
+        };
+        if was_created {
             created += 1;
         } else {
             already_present += 1;
@@ -444,28 +489,126 @@ async fn copy_manifest_objects(
     Ok((created, already_present))
 }
 
+fn changed_source(object: &BackupObject) -> RecoveryError {
+    RecoveryError::InvalidManifest(format!(
+        "source object `{}` changed after the cut was recorded",
+        object.path
+    ))
+}
+
+/// Reads a small object into memory and checks it against the manifest. A
+/// source that grew past the manifest size is refused before it is read to
+/// the end.
+async fn read_checked(
+    source: &dyn ObjectStore,
+    path: &ObjectPath,
+    object: &BackupObject,
+) -> Result<Vec<u8>, RecoveryError> {
+    let mut stream = source.get(path).await?.into_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.try_next().await? {
+        bytes.extend_from_slice(&chunk);
+        if chunk_len(&bytes, path)? > object.size {
+            return Err(changed_source(object));
+        }
+    }
+    if chunk_len(&bytes, path)? != object.size || digest(&bytes) != object.sha256 {
+        return Err(changed_source(object));
+    }
+    Ok(bytes)
+}
+
+/// Streams one large object from `source` into `target`.
+///
+/// `object_store` has no create-if-absent mode for a multipart upload, so the
+/// copy first checks that `target` does not hold the key. A key that holds
+/// the manifest bytes is already present, and a key that holds other bytes
+/// is refused.
+async fn stream_create_or_equal(
+    source: &dyn ObjectStore,
+    target: &dyn ObjectStore,
+    path: &ObjectPath,
+    object: &BackupObject,
+    chunk: usize,
+) -> Result<bool, RecoveryError> {
+    match target.head(path).await {
+        Ok(_) => {
+            return if object_digest(target, path).await? == (object.size, object.sha256.clone()) {
+                Ok(false)
+            } else {
+                Err(already_exists(path))
+            };
+        }
+        Err(object_store::Error::NotFound { .. }) => {}
+        Err(error) => return Err(error.into()),
+    }
+    let mut upload = WriteMultipart::new_with_chunk_size(target.put_multipart(path).await?, chunk);
+    match stream_into(source, path, object, &mut upload).await {
+        Ok(true) => {
+            upload.finish().await?;
+            Ok(true)
+        }
+        refused => {
+            // The copy error is the one to report. A failed abort leaves
+            // only uncommitted parts, and the target never shows them.
+            let _ = upload.abort().await;
+            refused.and_then(|_| Err(changed_source(object)))
+        }
+    }
+}
+
+/// Writes the source object into `upload`, and returns whether the bytes
+/// match the manifest.
+async fn stream_into(
+    source: &dyn ObjectStore,
+    path: &ObjectPath,
+    object: &BackupObject,
+    upload: &mut WriteMultipart,
+) -> Result<bool, RecoveryError> {
+    let mut stream = source.get(path).await?.into_stream();
+    let mut hasher = Sha256::new();
+    let mut size = 0_u64;
+    while let Some(chunk) = stream.try_next().await? {
+        size += chunk_len(&chunk, path)?;
+        if size > object.size {
+            return Ok(false);
+        }
+        hasher.update(&chunk);
+        upload.wait_for_capacity(COPY_PARTS_IN_FLIGHT).await?;
+        upload.put(chunk);
+    }
+    Ok(size == object.size && hex::encode(hasher.finalize()) == object.sha256)
+}
+
+fn already_exists(path: &ObjectPath) -> RecoveryError {
+    RecoveryError::InvalidManifest(format!(
+        "target object `{path}` already exists with different bytes"
+    ))
+}
+
+/// Writes `bytes` to `path` with create-if-absent semantics, and returns
+/// whether it created the object. A key that holds the same bytes is already
+/// present, and a key that holds other bytes is refused.
 async fn put_create_or_equal(
     store: &dyn ObjectStore,
     path: &ObjectPath,
-    bytes: &[u8],
+    bytes: Vec<u8>,
 ) -> Result<bool, RecoveryError> {
+    let expected = (chunk_len(&bytes, path)?, digest(&bytes));
     match store
         .put_opts(
             path,
-            PutPayload::from(bytes.to_vec()),
+            PutPayload::from(bytes),
             PutOptions::from(PutMode::Create),
         )
         .await
     {
         Ok(_) => Ok(true),
         Err(object_store::Error::AlreadyExists { .. }) => {
-            let existing = store.get(path).await?.bytes().await?;
-            if existing.as_ref() == bytes {
+            if object_digest(store, path).await? == expected {
                 Ok(false)
             } else {
-                Err(RecoveryError::InvalidManifest(format!(
-                    "target object `{path}` already exists with different bytes"
-                )))
+                Err(already_exists(path))
             }
         }
         Err(error) => Err(error.into()),
@@ -841,7 +984,7 @@ mod tests {
     use assert2::{assert, check};
     use object_store::memory::InMemory;
 
-    use super::*;
+    use super::{payload_recording_store::PayloadRecordingStore, *};
 
     fn tenant() -> TenantId {
         TenantId::new("tenant-a").unwrap()
@@ -945,6 +1088,135 @@ mod tests {
         assert!(matches!(error, RecoveryError::UnsafeTarget { .. }));
         assert!(target.get(&ObjectPath::from("a")).await.is_err());
     }
+
+    /// Bytes that differ at every offset of a part, so a part copied to the
+    /// wrong place changes the digest.
+    fn large_object(len: usize) -> Vec<u8> {
+        (0..len)
+            .map(|index| u8::try_from(index % 251).unwrap())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_large_object_is_copied_in_parts_no_larger_than_the_chunk() {
+        const CHUNK: usize = 1024;
+        let source: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let object = large_object(10 * CHUNK + 17);
+        put(&source, "blocks/large.parquet", &object).await;
+        put(&source, "blocks/small.index", b"index").await;
+
+        let backup = Arc::new(PayloadRecordingStore::new(Arc::new(InMemory::new())));
+        let backed_up = create_part_backup(
+            source.as_ref(),
+            backup.as_ref(),
+            Some(tenant()),
+            None,
+            "cut-1".into(),
+            offsets(),
+            CHUNK,
+        )
+        .await
+        .unwrap();
+        check!((backed_up.created, backed_up.already_present) == (2, 0));
+        assert!(backed_up.audit.is_clean());
+        // The largest write is the manifest or one part, never the object.
+        let manifest = load_backup_manifest(backup.as_ref()).await.unwrap();
+        let manifest_len = manifest_bytes(&manifest).unwrap().len();
+        check!(backup.largest_payload() <= CHUNK.max(manifest_len));
+        check!(backup.largest_payload() < object.len());
+
+        let target = PayloadRecordingStore::new(Arc::new(InMemory::new()));
+        let restored = copy_restored_part(backup.as_ref(), &target, &manifest, CHUNK)
+            .await
+            .unwrap();
+        check!((restored.created, restored.already_present) == (2, 0));
+        assert!(restored.audit.is_clean());
+        check!(target.largest_payload() == CHUNK);
+        let copied = target
+            .get(&ObjectPath::from("blocks/large.parquet"))
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        check!(copied.as_ref() == object.as_slice());
+
+        // A second pass finds both objects and writes nothing.
+        let repeated = copy_restored_part(backup.as_ref(), &target, &manifest, CHUNK)
+            .await
+            .unwrap();
+        check!((repeated.created, repeated.already_present) == (0, 2));
+    }
+
+    #[tokio::test]
+    async fn a_streamed_copy_refuses_a_changed_source_and_a_conflicting_target() {
+        struct Case {
+            name: &'static str,
+            source: Vec<u8>,
+            target: Option<Vec<u8>>,
+            target_after: Option<Vec<u8>>,
+        }
+
+        const CHUNK: usize = 1024;
+        let object = large_object(4 * CHUNK);
+        let manifest = BackupManifest {
+            schema_version: BACKUP_SCHEMA_VERSION,
+            tenant: Some(tenant()),
+            part: None,
+            cut_id: "cut-1".into(),
+            wal_offsets: offsets(),
+            objects: vec![BackupObject {
+                path: "blocks/large.parquet".into(),
+                size: u64::try_from(object.len()).unwrap(),
+                sha256: digest(&object),
+            }],
+        };
+        let mut changed = object.clone();
+        changed[3 * CHUNK] ^= 1;
+        let mut longer = object.clone();
+        longer.push(0);
+
+        let cases = [
+            Case {
+                name: "the source changed after the cut",
+                source: changed.clone(),
+                target: None,
+                target_after: None,
+            },
+            Case {
+                name: "the source grew after the cut",
+                source: longer,
+                target: None,
+                target_after: None,
+            },
+            Case {
+                name: "the target holds other bytes",
+                source: object.clone(),
+                target: Some(changed.clone()),
+                target_after: Some(changed),
+            },
+        ];
+        for case in cases {
+            let source: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+            put(&source, "blocks/large.parquet", &case.source).await;
+            let target: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+            if let Some(bytes) = &case.target {
+                put(&target, "blocks/large.parquet", bytes).await;
+            }
+
+            let result =
+                copy_manifest_objects(source.as_ref(), target.as_ref(), &manifest, CHUNK).await;
+            check!(
+                matches!(result, Err(RecoveryError::InvalidManifest(_))),
+                "{}",
+                case.name
+            );
+            let after = get_optional(target.as_ref(), "blocks/large.parquet")
+                .await
+                .unwrap();
+            check!(after == case.target_after, "{}", case.name);
+        }
+    }
 }
 
 mod audit_deployment_backup;
@@ -961,6 +1233,8 @@ mod deployment_part;
 mod deployment_restore_report;
 mod drained_group;
 mod group_offset;
+#[cfg(test)]
+mod payload_recording_store;
 mod restore_deployment_backup;
 
 pub use audit_deployment_backup::audit_deployment_backup;
