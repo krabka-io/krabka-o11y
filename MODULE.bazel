@@ -345,3 +345,39 @@ crate.annotation(
 use_repo(crate, "crates", "mutants")
 
 inject_repo(crate, "aws-lc")
+
+# Member directories for coordinated Git source dependencies.
+[
+    crate.annotation(
+        crate = name,
+        strip_prefix = directory,
+        workspace_cargo_toml = "Cargo.toml",
+    )
+    for name, directory in {
+        "krabka-admin-ui": "crates/admin-ui",
+        "krabka-app-sdk": "crates/app-sdk",
+        "krabka-backup": "crates/backup-cli",
+        "krabka-barrier": "crates/barrier-cli",
+        "krabka-bench-driver": "crates/bench-driver",
+        "krabka-cli": "crates/krabka-cli",
+        "krabka-client-streams": "crates/client-streams",
+        "krabka-connect": "crates/connect",
+        "krabka-connect-derive": "crates/connect-derive",
+        "krabka-connect-postgres": "crates/connect-postgres",
+        "krabka-connect-worker": "crates/connect-worker",
+        "krabka-docgen": "crates/docgen",
+        "krabka-gateway": "crates/gateway",
+        "krabka-guard": "crates/guard-cli",
+        "krabka-hlc": "crates/hlc",
+        "krabka-kafka-tap": "crates/kafka-tap",
+        "krabka-log-iobench": "crates/log-iobench",
+        "krabka-operator": "crates/krabka-operator",
+        "krabka-parse-benches": "crates/parse-benches",
+        "krabka-protocol-codegen": "crates/protocol-codegen",
+        "krabka-rebalancer": "crates/rebalancer",
+        "krabka-replicator": "crates/replicator",
+        "krabka-restore": "crates/restore",
+        "krabka-schema-registry": "crates/schema-registry",
+        "krabka-sdk-conformance": "crates/sdk-conformance",
+    }.items()
+]
