@@ -315,6 +315,8 @@ async fn start_prometheus() -> TestResult<testcontainers::ContainerAsync<Generic
             .with_wait_for(WaitFor::message_on_stderr(
                 "Server is ready to receive web requests",
             ))
+            // Epoch-based corpus samples must not race the image's self-scrape.
+            .with_copy_to("/etc/prometheus/prometheus.yml", b"global: {}\n".to_vec())
             .with_cmd([
                 "--config.file=/etc/prometheus/prometheus.yml",
                 "--storage.tsdb.path=/prometheus",
