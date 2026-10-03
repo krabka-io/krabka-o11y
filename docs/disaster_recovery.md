@@ -35,7 +35,16 @@ All of it is in the broker's log directory. The topic contract does not tier the
 | `profiles` | `s3://krabka-profiles` | Profile blocks and their SymbolDB `.symdb` objects, the profile index, tenant settings and recording rules (`profiles-admin/`), debuginfo uploads (`debug-info/`) |
 | `traces-overrides` | The `--traces-api-overrides-file` directory | API-written trace overrides. Only when the file is configured. |
 
-The two logs `data-root` volumes are separate parts because a deployment mounts one volume for each role. An all-in-one logs role has one `data-root`; back it up as one part.
+The two logs `data-root` volumes are separate parts because a deployment mounts one volume for each role. An all-in-one logs role has one `data-root`; back it up as one part named `logs-data-root`.
+
+### Required parts
+
+A backup refuses a part list that leaves out a part of the deployment. Each of these names must be a `--part` or an `--omit-part`:
+
+- `metrics`, `logs`, `traces`, and `profiles`;
+- `logs-data-root` for an all-in-one logs role, or both `logs-block-builder-data-root` and `logs-querier-data-root` for split logs roles.
+
+Use `--omit-part NAME` only for a part that the deployment does not have, for example `--omit-part profiles` when no profiles role runs. The cut records each omitted name in `omitted_parts`, so the audit and restore reports show it. A name cannot be a part and an omitted part. Other parts, such as `traces-overrides`, are optional.
 
 ### State that a cut does not need
 
@@ -71,11 +80,30 @@ krabka-o11y-recovery backup \
 
 The command reads the broker before and after the copy. It refuses to seal the cut when the two reads differ, or when a block-builder group has a record after its committed offset. It copies every object with create-if-absent semantics, writes one manifest for each part under `parts/<name>/`, and writes `krabka-recovery/cut.json` last. The cut names every part by the SHA-256 of its manifest, and it records the next offset of every partition and every committed group offset.
 
+The command reads each object as a stream. It holds an object of 8 MiB or less in memory, and it copies a larger object in multipart parts of 8 MiB. So memory does not grow with the object size.
+
 5. Stop the broker, and take the snapshot of its log directory. Record the snapshot name; `--broker-capture` stores it in the cut.
 
 A set without `krabka-recovery/cut.json` is not a backup. Repeat the command with the same arguments to resume an interrupted copy. After the broker moves, start again under a new backup URL.
 
-`krabka-o11y-recovery` names the default block-builder groups: `krabka-metrics-block-builder`, `krabka-observability-block-builder`, `krabka-traces-block-builder`, and `krabka-profiles-block-builder`.
+### Topic and group names
+
+`backup` and `restore` read the topics and the block-builder groups that the deployment sets. Each flag reads the same environment variable as the role setting, and has the same default. Give the values that the roles use:
+
+| Flag | Environment variable | Default |
+| --- | --- | --- |
+| `--metrics-wal-topic` | `KRABKA_METRICS_WAL_TOPIC` | `__krabka_metrics_wal` |
+| `--metrics-ha-tracker-topic` | `KRABKA_METRICS_HA_TRACKER_TOPIC` | `__krabka_metrics_ha` |
+| `--metrics-ruler-state-topic` | `KRABKA_METRICS_RULER_STATE_TOPIC` | `__krabka_metrics_ruler_state` |
+| `--logs-wal-topic` | `KRABKA_OBSERVABILITY_WAL_TOPIC` | `__krabka_observability_logs_wal` |
+| `--profiles-wal-topic` | `KRABKA_PROFILES_WAL_TOPIC` | `__krabka_profiles_wal` |
+| `--metrics-block-builder-group-id` | `KRABKA_METRICS_BLOCK_BUILDER_GROUP_ID` | `krabka-metrics-block-builder` |
+| `--logs-wal-group-id` | `KRABKA_OBSERVABILITY_WAL_GROUP_ID` | `krabka-observability-block-builder` |
+| `--profiles-block-builder-group-id` | `KRABKA_PROFILES_BLOCK_BUILDER_GROUP_ID` | `krabka-profiles-block-builder` |
+
+The metrics distributor and block builder always use `__krabka_metrics_wal`, and the traces roles always use `__krabka_traces_wal` and the group `krabka-traces-block-builder`. The cut always holds those two topics. The drained check reads the metrics block-builder group on `__krabka_metrics_wal`, the logs group on the logs WAL topic, and the profiles group on the profiles WAL topic.
+
+A block-builder group with no committed offset on a partition reads that partition from the start, so the drained check uses offset 0 for it. The check accepts the group only when the partition has no record. Otherwise the backup refuses with an `undrained_group` finding whose `committed` is `null`. That finding also shows a wrong group id, because a group that never ran has no committed offset.
 
 ## Audit a cut
 
@@ -113,10 +141,15 @@ Before it writes one object, the restore:
 
 - audits the set, and refuses any damage or mix;
 - refuses a target list that does not name exactly the parts of the cut;
+- refuses two targets, or a target and the backup set, that name the same store, or where one store holds the other;
 - reads the restored broker, and refuses it when any partition offset or committed group offset differs from the cut;
 - refuses a target that holds an object that the part does not hold.
 
-The restore never overwrites or deletes an object, so a retry resumes. A broker that has just started can report offset 0 for a partition whose log it has not opened yet. The restore then refuses with a `wal_offset` finding whose `actual` is 0. Wait until the broker is ready, and run the restore again. No index needs a manual edit: every index and manifest is an object in its part, and each role loads it at start.
+The restore never overwrites or deletes an object, so a retry resumes. A broker that has just started can report offset 0 for a partition whose log it has not opened yet. The restore then refuses with a `wal_offset` finding whose `actual` is 0. Wait until the broker is ready, and run the restore again.
+
+A refusal because of the broker names every finding in the error message: the kind, the topic and partition, the group, and the expected and actual offsets. With `--report`, the command also writes the findings to the report file as JSON. A backup that the broker refuses does the same.
+
+The overlap check compares the scheme, the host and port, and the path of each URL. Two URLs that name one store in two forms are not found, for example an `s3://` URL and an endpoint URL. Give each part its own bucket or prefix in one form. The backup does the same check on its part sources and the backup URL. No index needs a manual edit: every index and manifest is an object in its part, and each role loads it at start.
 
 After the restore, each block builder resumes at its committed offset. No record of its WAL at the cut lies after that offset, so it reads no record of a block that the cut holds and publishes no record twice.
 
