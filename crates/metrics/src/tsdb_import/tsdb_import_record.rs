@@ -9,8 +9,8 @@ use super::{Deserialize, Serialize, TsdbImportObject, TsdbImportStats};
 /// and the publication marker that makes them live together.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TsdbImportRecord {
-    /// The format version. Readers reject a version above [`Self::VERSION`]
-    /// before they act on the record.
+    /// The format version. Readers reject any version other than
+    /// [`Self::VERSION`] before they act on the record.
     pub version: u32,
     /// The ULID of the first upload of this content.
     pub ulid: String,

@@ -4,8 +4,8 @@ use super::{
 
 /// Reads a versioned import JSON object, or `None` if the key is absent.
 ///
-/// The version is checked before the rest is decoded, so a record that a
-/// newer build wrote fails with
+/// The version is checked before the rest is decoded, so a record of any
+/// version other than the current one fails with
 /// [`TsdbPublishError::UnsupportedRecordVersion`] and changes nothing.
 pub async fn read_import_json<T: DeserializeOwned>(
     store: &dyn ObjectStore,
@@ -31,7 +31,7 @@ pub async fn read_import_json<T: DeserializeOwned>(
         .and_then(serde_json::Value::as_u64)
         .filter(|version| *version > 0)
         .ok_or_else(|| invalid("the version is missing or 0".to_owned()))?;
-    if version > u64::from(TsdbImportRecord::VERSION) {
+    if version != u64::from(TsdbImportRecord::VERSION) {
         return Err(TsdbPublishError::UnsupportedRecordVersion {
             key: key.to_string(),
             version: u32::try_from(version).unwrap_or(u32::MAX),
