@@ -17,6 +17,11 @@
 //! restored broker, and the suite checks that each block builder resumes at
 //! the recorded offset: every record is in exactly one block.
 //!
+//! A second test imports a Prometheus TSDB block through the Mimir
+//! block-upload routes before the cut. After the restore, the import record
+//! and the ULID binding are in the metrics bucket, and an upload of the same
+//! block gets the duplicate answer and adds no sample.
+//!
 //! The suite writes the sealed cut, the audit and restore reports, and the
 //! query answers, with a `SHA256SUMS` manifest of those files, into the
 //! directory that `KRABKA_RECOVERY_EVIDENCE_DIR` names. Under Bazel it falls
@@ -24,7 +29,7 @@
 //! gate archives those outputs with the test log.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fmt::Write as _,
     path::{Path, PathBuf},
     sync::Arc,
@@ -45,15 +50,16 @@ use krabka_blockstore::{
 use krabka_broker::{BootstrapMode, Broker, BrokerConfig, BrokerHandle};
 use krabka_client_producer::Producer;
 use krabka_metrics::{
-    MetricsCompactorConfig, SamplePayload, WalExemplar, WalRecord,
+    MetricsCompactorConfig, SamplePayload, TsdbBlockFiles, WalExemplar, WalRecord,
     distributor::{KafkaSink as MetricsKafkaSink, WalSink as _},
     list_compaction_manifests,
     metrics::ServiceMetrics as MetricsServiceMetrics,
-    partition_key, run_compactor_consumer_loop,
+    partition_key, run_compactor_consumer_loop, tsdb_block_sha256,
 };
 use krabka_metrics_service::{
-    KafkaRecordingRuleWalSink, KafkaRulerStateSink, RulerStateWalRecord,
-    blockstore_prometheus_router,
+    KafkaRecordingRuleWalSink, KafkaRulerStateSink, MimirTenantAdminState,
+    RefreshingMetricBlockStore, RulerStateWalRecord, blockstore_prometheus_router,
+    mimir_tenant_admin_router,
 };
 use krabka_observability::{
     KafkaLogWalConsumer, KafkaLogWalSink, LogWalSink as _, QuerierIndexSource, Role, ServiceConfig,
@@ -77,7 +83,7 @@ use krabka_profiles::{
 };
 use krabka_promql::{
     InMemoryMetricStore, RecordingRuleWalSink as _, RulerAlertStateRecord, RulerGroupStateRecord,
-    RulerStateSink as _,
+    RulerStateSink as _, WalHead,
 };
 use krabka_traceql::{EngineOpts as TraceqlOpts, TraceqlEngine};
 use krabka_traces::{
@@ -88,13 +94,17 @@ use krabka_traces::{
     querier::store::KrabkaSpanStore,
 };
 use krabka_units::{Time, convert::TimeExt as _, millis};
-use object_store::{ObjectStore, local::LocalFileSystem, memory::InMemory};
+use object_store::{ObjectStore, ObjectStoreExt as _, local::LocalFileSystem, memory::InMemory};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt as _;
+use tsdb_fixture::{FIXTURE_MAX_TIME, FIXTURE_MIN_TIME, FIXTURE_ULID, fixture_files};
+
+#[path = "../../metrics/tests/support/tsdb_fixture.rs"]
+mod tsdb_fixture;
 
 const TENANTS: [&str; 2] = ["tenant-a", "tenant-b"];
 /// The trace that the exemplar, the log line, and the profile sample name.
@@ -113,6 +123,10 @@ const TRACES_GROUP: &str = "krabka-traces-block-builder";
 const PROFILES_GROUP: &str = "krabka-profiles-block-builder";
 const BROKER_DEADLINE: Duration = Duration::from_secs(30);
 const ALERT_RULE: &str = "BackupProbe\nbackup_probe > 0";
+/// The object prefix of Mimir block uploads in the metrics bucket.
+const UPLOAD_PREFIX: &str = "mimir-block-uploads";
+/// A second ULID for an upload of the same Prometheus block content.
+const OTHER_ULID: &str = "01M3MJXM7R4M5X4Q4CKHW5Q8N1";
 
 /// One deployment: a broker log directory, a bucket for each signal, and the
 /// local `data-root` that the logs block builder and querier share.
@@ -392,6 +406,77 @@ async fn a_broker_restored_from_another_time_is_refused_before_any_write() {
             part.name
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restored_deployment_keeps_a_tsdb_import_and_does_not_import_it_again() {
+    let live = Deployment::empty();
+    let broker = start_broker(live.broker_dir.path(), BootstrapMode::Bootstrap).await;
+    let bootstrap = broker.listen_addr().to_string();
+    provision_topics(
+        &bootstrap,
+        &ALL_TOPICS,
+        &TopicSettings::single_broker(),
+        None,
+    )
+    .await
+    .expect("provision topics");
+
+    let imported = upload_fixture_block(&mimir_upload_router(&live.metrics), FIXTURE_ULID).await;
+    check!(imported == json!({"result": "complete"}));
+    let records = objects_under(&live.metrics, UPLOAD_PREFIX).await;
+    check!(records.keys().cloned().collect::<BTreeSet<_>>() == expected_upload_keys());
+    let samples = imported_sample_count(&live.metrics).await;
+    check!(samples == json!([FIXTURE_MAX_TIME / 1_000, "3296"]));
+    let manifests = manifest_keys(&live.metrics).await;
+    check!(
+        manifests.len() == 2,
+        "a float and a native-histogram manifest"
+    );
+
+    let backup: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    backup_deployment(
+        &cut_broker_state(&bootstrap),
+        &backup,
+        &krabka_blockstore::DeploymentBackupPlan {
+            cut_id: "cut-tsdb-import".into(),
+            broker_capture: "in-process-broker-log-dir".into(),
+            drained_groups: deployment_drained_groups(),
+            parts: live.parts(),
+            omitted_parts: Vec::new(),
+        },
+    )
+    .await
+    .expect("seal the deployment cut");
+    broker.shutdown().await;
+    let restored = Deployment::empty();
+    copy_dir(live.broker_dir.path(), restored.broker_dir.path());
+    let restored_broker = start_broker(restored.broker_dir.path(), BootstrapMode::Rejoin).await;
+    wait_for_ready(&restored_broker).await;
+    restore_deployment_backup(
+        &backup,
+        &cut_broker_state(&restored_broker.listen_addr().to_string()),
+        &restored.parts(),
+    )
+    .await
+    .expect("restore the deployment");
+
+    check!(objects_under(&restored.metrics, UPLOAD_PREFIX).await == records);
+    check!(manifest_keys(&restored.metrics).await == manifests);
+    check!(imported_sample_count(&restored.metrics).await == samples);
+    let uploads = mimir_upload_router(&restored.metrics);
+    let same_ulid = send(
+        &uploads,
+        "POST",
+        &upload_uri(FIXTURE_ULID, "start"),
+        fixture_upload_meta(FIXTURE_ULID),
+    )
+    .await;
+    let other_ulid = upload_fixture_block(&uploads, OTHER_ULID).await;
+    check!(same_ulid == (StatusCode::CONFLICT, b"block already exists\n".to_vec()));
+    check!(other_ulid == json!({"result": "complete", "existingBlock": FIXTURE_ULID}));
+    check!(manifest_keys(&restored.metrics).await == manifests);
+    check!(imported_sample_count(&restored.metrics).await == samples);
 }
 
 fn cut_broker_state(bootstrap: &str) -> KafkaBrokerState {
@@ -1304,6 +1389,192 @@ async fn get_json(router: &axum::Router, tenant: &str, uri: &str) -> Value {
 
 async fn get_text(router: &axum::Router, tenant: &str, uri: &str) -> Value {
     Value::String(String::from_utf8(get_body(router, tenant, uri).await).expect("utf-8 body"))
+}
+
+// ---------------------------------------------------------------------------
+// Prometheus TSDB import
+// ---------------------------------------------------------------------------
+
+/// The Mimir block-upload routes over the metrics bucket, as a metrics
+/// querier serves them.
+fn mimir_upload_router(store: &Arc<dyn ObjectStore>) -> axum::Router {
+    let head = WalHead::new();
+    let query_store = Arc::new(RefreshingMetricBlockStore::new(
+        Arc::clone(store),
+        url::Url::parse("memory:///").expect("url"),
+        "metrics",
+        head.clone(),
+    ));
+    authenticate_requests(
+        mimir_tenant_admin_router(MimirTenantAdminState::new(
+            Arc::clone(store),
+            query_store,
+            head,
+        )),
+        &ServerSecurity::default(),
+    )
+}
+
+fn upload_uri(ulid: &str, step: &str) -> String {
+    format!("/api/v1/upload/block/{ulid}/{step}")
+}
+
+/// The files of the checked-in Prometheus block, by upload path.
+fn fixture_upload_files() -> [(&'static str, Vec<u8>); 3] {
+    let files = fixture_files();
+    [
+        ("index", files.index),
+        ("chunks/000001", files.chunks),
+        ("tombstones", files.tombstones),
+    ]
+}
+
+/// The upload `meta.json` of the checked-in block, as `mimirtool backfill`
+/// sends it to `start`.
+fn fixture_upload_meta(ulid: &str) -> Vec<u8> {
+    let files = std::iter::once(json!({"rel_path": "meta.json"}))
+        .chain(
+            fixture_upload_files()
+                .iter()
+                .map(|(path, bytes)| json!({"rel_path": path, "size_bytes": bytes.len()})),
+        )
+        .collect::<Vec<_>>();
+    serde_json::to_vec(&json!({
+        "ulid": ulid,
+        "minTime": FIXTURE_MIN_TIME,
+        "maxTime": FIXTURE_MAX_TIME,
+        "version": 1,
+        "thanos": {"files": files},
+    }))
+    .expect("encode meta.json")
+}
+
+async fn send(
+    router: &axum::Router,
+    method: &str,
+    uri: &str,
+    body: Vec<u8>,
+) -> (StatusCode, Vec<u8>) {
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("X-Scope-OrgID", TENANTS[0])
+                .body(Body::from(body))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body")
+        .to_vec();
+    (status, body)
+}
+
+/// Uploads the checked-in block under `ulid` with the four requests of
+/// `mimirtool backfill`, and returns the `check` answer.
+async fn upload_fixture_block(router: &axum::Router, ulid: &str) -> Value {
+    let started = send(
+        router,
+        "POST",
+        &upload_uri(ulid, "start"),
+        fixture_upload_meta(ulid),
+    )
+    .await;
+    assert!(started.0 == StatusCode::OK, "start: {started:?}");
+    for (path, bytes) in fixture_upload_files() {
+        let uri = format!(
+            "{}?path={}",
+            upload_uri(ulid, "files"),
+            path.replace('/', "%2F")
+        );
+        let uploaded = send(router, "POST", &uri, bytes).await;
+        assert!(uploaded.0 == StatusCode::OK, "file {path}: {uploaded:?}");
+    }
+    let finished = send(router, "POST", &upload_uri(ulid, "finish"), Vec::new()).await;
+    assert!(finished.0 == StatusCode::OK, "finish: {finished:?}");
+    let (status, body) = send(router, "GET", &upload_uri(ulid, "check"), Vec::new()).await;
+    assert!(status == StatusCode::OK, "check: {status}");
+    serde_json::from_slice(&body).expect("check answer")
+}
+
+/// The objects that the upload and the import of the checked-in block leave
+/// under the upload prefix: the upload files and state, the binding of the
+/// ULID, and the import record of the content hash.
+fn expected_upload_keys() -> BTreeSet<String> {
+    let files = fixture_files();
+    let sha256 = tsdb_block_sha256(TsdbBlockFiles {
+        index: &files.index,
+        chunk_segments: &[files.chunks.as_slice()],
+        tombstones: Some(&files.tombstones),
+    });
+    let tenant = format!("{UPLOAD_PREFIX}/{}", TENANTS[0]);
+    let upload = format!("{tenant}/{FIXTURE_ULID}");
+    [
+        format!("{upload}/files/chunks/000001"),
+        format!("{upload}/files/index"),
+        format!("{upload}/files/tombstones"),
+        format!("{upload}/import.json"),
+        format!("{upload}/state.json"),
+        format!("{upload}/uploading-meta.json"),
+        format!("{tenant}/by-sha256/{sha256}.json"),
+    ]
+    .into_iter()
+    .collect()
+}
+
+/// Every object under `prefix`, with its bytes.
+async fn objects_under(store: &Arc<dyn ObjectStore>, prefix: &str) -> BTreeMap<String, Vec<u8>> {
+    let mut objects = BTreeMap::new();
+    for path in list_paths(store).await {
+        if path.starts_with(&format!("{prefix}/")) {
+            let bytes = store
+                .get(&object_store::path::Path::from(path.as_str()))
+                .await
+                .expect("get")
+                .bytes()
+                .await
+                .expect("object bytes");
+            objects.insert(path, bytes.to_vec());
+        }
+    }
+    objects
+}
+
+async fn manifest_keys(store: &Arc<dyn ObjectStore>) -> BTreeSet<String> {
+    list_paths(store)
+        .await
+        .into_iter()
+        .filter(|path| {
+            Path::new(path)
+                .extension()
+                .is_some_and(|extension| extension == "index")
+        })
+        .collect()
+}
+
+/// The `[time, value]` pair of the count of every imported sample, as the
+/// metrics query path reads it from the manifests in `store`.
+async fn imported_sample_count(store: &Arc<dyn ObjectStore>) -> Value {
+    let query = url::form_urlencoded::byte_serialize(
+        br#"sum(count_over_time({__name__=~"imported_.+"}[3h]))"#,
+    )
+    .collect::<String>();
+    let answer = get_json(
+        &metrics_router(store).await,
+        TENANTS[0],
+        &format!(
+            "/api/v1/query?query={query}&time={}",
+            FIXTURE_MAX_TIME / 1_000
+        ),
+    )
+    .await;
+    check!(answer["status"] == "success", "{answer}");
+    answer["data"]["result"][0]["value"].clone()
 }
 
 // ---------------------------------------------------------------------------

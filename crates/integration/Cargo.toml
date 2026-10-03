@@ -30,6 +30,9 @@ assert2 = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true, features = ["json", "query"] }
 bytes = { workspace = true }
+# `backup_restore` reads the Prometheus TSDB block fixture of krabka-metrics,
+# whose expected samples are gzip-compressed.
+flate2 = { workspace = true }
 futures = { workspace = true }
 hex = { workspace = true }
 krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
