@@ -13,11 +13,14 @@ pub(crate) fn persisted_block_writer_properties() -> WriterProperties {
         .build()
 }
 
-/// Missing metadata is the supported legacy version. A present version must
-/// be unique and exactly match the current reader.
+/// Checks the block format version in a Parquet footer.
+///
+/// The version marker is required. It must appear once and exactly match the
+/// version that this build writes.
 ///
 /// # Errors
-/// Returns a description when the version marker is malformed or unsupported.
+/// Returns a description when the version marker is absent, malformed, or
+/// unsupported.
 pub fn validate_persisted_block_format(metadata: &ParquetMetaData) -> Result<(), String> {
     let versions = metadata
         .file_metadata()
@@ -28,7 +31,8 @@ pub fn validate_persisted_block_format(metadata: &ParquetMetaData) -> Result<(),
         .map(|entry| entry.value.as_deref())
         .collect::<Vec<_>>();
     match versions.as_slice() {
-        [] | [Some(PERSISTED_BLOCK_FORMAT_VERSION)] => Ok(()),
+        [Some(PERSISTED_BLOCK_FORMAT_VERSION)] => Ok(()),
+        [] => Err("unsupported persisted block format version: the marker is missing".to_string()),
         [None] => Err("persisted block format version has no value".to_string()),
         [Some(version)] => Err(format!(
             "unsupported persisted block format version `{version}`"

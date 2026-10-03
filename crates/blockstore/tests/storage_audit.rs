@@ -33,12 +33,13 @@ use storage_fixtures::{
     upper_case_manifest,
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Fault {
     None,
     MissingBlock,
     CorruptBlock,
     UnsupportedBlock,
+    UnversionedBlock,
     OrphanBlock,
     YoungBlock,
     OrphanSidecar,
@@ -82,7 +83,7 @@ async fn keys_under(store: &Arc<dyn ObjectStore>, prefix: &str) -> Vec<String> {
     keys
 }
 
-async fn put_unsupported_block(store: &Arc<dyn ObjectStore>, key: &str) {
+async fn put_unsupported_block(store: &Arc<dyn ObjectStore>, key: &str, version: Option<&str>) {
     let schema = Arc::new(Schema::new(vec![
         Field::new(COL_FINGERPRINT, DataType::UInt64, false),
         Field::new(COL_TIMESTAMP, DataType::Int64, false),
@@ -96,10 +97,12 @@ async fn put_unsupported_block(store: &Arc<dyn ObjectStore>, key: &str) {
     )
     .unwrap();
     let properties = WriterProperties::builder()
-        .set_key_value_metadata(Some(vec![KeyValue::new(
-            PERSISTED_BLOCK_FORMAT_KEY.to_string(),
-            Some("99".to_string()),
-        )]))
+        .set_key_value_metadata(version.map(|version| {
+            vec![KeyValue::new(
+                PERSISTED_BLOCK_FORMAT_KEY.to_string(),
+                Some(version.to_string()),
+            )]
+        }))
         .build();
     let mut bytes = Vec::new();
     let mut writer = ArrowWriter::try_new(&mut bytes, schema, Some(properties)).unwrap();
@@ -152,8 +155,9 @@ async fn inject(
             put_bytes(store, block, b"not a parquet file").await;
             vec![finding(StorageFindingKind::CorruptBlock, signal, t, block)]
         }
-        Fault::UnsupportedBlock => {
-            put_unsupported_block(store, block).await;
+        Fault::UnsupportedBlock | Fault::UnversionedBlock => {
+            let version = (fault == Fault::UnsupportedBlock).then_some("99");
+            put_unsupported_block(store, block, version).await;
             vec![finding(
                 StorageFindingKind::UnsupportedFormat,
                 signal,
@@ -453,6 +457,7 @@ fn cases() -> Vec<(StorageSignal, Fault)> {
         Fault::MissingBlock,
         Fault::CorruptBlock,
         Fault::UnsupportedBlock,
+        Fault::UnversionedBlock,
         Fault::OrphanBlock,
         Fault::YoungBlock,
         Fault::SplitBrain,
