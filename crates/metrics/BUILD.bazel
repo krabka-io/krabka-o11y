@@ -6,10 +6,20 @@ package(default_visibility = ["//visibility:public"])
 # `tests/support/diff_corpus.rs` is the shared differential corpus:
 # //crates/metrics-service's suites reach it with `#[path]`, so it has to
 # be nameable from there.
-exports_files([
-    "Cargo.toml",
-    "tests/support/diff_corpus.rs",
-])
+exports_files(
+    [
+        "Cargo.toml",
+        "tests/support/diff_corpus.rs",
+        "tests/support/tsdb_fixture.rs",
+    ] + glob(["tests/testdata/tsdb/**"]),
+)
+
+# The Prometheus TSDB block fixture, for the //crates/metrics-service suites
+# that upload it. They find it at this workspace path in their runfiles.
+filegroup(
+    name = "tsdb_fixture",
+    srcs = glob(["tests/testdata/tsdb/**"]),
+)
 
 crate_library(
     name = "metrics",
@@ -25,6 +35,9 @@ crate_binary(
 )
 
 crate_tests(
+    # The Prometheus TSDB block that `tests/tsdb_import.rs` decodes, with the
+    # samples the Prometheus TSDB library reads from it.
+    data = glob(["tests/testdata/**"]),
     # The shared lifecycle store, reached with `#[path]` from //crates/blockstore.
     extra_srcs = {
         "level_compaction": ["//crates/blockstore:tests/support/lifecycle_store.rs"],

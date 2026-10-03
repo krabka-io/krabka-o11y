@@ -640,4 +640,4 @@ pub use v2_histogram_to_native::v2_histogram_to_native;
 use v2_reset_hint::v2_reset_hint;
 use v2_spans::v2_spans;
 use v2_zero_count::v2_zero_count;
-use validate_spans_and_counts::validate_spans_and_counts;
+pub(crate) use validate_spans_and_counts::validate_spans_and_counts;
