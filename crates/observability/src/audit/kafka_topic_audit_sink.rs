@@ -88,7 +88,9 @@ impl KafkaTopicAuditSink {
 
 #[async_trait]
 impl AuditSink for KafkaTopicAuditSink {
-    async fn write(&self, record: AuditRecord) -> Result<(), AuditError> {
+    // Every write waits for the producer acknowledgment (Acks::All), including
+    // records for which the writer does not explicitly request durability.
+    async fn write(&self, record: AuditRecord, _durable: bool) -> Result<(), AuditError> {
         let produce =
             self.producer
                 .send(audit_producer_record(&self.topic, self.partition, record));

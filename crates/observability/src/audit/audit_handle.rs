@@ -7,7 +7,7 @@ use std::{
 };
 
 use krabka_audit::{AuditLog, AuditStats};
-use qubit_clock::{Clock, SystemClock};
+use qubit_clock::{StdWallClock, WallClock};
 
 use super::{
     AuditEndpoint, AuditEvent, AuditOutcome, AuditPrincipal, AuditResource, EpochMs,
@@ -32,7 +32,7 @@ pub struct AuditHandle {
 struct Inner {
     log: Arc<AuditLog>,
     stats: Arc<AuditStats>,
-    clock: Arc<dyn Clock>,
+    clock: Arc<dyn WallClock>,
     enabled: bool,
     closed: AtomicBool,
     dropped_after_close: AtomicU64,
@@ -47,7 +47,7 @@ impl AuditHandle {
         Self::build(
             AuditLog::disabled(),
             Arc::new(AuditStats::new()),
-            Arc::new(SystemClock::new()),
+            Arc::new(StdWallClock::new()),
             false,
         )
     }
@@ -58,14 +58,14 @@ impl AuditHandle {
     /// `stats` to the writer. A test can drain the receiver itself. The clock
     /// gives each event its time.
     #[must_use]
-    pub fn new(log: Arc<AuditLog>, stats: Arc<AuditStats>, clock: Arc<dyn Clock>) -> Self {
+    pub fn new(log: Arc<AuditLog>, stats: Arc<AuditStats>, clock: Arc<dyn WallClock>) -> Self {
         Self::build(log, stats, clock, true)
     }
 
     fn build(
         log: Arc<AuditLog>,
         stats: Arc<AuditStats>,
-        clock: Arc<dyn Clock>,
+        clock: Arc<dyn WallClock>,
         enabled: bool,
     ) -> Self {
         Self {
@@ -89,7 +89,15 @@ impl AuditHandle {
     /// The current time from the handle's clock.
     #[must_use]
     pub fn now(&self) -> EpochMs {
-        EpochMs(self.inner.clock.millis())
+        EpochMs(
+            self.inner
+                .clock
+                .now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| {
+                    i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX)
+                }),
+        )
     }
 
     /// Puts `event` in the queue to the writer, and does not wait.

@@ -39,7 +39,7 @@ use krabka_observability::{
     },
 };
 use opentelemetry_proto::tonic::collector::logs::v1::logs_service_client::LogsServiceClient;
-use qubit_clock::{DateTime, MockTime, Utc};
+use qubit_clock::{ManualMonotonicClock, ManualWallClock, MonotonicClock as _};
 use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose,
@@ -260,7 +260,7 @@ fn product_for_test() -> ProductInfo {
 
 // An enabled audit layer over a memory sink, whose clock stays at `START_MS`.
 struct AuditForTest {
-    _time: MockTime,
+    _time: Arc<ManualMonotonicClock>,
     sink: Arc<MemorySink>,
     handle: AuditHandle,
     writer: JoinHandle<()>,
@@ -269,9 +269,7 @@ struct AuditForTest {
 
 impl AuditForTest {
     fn start() -> Self {
-        let time = MockTime::at(
-            DateTime::<Utc>::from_timestamp_millis(START_MS).expect("the start time is valid"),
-        );
+        let time = ManualMonotonicClock::new_shared();
         let sink = Arc::new(MemorySink::default());
         let stop = CancellationToken::new();
         let (handle, writer) = AuditService::start_with_sink(
@@ -279,8 +277,12 @@ impl AuditForTest {
             product_for_test(),
             sink.clone(),
             AuditClocks {
-                clock: Arc::new(time.clock()),
-                sleeper: Arc::new(time.sleeper()),
+                clock: Arc::new(ManualWallClock::from_clock(
+                    std::time::UNIX_EPOCH
+                        + std::time::Duration::from_millis(START_MS.unsigned_abs()),
+                    Arc::clone(&time),
+                )),
+                timer: time.new_timer(),
             },
             stop.clone(),
         )

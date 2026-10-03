@@ -4502,7 +4502,7 @@ dependencies = [
  "prometheus-client",
  "proptest",
  "prost 0.14.4",
- "qubit-clock 0.8.1",
+ "qubit-clock 0.13.0",
  "rcgen",
  "regex",
  "reqwest 0.13.5",
@@ -7130,7 +7130,6 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "parking_lot",
- "tokio",
 ]
 
 [[package]]

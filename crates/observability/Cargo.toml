@@ -56,7 +56,7 @@ prometheus-client.workspace = true
 prost.workspace = true
 # The audit writer's checkpoint and replay cadence runs on this sleeper, so a
 # test can drive it without wall-clock time.
-qubit-clock = { version = "0.8", features = ["tokio"] }
+qubit-clock = "~0.13.0"
 regex.workspace = true
 # The outbound client that carries service-to-service credentials. The
 # `loki_differential` suite also uses it, for both sides of its comparison.

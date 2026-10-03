@@ -3274,7 +3274,7 @@ dependencies = [
  "krabka-protocol",
  "krabka-units",
  "krabka-verified",
- "qubit-clock 0.13.0",
+ "qubit-clock",
  "ring",
  "serde",
  "serde_json",
@@ -3603,7 +3603,7 @@ dependencies = [
  "parquet",
  "prometheus-client",
  "prost 0.14.4",
- "qubit-clock 0.8.1",
+ "qubit-clock",
  "regex",
  "reqwest 0.13.5",
  "rustls",
@@ -3790,7 +3790,7 @@ dependencies = [
  "krabka-units",
  "krabka-verified",
  "num-traits",
- "qubit-clock 0.13.0",
+ "qubit-clock",
 ]
 
 [[package]]
@@ -5583,18 +5583,6 @@ checksum = "4dcd034599e63b970727f70d79e02d62390a4a84f7c6b827c27c46d5ac3fa622"
 dependencies = [
  "ar_archive_writer",
  "cc",
-]
-
-[[package]]
-name = "qubit-clock"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78fd5f61da2a970d1b637134429f107f7a8d119227ad31e5f3c9b8cc5ef7df08"
-dependencies = [
- "chrono",
- "chrono-tz",
- "parking_lot",
- "tokio",
 ]
 
 [[package]]
