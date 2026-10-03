@@ -302,12 +302,7 @@ impl WalAssignmentWatch {
         if assigned.is_empty() {
             return false;
         }
-        tokio::time::timeout(
-            LOG_END_QUERY_TIMEOUT.to_std(),
-            broker_confirms_durable_log_end(consumer, &assigned),
-        )
-        .await
-        .unwrap_or(false)
+        bounded(group_committed_log_end(consumer, &assigned)).await
     }
 
     fn record_applied(&mut self, assigned: &[(String, i32)], at_log_end: bool) {

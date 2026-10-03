@@ -133,17 +133,26 @@ async fn spans_pushed_to_the_ingest_port_come_back_through_the_tempo_api_port() 
     // frontend that waited on a querier whose `/ready` was waiting on the
     // frontend -- would leave this 503 for the life of the process while every
     // port stayed open and every query still worked.
-    let ready = http
-        .get(format!("http://{admin}/ready"))
-        .send()
-        .await
-        .expect("the admin port answers");
-    let status = ready.status();
-    check!(
-        status == reqwest::StatusCode::OK,
-        "{}",
-        ready.text().await.unwrap_or_default()
-    );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let ready = http
+            .get(format!("http://{admin}/ready"))
+            .send()
+            .await
+            .expect("the admin port answers");
+        let status = ready.status();
+        if status == reqwest::StatusCode::OK {
+            break;
+        }
+        let body = ready.text().await.unwrap_or_default();
+        assert!(status == reqwest::StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert!(
+            Instant::now() < deadline,
+            "roles did not become ready: {body}"
+        );
+        assert!(let None = process.exited(), "the composition exited: {body}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }
 
 /// The role under test: the binary's own [`run`], on the `all` arm.
