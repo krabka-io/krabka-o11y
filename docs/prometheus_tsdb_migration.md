@@ -11,7 +11,7 @@ This guide moves historical data from a Prometheus server into Krabka. Krabka im
 | Native histograms | Schemas -4 to 8, and custom buckets (schema -53) | Integer and float histograms, gauge histograms, and counter-reset hints. |
 | Stale markers | Yes | A stale histogram becomes a float stale marker. The query path then hides the series as Prometheus does. |
 | `tombstones` | Format version 1 | The import drops every deleted sample. Mimir rejects a block that has this file, so this is a Krabka extension. |
-| Exemplars and metric metadata | No | A TSDB block does not hold them. |
+| Exemplars and metric metadata | Not applicable | A TSDB block does not hold them. See [Metadata and exemplars](#metadata-and-exemplars). |
 
 The import validates the whole block before it writes anything:
 
@@ -151,7 +151,38 @@ for q in 'count({__name__=~".+"})' \
 done
 ```
 
-The `tsdb_import` suite in `crates/metrics-service` does this comparison against the pinned Prometheus image. It covers instant queries, range queries, `rate`, `increase`, the histogram functions, `/api/v1/series` and the label endpoints.
+The `tsdb_import` suite in `crates/metrics-service` does this comparison against the pinned Prometheus image. It covers instant queries, range queries, `rate`, `increase`, the histogram functions, the tombstoned series, cardinality through `count` and the discovery endpoints, `/api/v1/series`, the label endpoints, `/api/v1/metadata` and `/api/v1/query_exemplars`.
+
+### Metadata and exemplars
+
+A TSDB block holds no metric metadata and no exemplars. Prometheus v3.14.0, which is `github.com/prometheus/prometheus v0.314.0`, shows this in its source:
+
+- `LeveledCompactor.write` in `tsdb/compact.go` writes only `chunks/`, `index`, `meta.json` and `tombstones`.
+- The index table of contents, `TOC` in `tsdb/index/index.go`, has only symbols, series, label indices and postings. A series entry holds labels and chunk references.
+- `BlockMeta` in `tsdb/block.go` holds the ULID, the time range, the stats, the compaction data and the version.
+- Exemplars are in a ring buffer in the head. `DB.ExemplarQuerier` in `tsdb/db.go` reads only `db.head.exemplars`. The WAL has exemplar and metadata records, but compaction does not copy them into a block.
+- `/api/v1/metadata` reads the metadata of the active scrape targets, in `API.metricMetadata` of `web/api/v1/api.go`.
+
+`github.com/prometheus/prometheus v0.307.0`, the version of the reference dumper, has the same code. So Prometheus that serves only the block answers `{"status":"success","data":{}}` for `/api/v1/metadata` and `{"status":"success","data":[]}` for `/api/v1/query_exemplars`. Krabka gives the same answers after the import.
+
+### Cardinality
+
+Prometheus gives `/api/v1/status/tsdb` from its head only. For a persisted block, Prometheus gives a head with no series and four empty lists. Krabka counts the series of its blocks. `/api/v1/status/tsdb` and the Grafana Mimir routes `/api/v1/cardinality/label_names`, `/api/v1/cardinality/label_values`, `/api/v1/cardinality/active_series` and `/api/v1/cardinality/active_native_histogram_metrics` take no time range. For such a request, Krabka reads only the blocks inside `--unbounded-compatibility-lookback`, by default one hour. An imported block is usually older than that, so these routes do not count it. This agrees with Prometheus and Mimir, which read these routes from the head. To count the imported series, start the querier with a lookback that reaches the block.
+
+To compare the cardinality of the block with Prometheus, use `count` and the discovery endpoints with a time range:
+
+```bash
+curl -fsS -H "X-Scope-OrgID: $TENANT" "$KRABKA/api/v1/query" \
+  --data-urlencode 'query=count by (__name__) ({__name__=~".+"})' --data-urlencode time=$T
+curl -fsS -H "X-Scope-OrgID: $TENANT" "$KRABKA/api/v1/label/__name__/values" \
+  --data-urlencode start=$START --data-urlencode end=$END
+```
+
+### Tombstones and Prometheus v2.45.0 and later
+
+Prometheus v2.45.0 and later, up to at least v3.15.0, can fail a query of a series that has a tombstone. The error is `unexpected error: runtime error: index out of range [2] with length 2`. `/api/v1/series` closes the connection. Krabka does not have this problem. If you verify a block with tombstones against Prometheus, expect this error. It is not a sign of a damaged block.
+
+Prometheus fails when four conditions are true for one series and one query window. A chunk that the query reads starts before the window, and a chunk that it reads ends after the window. The tombstone starts after the start of the window, and it ends at or after the end of the window. Prometheus trims the chunks to the window. It puts the front trim interval before the tombstone, then adds the back trim interval. `Intervals.Add` in `tsdb/tombstones/tombstones.go` then reads past the end of the list, at line 379 of v0.314.0. Its open-ended branch sets `maxi := len(in)`, but `maxi` counts from `mini`. Commit `80b7f73d26` added that branch. The `tsdb_import` suite records the windows that fail with the pinned image.
 
 ## Rollback
 
