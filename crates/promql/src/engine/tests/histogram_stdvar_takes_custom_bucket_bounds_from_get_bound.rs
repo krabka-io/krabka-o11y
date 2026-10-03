@@ -91,8 +91,10 @@ pub(crate) async fn histogram_stdvar_takes_custom_bucket_bounds_from_get_bound()
         };
         check!(samples.len() == 1, "{name}");
         let got = float_value(&samples[0].value);
+        // Every NaN matches every other: its sign bit depends on the target
+        // CPU, and Prometheus does not compare NaN payloads either.
         check!(
-            got.total_cmp(&want).is_eq() || approx_eq(got, want),
+            (got.is_nan() && want.is_nan()) || got.total_cmp(&want).is_eq() || approx_eq(got, want),
             "{name} {function}: {got} != {want}"
         );
     }
