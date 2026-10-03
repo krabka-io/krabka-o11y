@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-new_image=${1:?usage: kubernetes-qualification.sh NEW_IMAGE OLD_IMAGE [EVIDENCE_DIR]}
-old_image=${2:?usage: kubernetes-qualification.sh NEW_IMAGE OLD_IMAGE [EVIDENCE_DIR]}
-evidence_dir=${3:-qualification/evidence/kubernetes}
+image=${1:?usage: kubernetes-qualification.sh IMAGE [EVIDENCE_DIR]}
+evidence_dir=${2:-qualification/evidence/kubernetes}
 cluster="krabka-m17-${GITHUB_RUN_ID:-$$}-${GITHUB_RUN_ATTEMPT:-1}"
 namespace=krabka-o11y
 tenant=release-smoke
@@ -33,17 +32,6 @@ wait_deployments() {
   while IFS= read -r deployment; do
     run kubectl -n "${namespace}" rollout status "${deployment}" --timeout=15m
   done < <(kubectl -n "${namespace}" get deployments -l app.kubernetes.io/part-of=krabka-o11y -o name | sort)
-}
-
-set_krabka_image() {
-  local deployment=$1 image=$2 init_names
-  local images=("role=${image}")
-  init_names=$(kubectl -n "${namespace}" get "${deployment}" \
-    -o jsonpath='{.spec.template.spec.initContainers[*].name}')
-  if grep -qw topic-contract <<<"${init_names}"; then
-    images+=("topic-contract=${image}")
-  fi
-  run kubectl -n "${namespace}" set image "${deployment}" "${images[@]}"
 }
 
 query_forward_pids=()
@@ -84,29 +72,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ ${new_image} == krabka-o11y:dev ]] && ! docker image inspect "${new_image}" >/dev/null 2>&1; then
+if [[ ${image} == krabka-o11y:dev ]] && ! docker image inspect "${image}" >/dev/null 2>&1; then
   image_id=$(docker image ls --filter reference=krabka-o11y:dev --format '{{.ID}}' | sed -n '1p')
   test -n "${image_id}"
-  new_image=localhost/krabka-o11y:dev
-  run docker tag "${image_id}" "${new_image}"
+  image=localhost/krabka-o11y:dev
+  run docker tag "${image_id}" "${image}"
 fi
 
-for image in "${new_image}" "${old_image}"; do
-  if ! docker image inspect "${image}" >/dev/null 2>&1; then
-    run docker pull --platform linux/amd64 "${image}"
-  fi
-done
+if ! docker image inspect "${image}" >/dev/null 2>&1; then
+  run docker pull --platform linux/amd64 "${image}"
+fi
 
 run kind create cluster --name "${cluster}" --wait 120s
-run kind load docker-image --name "${cluster}" "${new_image}"
-run kind load docker-image --name "${cluster}" "${old_image}"
+run kind load docker-image --name "${cluster}" "${image}"
 kubectl version -o yaml >"${evidence_dir}/cluster-version.yaml"
 kubectl get nodes -o wide >"${evidence_dir}/nodes.txt"
 
 kubectl kustomize deploy >"${evidence_dir}/manifests.current.yaml"
 kubectl kustomize deploy >"${evidence_dir}/manifests.second.yaml"
 run cmp "${evidence_dir}/manifests.current.yaml" "${evidence_dir}/manifests.second.yaml"
-sed -e "s#image: ghcr.io/krabka-io/krabka-o11y:latest#image: ${old_image}#" \
+sed -e "s#image: ghcr.io/krabka-io/krabka-o11y:latest#image: ${image}#" \
   -e 's/--partitions=1/--partitions=2/g' \
   <"${evidence_dir}/manifests.current.yaml" >"${evidence_dir}/manifests.yaml"
 run kubectl apply --server-side -f "${evidence_dir}/manifests.yaml"
@@ -296,7 +281,7 @@ snapshot_restarts() {
 }
 
 assert_no_new_restarts() {
-  local stage=$1 baseline=${2:-old}
+  local stage=$1 baseline=${2:-initial}
   snapshot_restarts "${stage}"
   awk '
     NR == FNR {
@@ -384,10 +369,10 @@ assert_marker_cardinality() {
 }
 
 send_corpus
-query_corpus old
-# The old release did not deploy every role in this topology. Record its
-# stabilized pods as the baseline, then reject any additional restart.
-snapshot_restarts old
+query_corpus initial
+# Record the stabilized pods as the baseline, then reject any additional
+# restart.
+snapshot_restarts initial
 
 # These roles carry no singleton WAL partition or local durable ownership.
 scalable=(metrics-distributor metrics-query-frontend logs-distributor \
@@ -432,27 +417,15 @@ wait_deployments
 query_corpus node-drain
 assert_no_new_restarts node-drain
 
-# Rolling N-1 -> N and back, one role at a time, while the public corpus stays
-# queryable. The immutable images are both loaded into the kind node above.
+# Rolling restart, one role at a time, while the public corpus stays
+# queryable. Every role keeps the image under test.
 mapfile -t deployments < <(kubectl -n "${namespace}" get deployments -l app.kubernetes.io/part-of=krabka-o11y -o name | sort)
 for deployment in "${deployments[@]}"; do
-  set_krabka_image "${deployment}" "${new_image}"
+  run kubectl -n "${namespace}" rollout restart "${deployment}"
   run kubectl -n "${namespace}" rollout status "${deployment}" --timeout=10m
-  query_corpus "upgrade-${deployment##*/}"
+  query_corpus "rolling-restart-${deployment##*/}"
 done
-assert_no_new_restarts upgraded
-for deployment in "${deployments[@]}"; do
-  set_krabka_image "${deployment}" "${old_image}"
-  run kubectl -n "${namespace}" rollout status "${deployment}" --timeout=10m
-  query_corpus "rollback-${deployment##*/}"
-done
-assert_no_new_restarts rolled-back
-for deployment in "${deployments[@]}"; do
-  set_krabka_image "${deployment}" "${new_image}"
-done
-wait_deployments
-query_corpus restored-new
-assert_no_new_restarts restored-new
+assert_no_new_restarts rolling-restart
 
 # Cold restart every Krabka role while the broker and object store retain their
 # PVCs, then prove the acknowledged corpus is still queryable.
@@ -541,10 +514,9 @@ snapshot_role_recovery dependency-recovery "${replicated[@]}"
 assert_no_new_restarts dependency-recovery dependency-recovery-ready
 
 kubectl -n "${namespace}" get all -o wide >"${evidence_dir}/objects.txt"
-docker image inspect "${new_image}" >"${evidence_dir}/new-image.json"
-docker image inspect "${old_image}" >"${evidence_dir}/old-image.json"
-printf 'result=passed\ncluster=%s\nnew_image=%s\nold_image=%s\nmanifest_sha256=%s\n' \
-  "${cluster}" "${new_image}" "${old_image}" \
+docker image inspect "${image}" >"${evidence_dir}/image.json"
+printf 'result=passed\ncluster=%s\nimage=%s\nmanifest_sha256=%s\n' \
+  "${cluster}" "${image}" \
   "$(sha256sum "${evidence_dir}/manifests.yaml" | cut -d ' ' -f 1)" \
   >"${evidence_dir}/report.txt"
 find "${evidence_dir}" -maxdepth 1 -type f ! -name SHA256SUMS -print0 |

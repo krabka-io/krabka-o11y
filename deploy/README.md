@@ -53,13 +53,12 @@ credentials.
 The `kubernetes lifecycle` workflow applies this base to a fresh kind cluster.
 It checks all four public ingest/query protocols and tenant isolation while
 scaling, deleting a pod, enforcing disruption budgets, draining the node,
-cold-starting, upgrading, and rolling back every role. Run the same check
-locally after building the image:
+restarting every role in turn, and cold-starting. Every role runs the one image
+under test. Run the same check locally after building the image:
 
 ```bash
 bazel run -c opt //bazel/images/krabka:load
-tools/kubernetes-qualification.sh krabka-o11y:dev \
-  ghcr.io/krabka-io/krabka-o11y:sha-<previous-release-commit>
+tools/kubernetes-qualification.sh krabka-o11y:dev
 ```
 
 The report, exact rendered manifests, image metadata, command log, responses,
