@@ -576,13 +576,6 @@ impl<V> ObjectStoreCache<V> {
         };
         format!("{}/{tenant}/", self.prefix)
     }
-
-    fn is_legacy_path(&self, path: &Path) -> bool {
-        path.as_ref()
-            .strip_prefix(&self.prefix)
-            .and_then(|path| path.strip_prefix('/'))
-            .is_some_and(|path| !path.contains('/'))
-    }
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -674,11 +667,6 @@ where
             let now_ms = self.clock.now_epoch_millis();
             let mut swept = 0;
             while let Some(object) = objects.try_next().await? {
-                if self.is_legacy_path(&object.location) {
-                    self.store.delete(&object.location).await?;
-                    swept += 1;
-                    continue;
-                }
                 let bytes = self.store.get(&object.location).await?.bytes().await?;
                 let stored: StoredValue<serde_json::Value> =
                     serde_json::from_slice(&bytes).map_err(ObjectStoreCacheError::Decode)?;
@@ -749,11 +737,6 @@ where
         let mut tenant_bytes = 0_usize;
         let mut tenant_objects = 0_usize;
         for object in objects {
-            if self.is_legacy_path(&object.location) {
-                self.store.delete(&object.location).await?;
-                self.metrics.evictions.inc();
-                continue;
-            }
             let bytes = self.store.get(&object.location).await?.bytes().await?;
             let value: StoredValue<serde_json::Value> = match serde_json::from_slice(&bytes) {
                 Ok(value) => value,
