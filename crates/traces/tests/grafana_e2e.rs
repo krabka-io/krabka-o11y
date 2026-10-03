@@ -1009,7 +1009,7 @@ async fn wait_for_http_ok(client: &reqwest::Client, base: &str, paths: &[&str]) 
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
-    Err(format!("timed out waiting for {base}").into())
+    Err(format!("timed out waiting for {base}: {paths:?}").into())
 }
 
 async fn get_json(client: &reqwest::Client, url: &str) -> TestResult<JsonValue> {
@@ -1020,7 +1020,11 @@ async fn get_json(client: &reqwest::Client, url: &str) -> TestResult<JsonValue> 
         .await?;
     let status = resp.status();
     let body = resp.bytes().await?;
-    assert2::assert!(status == ReqwestStatusCode::OK);
+    assert2::assert!(
+        status == ReqwestStatusCode::OK,
+        "GET {url} returned {status}: {}",
+        String::from_utf8_lossy(&body)
+    );
     Ok(serde_json::from_slice(&body)?)
 }
 
@@ -1180,6 +1184,14 @@ async fn grafana_e2e_full_surface() -> TestResult {
         .send()
         .await?
         .error_for_status()?;
+    wait_for_http_ok(
+        &client,
+        &grafana_base,
+        &[&format!(
+            "/api/datasources/uid/{GRAFANA_TEMPO_DATASOURCE_UID}"
+        )],
+    )
+    .await?;
     let fetched = get_json(
         &client,
         &format!("{grafana_base}/api/datasources/uid/{GRAFANA_TEMPO_DATASOURCE_UID}"),
@@ -1806,6 +1818,14 @@ async fn grafana_e2e_service_graph(
         .send()
         .await?
         .error_for_status()?;
+    wait_for_http_ok(
+        &client,
+        &grafana_base,
+        &[&format!(
+            "/api/datasources/uid/{GRAFANA_PROM_DATASOURCE_UID}"
+        )],
+    )
+    .await?;
     let fetched = get_json(
         &client,
         &format!("{grafana_base}/api/datasources/uid/{GRAFANA_PROM_DATASOURCE_UID}"),

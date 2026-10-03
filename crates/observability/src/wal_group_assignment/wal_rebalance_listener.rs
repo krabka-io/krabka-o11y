@@ -103,7 +103,7 @@ impl WalRebalanceListener {
                 Some(offset) => {
                     consumer
                         .seek(partition.0, partition.1, offset.offset)
-                        .await?
+                        .await?;
                 }
                 None => never_committed.push(partition),
             }

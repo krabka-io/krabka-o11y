@@ -1025,6 +1025,40 @@ async fn compactor_runtime_rejects_missing_object_store() {
 }
 
 #[tokio::test]
+async fn compactor_drain_waits_through_an_empty_poll_with_records_still_pending() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+    let config = compactor_config("observability/logs");
+    let commits = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let dependencies = ServiceDependencies::default().with_wal_consumer(
+        RecordingWalConsumer::recording_commits_to(
+            vec![
+                Vec::new(),
+                vec![kafka_wal_record(
+                    &wal_record_without_position(30, "api stopping"),
+                    5,
+                    44,
+                )],
+            ],
+            &commits,
+        ),
+    );
+
+    let descriptors = run_compactor_until_idle(&config, dependencies, Some(&store))
+        .await
+        .unwrap();
+
+    assert!(descriptors.len() == 1);
+    assert!(
+        commits.lock().unwrap().as_slice()
+            == [WalPosition {
+                partition: PartitionIndex(5),
+                offset: Offset(44),
+            }]
+    );
+}
+
+#[tokio::test]
 async fn compactor_runtime_preserves_indexes_across_polled_batches_until_idle() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
@@ -2242,6 +2276,10 @@ impl RecordingWalConsumer {
 
 #[async_trait]
 impl LogWalConsumer for RecordingWalConsumer {
+    async fn is_drained(&mut self) -> bool {
+        self.batches.is_empty()
+    }
+
     async fn poll(&mut self, _timeout: Time) -> Result<Vec<KafkaWalRecord>, WalConsumerError> {
         if self.batches.is_empty() {
             Ok(Vec::new())

@@ -31,14 +31,14 @@ bytes = { workspace = true }
 crc32c = { workspace = true }
 clap = { workspace = true, features = ["env"] }
 krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
-krabka-client-consumer = { version = "0.4.0" }
-krabka-client-core = { version = "0.4.0" }
-krabka-client-producer = { version = "0.4.0" }
-krabka-ids = { version = "0.4.0" }
+krabka-client-consumer = { version = "0.5.0" }
+krabka-client-core = { version = "0.5.0" }
+krabka-client-producer = { version = "0.5.0" }
+krabka-ids = { version = "0.5.0" }
 krabka-observability = { path = "../observability", version = "0.4.0" }
 krabka-query-frontend = { path = "../query-frontend", version = "0.4.0" }
-krabka-telemetry = { version = "0.6.1" }
-krabka-throttle = { version = "0.6.1" }
+krabka-telemetry = { version = "0.7.0" }
+krabka-throttle = { version = "0.7.0" }
 krabka-units = { workspace = true }
 dashmap = { workspace = true }
 futures = { workspace = true }
@@ -72,8 +72,8 @@ protoc-bin-vendored = { workspace = true, optional = true }
 
 [dev-dependencies]
 assert2 = { workspace = true }
-krabka-broker = { version = "0.6.1" }
-krabka-client-admin = { version = "0.4.0" }
+krabka-broker = { version = "0.7.0" }
+krabka-client-admin = { version = "0.5.0" }
 mutants = { workspace = true }
 proptest = { workspace = true }
 reqwest = { workspace = true }

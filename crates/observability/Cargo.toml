@@ -26,24 +26,24 @@ base64 = { workspace = true }
 clap = { workspace = true, features = ["env"] }
 # The audit log, its hash chain, OCSF records and its disk spool. The broker
 # writes its own audit trail with the same crate.
-krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "19ea5bfac23c4858d5d6aed99890014fd0fa23d3", version = "0.4.0" }
+krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "ffdd381433675bdb34d36d4aab1170e53bb4f5a9", version = "0.7.0" }
 krabka-blockstore = { version = "0.4.0", path = "../blockstore" }
-krabka-client-admin = { version = "0.4.0" }
-krabka-client-core = { version = "0.4.0" }
-krabka-client-consumer = { version = "0.4.0" }
-krabka-client-producer = { version = "0.4.0" }
-krabka-ids = { version = "0.4.0" }
+krabka-client-admin = { version = "0.5.0" }
+krabka-client-core = { version = "0.5.0" }
+krabka-client-consumer = { version = "0.5.0" }
+krabka-client-producer = { version = "0.5.0" }
+krabka-ids = { version = "0.5.0" }
 # `/log_level` reloads this process's filter, which means this crate -- not
 # the pinned `krabka-telemetry`, whose `init` returns no reload handle --
 # installs the stdout subscriber. `krabka-logfmt` is the formatter that
 # `krabka-telemetry` would have installed, so the JSON lines are unchanged.
-krabka-logfmt = { version = "0.6.1" }
+krabka-logfmt = { version = "0.7.0" }
 krabka-logql = { version = "0.4.0", path = "../logql" }
 krabka-query-frontend = { version = "0.4.0", path = "../query-frontend" }
 # `ListenerProtocol` and `SaslMechanism`, the two types a `ClientSecurity` names
 # that `krabka-client-core` does not re-export.
-krabka-security = { version = "0.4.0" }
-krabka-telemetry = { version = "0.6.1" }
+krabka-security = { version = "0.5.0" }
+krabka-telemetry = { version = "0.7.0" }
 krabka-units = { workspace = true }
 datafusion.workspace = true
 flate2 = { workspace = true }
@@ -56,7 +56,7 @@ prometheus-client.workspace = true
 prost.workspace = true
 # The audit writer's checkpoint and replay cadence runs on this sleeper, so a
 # test can drive it without wall-clock time.
-qubit-clock = { version = "0.8", features = ["tokio"] }
+qubit-clock = "~0.13.0"
 regex.workspace = true
 # The outbound client that carries service-to-service credentials. The
 # `loki_differential` suite also uses it, for both sides of its comparison.
@@ -94,7 +94,7 @@ flate2 = { workspace = true }
 # `ingest_roundtrip` boots a real Krabka broker in-process and drives
 # push -> WAL -> compactor -> query through it, the way krabka-metrics and
 # krabka-traces already do. Test-only, hence dev-dependencies.
-krabka-broker = { version = "0.6.1" }
+krabka-broker = { version = "0.7.0" }
 mutants = { workspace = true }
 # OTel stack for the `set_remote_parent_from_wal_records` re-parenting test --
 # mirrors the export-less tracer subscriber `krabka-traces` uses for the same

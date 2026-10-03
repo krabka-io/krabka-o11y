@@ -217,7 +217,7 @@ impl WriterState {
                 spool: self.spool,
                 stats,
                 replay_every: AUDIT_SPOOL_REPLAY_EVERY,
-                sleeper: clocks.sleeper,
+                timer: clocks.timer,
             },
         );
         let closer = handle.clone();

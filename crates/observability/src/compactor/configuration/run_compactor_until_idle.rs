@@ -59,7 +59,7 @@ pub async fn run_compactor_until_idle(
             &compaction_metrics,
         )
         .await?;
-        if batch_descriptors.is_empty() {
+        if batch_descriptors.is_empty() && consumer.is_drained().await {
             break;
         }
         for descriptor in batch_descriptors {

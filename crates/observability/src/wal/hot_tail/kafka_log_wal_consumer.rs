@@ -164,6 +164,10 @@ impl LogWalConsumer for KafkaLogWalConsumer {
         self.assignment.observe_applied(&self.consumer).await;
     }
 
+    async fn is_drained(&mut self) -> bool {
+        self.assignment.is_drained(&self.consumer).await
+    }
+
     #[cfg_attr(test, mutants::skip)]
     async fn commit_compacted(&mut self, _position: WalPosition) -> Result<(), WalConsumerError> {
         self.consumer.commit_sync().await?;

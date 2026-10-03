@@ -36,9 +36,9 @@ krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
 # `backup_restore` boots a real broker in-process, takes a consistent cut of
 # it and of every signal's object store, and restores both into an empty
 # deployment. Test-only, hence dev-dependencies.
-krabka-broker = { version = "0.6.1" }
-krabka-client-consumer = { version = "0.4.0" }
-krabka-client-producer = { version = "0.4.0" }
+krabka-broker = { version = "0.7.0" }
+krabka-client-consumer = { version = "0.5.0" }
+krabka-client-producer = { version = "0.5.0" }
 krabka-logql = { path = "../logql", version = "0.4.0" }
 krabka-metrics = { path = "../metrics", version = "0.4.0" }
 krabka-metrics-service = { path = "../metrics-service", version = "0.4.0" }

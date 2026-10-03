@@ -24,7 +24,7 @@ use krabka_audit::{
 use krabka_client_producer::{Header, ProducerRecord};
 use krabka_ids::PartitionIndex;
 use krabka_units::prelude::{TimeExt as _, mebibytes, minutes};
-use qubit_clock::{DateTime, MockTime, Utc};
+use qubit_clock::{ManualMonotonicClock, ManualWallClock, MonotonicClock as _};
 use tokio_util::sync::CancellationToken;
 
 use super::*;
@@ -85,14 +85,17 @@ fn product() -> ProductInfo {
     krabka_product("krabka-audit-test", "0.0.0")
 }
 
-fn mock_time() -> MockTime {
-    MockTime::at(DateTime::<Utc>::from_timestamp_millis(START_MS).expect("the start time is valid"))
+fn mock_time() -> Arc<ManualMonotonicClock> {
+    ManualMonotonicClock::new_shared()
 }
 
-fn clocks(time: &MockTime) -> AuditClocks {
+fn clocks(time: &Arc<ManualMonotonicClock>) -> AuditClocks {
     AuditClocks {
-        clock: Arc::new(time.clock()),
-        sleeper: Arc::new(time.sleeper()),
+        clock: Arc::new(ManualWallClock::from_clock(
+            std::time::UNIX_EPOCH + std::time::Duration::from_millis(START_MS.unsigned_abs()),
+            Arc::clone(time),
+        )),
+        timer: time.new_timer(),
     }
 }
 
@@ -193,11 +196,11 @@ struct FailableSink {
 
 #[async_trait]
 impl AuditSink for FailableSink {
-    async fn write(&self, record: AuditRecord) -> Result<(), AuditError> {
+    async fn write(&self, record: AuditRecord, durable: bool) -> Result<(), AuditError> {
         if self.fail.load(Ordering::SeqCst) {
             return Err(AuditError::Sink("the topic is down".to_owned()));
         }
-        self.inner.write(record).await
+        self.inner.write(record, durable).await
     }
 }
 
@@ -207,7 +210,7 @@ struct StuckSink;
 
 #[async_trait]
 impl AuditSink for StuckSink {
-    async fn write(&self, _record: AuditRecord) -> Result<(), AuditError> {
+    async fn write(&self, _record: AuditRecord, _durable: bool) -> Result<(), AuditError> {
         std::future::pending().await
     }
 }
@@ -498,7 +501,7 @@ fn every_closed_set_holds_distinct_names_in_one_form() {
 async fn each_handle_method_stamps_the_clock_time_and_queues_the_event() {
     let time = mock_time();
     let (log, mut queue) = AuditLog::new(8);
-    let handle = AuditHandle::new(log, Arc::new(AuditStats::new()), Arc::new(time.clock()));
+    let handle = AuditHandle::new(log, Arc::new(AuditStats::new()), clocks(&time).clock);
 
     handle.admin_operation(
         alice(),
@@ -507,7 +510,8 @@ async fn each_handle_method_stamps_the_clock_time_and_queues_the_event() {
         vec![resource(RESOURCE_LOG_LEVEL, "debug")],
         AuditOutcome::Success,
     );
-    time.advance(std::time::Duration::from_millis(5));
+    time.advance(std::time::Duration::from_millis(5))
+        .expect("time advances");
     handle.authorization_denied(
         alice(),
         client(),
@@ -572,7 +576,7 @@ fn the_security_decisions_of_a_listener_become_audit_events() {
 
     let time = mock_time();
     let (log, mut queue) = AuditLog::new(8);
-    let handle = AuditHandle::new(log, Arc::new(AuditStats::new()), Arc::new(time.clock()));
+    let handle = AuditHandle::new(log, Arc::new(AuditStats::new()), clocks(&time).clock);
     let tenant = krabka_blockstore::TenantId::new("tenant-b").expect("a valid tenant id");
     let source: SocketAddr = "10.0.0.7:51000".parse().expect("the address is valid");
 
@@ -817,7 +821,8 @@ async fn a_failing_sink_spools_records_and_replays_them_in_order() {
     check!(handle.stats().depth() == 3);
 
     sink.fail.store(false, Ordering::SeqCst);
-    time.advance(AUDIT_SPOOL_REPLAY_EVERY.to_std());
+    time.advance(AUDIT_SPOOL_REPLAY_EVERY.to_std())
+        .expect("time advances");
     await_until("the spool drained", || handle.stats().depth() == 0).await;
     shutdown.cancel();
     writer
@@ -878,7 +883,8 @@ async fn a_restarted_writer_goes_on_from_the_chain_in_its_spool() {
     .into_parts();
     second.emit(events[2].clone());
     await_until("the third record spooled", || second.stats().spooled() == 1).await;
-    time.advance(AUDIT_SPOOL_REPLAY_EVERY.to_std());
+    time.advance(AUDIT_SPOOL_REPLAY_EVERY.to_std())
+        .expect("time advances");
     await_until("the spool drained", || second.stats().depth() == 0).await;
     second_shutdown.cancel();
     second_writer

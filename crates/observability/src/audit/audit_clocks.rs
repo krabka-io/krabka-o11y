@@ -1,22 +1,20 @@
 use std::{fmt, sync::Arc};
 
-use qubit_clock::{
-    Clock, SystemClock,
-    sleep::{AsyncSleeper, SystemSleeper},
-};
+use qubit_clock::{StdTimer, StdWallClock, Timer, WallClock};
 
-/// The clock that gives each audit event its time, and the sleeper that sets
+/// The clock that gives each audit event its time, and the timer that sets
 /// the pace of the audit writer.
 ///
 /// A service uses [`AuditClocks::system`]. A test gives a
-/// `qubit_clock::MockTime` clock and sleeper, so event times and the writer's
-/// checkpoint and replay timers move only when the test moves them.
+/// `qubit_clock::ManualMonotonicClock` and its wall clock and timer, so event
+/// times and the writer's checkpoint and replay timers move only when the test
+/// moves them.
 #[derive(Clone)]
 pub struct AuditClocks {
     /// Gives the epoch-millisecond time of each event.
-    pub clock: Arc<dyn Clock>,
+    pub clock: Arc<dyn WallClock>,
     /// Sets the pace of the writer's checkpoint timer and spool-replay timer.
-    pub sleeper: Arc<dyn AsyncSleeper>,
+    pub timer: Arc<dyn Timer>,
 }
 
 impl AuditClocks {
@@ -24,8 +22,8 @@ impl AuditClocks {
     #[must_use]
     pub fn system() -> Self {
         Self {
-            clock: Arc::new(SystemClock::new()),
-            sleeper: Arc::new(SystemSleeper::new()),
+            clock: Arc::new(StdWallClock::new()),
+            timer: Arc::new(StdTimer::new()),
         }
     }
 }
