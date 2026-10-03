@@ -98,7 +98,10 @@ async fn a_failed_final_drain_is_returned_to_the_caller() {
     })
     .await
     .unwrap_err();
-    assert!(matches!(error, ServiceRuntimeError::Compactor(_)), "{error}");
+    assert!(
+        matches!(error, ServiceRuntimeError::Compactor(_)),
+        "{error}"
+    );
     assert!(error.to_string().contains("coordinator"), "{error}");
 }
 
