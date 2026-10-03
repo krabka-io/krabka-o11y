@@ -7,14 +7,17 @@
 //! every partition in the cut and every committed consumer-group offset on
 //! those partitions.
 //!
-//! [`deployment_drained_groups`] names the consumer groups that write blocks.
-//! A backup refuses a cut where one of them has not committed the end of its
-//! topic, because a restored block builder would write those records again
-//! under other block keys.
+//! [`DeploymentKafkaNames`] names the topics of a cut and the consumer groups
+//! that write blocks, and [`deployment_drained_groups`] gives the default
+//! groups. A backup refuses a cut where one of those groups has not committed
+//! the end of its topic, because a restored block builder would write those
+//! records again under other block keys.
 
 mod deployment_drained_groups;
+mod deployment_kafka_names;
 mod kafka_broker_state;
 
 pub use self::{
-    deployment_drained_groups::deployment_drained_groups, kafka_broker_state::KafkaBrokerState,
+    deployment_drained_groups::deployment_drained_groups,
+    deployment_kafka_names::DeploymentKafkaNames, kafka_broker_state::KafkaBrokerState,
 };

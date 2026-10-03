@@ -770,12 +770,16 @@ fn validate_plan(plan: &DeploymentBackupPlan) -> Result<(), RecoveryError> {
         ));
     }
     let mut names = BTreeSet::new();
-    for part in &plan.parts {
-        validate_part_name(&part.name)?;
-        if !names.insert(part.name.as_str()) {
+    for name in plan
+        .parts
+        .iter()
+        .map(|part| &part.name)
+        .chain(&plan.omitted_parts)
+    {
+        validate_part_name(name)?;
+        if !names.insert(name.as_str()) {
             return Err(RecoveryError::InvalidManifest(format!(
-                "part `{}` appears more than once",
-                part.name
+                "part `{name}` appears more than once, as a part or as an omitted part"
             )));
         }
     }
@@ -824,6 +828,20 @@ fn validate_cut(cut: &DeploymentCut) -> Result<(), RecoveryError> {
     }
     for part in &cut.parts {
         validate_part_name(&part.name)?;
+    }
+    if cut.omitted_parts.windows(2).any(|pair| pair[0] >= pair[1])
+        || cut.omitted_parts.iter().any(|name| {
+            cut.parts
+                .binary_search_by(|part| part.name.as_str().cmp(name))
+                .is_ok()
+        })
+    {
+        return Err(RecoveryError::InvalidManifest(
+            "omitted parts must be sorted, unique, and not parts of the cut".into(),
+        ));
+    }
+    for name in &cut.omitted_parts {
+        validate_part_name(name)?;
     }
     Ok(())
 }

@@ -1,11 +1,13 @@
 //! Backs up, audits, and restores a whole deployment as one consistent cut.
 //!
 //! A cut binds one part for each store of the deployment to the broker state
-//! at the cut: the next offset of every partition of the six topics, and every
-//! committed consumer-group offset on them. `docs/disaster_recovery.md` is the
-//! procedure. Every mutating command needs `--apply`.
+//! at the cut: the next offset of every partition of the deployment's WAL and
+//! state topics, and every committed consumer-group offset on them.
+//! `docs/disaster_recovery.md` is the procedure. Every mutating command needs
+//! `--apply`.
 
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -16,18 +18,22 @@ use krabka_blockstore::{
     backup_deployment, restore_deployment_backup,
 };
 use krabka_observability::{
-    recovery_cut::{KafkaBrokerState, deployment_drained_groups},
+    recovery_cut::{DeploymentKafkaNames, KafkaBrokerState},
     server_security::install_crypto_provider,
-    topic_contract::ALL_TOPICS,
     wal_client_security::WalClientSecurityArgs,
 };
 use object_store::{ObjectStore, local::LocalFileSystem, parse_url_opts, prefix::PrefixStore};
 use serde::Serialize;
 use url::Url;
 
-use self::failure::failure;
+use self::{
+    failure::failure, refuse_missing_parts::refuse_missing_parts,
+    refuse_overlapping_stores::refuse_overlapping_stores,
+};
 
 mod failure;
+mod refuse_missing_parts;
+mod refuse_overlapping_stores;
 
 #[derive(Debug, Parser)]
 #[command(name = "krabka-o11y-recovery")]
@@ -55,6 +61,10 @@ enum Command {
         /// such as the logs `data-root`.
         #[arg(long = "part", value_parser = parse_part, required = true)]
         parts: Vec<(String, String)>,
+        /// A deployment part that this deployment does not have, such as
+        /// `profiles` when no profiles role runs. The cut records it.
+        #[arg(long = "omit-part")]
+        omitted_parts: Vec<String>,
         #[arg(long)]
         apply: bool,
         #[arg(long)]
@@ -88,6 +98,8 @@ struct BrokerArgs {
     #[arg(long, env = "KRABKA_BOOTSTRAP_SERVER")]
     bootstrap: String,
     #[command(flatten)]
+    names: DeploymentKafkaNames,
+    #[command(flatten)]
     wal_client_security: WalClientSecurityArgs,
 }
 
@@ -100,7 +112,7 @@ impl BrokerArgs {
         Ok(KafkaBrokerState::new(
             self.bootstrap.clone(),
             security,
-            ALL_TOPICS.iter().map(|topic| topic.name),
+            self.names.topics(),
         ))
     }
 }
@@ -122,15 +134,24 @@ async fn run(cli: Cli) -> Result<(), String> {
             cut_id,
             broker_capture,
             parts,
+            omitted_parts,
             apply,
             report,
         } => {
             require_apply(apply, "backup")?;
+            refuse_missing_parts(
+                &parts
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>(),
+                &omitted_parts,
+            )?;
             let plan = DeploymentBackupPlan {
                 cut_id,
                 broker_capture,
-                drained_groups: deployment_drained_groups(),
-                parts: open_parts(&parts, Some(&backup_url))?,
+                drained_groups: broker.names.drained_groups(),
+                parts: open_parts(&parts, &backup_url)?,
+                omitted_parts,
             };
             let result = backup_deployment(&broker.state()?, &open_store(&backup_url)?, &plan)
                 .await
@@ -163,7 +184,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             let result = restore_deployment_backup(
                 &open_store(&backup_url)?,
                 &broker.state()?,
-                &open_parts(&parts, Some(&backup_url))?,
+                &open_parts(&parts, &backup_url)?,
             )
             .await
             .map_err(|error| failure(&error, report.as_deref()))?;
@@ -180,16 +201,20 @@ fn parse_part(raw: &str) -> Result<(String, String), String> {
     Ok((name.into(), url.into()))
 }
 
-fn open_parts(
-    parts: &[(String, String)],
-    backup_url: Option<&str>,
-) -> Result<Vec<DeploymentPart>, String> {
+/// Opens every part store, after it refuses parts that overlap each other or
+/// the backup set. No store is opened when one overlaps.
+fn open_parts(parts: &[(String, String)], backup_url: &str) -> Result<Vec<DeploymentPart>, String> {
+    let stores = std::iter::once(("the backup set".to_string(), backup_url))
+        .chain(
+            parts
+                .iter()
+                .map(|(name, url)| (format!("part `{name}`"), url.as_str())),
+        )
+        .collect::<Vec<_>>();
+    refuse_overlapping_stores(&stores)?;
     parts
         .iter()
         .map(|(name, url)| {
-            if Some(url.as_str()) == backup_url {
-                return Err(format!("part `{name}` and the backup set use one URL"));
-            }
             Ok(DeploymentPart {
                 name: name.clone(),
                 store: open_store(url)?,
@@ -281,10 +306,117 @@ mod tests {
     }
 
     #[test]
-    fn a_part_may_not_share_the_backup_url() {
-        let parts = [("metrics".to_string(), "memory:///a".to_string())];
-        assert!(open_parts(&parts, Some("memory:///a")).is_err());
-        assert!(open_parts(&parts, Some("memory:///b")).is_ok());
+    fn a_part_may_not_overlap_the_backup_set_or_another_part() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let url = |name: &str| {
+            Url::from_directory_path(directory.path().join(name))
+                .expect("file URL")
+                .to_string()
+        };
+        let part = |name: &str, dir: &str| (name.to_string(), url(dir));
+        let cases = [
+            (vec![part("metrics", "metrics")], "backup", true),
+            (vec![part("metrics", "backup")], "backup", false),
+            (vec![part("metrics", "backup/metrics")], "backup", false),
+            (
+                vec![part("metrics", "target"), part("logs", "target")],
+                "backup",
+                false,
+            ),
+            (
+                vec![part("metrics", "target"), part("logs", "target/logs")],
+                "backup",
+                false,
+            ),
+        ];
+        for (parts, backup, accepted) in cases {
+            check!(
+                open_parts(&parts, &url(backup)).is_ok() == accepted,
+                "{parts:?}"
+            );
+            // A refused command opens no store, so it creates no directory.
+            if !accepted {
+                for (_, dir) in &parts {
+                    let path = Url::parse(dir).expect("URL").to_file_path().expect("path");
+                    check!(!path.exists(), "{dir}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_broker_arguments_name_the_deployment_topics_and_groups() {
+        let defaults = Cli::try_parse_from([
+            "krabka-o11y-recovery",
+            "restore",
+            "--bootstrap",
+            "broker:9092",
+            "--backup-url",
+            "s3://backups/cut-1",
+            "--part",
+            "metrics=s3://restore-metrics",
+        ])
+        .expect("defaults");
+        let Command::Restore { broker, .. } = defaults.command else {
+            panic!("restore");
+        };
+        check!(broker.names == DeploymentKafkaNames::default());
+
+        let custom = Cli::try_parse_from([
+            "krabka-o11y-recovery",
+            "backup",
+            "--bootstrap",
+            "broker:9092",
+            "--backup-url",
+            "s3://backups/cut-1",
+            "--cut-id",
+            "cut-1",
+            "--broker-capture",
+            "snapshot-1",
+            "--part",
+            "metrics=s3://krabka-metrics",
+            "--omit-part",
+            "profiles",
+            "--metrics-wal-topic",
+            "metrics-a",
+            "--metrics-ha-tracker-topic",
+            "ha-a",
+            "--metrics-ruler-state-topic",
+            "ruler-a",
+            "--logs-wal-topic",
+            "logs-a",
+            "--profiles-wal-topic",
+            "profiles-a",
+            "--metrics-block-builder-group-id",
+            "metrics-builder-a",
+            "--logs-wal-group-id",
+            "logs-builder-a",
+            "--profiles-block-builder-group-id",
+            "profiles-builder-a",
+        ])
+        .expect("custom names");
+        let Command::Backup {
+            broker,
+            omitted_parts,
+            ..
+        } = custom.command
+        else {
+            panic!("backup");
+        };
+        check!(omitted_parts == ["profiles"]);
+        check!(
+            broker.names
+                == DeploymentKafkaNames {
+                    metrics_wal_topic: "metrics-a".into(),
+                    metrics_ha_tracker_topic: "ha-a".into(),
+                    metrics_ruler_state_topic: "ruler-a".into(),
+                    logs_wal_topic: "logs-a".into(),
+                    profiles_wal_topic: "profiles-a".into(),
+                    metrics_block_builder_group_id: "metrics-builder-a".into(),
+                    logs_wal_group_id: "logs-builder-a".into(),
+                    profiles_block_builder_group_id: "profiles-builder-a".into(),
+                }
+        );
     }
 
     #[test]

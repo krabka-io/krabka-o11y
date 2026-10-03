@@ -131,6 +131,7 @@ fn plan(parts: Vec<DeploymentPart>) -> DeploymentBackupPlan {
             topic: WAL_TOPIC.into(),
         }],
         parts,
+        omitted_parts: Vec::new(),
     }
 }
 
@@ -202,6 +203,7 @@ async fn a_sealed_cut_names_every_part_by_digest_and_restores_every_part() {
                         byte_count: 15,
                     },
                 ],
+                omitted_parts: vec![],
             }
     );
 
@@ -258,6 +260,20 @@ async fn a_backup_refuses_a_lagging_block_builder_and_a_moving_broker() {
                 topic: WAL_TOPIC.into(),
                 partition: 0,
                 committed: Some(2),
+                wal_next_offset: 3,
+            }],
+        },
+        Case {
+            name: "the block builder has no committed offset",
+            broker: vec![BrokerSnapshot {
+                group_offsets: vec![],
+                ..snapshot(3, 3)
+            }],
+            findings: vec![BrokerFinding::UndrainedGroup {
+                group: BLOCK_BUILDER.into(),
+                topic: WAL_TOPIC.into(),
+                partition: 0,
+                committed: None,
                 wal_next_offset: 3,
             }],
         },
@@ -462,6 +478,96 @@ async fn a_block_builder_behind_only_transaction_markers_is_drained() {
         .await;
         check!(result.is_ok() == sealed, "{records} pending records");
     }
+}
+
+#[tokio::test]
+async fn a_block_builder_with_no_committed_offset_on_an_empty_wal_is_drained() {
+    // A group with no committed offset reads from the start of the WAL, so it
+    // is drained only when the WAL has no record.
+    let broker = BrokerSnapshot {
+        group_offsets: vec![],
+        ..snapshot(0, 0)
+    };
+    let backup = store();
+    let report = backup_deployment(
+        &ScriptedBroker::new([broker.clone()]),
+        &backup,
+        &plan(live_parts().await),
+    )
+    .await
+    .expect("an empty WAL needs no commit");
+    check!(report.cut.broker == broker);
+}
+
+#[tokio::test]
+async fn a_cut_records_the_parts_that_the_operator_omitted() {
+    let backup = store();
+    let mut omitting = plan(live_parts().await);
+    omitting.omitted_parts = vec!["traces".into(), "profiles".into()];
+    let report = backup_deployment(&ScriptedBroker::new([snapshot(3, 3)]), &backup, &omitting)
+        .await
+        .expect("backup");
+    check!(report.cut.omitted_parts == ["profiles", "traces"]);
+    let audit = audit_deployment_backup(&backup).await.expect("audit");
+    check!(audit.cut.omitted_parts == ["profiles", "traces"]);
+    let restored = restore_deployment_backup(
+        &backup,
+        &ScriptedBroker::new([snapshot(3, 3)]),
+        &empty_targets(&["metrics", "logs-querier-state"]),
+    )
+    .await
+    .expect("restore");
+    check!(restored.cut.omitted_parts == ["profiles", "traces"]);
+
+    // A part name is a part or an omitted part, not both.
+    for omitted in ["metrics", "Metrics"] {
+        let mut refused = plan(live_parts().await);
+        refused.omitted_parts = vec![omitted.into()];
+        let error = backup_deployment(&ScriptedBroker::new([snapshot(3, 3)]), &store(), &refused)
+            .await
+            .expect_err(omitted);
+        check!(
+            matches!(error, RecoveryError::InvalidManifest(_)),
+            "{omitted}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_cut_written_without_omitted_parts_still_audits() {
+    let backup = store();
+    backup_deployment(
+        &ScriptedBroker::new([snapshot(3, 3)]),
+        &backup,
+        &plan(live_parts().await),
+    )
+    .await
+    .expect("backup");
+    let path = ObjectPath::from(CUT_MANIFEST_PATH);
+    let mut cut: serde_json::Value = serde_json::from_slice(
+        &backup
+            .get(&path)
+            .await
+            .expect("cut")
+            .bytes()
+            .await
+            .expect("cut bytes"),
+    )
+    .expect("cut JSON");
+    check!(cut["omitted_parts"] == serde_json::json!([]));
+    cut.as_object_mut()
+        .expect("cut object")
+        .remove("omitted_parts");
+    put(
+        &backup,
+        CUT_MANIFEST_PATH,
+        &serde_json::to_vec_pretty(&cut).expect("JSON"),
+    )
+    .await;
+
+    let audit = audit_deployment_backup(&backup).await.expect("audit");
+    check!(audit.cut.omitted_parts == Vec::<String>::new());
+    assert!(audit.parts.values().all(AuditReport::is_clean));
 }
 
 #[tokio::test]

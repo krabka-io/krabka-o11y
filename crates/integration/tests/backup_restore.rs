@@ -207,6 +207,7 @@ async fn an_empty_deployment_restores_every_tenant_and_signal_and_resumes_ingest
             broker_capture: "in-process-broker-log-dir".into(),
             drained_groups: deployment_drained_groups(),
             parts: live.parts(),
+            omitted_parts: Vec::new(),
         },
     )
     .await
@@ -360,6 +361,7 @@ async fn a_broker_restored_from_another_time_is_refused_before_any_write() {
             broker_capture: "in-process-broker-log-dir".into(),
             drained_groups: deployment_drained_groups(),
             parts: live.parts(),
+            omitted_parts: Vec::new(),
         },
     )
     .await

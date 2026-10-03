@@ -89,12 +89,15 @@ pub async fn backup_deployment(
     refuse_broker_findings("backup", compare_snapshots(&before, &after))?;
 
     parts.sort();
+    let mut omitted_parts = plan.omitted_parts.clone();
+    omitted_parts.sort();
     let cut = DeploymentCut {
         schema_version: CUT_SCHEMA_VERSION,
         cut_id: plan.cut_id.clone(),
         broker_capture: plan.broker_capture.clone(),
         broker: before,
         parts,
+        omitted_parts,
     };
     validate_cut(&cut)?;
     let bytes = json_bytes(&cut)?;

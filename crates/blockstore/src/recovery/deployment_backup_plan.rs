@@ -8,4 +8,7 @@ pub struct DeploymentBackupPlan {
     pub broker_capture: String,
     pub drained_groups: Vec<DrainedGroup>,
     pub parts: Vec<DeploymentPart>,
+    /// The parts that the operator declares this deployment does not have.
+    /// The cut records them, so an audit and a restore show the omission.
+    pub omitted_parts: Vec<String>,
 }
