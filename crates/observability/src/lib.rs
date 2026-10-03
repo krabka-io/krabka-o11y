@@ -43,6 +43,7 @@ use self::querier::metric_eval::{
 
 pub mod audit;
 pub mod compaction_metrics;
+pub mod recovery_cut;
 pub mod server_security;
 pub mod topic_contract;
 pub mod wal_client_security;
