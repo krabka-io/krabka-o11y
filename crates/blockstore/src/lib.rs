@@ -35,6 +35,7 @@ mod retry;
 mod span_block;
 mod span_id;
 mod span_schema;
+mod storage_audit;
 mod store;
 mod tenant;
 mod trace_index;
@@ -154,6 +155,12 @@ pub use span_schema::{
     SCOL_SPAN_ID, SCOL_START_NANO, SCOL_STATUS_CODE, SCOL_STATUS_MESSAGE,
     SCOL_TRACE_DURATION_NANOS, SCOL_TRACE_ID, SCOL_TRACE_START_NANO, SpanKind, StatusCode,
     span_block_decl, span_block_schema, span_block_schema_with_promoted_attrs,
+};
+pub use storage_audit::{
+    RepairAction, RepairLogEntry, RepairLogPhase, RepairLogWriter, RepairOptions, RepairOutcome,
+    RepairReport, STORAGE_AUDIT_SCHEMA_VERSION, StorageAuditError, StorageAuditOptions,
+    StorageAuditReport, StorageAuditScope, StorageFinding, StorageFindingKind,
+    StorageFindingSeverity, StorageSignal, audit_store, repair_store,
 };
 pub use store::{BlockScan, BlockStore, ScanReport, ScanTableRequest};
 pub use tenant::{
