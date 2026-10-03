@@ -9,11 +9,7 @@
 //! ordinary flush rule will reach, cancels the builder, and asserts on the
 //! block and the committed offset the drain is supposed to leave behind.
 
-use std::{
-    collections::BTreeMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use assert2::{assert, check};
 use krabka_blockstore::ProfileIndex;
@@ -25,6 +21,7 @@ use krabka_profiles::{
     PROFILES_WAL_TOPIC, ProfileRecord, WalSample, WalSymbolSet,
     blockbuilder::{BlockBuilderConfig, run_with_config},
     distributor::{KafkaSink, WalSink as _},
+    metrics::ServiceMetrics,
 };
 use krabka_units::{Time, hours, millis};
 use object_store::{ObjectStore, memory::InMemory};
@@ -63,16 +60,24 @@ async fn cancelling_the_block_builder_flushes_and_commits_what_it_buffered() {
     config.flush_records = UNREACHABLE_FLUSH_RECORDS;
     config.flush_max_age = UNREACHABLE_FLUSH_MAX_AGE;
     config.poll_timeout = millis(100);
+    let metrics = ServiceMetrics::new();
+    config.metrics = Some(metrics.clone());
 
     let shutdown = CancellationToken::new();
     let builder = tokio::spawn(run_with_config(config, shutdown.clone()));
 
-    // Real-time wait, not a progress poll: the builder buffering a record is
-    // not observable from outside, so this is a budget generously above the
-    // 100ms poll loop it is running. Nothing must have been written yet -- a
-    // block here would mean an ordinary flush fired and the drain went
-    // untested.
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    // Start the drain only after the WAL record has actually been consumed.
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while metrics.wal_consumer.records(PROFILES_WAL_TOPIC, 0) == 0 {
+            assert!(
+                !builder.is_finished(),
+                "block-builder exited before consuming"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the block-builder consumes the WAL record before cancellation");
     check!(
         indexed_block_count(&store, &index_key).await == 0,
         "no ordinary flush may fire before the drain"
@@ -164,17 +169,22 @@ async fn replayed_records(bootstrap: &str) -> usize {
         .build()
         .await
         .expect("restart consumer");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut replayed = 0;
-    while Instant::now() < deadline {
-        let records = consumer
-            .poll(millis(250))
-            .await
-            .expect("poll the restart consumer");
-        replayed += records
-            .iter()
-            .filter(|record| record.topic == PROFILES_WAL_TOPIC)
-            .count();
-    }
-    replayed
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let mut replayed = 0;
+        loop {
+            let records = consumer
+                .poll(millis(250))
+                .await
+                .expect("poll the restart consumer");
+            replayed += records
+                .iter()
+                .filter(|record| record.topic == PROFILES_WAL_TOPIC)
+                .count();
+            if consumer.at_log_end().await {
+                return replayed;
+            }
+        }
+    })
+    .await
+    .expect("the restart consumer reaches the WAL end")
 }
