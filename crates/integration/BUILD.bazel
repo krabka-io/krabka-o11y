@@ -11,6 +11,10 @@ crate_tests(
     docker = {
         "alloy_client": ["alloy"],
         "prometheus_client": ["prometheus"],
+        # The operating-envelope soak. Every signal writes and reads through
+        # this one MinIO, so the request counts it reports are the counts a
+        # real object store would bill.
+        "soak_envelope": ["minio"],
     },
     docker_variants = {
         "alloy_client": {"previous": {"alloy": "alloy_previous"}},
@@ -21,4 +25,9 @@ crate_tests(
     # this crate is allowed to depend on more than one signal. A sweep over it
     # would generate no mutants and report on nothing.
     mutants = False,
+    # The soak holds a wall-clock budget of several minutes per run. The
+    # `scale` tag keeps it out of `bazel test //...` and out of the nightly
+    # container job. //.bazelrc selects it with `--config=scale`, and the
+    # `scale` job in //.github/workflows/ci.yml runs that on a schedule.
+    scale = ["soak_envelope"],
 )

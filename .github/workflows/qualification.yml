@@ -94,7 +94,7 @@ jobs:
             command: bazel test --config=scale --flaky_test_attempts=1 //crates/observability:scale_object_store_docker_test
           - id: scale-soak
             gate: scale
-            command: bazel test --config=scale --flaky_test_attempts=1 //crates/observability:soak_ingest_query_docker_test
+            command: bazel test --config=scale --flaky_test_attempts=1 //crates/integration:soak_envelope_docker_test
     steps:
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
