@@ -89,26 +89,9 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
-    "https://github.com/krabka-io/connectrpc-axum",
-    # Temporary DataFusion pin for profile query support.
-    "https://github.com/apache/datafusion",
-    # Pinned upstream object_store GCS copy/overwrite fix.
     "https://github.com/apache/arrow-rs-object-store",
-    # The sibling repositories. `[patch.crates-io    "https://github.com/krabka-io/krabka-broker",
-    "https://github.com/krabka-io/krabka-cli",
-    "https://github.com/krabka-io/krabka-client-rs",
-    "https://github.com/krabka-io/krabka-connect",
-    "https://github.com/krabka-io/krabka-gateway",
-    "https://github.com/krabka-io/krabka-o11y",
-    "https://github.com/krabka-io/krabka-operator",
-    "https://github.com/krabka-io/krabka-protocol",
-    "https://github.com/krabka-io/krabka-rebalancer",
-    "https://github.com/krabka-io/krabka-schema-registry",
-    "https://github.com/krabka-io/krabka-streams-rs",
-]` in Cargo.toml pins every
-    # crate each one publishes to a single revision. krabka-schema-registry
-    # is on the list because the
-    # broker depends on `krabka-schema-serde`, which that repository owns.
+    "https://github.com/apache/datafusion",
+    "https://github.com/krabka-io/connectrpc-axum",
     "https://github.com/krabka-io/krabka-broker",
     "https://github.com/krabka-io/krabka-client-rs",
     "https://github.com/krabka-io/krabka-protocol",
