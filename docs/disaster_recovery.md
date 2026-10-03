@@ -166,13 +166,7 @@ The `recovery` qualification gate runs `//crates/integration:backup_restore_test
 - No suite restores a Kubernetes deployment end to end. The `recovery` gate runs the roles' write and read paths in one process.
 - `--traces-api-overrides-file` is not a default part. Add it as a `file://` part when a deployment sets it.
 
-Native Prometheus TSDB block import is separate from backup restore. The Mimir
-block-upload endpoint imports Prometheus blocks with one commit point for each
-block. See [Migrating Prometheus TSDB Blocks](prometheus_tsdb_migration.md).
-An imported block is an ordinary metric block with an ordinary manifest. The
-import records are under `mimir-block-uploads/<tenant>/` in the metrics store.
-The `metrics` part copies that whole store, so the cut holds them, and a
-restored cluster does not import the same block again.
+Native Prometheus TSDB block import is separate from backup restore. The Mimir block-upload endpoint imports Prometheus blocks with one commit point for each block. See [Migrating Prometheus TSDB Blocks](prometheus_tsdb_migration.md). An imported block is an ordinary metric block with an ordinary manifest. The import records and the ULID bindings are under `mimir-block-uploads/<tenant>/` in the metrics store. The `metrics` part copies every object of that store, with no prefix filter, so the cut holds them. A restored cluster does not import the same block again. An upload of the same ULID gets `409 block already exists`. An upload of the same content under a new ULID gets `existingBlock` and adds no sample. The `backup_restore` suite imports a Prometheus block, seals a cut, and restores it. Then it checks the two answers and the sample count.
 
 ## Offline audit and repair
 
