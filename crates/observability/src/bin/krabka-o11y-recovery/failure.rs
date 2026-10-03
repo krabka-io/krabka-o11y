@@ -6,7 +6,7 @@ use super::{Path, RecoveryError, write_report};
 ///
 /// A broker mismatch also writes its findings to `report`, when the operator
 /// names one, as JSON with the same `kind` tags that a cut uses.
-pub(crate) fn failure(error: RecoveryError, report: Option<&Path>) -> String {
+pub(crate) fn failure(error: &RecoveryError, report: Option<&Path>) -> String {
     let message = error.to_string();
     if let (
         RecoveryError::BrokerMismatch {
@@ -14,7 +14,7 @@ pub(crate) fn failure(error: RecoveryError, report: Option<&Path>) -> String {
             findings,
         },
         Some(path),
-    ) = (&error, report)
+    ) = (error, report)
     {
         let failure = json!({
             "error": message,
@@ -49,7 +49,7 @@ mod tests {
             operation: "restore",
             findings: vec![finding],
         };
-        let message = failure(error, Some(&path));
+        let message = failure(&error, Some(&path));
         check!(
             message
                 == "restore refused because the broker state differs from the cut: wal_offset \
@@ -77,7 +77,7 @@ mod tests {
     fn another_failure_writes_no_report() {
         let directory = tempfile::tempdir().expect("tempdir");
         let path = directory.path().join("restore-report.json");
-        let message = failure(RecoveryError::Broker("connect".into()), Some(&path));
+        let message = failure(&RecoveryError::Broker("connect".into()), Some(&path));
         check!(message == "broker state could not be read: connect");
         assert!(!path.exists());
     }

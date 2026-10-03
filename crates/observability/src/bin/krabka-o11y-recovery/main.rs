@@ -134,7 +134,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             };
             let result = backup_deployment(&broker.state()?, &open_store(&backup_url)?, &plan)
                 .await
-                .map_err(|error| failure(error, report.as_deref()))?;
+                .map_err(|error| failure(&error, report.as_deref()))?;
             emit(&result, report)
         }
         Command::Audit { backup_url, report } => {
@@ -166,7 +166,7 @@ async fn run(cli: Cli) -> Result<(), String> {
                 &open_parts(&parts, Some(&backup_url))?,
             )
             .await
-            .map_err(|error| failure(error, report.as_deref()))?;
+            .map_err(|error| failure(&error, report.as_deref()))?;
             emit(&result, report)
         }
     }
