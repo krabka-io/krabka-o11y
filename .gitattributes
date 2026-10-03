@@ -37,3 +37,8 @@ crates/gres-conformance/corpus-regress/int4/int4.out       -whitespace
 # replays, and `git diff` prints its bytes -- which is how `aspect lint` came to
 # fail while parsing diff output as UTF-8.
 fuzz/corpus/**  binary
+
+# The Prometheus TSDB fixture block is binary too. Its `tombstones` file has no
+# NUL in its first 8k, so git would treat it as text and print its bytes in a
+# diff, which stops `aspect lint` for the reason given above.
+crates/metrics/tests/testdata/tsdb/01M3MJXM7R4M5X4Q4CKHW5Q8N0/**  binary
