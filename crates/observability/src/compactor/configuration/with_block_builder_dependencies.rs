@@ -38,7 +38,8 @@ pub(crate) async fn with_block_builder_dependencies(
         security.cloned(),
     )
     .await?
-    .with_metrics(metrics.clone());
+    .with_metrics(metrics.clone())
+    .rewinding_fenced_partitions();
     Ok(dependencies
         .with_wal_consumer(consumer)
         .with_wal_recovery_metrics(metrics)

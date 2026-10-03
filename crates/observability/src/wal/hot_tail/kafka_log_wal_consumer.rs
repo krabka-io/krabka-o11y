@@ -91,6 +91,18 @@ impl KafkaLogWalConsumer {
         self
     }
 
+    /// The same consumer, which seeks a fenced partition that the group gives
+    /// back to the group's committed offset.
+    ///
+    /// The compactor fences and commits, so it needs this. The querier hot
+    /// tail commits nothing, and a rewind would read the whole retained WAL
+    /// into it again, so it must not use this.
+    #[must_use]
+    pub fn rewinding_fenced_partitions(mut self) -> Self {
+        self.rebalance = self.rebalance.rewinding_fenced_partitions();
+        self
+    }
+
     /// Keeps readiness false until the broker reports this consumer caught up.
     #[must_use]
     pub fn with_catch_up(mut self, gate: ReadinessGate) -> Self {

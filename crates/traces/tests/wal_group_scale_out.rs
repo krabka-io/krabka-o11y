@@ -36,9 +36,6 @@ use krabka_units::millis;
 const PARTITIONS: i32 = 2;
 const RECORDS_PER_PARTITION: i64 = 4;
 const DEADLINE: Duration = Duration::from_mins(1);
-/// How long both members poll after the second one joins. The group needs
-/// some rounds to settle; the gates must be open at the end of them.
-const SETTLE: Duration = Duration::from_secs(15);
 
 /// One member's view of the group: the consumer the role drives, its
 /// catch-up gate, and what it holds and has written.
@@ -53,7 +50,7 @@ impl Member {
     /// Joins `group` with the settings of the block builder roles. They keep
     /// the client's default assignor list, so the group rebalances eagerly.
     async fn join(bootstrap: &str, topic: &str, group: &str) -> Self {
-        let rebalance = WalRebalanceListener::new(topic);
+        let rebalance = WalRebalanceListener::new(topic).rewinding_fenced_partitions();
         let consumer = Consumer::builder()
             .bootstrap(bootstrap.to_owned())
             .group_id(group.to_owned())
@@ -138,35 +135,46 @@ async fn scale_out(name: &str, flushed_before_join: bool) -> Outcome {
     }
     assert!(let Ok(mut second) = joining.await);
 
-    let settled = Instant::now() + SETTLE;
-    while Instant::now() < settled {
+    // Poll until the group reaches the expected outcome, or until the
+    // deadline. A healthy run stops after a few rounds; a broken one shows its
+    // last state at the deadline.
+    let deadline = Instant::now() + DEADLINE;
+    loop {
         first.step(true).await;
         second.step(true).await;
+        let outcome = Outcome {
+            first_ready: first.gate.is_ready(),
+            second_ready: second.gate.is_ready(),
+            written: first
+                .written
+                .iter()
+                .chain(&second.written)
+                .copied()
+                .collect(),
+        };
+        if outcome == expected() || Instant::now() >= deadline {
+            return outcome;
+        }
     }
+}
+
+/// Both members caught up, and every record written.
+fn expected() -> Outcome {
     Outcome {
-        first_ready: first.gate.is_ready(),
-        second_ready: second.gate.is_ready(),
-        written: first.written.into_iter().chain(second.written).collect(),
+        first_ready: true,
+        second_ready: true,
+        written: (0..PARTITIONS)
+            .flat_map(|partition| (0..RECORDS_PER_PARTITION).map(move |offset| (partition, offset)))
+            .collect(),
     }
 }
 
 #[tokio::test]
 async fn both_members_are_caught_up_and_every_record_is_written_after_a_scale_out() {
-    let every_record: BTreeSet<(i32, i64)> = (0..PARTITIONS)
-        .flat_map(|partition| (0..RECORDS_PER_PARTITION).map(move |offset| (partition, offset)))
-        .collect();
     let cases = [("flushed", true), ("buffered", false)];
     for (name, flushed_before_join) in cases {
         let outcome = Box::pin(scale_out(name, flushed_before_join)).await;
-        check!(
-            outcome
-                == Outcome {
-                    first_ready: true,
-                    second_ready: true,
-                    written: every_record.clone(),
-                },
-            "case {name}"
-        );
+        check!(outcome == expected(), "case {name}");
     }
 }
 

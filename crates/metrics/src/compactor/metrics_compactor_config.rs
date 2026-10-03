@@ -125,7 +125,8 @@ impl MetricsCompactorConfig {
         catch_up: Option<krabka_observability::ReadinessGate>,
     ) -> Result<DurableCompactionConsumer<WalAssignmentConsumer>, MetricsCompactorBuildError> {
         self.validate()?;
-        let rebalance = WalRebalanceListener::new(self.wal_topic.clone());
+        let rebalance =
+            WalRebalanceListener::new(self.wal_topic.clone()).rewinding_fenced_partitions();
         let consumer = Consumer::builder()
             .bootstrap(self.bootstrap.clone())
             .maybe_security(security)
