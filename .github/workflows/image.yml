@@ -208,6 +208,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.release_tag || github.ref }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: verify and reuse original build provenance
         if: inputs.release_tag
         run: |
