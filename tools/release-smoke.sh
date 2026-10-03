@@ -12,7 +12,7 @@ marker=${base_marker}
 services=(
   metrics-distributor metrics-block-builder metrics-querier
   logs-distributor logs-block-builder logs-querier
-  traces-distributor traces-block-builder traces-querier
+  traces-distributor traces-block-builder traces-live-store traces-querier
   profiles-distributor profiles-block-builder profiles-querier
 )
 
