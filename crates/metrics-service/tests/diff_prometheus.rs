@@ -188,7 +188,6 @@ async fn prometheus_compliance_corpus_matches_krabka() -> TestResult {
     let prometheus = start_prometheus().await?;
     let prometheus_base = mapped_base_url(&prometheus, PROMETHEUS_PORT).await?;
     wait_for_http_ok(&client, &prometheus_base, "/-/ready").await?;
-    tokio::time::sleep(Duration::from_secs(20)).await;
 
     let krabka = start_krabka_query_server().await?;
     seed_both(&client, &krabka.base_url, &prometheus_base, &corpus).await?;
@@ -316,6 +315,8 @@ async fn start_prometheus() -> TestResult<testcontainers::ContainerAsync<Generic
             .with_wait_for(WaitFor::message_on_stderr(
                 "Server is ready to receive web requests",
             ))
+            // Epoch-based corpus samples must not race the image's self-scrape.
+            .with_copy_to("/etc/prometheus/prometheus.yml", b"global: {}\n".to_vec())
             .with_cmd([
                 "--config.file=/etc/prometheus/prometheus.yml",
                 "--storage.tsdb.path=/prometheus",

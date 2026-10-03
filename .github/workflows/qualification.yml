@@ -98,6 +98,9 @@ jobs:
             command: bazel test --config=scale --flaky_test_attempts=1 //crates/integration:soak_envelope_docker_test
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Kubernetes and migration gates use HEAD^ for the baseline image.
+          fetch-depth: 2
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
           bazelisk-cache: true
