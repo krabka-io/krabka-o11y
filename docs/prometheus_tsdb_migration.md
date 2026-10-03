@@ -35,9 +35,11 @@ The import validates the whole block before it writes anything:
 
 ## Atomicity and re-import
 
-An upload that fails leaves no index entry. The import writes the Parquet blocks first, then one import record, then the `.index` manifests that make the blocks queryable. The import record is the commit point. Before the record exists, a failure deletes what the import wrote. After the record exists, a retry completes the import.
+An upload that fails leaves no index entry. The import writes the Parquet blocks first, then one import record, then the `.index` manifests, then a publication marker. The import record is the commit point. Before the record exists, a failure deletes what the import wrote. After the record exists, a retry completes the import.
 
-The manifests do not become live at the same time. A block with float and native-histogram samples has two manifests, and the import writes the float manifest first. A query that runs between the two writes can return the float samples without the histogram samples. If the querier stops between the two writes, `check` gives `validating`, and the float samples stay queryable without the histogram samples. Send `finish` again. The retry writes the missing manifest. An upload of the same content under a new ULID also writes it.
+The import writes the blocks and manifests of a block into one directory, `metrics/<tenant>/uploaded/<ULID>-<hash>/`. The hash part is the first 16 hex digits of the content hash. Queries, compaction and retention do not read a manifest in that directory until the directory holds the empty object `_published`. The import writes `_published` after all the manifests, so a query returns all the samples of the block or none of them. A block with float and native-histogram samples has two manifests, and they become queryable at the same time.
+
+If the querier stops after the commit point, `check` gives `validating`, and no sample of the block is queryable. Send `finish` again. The retry writes the missing objects and `_published`. An upload of the same content under a new ULID also completes the import. Until a retry, the orphan sweep keeps the blocks and manifests of the import, and retention does not delete them.
 
 The import is idempotent by content. The content hash is a SHA-256 over the `index`, each chunk segment and the `tombstones` file.
 
@@ -158,7 +160,7 @@ To remove one imported block, delete its objects in this order. The manifests go
 1. Read the content hash from `mimir-block-uploads/<tenant>/<ULID>/import.json`. The field is `sha256`.
 2. Read the import record `mimir-block-uploads/<tenant>/by-sha256/<sha256>.json`. Its `objects` list names each `index_key` and `block_key`.
 3. Delete each `index_key`. After the cold-index cache interval, 30 seconds by default, queries do not return the block.
-4. Delete each `block_key`.
+4. Delete each `block_key`, then the `_published` object in the same directory.
 5. Delete the import record, then `mimir-block-uploads/<tenant>/<ULID>/`.
 
 Do not delete the import record while the samples are live. Without the record, a new upload of the same block imports the samples again.
@@ -168,4 +170,4 @@ Compaction can merge an imported block with other blocks of the tenant. Then the
 - Delete the series with the Prometheus `POST /api/v1/admin/tsdb/delete_series` API, when the admin API is on. Give the block's time range as `start` and `end`.
 - Delete the whole tenant with `POST /compactor/delete_tenant`. This also deletes every upload of the tenant.
 
-A rollback of the Krabka binary to v0.4 keeps the imported data queryable. The imported blocks and manifests use the same formats as the blocks that the block builder writes. The v0.4 binary does not read the import record or the binding. It rejects a new Prometheus TSDB upload, and it does not change the imported blocks.
+A rollback of the Krabka binary to v0.4 keeps the imported data queryable. The imported blocks and manifests use the same formats as the blocks that the block builder writes. The v0.4 binary does not read the import record, the binding or `_published`. It also reads the manifests of an import that is not published, so it can return part of the samples of such a block. It rejects a new Prometheus TSDB upload, and it does not change the imported blocks.

@@ -169,7 +169,8 @@ The `recovery` qualification gate runs `//crates/integration:backup_restore_test
 Native Prometheus TSDB block import is separate from backup restore. The Mimir
 block-upload endpoint imports Prometheus blocks with one commit point for each
 block. See [Migrating Prometheus TSDB Blocks](prometheus_tsdb_migration.md).
-An imported block is an ordinary metric block with an ordinary manifest. The
+An imported block is an ordinary metric block with an ordinary manifest, and
+an empty `_published` marker beside them makes the manifests live. The
 import records are under `mimir-block-uploads/<tenant>/` in the metrics store.
 The `metrics` part copies that whole store, so the cut holds them, and a
 restored cluster does not import the same block again.

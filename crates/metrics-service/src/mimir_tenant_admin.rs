@@ -9,7 +9,7 @@ use axum::{
 };
 use futures::TryStreamExt as _;
 use krabka_blockstore::escape_object_path_segment;
-use krabka_metrics::list_compaction_manifests;
+use krabka_metrics::list_compaction_index;
 use krabka_observability::server_security::{Principal, authorize_admin};
 use object_store::{ObjectStore, ObjectStoreExt as _, PutPayload, path::Path};
 use serde::{Deserialize, Serialize};
@@ -141,14 +141,11 @@ async fn new_marker(
     store: &Arc<dyn ObjectStore>,
     tenant: &str,
 ) -> Result<TenantDeletionMarker, String> {
-    let manifests = list_compaction_manifests(store)
+    // Also the objects of TSDB imports that are not published yet.
+    let mut objects = list_compaction_index(store)
         .await
-        .map_err(|error| error.to_string())?;
-    let mut objects = manifests
-        .into_iter()
-        .filter(|manifest| manifest.tenant == tenant)
-        .flat_map(|manifest| [manifest.index_key, manifest.block_key])
-        .collect::<Vec<_>>();
+        .map_err(|error| error.to_string())?
+        .tenant_keys(tenant);
     let upload_prefix = Path::from(format!(
         "mimir-block-uploads/{}",
         escape_object_path_segment(tenant)

@@ -18,20 +18,24 @@ use super::{
 /// 3. It creates the import record of the content hash with a create-only
 ///    put. The record is the commit point. Before it, a failure rolls the
 ///    import back. After it, a retry completes the import.
-/// 4. It writes the `.index` manifest of each block, one at a time. Each
-///    manifest makes its block live when the put ends.
-/// 5. It marks the record published.
+/// 4. It writes the `.index` manifest of each block. The manifests are in the
+///    import directory, and the manifest loaders do not read a manifest there
+///    until the directory has a publication marker.
+/// 5. It writes the publication marker. This one put makes every manifest of
+///    the import live together, so a query reads all the samples of the block
+///    or none of them.
+/// 6. It marks the record published.
 ///
 /// An error before the commit point deletes the blocks and a binding that
-/// this call created. An error in step 4 or 5 deletes the manifests that this
-/// call wrote. Either way, a failed call leaves no index entry of the import.
+/// this call created. An error in step 4 or 5 leaves manifests that no query
+/// reads. Either way, a failed call leaves no live index entry of the import.
+/// An error in step 6 leaves the import live, and a retry marks the record
+/// published.
 ///
-/// The publication is not atomic for readers. A block with float and
-/// histogram samples has two manifests. A query that lists the manifests
-/// between the two puts reads the float samples only. A process that stops
-/// between the two puts leaves the float manifest live under an unpublished
-/// record until a later import of the same content, under any ULID, writes
-/// the missing manifest and marks the record published.
+/// A process that stops after the commit point leaves an unpublished record.
+/// A later import of the same content, under any ULID, writes the missing
+/// manifests and the marker, then marks the record published. If the marker
+/// is already there, that import writes only the record.
 ///
 /// If the record is already published, the function writes nothing and
 /// returns [`TsdbImportOutcome::AlreadyImported`] with the stored record, so
@@ -103,7 +107,7 @@ pub async fn publish_tsdb_import(
 }
 
 /// Answers for content that already has a record: a published record as it
-/// is, and an unpublished one after this call writes its missing manifests.
+/// is, and an unpublished one after this call publishes it.
 async fn resume(
     store: &Arc<dyn ObjectStore>,
     keys: &TsdbImportKeys,
@@ -114,8 +118,15 @@ async fn resume(
     if record.published {
         return Ok(TsdbImportOutcome::AlreadyImported(record));
     }
-    let manifests = missing_manifests(store, &record, block).await?;
-    let record = publish(store.as_ref(), keys, record, &manifests).await?;
+    let marker = keys.published_marker(&record.ulid, &record.sha256);
+    let record = if exists(store.as_ref(), &marker).await? {
+        // The import is live. Compaction can have merged its blocks since,
+        // so a manifest that is gone now stays gone.
+        mark_published(store.as_ref(), keys, record).await?
+    } else {
+        let manifests = missing_manifests(store, &record, block).await?;
+        publish(store.as_ref(), keys, record, &manifests).await?
+    };
     // The first import of this content chose the keys. This call only
     // finished it, so the content was there before.
     if record.ulid == target.block_ulid {
@@ -283,11 +294,14 @@ async fn stage_and_commit(
     Ok((ImportCommit::Lost(existing), manifests))
 }
 
-/// Writes the blocks of the manifests that an unpublished record names and
-/// the store lacks, and returns those manifests.
+/// Writes the objects that an unpublished record names and the store lacks,
+/// and returns their manifests.
 ///
-/// The blocks are written again, because no manifest named the old copies,
-/// and the orphan sweep may have deleted them.
+/// A block with no manifest is written again. No manifest named it, so the
+/// orphan sweep may have deleted it. A manifest that is there keeps its block
+/// from the orphan sweep, also before the import is live. A block that is
+/// gone all the same is written again with its manifest, so the marker never
+/// makes a manifest live whose block is gone.
 async fn missing_manifests(
     store: &Arc<dyn ObjectStore>,
     record: &TsdbImportRecord,
@@ -295,16 +309,10 @@ async fn missing_manifests(
 ) -> Result<Vec<CompactionIndexManifest>, TsdbPublishError> {
     let mut missing = Vec::new();
     for object in &record.objects {
-        let key = Path::from(object.index_key.as_str());
-        match store.head(&key).await {
-            Ok(_) => {}
-            Err(object_store::Error::NotFound { .. }) => missing.push(object),
-            Err(source) => {
-                return Err(TsdbPublishError::ObjectStore {
-                    key: key.to_string(),
-                    source,
-                });
-            }
+        let index = Path::from(object.index_key.as_str());
+        let block_key = Path::from(object.block_key.as_str());
+        if !exists(store.as_ref(), &index).await? || !exists(store.as_ref(), &block_key).await? {
+            missing.push(object);
         }
     }
     let mut manifests = Vec::new();
@@ -336,42 +344,48 @@ async fn missing_manifests(
     Ok(manifests)
 }
 
-/// Writes `manifests`, then marks the record published.
+/// Writes `manifests`, then the publication marker, then marks the record
+/// published.
 ///
-/// If a step fails, the function deletes the manifests that it wrote, so that
-/// a failed call leaves no index entry that it made.
+/// The manifests are not live until the marker exists. A failed call
+/// therefore deletes nothing. It leaves manifests that no query reads, or a
+/// live import whose record a retry marks published.
 async fn publish(
     store: &dyn ObjectStore,
     keys: &TsdbImportKeys,
     record: TsdbImportRecord,
     manifests: &[CompactionIndexManifest],
 ) -> Result<TsdbImportRecord, TsdbPublishError> {
+    for manifest in manifests {
+        put_manifest(store, manifest).await?;
+    }
+    put_marker(store, &keys.published_marker(&record.ulid, &record.sha256)).await?;
+    mark_published(store, keys, record).await
+}
+
+/// Stores `record` with [`TsdbImportRecord::published`] set.
+async fn mark_published(
+    store: &dyn ObjectStore,
+    keys: &TsdbImportKeys,
+    record: TsdbImportRecord,
+) -> Result<TsdbImportRecord, TsdbPublishError> {
     let record = TsdbImportRecord {
         published: true,
         ..record
     };
-    let record_key = keys.record(&record.sha256);
-    let mut written = 0;
-    let mut outcome = Ok(());
-    for manifest in manifests {
-        written += 1;
-        outcome = put_manifest(store, manifest).await;
-        if outcome.is_err() {
-            break;
-        }
-    }
-    if outcome.is_ok() {
-        outcome = put_import_json(store, &record_key, &record).await;
-    }
-    match outcome {
-        Ok(()) => Ok(record),
-        Err(error) => {
-            let keys = manifests[..written]
-                .iter()
-                .map(|manifest| Path::from(manifest.index_key.as_str()));
-            delete_keys(store, keys).await;
-            Err(error)
-        }
+    put_import_json(store, &keys.record(&record.sha256), &record).await?;
+    Ok(record)
+}
+
+/// Answers whether the store holds an object at `key`.
+async fn exists(store: &dyn ObjectStore, key: &Path) -> Result<bool, TsdbPublishError> {
+    match store.head(key).await {
+        Ok(_) => Ok(true),
+        Err(object_store::Error::NotFound { .. }) => Ok(false),
+        Err(source) => Err(TsdbPublishError::ObjectStore {
+            key: key.to_string(),
+            source,
+        }),
     }
 }
 
@@ -419,6 +433,17 @@ async fn put_manifest(
     let key = Path::from(manifest.index_key.as_str());
     store
         .put(&key, PutPayload::from(manifest.encode()?))
+        .await
+        .map_err(|source| TsdbPublishError::ObjectStore {
+            key: key.to_string(),
+            source,
+        })?;
+    Ok(())
+}
+
+async fn put_marker(store: &dyn ObjectStore, key: &Path) -> Result<(), TsdbPublishError> {
+    store
+        .put(key, PutPayload::default())
         .await
         .map_err(|source| TsdbPublishError::ObjectStore {
             key: key.to_string(),

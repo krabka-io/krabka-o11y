@@ -49,11 +49,15 @@ use tsdb_fixture::{
     FIXTURE_MAX_TIME, FIXTURE_MIN_TIME, FIXTURE_ULID, FixtureFiles, expected_samples, fixture_files,
 };
 
+use self::crashing_store::{CrashPoint, CrashingStore};
+
 // This suite uses only `normalize`, which the other differential suites share.
 #[allow(dead_code)]
 #[path = "../../metrics/tests/support/diff_corpus.rs"]
 mod diff_corpus;
 
+#[path = "../../metrics/tests/support/crashing_store.rs"]
+mod crashing_store;
 #[path = "../../metrics/tests/support/tsdb_fixture.rs"]
 mod tsdb_fixture;
 
@@ -736,6 +740,71 @@ async fn a_store_failure_on_the_index_probe_leaves_the_upload_validating() -> Te
     check!(retry_status == StatusCode::OK, "retry: {retry_body}");
     check!(after == json!({"result": "complete"}));
     check!(all_imported_samples(&krabka).await? == expected_series());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_query_during_a_stopped_import_reads_all_samples_or_none() -> TestResult {
+    // The write where the process stops, and whether the samples are live
+    // after the stop.
+    let cases = [
+        ("/float.index", 1, false),
+        ("/native-histograms.index", 1, false),
+        ("/_published", 1, false),
+        ("/by-sha256/", 2, true),
+    ];
+
+    for (key_part, occurrence, live) in cases {
+        let store = Arc::new(CrashingStore::default());
+        let krabka = Krabka::start_with(store.clone()).await?;
+        let block = UploadBlock::fixture();
+        let (status, body) = krabka
+            .post(
+                krabka.upload_url(FIXTURE_ULID, "start"),
+                block.meta(FIXTURE_ULID),
+            )
+            .await?;
+        assert!(status == StatusCode::OK, "start: {body}");
+        for (path, bytes) in &block.uploaded {
+            let url = format!(
+                "{}?path={}",
+                krabka.upload_url(FIXTURE_ULID, "files"),
+                encode(path)
+            );
+            let (status, body) = krabka.post(url, bytes.clone()).await?;
+            assert!(status == StatusCode::OK, "file {path}: {body}");
+        }
+        store.crash_at(Some(CrashPoint {
+            key_part: key_part.to_owned(),
+            occurrence,
+        }));
+
+        let (stopped_status, _) = krabka
+            .post(krabka.upload_url(FIXTURE_ULID, "finish"), Vec::new())
+            .await?;
+        let during = all_imported_samples(&krabka).await?;
+        store.crash_at(None);
+        let (retry_status, retry_body) = krabka
+            .post(krabka.upload_url(FIXTURE_ULID, "finish"), Vec::new())
+            .await?;
+        let after = krabka
+            .get_json(&krabka.upload_url(FIXTURE_ULID, "check"), &[])
+            .await?;
+
+        let case = format!("{key_part} #{occurrence}");
+        check!(
+            stopped_status == StatusCode::INTERNAL_SERVER_ERROR,
+            "case: {case}"
+        );
+        let expected = if live { expected_series() } else { Vec::new() };
+        check!(during == expected, "case: {case}");
+        check!(retry_status == StatusCode::OK, "case: {case}: {retry_body}");
+        check!(after == json!({"result": "complete"}), "case: {case}");
+        check!(
+            all_imported_samples(&krabka).await? == expected_series(),
+            "case: {case}"
+        );
+    }
     Ok(())
 }
 

@@ -5,8 +5,8 @@ use super::{Deserialize, Serialize, TsdbImportObject, TsdbImportStats};
 /// The import creates it under the content hash after every Parquet object of
 /// the block is written. Its creation is the commit point of the import:
 /// after it, a retry completes the import and does not roll it back. The
-/// import sets [`Self::published`] after it writes every `.index` manifest.
-/// Until then, queries can read some of the objects and not the others.
+/// import sets [`Self::published`] after it writes every `.index` manifest
+/// and the publication marker that makes them live together.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TsdbImportRecord {
     /// The format version. Readers reject a version above [`Self::VERSION`]
@@ -18,10 +18,10 @@ pub struct TsdbImportRecord {
     pub sha256: String,
     pub stats: TsdbImportStats,
     pub objects: Vec<TsdbImportObject>,
-    /// Whether every manifest was written. A later import of the same content
-    /// writes the missing manifests of an unpublished record. It leaves a
-    /// published record as it is, because compaction and retention delete
-    /// the manifests of a published import.
+    /// Whether every manifest and the publication marker were written. A
+    /// later import of the same content writes the missing objects of an
+    /// unpublished record. It leaves a published record as it is, because
+    /// compaction and retention delete the manifests of a published import.
     pub published: bool,
 }
 

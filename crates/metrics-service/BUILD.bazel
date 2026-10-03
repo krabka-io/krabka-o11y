@@ -76,6 +76,7 @@ crate_tests(
         "diff_prometheus": ["//crates/metrics:tests/support/diff_corpus.rs"],
         "grafana_integration": ["//crates/metrics:tests/support/diff_corpus.rs"],
         "tsdb_import": [
+            "//crates/metrics:tests/support/crashing_store.rs",
             "//crates/metrics:tests/support/diff_corpus.rs",
             "//crates/metrics:tests/support/tsdb_fixture.rs",
         ],
