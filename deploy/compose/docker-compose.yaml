@@ -284,6 +284,13 @@ services:
       start_period: 120s
     stop_grace_period: 60s
 
+  traces-live-store:
+    !!merge <<: *krabka
+    command: [krabka-traces, --config.file=/etc/krabka/traces-live-store.yaml]
+    depends_on: *needs-stack
+    healthcheck: *probe-9404
+    stop_grace_period: 60s
+
   # --- profiles -----------------------------------------------------------
   profiles-distributor:
     !!merge <<: *krabka
