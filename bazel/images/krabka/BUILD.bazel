@@ -64,6 +64,7 @@ BINARIES = {
     "/usr/local/bin/krabka-metrics": "//crates/metrics:krabka-metrics",
     "/usr/local/bin/krabka-metrics-service": "//crates/metrics-service:krabka-metrics-service",
     "/usr/local/bin/krabka-o11y-bootstrap": "//crates/observability:krabka-o11y-bootstrap",
+    "/usr/local/bin/krabka-o11y-recovery": "//crates/observability:krabka-o11y-recovery",
     "/usr/local/bin/krabka-observability": "//crates/observability:krabka-observability",
     "/usr/local/bin/krabka-profiles": "//crates/profiles:krabka-profiles",
     "/usr/local/bin/krabka-traces": "//crates/traces:krabka-traces",

@@ -25,6 +25,8 @@ replacement object.
 | profiles | block metadata, SymbolDB objects, and lifecycle manifests | protobuf/JSON version 1 | exact version; immutable object keys |
 | ruler | rule groups, evaluations, and active-alert tenant state | Kafka version 1 | validate the whole poll before state mutation |
 | tenant admin | delete requests, deletion markers, overrides, and uploaded debuginfo | JSON/raw version 1 | JSON schemas are additive; raw uploads are immutable |
+| recovery | backup part manifests (`.krabka-recovery/manifest.json`) | JSON `schema_version` 2 | readers accept version 1, which names one tenant and no part; future versions rejected before a copy |
+| recovery | deployment cut (`krabka-recovery/cut.json`) | JSON `schema_version` 1 | exact version; written last, so a set without it is incomplete; an absent `omitted_parts` reads as empty |
 
 The release qualification runs a real old/new rolling replacement across all
 role services, queries the same four-signal corpus after every replacement,
