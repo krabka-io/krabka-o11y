@@ -145,11 +145,11 @@ Before it writes one object, the restore:
 - reads the restored broker, and refuses it when any partition offset or committed group offset differs from the cut;
 - refuses a target that holds an object that the part does not hold.
 
-The restore never overwrites or deletes an object, so a retry resumes. A broker that has just started can report offset 0 for a partition whose log it has not opened yet. The restore then refuses with a `wal_offset` finding whose `actual` is 0. Wait until the broker is ready, and run the restore again.
+The restore never overwrites or deletes an object, so a retry resumes. A broker that has just started can report offset 0 for a partition whose log it has not opened yet. The restore then refuses with a `wal_offset` finding whose `actual` is 0. Wait until the broker is ready, and run the restore again. No index needs a manual edit: every index and manifest is an object in its part, and each role loads it at start.
 
 A refusal because of the broker names every finding in the error message: the kind, the topic and partition, the group, and the expected and actual offsets. With `--report`, the command also writes the findings to the report file as JSON. A backup that the broker refuses does the same.
 
-The overlap check compares the scheme, the host and port, and the path of each URL. Two URLs that name one store in two forms are not found, for example an `s3://` URL and an endpoint URL. Give each part its own bucket or prefix in one form. The backup does the same check on its part sources and the backup URL. No index needs a manual edit: every index and manifest is an object in its part, and each role loads it at start.
+The overlap check compares the scheme, the host and port, and the path of each URL. Two URLs that name one store in two forms are not found, for example an `s3://` URL and an endpoint URL. Give each part its own bucket or prefix in one form. The backup does the same check on its part sources and the backup URL.
 
 After the restore, each block builder resumes at its committed offset. No record of its WAL at the cut lies after that offset, so it reads no record of a block that the cut holds and publishes no record twice.
 
