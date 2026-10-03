@@ -39,14 +39,17 @@ krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
 krabka-broker = { version = "0.6.1" }
 krabka-client-consumer = { version = "0.4.0" }
 krabka-client-producer = { version = "0.4.0" }
+krabka-logql = { path = "../logql", version = "0.4.0" }
 krabka-metrics = { path = "../metrics", version = "0.4.0" }
 krabka-metrics-service = { path = "../metrics-service", version = "0.4.0" }
 krabka-observability = { path = "../observability", version = "0.4.0" }
+krabka-pprof = { path = "../pprof", version = "0.4.0" }
 krabka-profiles = { path = "../profiles", version = "0.4.0" }
 krabka-promql = { path = "../promql", version = "0.4.0" }
 krabka-traceql = { path = "../traceql", version = "0.4.0" }
 krabka-traces = { path = "../traces", version = "0.4.0" }
 krabka-units = { workspace = true }
+num-traits = { workspace = true }
 object_store = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
@@ -54,7 +57,20 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 tempfile = { workspace = true }
 testcontainers = { workspace = true }
-tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "time"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-util = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 url = { workspace = true }
+
+# The operating-envelope soak needs a MinIO container and a wall-clock budget,
+# so it stays out of a plain `cargo test`. The `#[ignore]` on its one test
+# keeps it out as well; this line keeps its build out of `cargo test`, which
+# would otherwise link a binary it never runs. It stays reachable by name:
+#
+#     cargo test -p krabka-integration --test soak_envelope -- --ignored
+#
+# Under Bazel the same separation is the `scale` tag in BUILD.bazel, which
+# //.bazelrc excludes from `bazel test //...` and selects with `--config=scale`.
+[[test]]
+name = "soak_envelope"
+test = false
