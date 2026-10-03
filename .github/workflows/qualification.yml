@@ -25,7 +25,8 @@ jobs:
           - id: ordinary-cargo
             gate: ordinary
             command: cargo test --workspace --locked
-            allowed_ignored: 26
+            # Includes the compaction memory worker, run by its parent test.
+            allowed_ignored: 27
           - id: ordinary-clippy
             gate: ordinary
             command: cargo clippy --workspace --all-targets --locked -- -D warnings
