@@ -54,7 +54,7 @@ krabka-pprof = { path = "../crates/pprof" }
 krabka-promql = { path = "../crates/promql" }
 krabka-traceql = { path = "../crates/traceql" }
 krabka-traces = { path = "../crates/traces" }
-krabka-units = { version = "0.4.0" }
+krabka-units = { version = "0.5.0" }
 libfuzzer-sys = "0.4"
 # The features //crates/traces/Cargo.toml takes, so `TracesData` here is the
 # same type `decode_otlp` takes there.

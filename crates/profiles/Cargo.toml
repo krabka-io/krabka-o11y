@@ -63,12 +63,12 @@ krabka-metrics = { path = "../metrics", version = "0.4.0" }
 krabka-observability = { path = "../observability", version = "0.4.0" }
 krabka-pprof = { path = "../pprof", version = "0.4.0" }
 krabka-query-frontend = { path = "../query-frontend", version = "0.4.0" }
-krabka-telemetry = { version = "0.6.1" }
-krabka-client-producer = { version = "0.4.0" }
-krabka-client-consumer = { version = "0.4.0" }
-krabka-client-admin = { version = "0.4.0" }
-krabka-client-core = { version = "0.4.0" }
-krabka-throttle = { version = "0.6.1" }
+krabka-telemetry = { version = "0.7.0" }
+krabka-client-producer = { version = "0.5.0" }
+krabka-client-consumer = { version = "0.5.0" }
+krabka-client-admin = { version = "0.5.0" }
+krabka-client-core = { version = "0.5.0" }
+krabka-throttle = { version = "0.7.0" }
 krabka-units = { workspace = true }
 refined_type = { workspace = true }
 reqwest = { workspace = true }
@@ -94,6 +94,6 @@ qubit-clock = "0.8"
 rcgen = { workspace = true }
 sha2 = { workspace = true }
 flate2 = { workspace = true }
-krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "19ea5bfac23c4858d5d6aed99890014fd0fa23d3", version = "0.4.0" }
-krabka-broker = { version = "0.6.1" }
+krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "19ea5bfac23c4858d5d6aed99890014fd0fa23d3", version = "0.7.0" }
+krabka-broker = { version = "0.7.0" }
 krabka-pprof = { path = "../pprof", version = "0.4.0" }

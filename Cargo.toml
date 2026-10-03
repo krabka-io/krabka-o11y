@@ -187,7 +187,7 @@ x509-parser = "0.18"
 xxhash-rust = { version = "0.8", features = ["xxh3", "xxh64"] }
 
 # First-party crates inherited by more than one member.
-krabka-units = "0.4.0"
+krabka-units = "0.5.0"
 
 # Sibling repositories, pinned by revision. These crates are declared
 # against crates.io above and in the member manifests; the patch below is
