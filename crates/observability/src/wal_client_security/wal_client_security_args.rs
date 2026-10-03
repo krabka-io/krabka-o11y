@@ -1,3 +1,5 @@
+use krabka_client_core::OAuthBearerTokenSource;
+
 use super::{
     Args, ClientSecurity, KeyStore, NonEmptyStringValueParser, PathBuf, SaslCredentials,
     TlsConnectorConfig, TrustStore, WalClientSecurityError, WalSaslMechanism, WalSecurityProtocol,
@@ -124,10 +126,7 @@ impl WalClientSecurityArgs {
     /// default, the first TLS connection panics.
     ///
     /// The returned [`ClientSecurity`] holds the SASL password in memory.
-    /// `krabka-client-core` derives `Debug` on `ClientSecurity`, on
-    /// `SaslCredentials` and on `ConnectionOptions`, so `{:?}` on any value
-    /// that holds this policy prints the password. Never log such a value
-    /// with `{:?}`, and never record it in a tracing field.
+    /// The client redacts it from `Debug` output.
     ///
     /// # Errors
     ///
@@ -258,6 +257,7 @@ impl WalClientSecurityArgs {
                         mechanism: mechanism.into(),
                         username,
                         password,
+                        delegation_token: false,
                     }
                 }
             }
@@ -279,7 +279,10 @@ impl WalClientSecurityArgs {
                     .clone()
                     .ok_or(WalClientSecurityError::MissingOAuthBearerTokenPath)?;
                 check_readable("--wal-sasl-oauthbearer-token-path", &token_path)?;
-                SaslCredentials::OAuthBearer { token_path }
+                SaslCredentials::OAuthBearer {
+                    token: OAuthBearerTokenSource::File(token_path),
+                    extensions: std::collections::BTreeMap::default(),
+                }
             }
         };
         Ok(Some(credentials))

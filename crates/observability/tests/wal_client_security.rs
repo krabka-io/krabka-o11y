@@ -120,6 +120,7 @@ async fn start_broker(
         protocol,
         tls_config: None,
         sasl_mechanisms: None,
+        principal_mapper: krabka_broker::SslPrincipalMapper::default(),
     }];
     config.inter_broker_listener_name = name.to_string();
     configure(&mut config);

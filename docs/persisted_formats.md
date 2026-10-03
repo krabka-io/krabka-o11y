@@ -21,6 +21,7 @@ replacement object.
 | blockstore | storage audit report, repair report, and repair audit log (JSONL of `intent` and `outcome` lines) | JSON `schema_version: 1` | exact version; readers reject another version before a repair acts |
 | logs | block/index manifests, shard catalogs, and compaction frontier | JSON version 1 | exact version; atomic replacement |
 | metrics | compaction index manifests and block-kind keys | JSON/versioned key version 1 | exact version; source blocks and WAL remain authoritative |
+| metrics | Prometheus TSDB import records and block-ULID bindings | JSON `version: 1`, required | version 1 or earlier; a later or absent version stops the import before it writes |
 | traces | block metadata, compaction keys, and search index manifests | JSON/key version 1 | exact version; replacement only after output is durable |
 | profiles | block metadata, SymbolDB objects, and lifecycle manifests | protobuf/JSON version 1 | exact version; immutable object keys |
 | ruler | rule groups, evaluations, and active-alert tenant state | Kafka version 1 | validate the whole poll before state mutation |

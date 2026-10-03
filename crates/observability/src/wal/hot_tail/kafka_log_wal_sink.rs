@@ -67,7 +67,7 @@ impl KafkaLogWalSink {
     /// Hands one record to the producer and returns the future for its ack.
     ///
     /// The two halves are separate because only the first decides order.
-    /// `Producer::send` appends the record to the partition accumulator, and
+    /// `Producer::enqueue` appends the record to the partition accumulator, and
     /// the returned future resolves when the broker acks it.
     async fn enqueue(
         &self,
@@ -75,12 +75,10 @@ impl KafkaLogWalSink {
     ) -> Result<impl Future<Output = Result<(), WalSinkError>> + use<>, WalSinkError> {
         let delivery = self
             .producer
-            .send(build_kafka_wal_record(&self.topic, &record)?)
-            .await;
+            .enqueue(build_kafka_wal_record(&self.topic, &record)?)
+            .await?;
         Ok(async move {
-            delivery
-                .await
-                .map_err(|_| WalSinkError::DeliveryCanceled)??;
+            delivery.await?;
             Ok(())
         })
     }

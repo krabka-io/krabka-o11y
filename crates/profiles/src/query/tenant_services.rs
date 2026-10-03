@@ -869,7 +869,7 @@ fn diff_json(
     let max_self = graph
         .levels
         .iter()
-        .flat_map(|level| level.values.chunks_exact(7))
+        .flat_map(|level| level.values.as_chunks::<7>().0.iter())
         .fold(0_i64, |max, bar| max.max(bar[2]).max(bar[5]));
     serde_json::to_string(&json!({
         "flamebearer": {

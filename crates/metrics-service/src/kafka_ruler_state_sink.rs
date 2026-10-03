@@ -25,12 +25,9 @@ impl KafkaRulerStateSink {
         let value = record
             .encode()
             .map_err(|error| RulerWalError::Append(error.to_string()))?;
-        let ack = self
-            .producer
+        self.producer
             .send(keyed_producer_record(self.topic.clone(), key, value))
-            .await;
-        ack.await
-            .map_err(|error| RulerWalError::Append(error.to_string()))?
+            .await
             .map_err(|error| RulerWalError::Append(error.to_string()))?;
         Ok(())
     }

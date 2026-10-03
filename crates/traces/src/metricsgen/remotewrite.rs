@@ -18,8 +18,6 @@ use crate::metricsgen::{
 #[cfg(test)]
 mod tests {
 
-    use prost::Message as _;
-
     use super::*;
     use crate::metricsgen::{
         BucketSpan, NativeHistogram,

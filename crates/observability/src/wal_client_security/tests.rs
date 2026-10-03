@@ -6,7 +6,7 @@ use std::{
 use assert2::assert;
 use clap::Parser;
 use krabka_client_core::{
-    ClientSecurity, ConnectionOptions, SaslCredentials, TlsConnectorConfig,
+    ClientSecurity, ConnectionOptions, OAuthBearerTokenSource, SaslCredentials, TlsConnectorConfig,
     security::{KeyStore, TrustStore},
 };
 use krabka_security::{ListenerProtocol, SaslMechanism};
@@ -129,7 +129,13 @@ fn public_credential_fields(
 ) -> (SaslMechanism, Vec<&str>, Option<&Path>) {
     let mechanism = credentials.mechanism();
     match credentials {
-        SaslCredentials::Plain { username, .. } | SaslCredentials::Scram { username, .. } => {
+        SaslCredentials::Plain { username, .. } => (mechanism, vec![username.as_str()], None),
+        SaslCredentials::Scram {
+            username,
+            delegation_token,
+            ..
+        } => {
+            assert!(!delegation_token);
             (mechanism, vec![username.as_str()], None)
         }
         SaslCredentials::Gssapi {
@@ -146,9 +152,17 @@ fn public_credential_fields(
             ],
             Some(keytab_path.as_path()),
         ),
-        SaslCredentials::OAuthBearer { token_path } => {
+        SaslCredentials::OAuthBearer {
+            token: OAuthBearerTokenSource::File(token_path),
+            extensions,
+        } => {
+            assert!(extensions.is_empty());
             (mechanism, Vec::new(), Some(token_path.as_path()))
         }
+        SaslCredentials::OAuthBearer {
+            token: OAuthBearerTokenSource::Provider(_),
+            ..
+        } => panic!("WAL OAuth tokens must be read from a file"),
     }
 }
 
@@ -305,6 +319,7 @@ fn sasl_ssl_with_scram_sha_512_builds_the_whole_policy() {
             mechanism: SaslMechanism::ScramSha512,
             username: "krabka-metrics".to_string(),
             password: SECRET.to_string(),
+            delegation_token: false,
         }),
         sasl_host: None,
     };
@@ -411,6 +426,7 @@ fn each_protocol_and_mechanism_builds_the_policy_it_names() {
                     mechanism: SaslMechanism::ScramSha256,
                     username: "alice".to_string(),
                     password: SECRET.to_string(),
+                    delegation_token: false,
                 }),
                 sasl_host: None,
             },
@@ -433,7 +449,8 @@ fn each_protocol_and_mechanism_builds_the_policy_it_names() {
                 protocol: ListenerProtocol::SaslSsl,
                 tls: Some(tls.clone()),
                 sasl: Some(SaslCredentials::OAuthBearer {
-                    token_path: PathBuf::from(&token),
+                    token: OAuthBearerTokenSource::File(PathBuf::from(&token)),
+                    extensions: std::collections::BTreeMap::default(),
                 }),
                 sasl_host: None,
             },

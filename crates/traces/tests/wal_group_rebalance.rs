@@ -2,18 +2,14 @@
 //! broker.
 //!
 //! The block builder buffers decoded windows across polls and commits offsets
-//! only after it writes a block. `krabka-client-consumer` exposes no rebalance
-//! callback, so nothing in this process runs between the group's decision to
-//! move a partition and the move itself. These tests state the consequence as
-//! behaviour: a second member joins, partitions leave the first member, and the
-//! records the first member had already polled are read a second time by the
-//! member that takes them over.
+//! only after it writes a block. These fixtures do not register a revoke
+//! listener to flush those buffers. These tests state the consequence as
+//! behaviour: a second member joins cooperatively, a partition leaves the
+//! first member, and the records the first member had already polled are read
+//! a second time by the member that takes them over.
 //!
-//! The suite is the executable form of the limitation that
-//! `krabka_observability::wal_group_assignment` documents. If a future
-//! `krabka-client-consumer` grows a revoke callback and the block builder
-//! flushes from it, `the_group_reads_the_first_members_polled_records_again`
-//! is the test that must change.
+//! The replay assertion covers a consumer whose buffered records have not
+//! reached a durable block before revocation.
 
 mod support;
 
@@ -21,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use assert2::{assert, check};
 use bytes::Bytes;
-use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerRecord};
+use krabka_client_consumer::{Assignor, AutoOffsetReset, Consumer, ConsumerRecord};
 use krabka_client_producer::{Producer, ProducerRecord};
 use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
 use krabka_protocol::owned::create_topics_request::{CreatableTopic, CreateTopicsRequest};
@@ -59,9 +55,9 @@ async fn a_second_group_member_takes_partitions_and_the_watch_reports_it() {
         check!(metrics.partition_revocations(topic, partition) == 0);
     }
 
-    // A second member joins the same group. Nothing asks the first member to
-    // flush, and nothing in this process is told before the partitions move.
-    let mut second = member(&proc.bootstrap, topic, "rebalance-reported", "second").await;
+    // A second member joins the same group. This fixture has no revoke listener
+    // to flush the first member's buffered records.
+    let mut second = join_second(&mut first, &proc.bootstrap, topic, "rebalance-reported").await;
     let rebalance = poll_until_revoked(&mut first, &mut second, &metrics, topic).await;
 
     // One partition of the two moved, and the instruments say which.
@@ -94,7 +90,7 @@ async fn the_group_reads_the_first_members_polled_records_again() {
     let held = drain(&mut first, per_partition() * 2).await;
     check!(held.len() == per_partition() * 2);
 
-    let mut second = member(&proc.bootstrap, topic, "rebalance-replay", "second").await;
+    let mut second = join_second(&mut first, &proc.bootstrap, topic, "rebalance-replay").await;
     let mut rebalance = poll_until_revoked(&mut first, &mut second, &metrics, topic).await;
     assert!(let Some(&lost) = rebalance.revoked.first());
 
@@ -106,6 +102,7 @@ async fn the_group_reads_the_first_members_polled_records_again() {
     // cannot collapse: the two members pick different flush boundaries, so the
     // two keys differ.
     let replayed = drain_partition(
+        &mut first,
         &mut second,
         &mut rebalance.polled_by_second,
         lost,
@@ -161,7 +158,7 @@ async fn fill(bootstrap: &str, topic: &str) {
                     ..ProducerRecord::default()
                 })
                 .await;
-            assert!(let Ok(Ok(_)) = ack.await);
+            assert!(let Ok(_) = ack);
         }
     }
 }
@@ -172,10 +169,33 @@ async fn member(bootstrap: &str, topic: &str, group: &str, client: &str) -> Cons
         .client_id(format!("krabka-traces-{group}-{client}"))
         .group_id(group.to_owned())
         .subscribe(vec![topic.to_owned()])
+        .assignors(vec![Assignor::CooperativeSticky])
         .auto_offset_reset(AutoOffsetReset::Earliest)
+        .enable_auto_commit(false)
         .build()
         .await
         .expect("consumer build")
+}
+
+/// Keeps the first member polling while the second member joins the group.
+async fn join_second(
+    first: &mut BlockBuilderConsumer,
+    bootstrap: &str,
+    topic: &str,
+    group: &str,
+) -> Consumer {
+    let joining = member(bootstrap, topic, group, "second");
+    tokio::pin!(joining);
+    tokio::time::timeout(DEADLINE, async {
+        loop {
+            tokio::select! {
+                consumer = &mut joining => return consumer,
+                _ = first.poll(millis(100)) => {}
+            }
+        }
+    })
+    .await
+    .expect("second member joins while first continues polling")
 }
 
 /// Polls until `expected` records arrive, or fails at the deadline.
@@ -198,7 +218,9 @@ async fn drain(consumer: &mut BlockBuilderConsumer, expected: usize) -> Vec<Cons
 /// `already_polled` carries what the drive loop in [`poll_until_revoked`]
 /// already took off the consumer. Those records are part of the answer, so this
 /// starts from them rather than polling for records that have already arrived.
+/// The first member keeps polling to finish the cooperative rebalance rounds.
 async fn drain_partition(
+    first: &mut BlockBuilderConsumer,
     consumer: &mut Consumer,
     already_polled: &mut Vec<ConsumerRecord>,
     partition: i32,
@@ -211,6 +233,7 @@ async fn drain_partition(
         .map(|record| record.offset)
         .collect();
     while out.len() < expected && Instant::now() < deadline {
+        let _ = first.poll(millis(100)).await;
         assert!(let Ok(polled) = consumer.poll(millis(250)).await);
         out.extend(
             polled

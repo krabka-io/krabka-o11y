@@ -48,10 +48,39 @@ set_krabka_image() {
 
 query_forward_pids=()
 ingest_forward_pids=()
+capture_failure_diagnostics() {
+  local diagnostics="${evidence_dir}/failure" pod container deadline=$((SECONDS + 120))
+  mkdir -p "${diagnostics}"
+  kubectl --request-timeout=10s -n "${namespace}" get pods -o json \
+    >"${diagnostics}/pods.json" 2>&1 || true
+  kubectl --request-timeout=10s -n "${namespace}" describe pods \
+    >"${diagnostics}/pods-describe.txt" 2>&1 || true
+  kubectl --request-timeout=10s -n "${namespace}" get events --sort-by=.lastTimestamp -o yaml \
+    >"${diagnostics}/events.yaml" 2>&1 || true
+  while IFS=$'\t' read -r pod container; do
+    if ((SECONDS >= deadline)); then
+      printf 'Container log collection reached its 120-second budget.\n' \
+        >"${diagnostics}/collection-timeout.txt"
+      break
+    fi
+    kubectl --request-timeout=10s -n "${namespace}" logs "${pod}" -c "${container}" \
+      --pod-running-timeout=5s --timestamps --tail=200 --limit-bytes=1048576 \
+      >"${diagnostics}/${pod}-${container}.log" 2>&1 || true
+    kubectl --request-timeout=10s -n "${namespace}" logs "${pod}" -c "${container}" \
+      --previous --pod-running-timeout=5s --timestamps --tail=200 --limit-bytes=1048576 \
+      >"${diagnostics}/${pod}-${container}-previous.log" 2>&1 || true
+  done < <(jq -r '.items[] | .metadata.name as $pod |
+    ((.spec.initContainers // []) + (.spec.containers // []))[] |
+    [$pod, .name] | @tsv' "${diagnostics}/pods.json" 2>"${diagnostics}/collection-errors.txt")
+}
+
 cleanup() {
+  local status=$?
+  if ((status != 0)); then capture_failure_diagnostics || true; fi
   if ((${#query_forward_pids[@]})); then kill "${query_forward_pids[@]}" 2>/dev/null || true; fi
   if ((${#ingest_forward_pids[@]})); then kill "${ingest_forward_pids[@]}" 2>/dev/null || true; fi
   kind delete cluster --name "${cluster}" >/dev/null 2>&1 || true
+  return "${status}"
 }
 trap cleanup EXIT
 

@@ -11,7 +11,7 @@ pub(crate) async fn list_delete_requests(
 ) -> Response {
     let tenant = match authorized_delete_tenant(&state, &security, &headers).await {
         Ok(tenant) => tenant,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     match execute_list_delete_requests(&state, &tenant, raw_query.as_deref()) {
         Ok(requests) => json_response(StatusCode::OK, &json!(requests)),

@@ -203,7 +203,9 @@ done
 # crates.io. That needs the name to exist there under another owner, which is
 # why cargo stays quiet about it: it found a package with the right name.
 while IFS= read -r crate_name; do
-  if [[ -n ${member_repo["$crate_name"]:-} ]]; then
+  # Upstream patches may coexist with incompatible registry versions; the
+  # namespace ownership check applies to Krabka sibling repositories.
+  if [[ ${member_repo["$crate_name"]:-} == https://github.com/krabka-io/* ]]; then
     fail "$crate_name comes from crates.io, and ${member_repo["$crate_name"]} holds a crate with that name at the pinned revision. The build links the registry copy, not the sibling: add it to [patch.crates-io] in Cargo.toml and to SIBLING_MEMBERS in MODULE.bazel."
   fi
 done < <(jq -r '.packages[]

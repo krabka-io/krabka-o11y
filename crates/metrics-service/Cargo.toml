@@ -37,7 +37,7 @@ krabka-metrics = { path = "../metrics", version = "0.4.0" }
 krabka-observability = { path = "../observability", version = "0.4.0" }
 krabka-promql = { path = "../promql", version = "0.4.0" }
 krabka-query-frontend = { path = "../query-frontend", version = "0.4.0" }
-krabka-telemetry = { version = "0.4.0" }
+krabka-telemetry = { version = "0.6.1" }
 krabka-units = { workspace = true }
 futures = { workspace = true }
 object_store = { workspace = true }
@@ -58,7 +58,8 @@ url = { workspace = true }
 tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
 
 [dev-dependencies]
-krabka-broker = { version = "0.4.0" }
+flate2 = { workspace = true }
+krabka-broker = { version = "0.6.1" }
 krabka-client-admin = { version = "0.4.0" }
 opentelemetry-proto = { workspace = true }
 prost = { workspace = true }

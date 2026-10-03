@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
 use assert2::{assert, check};
-use krabka_client_admin::{KafkaError, TopicConfigOverrides, TopicMetadata, TopicMetadataEntry};
+use krabka_client_admin::{
+    Config, ConfigEntry, ConfigResource, ConfigSource, ConfigType, KafkaError, TopicMetadata,
+    TopicMetadataEntry,
+};
 use krabka_units::{minutes, secs};
 
 use super::{
@@ -29,14 +32,30 @@ fn entry(name: &str, partitions: i32, replicas: i32) -> TopicMetadataEntry {
     }
 }
 
-fn overrides(name: &str, pairs: &[(&str, &str)]) -> TopicConfigOverrides {
-    TopicConfigOverrides {
-        topic: name.to_string(),
-        overrides: pairs
-            .iter()
-            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-            .collect(),
-    }
+fn overrides(name: &str, pairs: &[(&str, &str)]) -> (ConfigResource, Result<Config, KafkaError>) {
+    (
+        ConfigResource::topic(name),
+        Ok(Config {
+            entries: pairs
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        (*name).to_string(),
+                        ConfigEntry {
+                            name: (*name).to_string(),
+                            value: Some((*value).to_string()),
+                            source: ConfigSource::DynamicTopicConfig,
+                            is_sensitive: false,
+                            is_read_only: false,
+                            synonyms: Vec::new(),
+                            config_type: ConfigType::Unknown,
+                            documentation: None,
+                        },
+                    )
+                })
+                .collect(),
+        }),
+    )
 }
 
 fn metadata(entries: Vec<TopicMetadataEntry>) -> TopicMetadata {
@@ -83,10 +102,10 @@ fn a_matching_broker_reports_no_drift_and_the_live_shard_count() {
         entry(METRICS_WAL_TOPIC, 4, 1),
         entry(METRICS_HA_TOPIC, 2, 1),
     ]);
-    let configs = vec![
+    let configs = BTreeMap::from([
         overrides(METRICS_WAL_TOPIC, &[(RETENTION_MS, "900000")]),
         overrides(METRICS_HA_TOPIC, &[(CLEANUP_POLICY, COMPACT)]),
-    ];
+    ]);
 
     let (observed, drift) = inspect_topics(
         &contracts,
@@ -121,7 +140,7 @@ fn a_wrong_partition_count_is_fatal_and_names_both_counts() {
     let settings = settings(4, 1, 1);
     let specs = desired_specs(&contracts, &settings);
     let metadata = metadata(vec![entry(METRICS_WAL_TOPIC, 1, 1)]);
-    let configs = vec![overrides(METRICS_WAL_TOPIC, &[(RETENTION_MS, "900000")])];
+    let configs = BTreeMap::from([overrides(METRICS_WAL_TOPIC, &[(RETENTION_MS, "900000")])]);
 
     let (_, drift) = inspect_topics(
         &contracts,
@@ -156,7 +175,7 @@ fn an_uncompacted_state_topic_is_fatal_whether_the_policy_is_wrong_or_absent() {
         &contracts,
         &TopicExpectation::Deployment(&specs),
         &metadata,
-        &[overrides(METRICS_HA_TOPIC, &[(CLEANUP_POLICY, "delete")])],
+        &BTreeMap::from([overrides(METRICS_HA_TOPIC, &[(CLEANUP_POLICY, "delete")])]),
     )
     .1;
     check!(
@@ -175,7 +194,7 @@ fn an_uncompacted_state_topic_is_fatal_whether_the_policy_is_wrong_or_absent() {
         &contracts,
         &TopicExpectation::Deployment(&specs),
         &metadata,
-        &[overrides(METRICS_HA_TOPIC, &[])],
+        &BTreeMap::from([overrides(METRICS_HA_TOPIC, &[])]),
     )
     .1;
     check!(
@@ -202,7 +221,7 @@ fn retention_and_replication_differences_are_reported_but_not_fatal() {
     let settings = settings(1, 1, 3);
     let specs = desired_specs(&contracts, &settings);
     let metadata = metadata(vec![entry(METRICS_WAL_TOPIC, 1, 1)]);
-    let configs = vec![overrides(METRICS_WAL_TOPIC, &[(RETENTION_MS, "60000")])];
+    let configs = BTreeMap::from([overrides(METRICS_WAL_TOPIC, &[(RETENTION_MS, "60000")])]);
 
     let (observed, drift) = inspect_topics(
         &contracts,
@@ -263,7 +282,7 @@ fn an_absent_or_unreadable_topic_is_fatal() {
         &contracts,
         &TopicExpectation::Deployment(&specs),
         &metadata,
-        &[],
+        &BTreeMap::new(),
     );
 
     assert!(observed == Vec::new());
@@ -293,7 +312,7 @@ fn a_topic_the_broker_omits_entirely_is_also_absent() {
         &contracts,
         &TopicExpectation::Deployment(&specs),
         &metadata(Vec::new()),
-        &[],
+        &BTreeMap::new(),
     );
 
     assert!(observed == Vec::new());
@@ -359,10 +378,10 @@ fn a_structure_check_reads_the_shard_count_instead_of_comparing_it() {
         entry(METRICS_WAL_TOPIC, 12, 3),
         entry(METRICS_HA_TOPIC, 5, 3),
     ]);
-    let compacted = vec![
+    let compacted = BTreeMap::from([
         overrides(METRICS_WAL_TOPIC, &[(RETENTION_MS, "60000")]),
         overrides(METRICS_HA_TOPIC, &[(CLEANUP_POLICY, COMPACT)]),
-    ];
+    ]);
 
     let (observed, drift) = inspect_topics(
         &contracts,
@@ -381,10 +400,10 @@ fn a_structure_check_reads_the_shard_count_instead_of_comparing_it() {
         "the live counts come back for the role to use"
     );
 
-    let uncompacted = vec![
+    let uncompacted = BTreeMap::from([
         overrides(METRICS_WAL_TOPIC, &[(RETENTION_MS, "60000")]),
         overrides(METRICS_HA_TOPIC, &[]),
-    ];
+    ]);
     let (_, drift) = inspect_topics(
         &contracts,
         &TopicExpectation::Structure,

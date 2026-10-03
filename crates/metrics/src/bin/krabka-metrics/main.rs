@@ -54,7 +54,7 @@ mod tests {
     };
 
     use assert2::{assert, check};
-    use clap::{CommandFactory, Parser, ValueEnum as _};
+    use clap::{CommandFactory, Parser};
     use krabka_broker::{Broker, BrokerConfig};
     use krabka_client_admin::{AdminClient, CreateTopicSpec};
     use krabka_observability::topic_contract::{METRICS_HA_TOPIC, METRICS_WAL_TOPIC};
@@ -834,6 +834,7 @@ mod tests {
         let specs: Vec<CreateTopicSpec> = topics
             .iter()
             .map(|(name, configs)| CreateTopicSpec {
+                replica_assignments: std::collections::BTreeMap::default(),
                 name: (*name).to_string(),
                 partitions: 1,
                 replicas: 1,
@@ -841,7 +842,10 @@ mod tests {
             })
             .collect();
         admin
-            .create_topics(&specs, krabka_units::secs(5))
+            .create_topics(
+                &specs,
+                krabka_client_admin::TopicMutationOptions::with_timeout(krabka_units::secs(5)),
+            )
             .await
             .expect("create topics");
     }

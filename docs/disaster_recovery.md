@@ -60,6 +60,14 @@ unlisted target objects stop the operation before new bytes are copied. Keep
 the backup manifest, command output, broker snapshot identity, and post-restore
 query-equivalence results together as the recovery evidence bundle.
 
+Native Prometheus TSDB block import is separate from backup restore. The Mimir
+block-upload endpoint imports Prometheus blocks with one commit point for each
+block. See [Migrating Prometheus TSDB Blocks](prometheus_tsdb_migration.md).
+An imported block is an ordinary metric block with an ordinary manifest. The
+import records are under `mimir-block-uploads/<tenant>/`. The backup prefix
+should include them, so that a restored cluster does not import the same block
+again.
+
 ## Offline audit and repair
 
 `audit-store` reads a live store in place. It lists every object under the
@@ -160,8 +168,3 @@ audit log together.
 After an applied repair, run `audit-store` again for the same tenant and
 signal, and run the lifecycle and query suites of the signal before you
 return the tenant to service.
-
-Native Prometheus TSDB block import remains separate from backup restore. The
-Mimir upload endpoint continues to reject Prometheus index/chunk encodings until
-their complete histogram, exemplar, tombstone, checksum, and atomic-publication
-contract is implemented and qualified.

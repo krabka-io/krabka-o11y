@@ -37,12 +37,13 @@ krabka-client-producer = { version = "0.4.0" }
 krabka-ids = { version = "0.4.0" }
 krabka-observability = { path = "../observability", version = "0.4.0" }
 krabka-query-frontend = { path = "../query-frontend", version = "0.4.0" }
-krabka-telemetry = { version = "0.4.0" }
-krabka-throttle = { version = "0.4.0" }
+krabka-telemetry = { version = "0.6.1" }
+krabka-throttle = { version = "0.6.1" }
 krabka-units = { workspace = true }
 dashmap = { workspace = true }
 futures = { workspace = true }
 flate2 = { workspace = true }
+hex = { workspace = true }
 object_store = { workspace = true }
 opentelemetry-proto = { workspace = true }
 prometheus-client = { workspace = true }
@@ -52,6 +53,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 serde-wincode = { workspace = true }
 serde_yaml = { workspace = true }
+sha2 = { workspace = true }
 snap = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }
@@ -70,7 +72,7 @@ protoc-bin-vendored = { workspace = true, optional = true }
 
 [dev-dependencies]
 assert2 = { workspace = true }
-krabka-broker = { version = "0.4.0" }
+krabka-broker = { version = "0.6.1" }
 krabka-client-admin = { version = "0.4.0" }
 mutants = { workspace = true }
 proptest = { workspace = true }

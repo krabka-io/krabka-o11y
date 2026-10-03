@@ -7,7 +7,7 @@ pub(crate) fn flamebearer_diff_json(
     let max_self = diff
         .levels
         .iter()
-        .flat_map(|level| level.values.chunks_exact(7))
+        .flat_map(|level| level.values.as_chunks::<7>().0.iter())
         .fold(0_i64, |max_self, bar| max_self.max(bar[2]).max(bar[5]));
     json!({
         "flamebearer": {
