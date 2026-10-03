@@ -90,7 +90,7 @@ temp-env = "0.3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 reqwest = { workspace = true, features = ["json"] }
 testcontainers = { workspace = true }
-qubit-clock = "0.8"
+qubit-clock = "~0.13.0"
 rcgen = { workspace = true }
 sha2 = { workspace = true }
 flate2 = { workspace = true }

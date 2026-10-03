@@ -21,6 +21,7 @@ use std::{
     net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::{Duration, SystemTime},
 };
 
 use assert2::check;
@@ -46,6 +47,7 @@ use krabka_profiles::{
     metrics::ServiceMetrics,
     query::{self, QuerierState},
 };
+use qubit_clock::FixedWallClock;
 use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose,
@@ -532,7 +534,11 @@ async fn a_secured_door_refuses_a_missing_or_wrong_credential_and_ready_needs_no
 async fn a_refused_credential_and_a_denied_tenant_each_become_one_audit_event() {
     let pki = Pki::new();
     let (log, mut queue) = AuditLog::new(8);
-    let audit = AuditHandle::new(log, Arc::new(AuditStats::new()), Arc::new(FixedClock));
+    let clock = FixedWallClock::new(
+        SystemTime::UNIX_EPOCH
+            + Duration::from_millis(u64::try_from(EVENT_TIME_MS).expect("positive event time")),
+    );
+    let audit = AuditHandle::new(log, Arc::new(AuditStats::new()), Arc::new(clock));
     let security = pki.security(false).with_security_events(Arc::new(audit));
     let stack = Stack::start_with(
         TenantPolicy::anonymous(),
@@ -603,15 +609,6 @@ async fn a_refused_credential_and_a_denied_tenant_each_become_one_audit_event() 
                 ),
             ]
     );
-}
-
-/// A clock that gives every audit event the same time.
-struct FixedClock;
-
-impl qubit_clock::Clock for FixedClock {
-    fn millis(&self) -> i64 {
-        EVENT_TIME_MS
-    }
 }
 
 /// A CA and a directory for the files that the security flags name.

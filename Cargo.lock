@@ -3888,7 +3888,7 @@ dependencies = [
  "krabka-protocol",
  "krabka-units",
  "krabka-verified",
- "qubit-clock 0.13.0",
+ "qubit-clock",
  "ring",
  "serde",
  "serde_json",
@@ -3997,7 +3997,7 @@ dependencies = [
  "opentelemetry-proto 0.33.0",
  "prometheus-client",
  "prost 0.14.4",
- "qubit-clock 0.13.0",
+ "qubit-clock",
  "rcgen",
  "refined_type",
  "regex",
@@ -4502,7 +4502,7 @@ dependencies = [
  "prometheus-client",
  "proptest",
  "prost 0.14.4",
- "qubit-clock 0.13.0",
+ "qubit-clock",
  "rcgen",
  "regex",
  "reqwest 0.13.5",
@@ -4607,7 +4607,7 @@ dependencies = [
  "proptest",
  "prost 0.14.4",
  "protoc-bin-vendored",
- "qubit-clock 0.8.1",
+ "qubit-clock",
  "rcgen",
  "refined_type",
  "regex",
@@ -4904,7 +4904,7 @@ dependencies = [
  "krabka-units",
  "krabka-verified",
  "num-traits",
- "qubit-clock 0.13.0",
+ "qubit-clock",
 ]
 
 [[package]]
@@ -7120,17 +7120,6 @@ name = "quad-rand"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a651516ddc9168ebd67b24afd085a718be02f8858fe406591b013d101ce2f40"
-
-[[package]]
-name = "qubit-clock"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78fd5f61da2a970d1b637134429f107f7a8d119227ad31e5f3c9b8cc5ef7df08"
-dependencies = [
- "chrono",
- "chrono-tz",
- "parking_lot",
-]
 
 [[package]]
 name = "qubit-clock"
