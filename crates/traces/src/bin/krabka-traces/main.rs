@@ -5,7 +5,8 @@ use clap::{ArgAction, Args, Parser, ValueEnum};
 use krabka_blockstore::{
     BlockLevel, BlockStore, BlockTimestampUnit, BlockWriter, CompactionPolicy,
     DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_TARGET_ROWS_PER_BLOCK,
-    IndexSnapshotRetain, PromotedSpanAttr, TENANT_HEADER, TenantId, TenantPolicy, TraceIndex,
+    IndexSnapshotRetain, ObjectStoreAccess, PromotedSpanAttr, TENANT_HEADER, TenantId,
+    TenantPolicy, TraceIndex,
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerFetchMaxBytes};
 use krabka_client_core::{

@@ -48,6 +48,7 @@ pub(crate) async fn build_all_stages(
     // store no reader ever opens, and the process would start, pass its
     // probes, ingest happily and answer every query with nothing.
     let configured = build_object_store(&cli.object_store_url, metrics.object_store.clone())
+        .await
         .map_err(|e| format!("object store: {e}"))?;
     let index_key = cli.index_object_key.clone();
     let store = configured.store;

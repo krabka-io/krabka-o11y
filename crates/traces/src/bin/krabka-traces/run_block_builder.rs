@@ -1,9 +1,9 @@
 use krabka_observability::{RoleReadiness, wal_group_assignment::WalRebalanceListener};
 
 use super::{
-    Arc, BlockStoreGates, BlockWriter, CancellationToken, Cli, Mutex, ProcessSecurity,
-    ServiceMetrics, SharedObjectStore, TraceIndex, blockbuilder, promoted_attrs_from_cli,
-    wal_consumer,
+    Arc, BlockStoreGates, BlockWriter, CancellationToken, Cli, Mutex, ObjectStoreAccess,
+    ProcessSecurity, ServiceMetrics, SharedObjectStore, TraceIndex, blockbuilder,
+    promoted_attrs_from_cli, wal_consumer,
 };
 
 /// Consumes the traces WAL and writes blocks.
@@ -37,7 +37,13 @@ pub(crate) async fn run_block_builder(
     )
     .await?;
     wal_consumer_gate.mark_ready();
-    let configured = object_store.get(&cli, metrics.object_store.clone()).await?;
+    let configured = object_store
+        .get(
+            &cli,
+            metrics.object_store.clone(),
+            ObjectStoreAccess::ReadWrite,
+        )
+        .await?;
     gates.object_store.mark_ready();
     let writer =
         BlockWriter::new(configured.store.clone()).with_metrics(metrics.object_store.clone());

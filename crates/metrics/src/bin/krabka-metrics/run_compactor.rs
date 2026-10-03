@@ -33,7 +33,7 @@ pub(crate) async fn run_compactor(
     readiness: RoleReadiness,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let object_store_gate = readiness.gate("object-store");
-    let store = build_object_store(&cli.object_store_url, metrics.object_store.clone())?;
+    let store = build_object_store(&cli.object_store_url, metrics.object_store.clone()).await?;
     object_store_gate.mark_ready();
     let policy = compactor_policy_from_cli(&cli);
     tracing::info!(

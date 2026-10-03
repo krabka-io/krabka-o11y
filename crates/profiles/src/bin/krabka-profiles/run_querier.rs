@@ -29,6 +29,7 @@ pub(crate) async fn run_querier(
         load_profiles_limits_overrides_config(cli.profiles_limits_overrides_config.as_deref())?;
     let debuginfod = debuginfod_config(&cli)?;
     let configured = build_object_store(&cli.object_store_url, metrics.object_store.clone())
+        .await
         .map_err(|e| format!("object store: {e}"))?;
     object_store_gate.mark_ready();
     let index_key = cli.index_object_key.clone();

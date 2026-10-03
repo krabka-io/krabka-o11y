@@ -24,6 +24,7 @@ pub(crate) async fn run_symbolizer(
         config,
     )?;
     let configured = build_object_store(&cli.object_store_url, metrics.object_store.clone())
+        .await
         .map_err(|error| format!("object store: {error}"))?;
     loop {
         match ProfileIndex::load_latest_snapshot_or_empty_with_max_bytes(

@@ -58,6 +58,16 @@ writes raw estimates, confidence intervals, runner metadata, duration, and
 `SHA256SUMS` below `benches/target/criterion`. Manual mutation sweeps preserve every
 shard log plus commit, toolchain, host, command, duration, and checksums.
 
+Object-store cost is counted in requests and bytes. `MeteredObjectStore` in
+`krabka-blockstore` counts each request attempt and its payload bytes per
+operation. A report writes those counts as the `operations` and
+`transferred_bytes` maps, plus their sums as `requests_total` and
+`transferred_bytes_total`. The `object-store contract` workflow writes these
+fields for the provider suite and for one lifecycle test per signal.
+`tools/object-store-evidence.py` rejects a report whose totals are zero or
+differ from the sums of their maps. See
+[`object_store_contract.md`](object_store_contract.md).
+
 `tools/bench-ratchet.py` rejects missing or noisy measurements and applies
 numeric baselines only after a quiet stable runner produces them.
 `tools/mutants-ratchet.py` rejects missing, silent, timed-out, or internally

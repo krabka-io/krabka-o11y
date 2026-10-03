@@ -40,7 +40,7 @@ pub async fn run_compactor_until_shutdown(
             metrics.compaction.clone()
         });
     let configured_store =
-        build_compactor_configured_object_store(config, object_store, object_store_metrics)?;
+        build_compactor_configured_object_store(config, object_store, object_store_metrics).await?;
     let (store, object_store_prefix) =
         compactor_object_store(object_store, configured_store.as_ref())?;
     let index_prefix = config

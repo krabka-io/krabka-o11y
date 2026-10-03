@@ -1,3 +1,9 @@
+// The logs lifecycle has no block merge and no orphan sweep, so this suite
+// uses neither step the shared helper names for them.
+#[allow(dead_code)]
+#[path = "../../blockstore/tests/support/lifecycle_store.rs"]
+mod lifecycle_store;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
@@ -50,6 +56,8 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 use tower::ServiceExt as _;
+
+use self::lifecycle_store::{LifecycleStep, LifecycleStore};
 
 #[derive(Clone)]
 struct RecordingObjectStore {
@@ -3063,4 +3071,93 @@ async fn the_retention_period_flag_sweeps_without_an_overrides_file() {
         list_log_block_paths(&store, &prefix).await
             == vec![log_block_object_path(&prefix, &kept).to_string()]
     );
+}
+
+/// A log block goes through every stage of its life on the store the
+/// environment names, and a restarted compactor finds what the last one left.
+///
+/// The logs compactor writes blocks from the WAL and sweeps retention. It does
+/// not merge blocks, and it has no orphan sweep, so the test checks neither.
+/// By default the store is in memory. See `docs/object_store_contract.md` to
+/// run it against a provider.
+#[tokio::test]
+async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
+    let mut lifecycle = LifecycleStore::open("logs", "block_lifecycle");
+    let store = lifecycle.store();
+    let config = compactor_config("observability/logs");
+    let prefix = ObjectPath::from("observability/logs");
+    let now_ns = now_unix_nanos();
+
+    // Flush: one block from the WAL, two hours old.
+    let first_run =
+        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![vec![
+            kafka_wal_record(
+                &wal_record_without_position(now_ns - 2 * HOUR_NS, "api old"),
+                4,
+                42,
+            ),
+        ]]));
+    let old = run_compactor_once(&config, first_run, Some(store.as_ref()))
+        .await
+        .unwrap()
+        .expect("the first block is written");
+
+    // Restart: a new compactor on a new store handle appends to the index the
+    // last one saved.
+    let store = lifecycle.restart();
+    let second_run =
+        ServiceDependencies::default().with_wal_consumer(RecordingWalConsumer::new(vec![vec![
+            kafka_wal_record(
+                &wal_record_without_position(now_ns - MINUTE_NS, "api new"),
+                4,
+                43,
+            ),
+        ]]));
+    let new = run_compactor_once(&config, second_run, Some(store.as_ref()))
+        .await
+        .unwrap()
+        .expect("the second block is written");
+
+    // Query: the index names both blocks, and each block reads.
+    let api = series_fingerprint(&labels([("app", "api"), ("env", "prod")]));
+    let (_, blocks) = read_all_tenant_shard_indexes(store.as_ref(), &prefix, "tenant-a")
+        .await
+        .unwrap();
+    check!(
+        blocks.match_blocks("tenant-a", TimeRange::new(0, i64::MAX).unwrap(), &[api])
+            == vec![old.clone(), new.clone()]
+    );
+    for (descriptor, line) in [(&old, "api old"), (&new, "api new")] {
+        let rows = read_log_block_from_object_store(store.as_ref(), &prefix, &descriptor.key)
+            .await
+            .unwrap();
+        check!(rows.iter().map(|row| row.line.as_str()).collect::<Vec<_>>() == vec![line]);
+    }
+
+    // Retention: the two-hour-old block is past a one-hour window.
+    run_compactor_with_retention_overrides(
+        &config,
+        store.as_ref(),
+        &prefix,
+        "overrides:\n  tenant-a:\n    retention_period: \"1h\"\n",
+        &old.key,
+    )
+    .await;
+    let (_, blocks) = read_all_tenant_shard_indexes(store.as_ref(), &prefix, "tenant-a")
+        .await
+        .unwrap();
+    check!(blocks.blocks().to_vec() == vec![new.clone()]);
+    check!(
+        list_log_block_paths(store.as_ref(), &prefix).await
+            == vec![log_block_object_path(&prefix, &new.key).to_string()]
+    );
+
+    lifecycle
+        .finish(&[
+            LifecycleStep::Flush,
+            LifecycleStep::Restart,
+            LifecycleStep::Query,
+            LifecycleStep::Retention,
+        ])
+        .await;
 }

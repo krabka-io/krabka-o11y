@@ -278,6 +278,10 @@ jobs:
       # point: the `bench` job below is nightly, and a ratchet developed only
       # against it would be checked once a day.
       - run: tools/bench-ratchet.py --self-test
+      # //tools/object-store-evidence.py gates the manual `object-store
+      # contract` workflow, which needs provider credentials. Its `--self-test`
+      # checks synthetic evidence, so a fault shows on the pull request.
+      - run: tools/object-store-evidence.py --self-test
       # //tools/soak-gate.py reads the operating-envelope soak's report. Its
       # `--self-test` drives the structural check, the baseline ratchet and the
       # envelope computation against synthetic reports, so it needs no soak:
