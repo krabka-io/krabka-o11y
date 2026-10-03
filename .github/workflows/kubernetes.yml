@@ -24,7 +24,6 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
-        with: {fetch-depth: 0}
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
           bazelisk-cache: true
@@ -47,12 +46,11 @@ jobs:
         run: bazel run -c opt //bazel/images/krabka:load
       - name: qualify
         run: |
-          new="localhost/krabka-o11y:sha-${GITHUB_SHA::12}"
-          old="ghcr.io/${GITHUB_REPOSITORY}:sha-$(git rev-parse --short=12 origin/main)"
+          image="localhost/krabka-o11y:sha-${GITHUB_SHA::12}"
           image_id=$(docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}' | awk '$1 ~ /krabka-o11y:dev$/ { print $2; exit }')
           test -n "${image_id}"
-          docker tag "${image_id}" "${new}"
-          tools/kubernetes-qualification.sh "${new}" "${old}"
+          docker tag "${image_id}" "${image}"
+          tools/kubernetes-qualification.sh "${image}"
       - if: always()
         uses: actions/upload-artifact@v4
         with:

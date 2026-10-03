@@ -1,3 +1,5 @@
+use krabka_units::prelude::TimeExt as _;
+
 use super::{
     Arc, CancellationToken, CriticalTaskError, ObjectStore, ServerListener, ServiceConfig,
     ServiceDependencies, ServiceRuntimeError, StagedDrain, SupervisedTasks, TcpListener,
@@ -166,14 +168,26 @@ pub async fn serve_all_service_listener(
     // ends rather than running forever, and it is what puts the pushes this
     // process accepted last into a block rather than leaving them in a WAL
     // that, in a one-process stack, nothing restarts to read.
-    match run_compactor_until_idle(&config, dependencies, object_store).await {
+    let drained = tokio::time::timeout(
+        config.all_drain_stage_timeout.to_std(),
+        run_compactor_until_idle(&config, dependencies, object_store),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "block builder could not drain the WAL before exit",
+        )
+        .into())
+    });
+    match &drained {
         Ok(blocks) => tracing::info!(
             blocks = blocks.len(),
             "block builder drained the WAL before exit"
         ),
-        Err(error) => {
-            tracing::error!(%error, "block builder could not drain the WAL before exit");
-        }
+        Err(error) => tracing::error!(%error, "block builder could not drain the WAL before exit"),
     }
-    outcome.and(builder_outcome.map(|_| ()))
+    outcome
+        .and(builder_outcome.map(|_| ()))
+        .and(drained.map(|_| ()))
 }

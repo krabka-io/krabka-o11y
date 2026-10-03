@@ -193,7 +193,7 @@ jobs:
             printf '%s %s\n' "${platform}" "${IMAGE}" >> release-assets/platforms.txt
           done
       - name: clean four-signal install and query smoke
-        run: tools/release-smoke.sh "${IMAGE}" "" release-assets/smoke
+        run: tools/release-smoke.sh "${IMAGE}" release-assets/smoke
       - name: generate SPDX SBOM
         uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:

@@ -59,6 +59,14 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+    fn format_headers() -> Vec<krabka_client_consumer::Header> {
+        vec![krabka_client_consumer::Header {
+            key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
+            value: Some(bytes::Bytes::from_static(
+                krabka_observability::persisted_format::PERSISTED_FORMAT_VERSION,
+            )),
+        }]
+    }
 
     /// A buffer flushes on either threshold, and on neither when empty. The
     /// row and age thresholds are checked at their own boundary with the other
@@ -1596,7 +1604,7 @@ overrides:
                 timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
                 key: None,
                 value: Some(bytes::Bytes::from(wal_record.encode().expect("encode wal"))),
-                headers: Vec::new(),
+                headers: format_headers(),
             },
             krabka_client_consumer::ConsumerRecord {
                 topic: "unrelated".to_string(),
@@ -1607,7 +1615,7 @@ overrides:
                 timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
                 key: None,
                 value: Some(bytes::Bytes::from_static(b"ignored")),
-                headers: Vec::new(),
+                headers: format_headers(),
             },
         ];
 
@@ -1633,7 +1641,7 @@ overrides:
             timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
             key: None,
             value: None,
-            headers: Vec::new(),
+            headers: format_headers(),
         }];
         let err =
             super::compaction_wal_records_from_consumer_records(crate::WAL_TOPIC, &missing_value)
@@ -1727,7 +1735,7 @@ overrides:
                 timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
                 key: None,
                 value: Some(bytes::Bytes::from(wal_record.encode().expect("encode wal"))),
-                headers: Vec::new(),
+                headers: format_headers(),
             }],
         };
 
@@ -1798,7 +1806,7 @@ overrides:
                     .encode()
                     .expect("encode wal"),
             )),
-            headers: Vec::new(),
+            headers: format_headers(),
         };
         let mut poller = QueuePoller {
             batches: vec![vec![make_record(10, 100)], vec![make_record(11, 200)]],
@@ -1870,7 +1878,7 @@ overrides:
                     .encode()
                     .expect("encode wal"),
             )),
-            headers: Vec::new(),
+            headers: format_headers(),
         };
         // Two records per poll; flush_max_rows == 2 flushes on the first poll.
         let mut poller = QueuePoller {
@@ -1955,7 +1963,7 @@ overrides:
                     .encode()
                     .expect("encode wal"),
             )),
-            headers: Vec::new(),
+            headers: format_headers(),
         };
         let clock = std::sync::Arc::new(FixedClock::new(std::time::Instant::now()));
         let advance_clock = std::sync::Arc::clone(&clock);
@@ -2024,7 +2032,7 @@ overrides:
                     .encode()
                     .expect("encode wal"),
             )),
-            headers: Vec::new(),
+            headers: format_headers(),
         };
         let mut consumer = PollAndCommit {
             batches: vec![vec![make_record(10, 100)], Vec::new()],
@@ -2209,7 +2217,7 @@ overrides:
                     .encode()
                     .expect("encode wal"),
             )),
-            headers: Vec::new(),
+            headers: format_headers(),
         };
         let mut consumer = PollAndCommit {
             batches: vec![vec![record]],
@@ -2270,7 +2278,7 @@ overrides:
                     .encode()
                     .expect("encode wal"),
             )),
-            headers: Vec::new(),
+            headers: format_headers(),
         };
         let mut consumer = PollAndCommit {
             batches: vec![vec![record]],
@@ -2317,7 +2325,7 @@ overrides:
                     .encode()
                     .expect("encode wal"),
             )),
-            headers: Vec::new(),
+            headers: format_headers(),
         };
         let mut consumer = PollAndCommit {
             batches: vec![vec![make_record(10, 100)], vec![make_record(11, 200)]],
@@ -2450,7 +2458,7 @@ overrides:
                     .encode()
                     .expect("encode wal"),
             )),
-            headers: Vec::new(),
+            headers: format_headers(),
         };
         let mut poller = QueuePoller {
             batches: vec![vec![make_record(10, 100)], vec![make_record(11, 200)]],

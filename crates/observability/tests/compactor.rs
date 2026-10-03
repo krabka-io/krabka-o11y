@@ -486,7 +486,7 @@ async fn compactor_does_not_commit_offset_for_invalid_kafka_wal_payload() {
             partition: PartitionIndex(2),
             offset: Offset(42),
             timestamp_ms: None,
-            headers: Vec::new(),
+            headers: vec![kafka_header("krabka-format-version", "1")],
         }],
     )
     .await
@@ -560,7 +560,7 @@ async fn compactor_does_not_commit_polled_batch_when_decode_fails() {
         partition: PartitionIndex(3),
         offset: Offset(42),
         timestamp_ms: None,
-        headers: Vec::new(),
+        headers: vec![kafka_header("krabka-format-version", "1")],
     }]]);
 
     let error = compact_next_kafka_wal_batch_to_object_store(
@@ -1022,6 +1022,40 @@ async fn compactor_runtime_rejects_missing_object_store() {
         .unwrap_err();
 
     assert!(error.to_string().contains("object store is required"));
+}
+
+#[tokio::test]
+async fn compactor_drain_waits_through_an_empty_poll_with_records_still_pending() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
+    let config = compactor_config("observability/logs");
+    let commits = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let dependencies = ServiceDependencies::default().with_wal_consumer(
+        RecordingWalConsumer::recording_commits_to(
+            vec![
+                Vec::new(),
+                vec![kafka_wal_record(
+                    &wal_record_without_position(30, "api stopping"),
+                    5,
+                    44,
+                )],
+            ],
+            &commits,
+        ),
+    );
+
+    let descriptors = run_compactor_until_idle(&config, dependencies, Some(&store))
+        .await
+        .unwrap();
+
+    assert!(descriptors.len() == 1);
+    assert!(
+        commits.lock().unwrap().as_slice()
+            == [WalPosition {
+                partition: PartitionIndex(5),
+                offset: Offset(44),
+            }]
+    );
 }
 
 #[tokio::test]
@@ -2242,6 +2276,10 @@ impl RecordingWalConsumer {
 
 #[async_trait]
 impl LogWalConsumer for RecordingWalConsumer {
+    async fn is_drained(&mut self) -> bool {
+        self.batches.is_empty()
+    }
+
     async fn poll(&mut self, _timeout: Time) -> Result<Vec<KafkaWalRecord>, WalConsumerError> {
         if self.batches.is_empty() {
             Ok(Vec::new())

@@ -17,7 +17,7 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use assert2::{assert, check};
@@ -32,6 +32,7 @@ use krabka_profiles::{
     PROFILES_WAL_TOPIC, ProfileRecord, WalSample, WalSymbolSet,
     blockbuilder::{BlockBuilderConfig, run_with_config},
     distributor::{KafkaSink, WalSink as _},
+    metrics::ServiceMetrics,
 };
 use krabka_units::{Time, hours, millis};
 use object_store::{
@@ -248,16 +249,25 @@ impl TestBroker {
         // allows, with none of its waiting. Raising the default cannot make
         // this suite slower.
         config.object_store_retry = ObjectStoreRetryPolicy::immediate(4);
+        let metrics = ServiceMetrics::new();
+        config.metrics = Some(metrics.clone());
 
         let shutdown = CancellationToken::new();
         let builder = tokio::spawn(run_with_config(config, shutdown.clone()));
 
-        // Real-time wait, not a progress poll: the builder buffering a record
-        // is not observable from outside, so this is a budget generously above
-        // the 100ms poll loop it is running. No ordinary flush can fire in it,
-        // because the record and age thresholds above are unreachable, so the
-        // store must still be untouched when the wait ends.
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        // Wait for the record to be consumed before testing the drain. Group
+        // assignment can take longer than a fixed sleep on a busy CI runner.
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while metrics.wal_consumer.records(PROFILES_WAL_TOPIC, 0) == 0 {
+                assert!(
+                    !builder.is_finished(),
+                    "block-builder exited before consuming"
+                );
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the block-builder consumes the WAL record before cancellation");
         check!(
             flaky.index_put_attempts() == 0,
             "no ordinary flush may fire before the drain"
@@ -284,19 +294,24 @@ impl TestBroker {
             .build()
             .await
             .expect("restart consumer");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut replayed = 0;
-        while Instant::now() < deadline {
-            let records = consumer
-                .poll(millis(250))
-                .await
-                .expect("poll the restart consumer");
-            replayed += records
-                .iter()
-                .filter(|record| record.topic == PROFILES_WAL_TOPIC)
-                .count();
-        }
-        replayed
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let mut replayed = 0;
+            loop {
+                let records = consumer
+                    .poll(millis(250))
+                    .await
+                    .expect("poll the restart consumer");
+                replayed += records
+                    .iter()
+                    .filter(|record| record.topic == PROFILES_WAL_TOPIC)
+                    .count();
+                if consumer.at_log_end().await {
+                    return replayed;
+                }
+            }
+        })
+        .await
+        .expect("the restart consumer reaches the WAL end")
     }
 }
 

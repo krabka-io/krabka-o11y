@@ -538,6 +538,17 @@ mod tests {
         router_with_config(engine, cfg, RoleReadiness::new())
     }
 
+    // Every block writer stamps the block format version, and every reader
+    // refuses a block without it.
+    fn versioned_block_properties() -> parquet::file::properties::WriterPropertiesBuilder {
+        WriterProperties::builder().set_key_value_metadata(Some(vec![
+            parquet::file::metadata::KeyValue::new(
+                krabka_blockstore::PERSISTED_BLOCK_FORMAT_KEY.to_string(),
+                Some(krabka_blockstore::PERSISTED_BLOCK_FORMAT_VERSION.to_string()),
+            ),
+        ]))
+    }
+
     #[test]
     fn match_all_query_requires_only_empty_selector() {
         for (input, want) in [
@@ -717,7 +728,7 @@ mod tests {
         ));
         let first = encode_span_rows(&[block_span_row(1, 1, "first-rg")]).unwrap();
         let second = encode_span_rows(&[block_span_row(2, 2, "second-rg")]).unwrap();
-        let props = WriterProperties::builder()
+        let props = versioned_block_properties()
             .set_max_row_group_row_count(Some(1))
             .set_write_batch_size(1)
             .build();
@@ -2390,8 +2401,12 @@ overrides:
         let batch = encode_span_rows(&[early, late]).unwrap();
         let object_writer =
             BufWriter::new(object_store.clone(), Path::from("blocks/straddle.parquet"));
-        let mut writer =
-            AsyncArrowWriter::try_new(object_writer, span_block_schema(), None).unwrap();
+        let mut writer = AsyncArrowWriter::try_new(
+            object_writer,
+            span_block_schema(),
+            Some(versioned_block_properties().build()),
+        )
+        .unwrap();
         writer.write(&batch).await.unwrap();
         writer.close().await.unwrap();
 

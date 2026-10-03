@@ -52,7 +52,7 @@ impl BlockStore {
     ///
     /// Returns [`BlockStoreError::ObjectStore`] if the backend builder rejects `cfg`.
     pub fn from_config(cfg: &krabka_object_store::ObjectStoreConfig, base: Url) -> Result<Self> {
-        let store = krabka_object_store::build_object_store(cfg)
+        let store = krabka_object_store::v013::build_object_store(cfg)
             .map_err(|e| BlockStoreError::ObjectStore(e.to_string()))?;
         Ok(Self::new(store, base))
     }

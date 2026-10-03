@@ -33,10 +33,8 @@ use crate::TenantId;
 
 /// Completion marker written last in every backup set.
 pub const BACKUP_MANIFEST_PATH: &str = ".krabka-recovery/manifest.json";
-/// The manifest version that readers accept as the previous release.
-const LEGACY_BACKUP_SCHEMA_VERSION: u32 = 1;
-/// The manifest version that writers stamp.
-const BACKUP_SCHEMA_VERSION: u32 = 2;
+/// The manifest version that writers stamp and readers accept.
+const BACKUP_SCHEMA_VERSION: u32 = 1;
 /// Completion record of a deployment backup set, relative to its root.
 pub const CUT_MANIFEST_PATH: &str = "krabka-recovery/cut.json";
 /// The prefix under the backup root that holds one directory per part.
@@ -67,9 +65,8 @@ pub struct BackupObject {
 
 /// Identity and consistent-cut metadata for one backup part.
 ///
-/// Version 1 manifests always name a tenant. Version 2 adds `part`, the name
-/// of the part inside a [`DeploymentCut`]. A version 2 manifest names a
-/// tenant, a part, or both.
+/// A manifest names a tenant, a part, or both. `part` is the name of the part
+/// inside a [`DeploymentCut`].
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BackupManifest {
     pub schema_version: u32,
@@ -638,29 +635,19 @@ fn refuse_unsafe(
 }
 
 fn validate_manifest(manifest: &BackupManifest) -> Result<(), RecoveryError> {
-    match manifest.schema_version {
-        LEGACY_BACKUP_SCHEMA_VERSION => {
-            if manifest.tenant.is_none() || manifest.part.is_some() {
-                return Err(RecoveryError::InvalidManifest(
-                    "a version 1 manifest names one tenant and no part".into(),
-                ));
-            }
-        }
-        BACKUP_SCHEMA_VERSION => {
-            if manifest.tenant.is_none() && manifest.part.is_none() {
-                return Err(RecoveryError::InvalidManifest(
-                    "a version 2 manifest names a tenant, a part, or both".into(),
-                ));
-            }
-            if let Some(part) = &manifest.part {
-                validate_part_name(part)?;
-            }
-        }
-        version => {
-            return Err(RecoveryError::InvalidManifest(format!(
-                "schema version {version} is unsupported"
-            )));
-        }
+    if manifest.schema_version != BACKUP_SCHEMA_VERSION {
+        return Err(RecoveryError::InvalidManifest(format!(
+            "schema version {} is unsupported",
+            manifest.schema_version
+        )));
+    }
+    if manifest.tenant.is_none() && manifest.part.is_none() {
+        return Err(RecoveryError::InvalidManifest(
+            "a manifest names a tenant, a part, or both".into(),
+        ));
+    }
+    if let Some(part) = &manifest.part {
+        validate_part_name(part)?;
     }
     if manifest.cut_id.trim().is_empty() {
         return Err(RecoveryError::InvalidManifest("cut_id is empty".into()));

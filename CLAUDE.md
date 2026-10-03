@@ -41,12 +41,7 @@ Mutation sweeps never run in CI, not even nightly: they hold a runner for hours.
 
 ## Compatibility
 
-**Release `v0.4` is a supported persisted-data boundary.** Writers stamp the
-current version and readers support the previous release according to
-[`docs/persisted_formats.md`](docs/persisted_formats.md). Reject unknown future
-formats before state mutation. A persisted schema change needs an old/new
-rolling-upgrade and rollback result; deleting local WAL topics, blocks, or data
-directories is not a migration plan.
+**Persisted formats have no backward-compatibility requirement.** Krabka is greenfield and has no deployments, so no data exists to stay compatible with. Do not add a reader for an older format, a fallback for a missing version marker, or an upgrade or rollback test. Writers still stamp the current version. A reader of a versioned format still rejects a missing, unknown, or future version before state mutation. [`docs/persisted_formats.md`](docs/persisted_formats.md) lists each format and its version marker.
 
 **Upstream compatibility is the constraint that matters.** Each signal has one upstream implementation that Krabka must match:
 
@@ -111,4 +106,4 @@ Write conventional commits. They are the repo's convention and are applied consi
 - `fix:` — a fix, at the patch level
 - `feat!:` — a breaking change, at the major level
 
-No crate in this repo is published — all ten set `publish = false`, because they depend on a git pin of DataFusion that crates.io rejects. Version tags publish the multi-platform image and release artifacts only after an exact-commit compatibility qualification succeeds; see `.github/workflows/image.yml`.
+No crate in this repo is published — all ten set `publish = false`, because they depend on a git pin of DataFusion that crates.io rejects. Version tags publish the multi-platform image and release artifacts only after the exact-commit qualification in `.github/workflows/qualification.yml` succeeds. That qualification checks upstream compatibility and the operational gates of one build, not an upgrade from an older build; see `.github/workflows/image.yml`.

@@ -30,6 +30,15 @@ mod tests {
         wal,
     };
 
+    fn format_headers() -> Vec<krabka_client_consumer::Header> {
+        vec![krabka_client_consumer::Header {
+            key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
+            value: Some(bytes::Bytes::from_static(
+                krabka_observability::persisted_format::PERSISTED_FORMAT_VERSION,
+            )),
+        }]
+    }
+
     fn payload() -> SeriesPayload {
         SeriesPayload {
             tenant: "t".into(),
@@ -161,7 +170,7 @@ mod tests {
                 timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
                 key: None,
                 value: Some(bytes::Bytes::from(encoded.clone())),
-                headers: Vec::new(),
+                headers: format_headers(),
             },
             krabka_client_consumer::ConsumerRecord {
                 topic: crate::TRACES_WAL_TOPIC.into(),
@@ -172,7 +181,7 @@ mod tests {
                 timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
                 key: None,
                 value: None,
-                headers: Vec::new(),
+                headers: format_headers(),
             },
         ];
 

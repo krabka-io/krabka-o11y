@@ -111,6 +111,59 @@ fn kafka_wal_record_decode_rejects_invalid_payload() {
 }
 
 #[test]
+fn a_kafka_wal_record_without_a_version_header_decodes_only_as_a_native_record() {
+    let labels = labels([("app", "api")]);
+    let json_record = WalLogRecord {
+        tenant: "tenant-a".to_string(),
+        labels: labels.clone(),
+        timestamp_ns: 1_900_000,
+        line: "api error".to_string(),
+        structured_metadata: BTreeMap::new(),
+        position: None,
+    };
+    let header = |key: &str, value: &[u8]| KafkaWalHeader {
+        key: key.to_string(),
+        value: Some(value.to_vec()),
+    };
+    let unversioned_json = KafkaWalRecord {
+        value: serde_json::to_vec(&json_record).unwrap(),
+        partition: PartitionIndex(3),
+        offset: Offset(42),
+        timestamp_ms: Some(1),
+        headers: vec![
+            header("krabka-wal-record-type", b"log"),
+            header("krabka-tenant", b"tenant-a"),
+        ],
+    };
+    let error = decode_kafka_wal_record_envelope(unversioned_json).unwrap_err();
+    check!(
+        error.to_string() == "unsupported WAL record format: persisted format header is missing"
+    );
+
+    let native = KafkaWalRecord {
+        value: b"api error".to_vec(),
+        partition: PartitionIndex(3),
+        offset: Offset(42),
+        timestamp_ms: Some(1),
+        headers: vec![
+            header("krabka-tenant", b"tenant-a"),
+            header("krabka-log-timestamp-ns", b"1900000"),
+            header("krabka-log-label-app", b"api"),
+        ],
+    };
+    check!(
+        decode_kafka_wal_record_envelope(native).unwrap()
+            == WalLogRecord {
+                position: Some(WalPosition {
+                    partition: PartitionIndex(3),
+                    offset: Offset(42),
+                }),
+                ..json_record
+            }
+    );
+}
+
+#[test]
 fn native_kafka_log_record_rejects_invalid_label_header_name() {
     let error = decode_kafka_wal_record_envelope(KafkaWalRecord {
         value: b"api error".to_vec(),

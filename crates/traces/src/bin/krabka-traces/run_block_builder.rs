@@ -27,7 +27,8 @@ pub(crate) async fn run_block_builder(
     let wal_catch_up_gate = readiness.gate("wal-catch-up");
     let gates = BlockStoreGates::register(&readiness);
     let promoted_attrs = promoted_attrs_from_cli(&cli)?;
-    let rebalance = WalRebalanceListener::new(crate::TRACES_WAL_TOPIC);
+    let rebalance =
+        WalRebalanceListener::new(crate::TRACES_WAL_TOPIC).rewinding_fenced_partitions();
     let consumer = wal_consumer(
         &cli,
         "krabka-traces-block-builder",
