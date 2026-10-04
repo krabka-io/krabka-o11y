@@ -1,5 +1,7 @@
 name: Grafana performance comparison
 on:
+  push:
+    branches: [codex/grafana-envelope-comparison]
   workflow_dispatch:
     inputs:
       phase_seconds:
@@ -27,7 +29,15 @@ permissions:
   contents: read
   actions: read
 jobs:
+  validate:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 tools/compare-grafana.py --self-test
+      - run: python3 tools/deployment-envelope.py --self-test
   compare:
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       max-parallel: 2
