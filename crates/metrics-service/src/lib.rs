@@ -58,6 +58,8 @@ mod tests {
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
+    use object_store::ObjectStoreExt;
+
     fn format_headers() -> Vec<krabka_client_consumer::Header> {
         vec![krabka_client_consumer::Header {
             key: krabka_observability::persisted_format::PERSISTED_FORMAT_HEADER.to_string(),
@@ -2060,7 +2062,7 @@ rules:
     async fn a_query_relists_retired_sidecars_but_preserves_current_manifest_errors() {
         let counting = Arc::new(CountingObjectStore::new(Arc::default(), millis(0)));
         let store: Arc<dyn ObjectStore> = counting.clone();
-        let base = Url::parse("memory:///").unwrap();
+        let base = url::Url::parse("memory:///").unwrap();
         let blocks = krabka_blockstore::BlockStore::new(store.clone(), base.clone());
         let mut labels = krabka_blockstore::Labels::new();
         labels.insert("__name__", "up");
