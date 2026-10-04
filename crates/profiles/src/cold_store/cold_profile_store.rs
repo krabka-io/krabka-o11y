@@ -8,7 +8,7 @@ use super::{
     Int64Type, LabelMatcher, LazySymbolizer, LocalPartition, MemTable, Mutex, NativeResolver,
     ObjectStore, ObjectStoreExt, ParquetRecordBatchReaderBuilder, Path, ProfileError, ProfileIndex,
     ProfileQueryStats, ProfileScan, ProfileStats, ProfileStore, RecordBatch, RwLock,
-    SeriesFingerprint, SessionContext, SymbolDb, UInt64Type, VecDeque, batch_fingerprints_overlap,
+    SeriesFingerprint, SymbolDb, UInt64Type, VecDeque, batch_fingerprints_overlap,
     block_partition_map, filter_and_remap_batch, is_unbounded_metadata_range,
     local_native_resolver, profile_samples_schema,
 };
@@ -213,7 +213,7 @@ impl ColdProfileStore {
         }
         let table = MemTable::try_new(profile_samples_schema(), vec![batches])
             .map_err(|err| ProfileError::Store(err.to_string()))?;
-        let ctx = SessionContext::new();
+        let ctx = krabka_pprof::profile_session_context();
         let samples_table = "samples".to_string();
         ctx.register_table(&samples_table, Arc::new(table))
             .map_err(|err| ProfileError::Store(err.to_string()))?;

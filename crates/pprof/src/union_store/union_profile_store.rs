@@ -1,7 +1,7 @@
 use super::{
     Arc, BTreeSet, LabelMatcher, MemTable, ProfileError, ProfileScan, ProfileStats, ProfileStore,
-    RecordBatch, SessionContext, UnionSymbols, collect_and_remap, max_option, min_option,
-    profile_samples_schema, sorted_union,
+    RecordBatch, UnionSymbols, collect_and_remap, max_option, min_option, profile_samples_schema,
+    sorted_union,
 };
 
 #[derive(Clone)]
@@ -43,7 +43,7 @@ where
         let mut symbols = UnionSymbols::default();
         let hot = collect_and_remap(hot, 1, &mut symbols).await?;
         let cold = collect_and_remap(cold, 2, &mut symbols).await?;
-        let ctx = SessionContext::new();
+        let ctx = crate::profile_session_context();
         for (name, mut batches) in [("hot_samples", hot), ("cold_samples", cold)] {
             if batches.is_empty() {
                 batches.push(RecordBatch::new_empty(profile_samples_schema()));

@@ -10,7 +10,7 @@ use arrow::{
     datatypes::UInt64Type,
     record_batch::RecordBatch,
 };
-use datafusion::{catalog::MemTable, prelude::SessionContext};
+use datafusion::catalog::MemTable;
 use krabka_blockstore::LabelMatcher;
 
 use crate::{
