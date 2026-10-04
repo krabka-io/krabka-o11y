@@ -16,6 +16,7 @@ import math
 import os
 import pathlib
 import re
+import socket
 import subprocess
 import struct
 import statistics
@@ -33,8 +34,8 @@ ROLES = ("distributor", "block-builder", "querier")
 SEED = 267
 POINTS = 10
 SERIES = 100
-WRITERS = (1, 2, 4, 8, 16, 32, 64)
-CARDINALITIES = (100, 1_000, 5_000, 20_000)
+WRITERS = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512)
+CARDINALITIES = (100, 1_000, 5_000, 20_000, 100_000, 500_000)
 P99_SECONDS = 2
 CATCHUP_SECONDS = 10
 
@@ -107,7 +108,8 @@ def write_request(signal, sequence, cardinality, tenant="soak"):
 def query_request(signal, window_seconds=30):
     now = time.time()
     if signal == "metrics":
-        query = urllib.parse.urlencode({"query": "sum(envelope_samples)", "time": now})
+        expression = "sum(last_over_time(envelope_samples[30m]))" if window_seconds > 30 else "sum(envelope_samples)"
+        query = urllib.parse.urlencode({"query": expression, "time": now})
         return f"/api/v1/query?{query}", None
     if signal == "logs":
         query = urllib.parse.urlencode({"query": '{job="envelope"}', "limit": 1000,
@@ -168,6 +170,29 @@ def prometheus(text):
                 except ValueError:
                     continue
     return samples
+
+
+def set_noisy_byte_quota():
+    """Set the quota read by logs' broker-backed tenant admission control.
+
+    Kafka AlterClientQuotas v0 (API 49) has one user entity and one operation.
+    https://github.com/apache/kafka/blob/4.0/clients/src/main/resources/common/message/AlterClientQuotasRequest.json
+    """
+    def string(value):
+        data = value.encode()
+        return struct.pack(">h", len(data)) + data
+
+    request = struct.pack(">hhi", 49, 0, SEED) + string("operating-envelope")
+    request += struct.pack(">ii", 1, 1) + string("user") + string("noisy")
+    request += struct.pack(">i", 1) + string("producer_byte_rate") + struct.pack(">d??", 65536, False, False)
+    with socket.create_connection(("127.0.0.1", 9092), timeout=30) as connection:
+        connection.sendall(struct.pack(">i", len(request)) + request)
+        with connection.makefile("rb") as response:
+            size = struct.unpack(">i", response.read(4))[0]
+            body = response.read(size)
+    if len(body) < 14 or struct.unpack(">i", body[:4])[0] != SEED or (
+        struct.unpack(">i", body[8:12])[0] != 1 or struct.unpack(">h", body[12:14])[0] != 0):
+        raise RuntimeError(f"broker refused noisy tenant quota: {body.hex()}")
 
 
 class Deployment:
@@ -257,6 +282,7 @@ class Deployment:
 
     def start(self):
         self.run("up", "-d", "--wait", "--wait-timeout", "300")
+        set_noisy_byte_quota()
         for signal in SIGNALS:
             until = time.monotonic() + 180
             while time.monotonic() < until:
@@ -428,6 +454,7 @@ def run(args):
                         "object_store_cpu": 2, "object_store_memory_gib": 2, "replicas": 1,
                         "wal_partitions": 1, "replication": 1, "wal_retention_seconds": 900,
                         "block_retention": "unlimited", "flush_max_age_seconds": 2, "nofile": 65536,
+                        "noisy_logs_bytes_per_sec": 65536,
                         "broker_image": json.loads(deployment.file.read_text())["services"]["broker"]["image"],
                         "object_store_image": json.loads(deployment.file.read_text())["services"]["minio"]["image"]},
               "run_id": f"{os.environ.get('GITHUB_RUN_ID', 'local')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}-{args.output.name}",
@@ -473,20 +500,26 @@ def run(args):
                 tenant = f"burst-{writers}" if phase == "burst" else (
                     f"cardinality-{cardinality}" if phase == "high_cardinality" else (
                         last_cardinality_tenant if cold else "quiet" if noisy else "soak"))
+                if cold:
+                    cardinality = last_cardinality
                 count = 1
                 if phase == "high_cardinality":
                     per_request = report["dataset"]["series_per_request"][signal]
                     count = math.ceil(cardinality / per_request)
                 if not cold:
-                    for _ in range(count):
+                    def seed_one(_):
                         path, body, content, _ = write_request(signal, next(deployment.sequence), cardinality, tenant)
                         status, response = http(INGEST[signal], path, tenant, body, content)
                         if not 200 <= status < 300:
                             raise RuntimeError(f"{signal} {phase} seed failed: {status} {response[:200]!r}")
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                        for _ in pool.map(seed_one, range(count)):
+                            pass
                     seeded = deployment.drain(signal)
                     if not seeded["recovered"]:
                         raise RuntimeError(f"{signal} seed did not become durable: {seeded}")
-                result, records, samples = measure(deployment, signal, args.seconds, args.seconds / 4,
+                phase_seconds = args.seconds / 2 if phase in ("burst", "high_cardinality") else args.seconds
+                result, records, samples = measure(deployment, signal, phase_seconds, phase_seconds / 4,
                                                     writers, cardinality, noisy, cold or phase == "high_cardinality",
                                                     1.0 if phase == "burst" else 0.25, tenant)
                 result["phase"] = phase

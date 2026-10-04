@@ -156,11 +156,12 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/deployment-envelope.py --self-test
+          mkdir -p qualification/evidence
           for field in instance/machine-type instance/zone instance/image; do
             curl -fsS -H 'Metadata-Flavor: Google' \
               "http://metadata.google.internal/computeMetadata/v1/${field}"
             echo
-          done > qualification/gce-deployment.txt
+          done > qualification/evidence/gce.txt
           digest=()
           if [[ -n "${IMAGE_DIGEST}" ]]; then digest=(--image-digest "${IMAGE_DIGEST}"); fi
           for run in $(seq 1 "${REPETITIONS}"); do
@@ -168,7 +169,6 @@ jobs:
               "${digest[@]}" --image-commit "${IMAGE_COMMIT}" --seconds "${PHASE_SECONDS}" \
               --output "qualification/evidence/deployment-${run}"
           done
-          cp qualification/gce-deployment.txt qualification/evidence/gce.txt
           if [[ "${PHASE_SECONDS}" -ge 60 && "${REPETITIONS}" -ge 3 ]]; then
             python3 tools/deployment-envelope.py --reports qualification/evidence/deployment-*/deployment-report.json \
               --record qualification/evidence/deployment-baseline.json
