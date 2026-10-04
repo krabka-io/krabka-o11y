@@ -254,7 +254,7 @@ the durable offset advances through those records after restart. Every raw
 operation and telemetry sample, runner identity, container log, source commit,
 image digest, and checksum is retained. A locally built image is preserved as
 a checksummed `deployment-image-<commit>` artifact, including its manifest and
-configuration digests. `image_artifact_run` reuses that exact build.
+Docker image IDs. `image_artifact_run` reuses that exact build.
 
 Three complete comparable runs support `qualification/deployment-envelope-baseline.json`.
 The gate publishes the highest passing load common to all three runs only

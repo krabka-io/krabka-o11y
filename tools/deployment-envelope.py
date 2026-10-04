@@ -248,7 +248,12 @@ class Deployment:
             if signal in ("metrics", "logs"):
                 file = roles / f"{signal}-block-builder.yaml"
                 interval = "block-builder-retention-sweep-interval" if signal == "metrics" else "compactor-retention-sweep-interval"
-                file.write_text(file.read_text() + f"\n{flags[signal]}: /etc/krabka/{signal}-limits.yaml\n{interval}: 2s\n")
+                content = file.read_text() + f"\n{flags[signal]}: /etc/krabka/{signal}-limits.yaml\n"
+                if re.search(rf"^{interval}:", content, re.M):
+                    content = re.sub(rf"^{interval}:.*$", f"{interval}: 2s", content, flags=re.M)
+                else:
+                    content += f"{interval}: 2s\n"
+                file.write_text(content)
             if signal == "logs":
                 file = roles / "logs-querier.yaml"
                 file.write_text(file.read_text() + "\nlogs-limits-overrides-config: /etc/krabka/logs-limits.yaml\n")
