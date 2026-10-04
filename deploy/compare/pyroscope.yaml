@@ -1,0 +1,41 @@
+# Pyroscope 2.3.1; native v2 single-node object-store architecture.
+# Use -config.expand-env=true. Persist /data through process restarts.
+target: all
+architecture_storage: v2
+multitenancy_enabled: true
+server:
+  http_listen_port: 4040
+  grpc_listen_port: 9095
+self_profiling:
+  disable_push: true
+storage:
+  backend: s3
+  s3:
+    endpoint: minio:9000
+    bucket_name: pyroscope
+    access_key_id: ${MINIO_ROOT_USER}
+    secret_access_key: ${MINIO_ROOT_PASSWORD}
+    insecure: true
+    bucket_lookup_type: path-style
+segment_writer:
+  segment_duration: 500ms
+  lifecycler:
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+metastore:
+  address: localhost:9095
+  data_dir: /data/pyroscope/metastore
+  raft:
+    dir: /data/pyroscope/raft
+    bootstrap_expect_peers: 1
+    server_id: localhost:9099
+    bind_address: localhost:9099
+    advertise_address: localhost:9099
+limits:
+  ingestion_rate_mb: 1000000
+  ingestion_burst_size_mb: 1000000
+  max_global_series_per_tenant: 0
+analytics:
+  reporting_enabled: false

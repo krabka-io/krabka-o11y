@@ -522,7 +522,7 @@ def durably_caught_up(status, end_offset=0):
         and p["committed_offset"] >= end_offset for p in partitions)
 
 
-def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, interval=0.25, tenant="soak", on_measurement=None):
+def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, interval=0.25, tenant="soak", on_measurement=None, check_durability=True):
     records = []
     stop = threading.Event()
     started = time.monotonic()
@@ -591,9 +591,10 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
     )
     if maintenance_result:
         result["deletion_verification"] = maintenance_result
-    result["catchup"] = deployment.drain(signal)
-    result["ingest"]["durable_rows_per_sec"] = writes["accepted_rows"] / (duration + result["catchup"]["seconds"])
-    result["objectives_met"] &= result["catchup"]["recovered"] and result["catchup"]["seconds"] <= CATCHUP_SECONDS
+    if check_durability:
+        result["catchup"] = deployment.drain(signal)
+        result["ingest"]["durable_rows_per_sec"] = writes["accepted_rows"] / (duration + result["catchup"]["seconds"])
+        result["objectives_met"] &= result["catchup"]["recovered"] and result["catchup"]["seconds"] <= CATCHUP_SECONDS
     return result, records, samples
 
 
