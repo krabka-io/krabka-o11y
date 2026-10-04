@@ -5,6 +5,7 @@ API acknowledgements have different durability contracts. This experiment
 reports accepted throughput, not equivalent durable throughput.
 """
 import argparse
+import functools
 import importlib.util
 import json
 import math
@@ -49,14 +50,25 @@ def write_request(signal, sequence, cardinality, tenant='soak', age_seconds=0):
     with _timestamp_lock:
         stamp = max(now, _last_ms.get((tenant, age_seconds), 0) + 1)
         _last_ms[tenant, age_seconds] = stamp
-    series = []
-    for i in range(1000):
-        label = (sequence * 1000 + i) % cardinality
+    timestamp = env.wire.pb_int64_field(2, stamp)
+    prefixes = metric_prefixes(cardinality, len(timestamp))
+    start = sequence * 1000 % cardinality
+    selected = prefixes[start:start + 1000] if cardinality % 1000 == 0 else tuple(prefixes[(start + i) % cardinality] for i in range(1000))
+    body = b''.join(prefix + timestamp for prefix in selected)
+    return '/api/v1/push', env.wire.snappy_literal_block(body), 'application/x-protobuf', 1000
+
+
+@functools.lru_cache(maxsize=8)
+def metric_prefixes(cardinality, timestamp_size):
+    """Cache immutable labels and values; only the timestamp changes per RPC."""
+    prefixes = []
+    for label in range(cardinality):
         labels = env.wire.pb_bytes_field(1, env.wire.pb_label('__name__', 'envelope_samples'))
         labels += env.wire.pb_bytes_field(1, env.wire.pb_label('series', str(label)))
-        sample = env.wire.pb_double_field(1, float((env.SEED + label) % 97)) + env.wire.pb_int64_field(2, stamp)
-        series.append(env.wire.pb_bytes_field(1, labels + env.wire.pb_bytes_field(2, sample)))
-    return '/api/v1/push', env.wire.snappy_literal_block(b''.join(series)), 'application/x-protobuf', 1000
+        sample = env.wire.pb_double_field(1, float((env.SEED + label) % 97)) + bytes(timestamp_size)
+        series = env.wire.pb_bytes_field(1, labels + env.wire.pb_bytes_field(2, sample))
+        prefixes.append(series[:-timestamp_size])
+    return tuple(prefixes)
 
 
 def http(port, path, tenant='soak', body=None, content_type='application/json'):
@@ -109,6 +121,8 @@ def resource_sample(deployment, sample):
 
 
 def cost(samples):
+    if len(samples) < 2:
+        raise RuntimeError('insufficient resource samples; CPU and S3 deltas are unavailable')
     cpu, throttle = {}, {}
     requests = read_bytes = write_bytes = 0
     for first, following in zip(samples, samples[1:]):
@@ -297,12 +311,16 @@ def run(args):
                             duration = args.seconds if phase == 'steady' else args.seconds / 2
                             result, operations, samples = env.measure(deployment, args.signal, duration, duration / 4,
                                 writers, cardinality, cold=phase == 'high_cardinality', interval=1, tenant=tenant, check_durability=False)
-                            result['resources'] = cost(samples)
-                            rows = result['ingest']['accepted_rows']
-                            result['resources']['cpu_seconds_per_million_accepted_rows'] = result['resources']['cpu_seconds_total'] * 1e6 / rows if rows else None
                             name = f'{level}'
                             (output / f'{name}.operations.jsonl').write_text(''.join(json.dumps(record) + '\n' for record in operations))
                             (output / f'{name}.telemetry.jsonl').write_text(''.join(json.dumps(sample) + '\n' for sample in samples))
+                            result['resources'] = cost(samples)
+                            result['resources']['sample_count'] = len(samples)
+                            result['resources']['sampled_seconds'] = samples[-1]['time_unix'] - samples[0]['time_unix']
+                            result['resources']['coverage_fraction'] = result['resources']['sampled_seconds'] / result['duration_seconds']
+                            result['objectives_met'] &= result['resources']['coverage_fraction'] >= 0.9
+                            rows = result['ingest']['accepted_rows']
+                            result['resources']['cpu_seconds_per_million_accepted_rows'] = result['resources']['cpu_seconds_total'] * 1e6 / rows if rows else None
                         except RuntimeError as error:
                             result = {'signal': args.signal, 'writers': writers, 'cardinality': cardinality,
                                       'objectives_met': False, 'seed_error': str(error)}
@@ -324,6 +342,20 @@ def self_test():
     query = env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(write_request('profiles', 1, 100)[0]).query)
     assert query['units'] == ['nanoseconds'] and query['sampleRate'] == ['1000000000']
     assert chr(34) not in query['name'][0] and query['from'] == query['until']
+    # The original uncached encoder is an independent byte-level oracle.
+    stamp = env.wire.pb_int64_field(2, 1791120000000)
+    for cardinality in (1000, 5000, 20000):
+        for sequence in (0, 23):
+            reference = []
+            for i in range(1000):
+                label = (sequence * 1000 + i) % cardinality
+                labels = env.wire.pb_bytes_field(1, env.wire.pb_label('__name__', 'envelope_samples'))
+                labels += env.wire.pb_bytes_field(1, env.wire.pb_label('series', str(label)))
+                sample = env.wire.pb_double_field(1, float((env.SEED + label) % 97)) + stamp
+                reference.append(env.wire.pb_bytes_field(1, labels + env.wire.pb_bytes_field(2, sample)))
+            prefixes = metric_prefixes(cardinality, len(stamp))
+            start = sequence * 1000 % cardinality
+            assert b''.join(prefix + stamp for prefix in prefixes[start:start + 1000]) == b''.join(reference)
     sample = {'cpu_usec': {'a': 10}, 'throttled_usec': {'a': 1}, 'rss_kib': {'a': 100},
               's3': {'minio_s3_requests_total{api="GetObject"}': 2, 'minio_s3_traffic_sent_bytes': 10}}
     after = {'cpu_usec': {'a': 1000010}, 'throttled_usec': {'a': 2}, 'rss_kib': {'a': 200},
