@@ -18,6 +18,7 @@ import pathlib
 import re
 import subprocess
 import struct
+import statistics
 import threading
 import time
 import urllib.error
@@ -266,6 +267,7 @@ class Deployment:
                 raise RuntimeError(f"{signal} querier did not become ready")
         for name in self.admin_ports:
             self.ids[name] = self.run("ps", "-q", name)
+        self.ids["minio"] = self.run("ps", "-q", "minio")
         self.refresh_pids()
         images = {name: json.loads(command("docker", "inspect", identity))[0]
                   for name, identity in self.ids.items()}
@@ -293,6 +295,11 @@ class Deployment:
                 samples["rss_kib"][name] = int(re.search(r"^VmRSS:\s+(\d+)", text, re.M)[1])
             except (OSError, TypeError):
                 samples["scrape_errors"].append(f"{name}/rss")
+        try:
+            text = pathlib.Path(f"/proc/{self.pids['minio']}/status").read_text()
+            samples["rss_kib"]["minio"] = int(re.search(r"^VmRSS:\s+(\d+)", text, re.M)[1])
+        except (OSError, TypeError):
+            samples["scrape_errors"].append("minio/rss")
         return samples
 
     def drain(self, signal, timeout=180):
@@ -415,14 +422,23 @@ def run(args):
     deployment = Deployment(args.output, args.image)
     report = {"schema_version": 1, "harness_commit": command("git", "rev-parse", "HEAD"),
               "image": args.image, "image_digest": args.image_digest or args.image.split("@")[-1],
+              "image_commit": args.image_commit,
               "seed": SEED, "phase_seconds": args.seconds,
+              "shape": {"role_cpu": 1, "role_memory_gib": 1, "broker_cpu": 2, "broker_memory_gib": 2,
+                        "object_store_cpu": 2, "object_store_memory_gib": 2, "replicas": 1,
+                        "wal_partitions": 1, "replication": 1, "wal_retention_seconds": 900,
+                        "block_retention": "unlimited", "flush_max_age_seconds": 2, "nofile": 65536,
+                        "broker_image": json.loads(deployment.file.read_text())["services"]["broker"]["image"],
+                        "object_store_image": json.loads(deployment.file.read_text())["services"]["minio"]["image"]},
               "run_id": f"{os.environ.get('GITHUB_RUN_ID', 'local')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}-{args.output.name}",
               "objectives": {"ingest_p99_seconds": P99_SECONDS, "query_p99_seconds": P99_SECONDS,
                              "error_rate": 0, "durable_catchup_seconds": CATCHUP_SECONDS},
               "dataset": {"points_per_series": POINTS, "series_per_request":
                           {"metrics": SERIES, "logs": SERIES, "traces": 10, "profiles": 1}},
               "host": {"cpu_count": os.cpu_count(), "kernel": command("uname", "-r"),
-                       "cpu_model": command("lscpu", "-J"),
+                       "cpu_model": next(r["data"] for r in json.loads(command("lscpu", "-J"))["lscpu"]
+                                         if r["field"] == "Model name:"),
+                       "memory_kib": int(re.search(r"^MemTotal:\s+(\d+)", pathlib.Path("/proc/meminfo").read_text(), re.M)[1]),
                        "runner": os.environ.get("KRABKA_SOAK_RUNNER")},
               "burst_levels": WRITERS, "cardinality_levels": CARDINALITIES, "entries": []}
     sequence = 0
@@ -504,8 +520,8 @@ def run(args):
                     last_cardinality = cardinality
             # Stop the durable consumer, append a backlog, then time catch-up.
             builder = f"{signal}-block-builder"
+            prior = deployment.drain(signal)["status"]
             deployment.run("stop", "--timeout", "120", builder)
-            prior = deployment.sample(signal)["recovery"].get(builder)
             for _ in range(10):
                 path, body, content, _ = write_request(signal, next(deployment.sequence), 100)
                 status, _ = http(INGEST[signal], path, body=body, content_type=content)
@@ -515,7 +531,11 @@ def run(args):
             deployment.run("start", builder)
             deployment.refresh_pids()
             catchup = deployment.drain(signal)
-            recovered = catchup["recovered"]
+            before_offsets = [p["consumed_offset"] for c in prior["wal_consumers"] for p in c["partitions"] if p["assigned"]]
+            after_offsets = [p["consumed_offset"] for c in (catchup["status"] or {}).get("wal_consumers", []) for p in c["partitions"] if p["assigned"]]
+            appended_records = 10 * report["dataset"]["series_per_request"][signal] * (1 if signal == "profiles" else POINTS)
+            recovered = catchup["recovered"] and len(before_offsets) == len(after_offsets) == 1 and (
+                after_offsets[0] >= before_offsets[0] + appended_records)
             report["entries"].append({"signal": signal, "phase": "restart",
                                       "backlog_batches": 10, "recovered": recovered,
                                       "recovery_seconds": time.monotonic() - before,
@@ -546,19 +566,151 @@ def self_test():
     assert not durably_caught_up(status)  # Readiness alone does not prove a durable append.
     status["wal_consumers"][0]["partitions"][0]["committed_offset"] = 100
     assert durably_caught_up(status)
+    # Three independently measured rates have a median of 200; one outlier
+    # must not shift the baseline. Use a model report, not the HTTP generator.
+    reports = []
+    for index, rate in enumerate((180, 200, 220)):
+        report = {key: {} for key in REFERENCE_FIELDS}
+        report.update(schema_version=1, phase_seconds=60, run_id=str(index), image_commit="a" * 40,
+                      image_digest="sha256:" + "b" * 64, harness_commit="c" * 40, entries=[])
+        for signal in SIGNALS:
+            for phase, level, met in (("steady", 0, True), ("burst", 1, True), ("burst", 2, False),
+                                      ("high_cardinality", 100, True), ("high_cardinality", 1000, False),
+                                      ("cold_window", 0, True), ("noisy_tenant", 0, True), ("restart", 0, True)):
+                report["entries"].append({"signal": signal, "phase": phase, "objectives_met": met,
+                    "writers": level, "cardinality": level, "recovered": True, "recovery_seconds": 1,
+                    "ingest": {"attempts": 10, "durable_rows_per_sec": rate, "latency_seconds": {"p99": 0.1}},
+                    "query": {"attempts": 10, "latency_seconds": {"p99": 0.1}},
+                    "telemetry": {"rss_kib_peak_by_role": {"querier": 1000}, "object_requests": 20}})
+        reports.append(report)
+    baseline = qualification(reports)
+    assert baseline["limits"]["logs"]["burst"]["level"] == 1
+    assert baseline["metrics"]["metrics/steady/durable_rows_per_sec"]["median"] == 200
+    qualification(reports, baseline)
+    for mutate in (
+        lambda rs: rs[1].update(run_id="0"),
+        lambda rs: rs[1].update(host={"cpu_count": 8}),
+        lambda rs: rs[0]["entries"][0]["telemetry"]["rss_kib_peak_by_role"].update(querier=5000),
+        lambda rs: rs[0]["entries"][0]["ingest"].update(durable_rows_per_sec=10),
+        lambda rs: rs[0]["entries"][0]["query"]["latency_seconds"].update(p99=0.4),
+    ):
+        changed = json.loads(json.dumps(reports))
+        mutate(changed)
+        try:
+            qualification(changed, baseline)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("an invalid or regressed report passed qualification")
     print("deployment-envelope self-test passed")
+
+
+REFERENCE_FIELDS = ("schema_version", "seed", "phase_seconds", "shape", "dataset", "objectives",
+                    "host", "burst_levels", "cardinality_levels")
+
+
+def qualification(reports, baseline=None):
+    """Compute conservative limits, or compare the same load with its baseline."""
+    if len(reports) < 3 or len({r["run_id"] for r in reports}) != len(reports):
+        raise ValueError("qualification needs at least three distinct runs")
+    first = reports[0]
+    reference = {key: first[key] for key in REFERENCE_FIELDS}
+    if first["phase_seconds"] < 60:
+        raise ValueError("qualification needs at least 60 measured seconds per phase")
+    for report in reports:
+        for key in (*REFERENCE_FIELDS, "image_commit", "image_digest", "harness_commit"):
+            if report[key] != first[key]:
+                raise ValueError(f"qualification runs differ in {key}")
+        if not re.fullmatch(r"[0-9a-f]{40}", report["image_commit"] or ""):
+            raise ValueError("qualification requires the image source commit")
+    if baseline and reference != baseline["reference"]:
+        raise ValueError("workload or host differs from the baseline; review new measurements")
+    limits, metrics = {}, {}
+    for signal in SIGNALS:
+        entries = [[e for e in report["entries"] if e["signal"] == signal] for report in reports]
+        for run in entries:
+            for phase in ("steady", "cold_window", "noisy_tenant", "restart"):
+                found = [e for e in run if e["phase"] == phase]
+                if len(found) != 1 or not found[0].get("objectives_met", found[0].get("recovered")):
+                    raise ValueError(f"{signal}/{phase} did not meet its objectives")
+        limits[signal] = {}
+        selected = []
+        for phase, unit, configured in (("burst", "writers", WRITERS),
+                                        ("high_cardinality", "cardinality", CARDINALITIES)):
+            steps = [{e[unit]: e for e in run if e["phase"] == phase} for run in entries]
+            if any(not run or len(run) != len([e for e in entries[i] if e["phase"] == phase])
+                   for i, run in enumerate(steps)):
+                raise ValueError(f"{signal}/{phase} has missing or duplicate steps")
+            passing = [n for n in configured if all(n in run and run[n]["objectives_met"] for run in steps)]
+            if not passing:
+                raise ValueError(f"{signal}/{phase} has no passing load")
+            level = max(passing)
+            if baseline:
+                level = baseline["limits"][signal][phase]["level"]
+                if any(level not in run or not run[level]["objectives_met"] for run in steps):
+                    raise ValueError(f"{signal}/{phase} missed the published load {level}")
+            failures = [n for n in configured if n > level and any(n in run and not run[n]["objectives_met"] for run in steps)]
+            if not failures:
+                raise ValueError(f"{signal}/{phase} did not reach measured saturation")
+            limits[signal][phase] = {"level": level, "first_failing_level": min(failures), "unit": unit}
+            selected.append((phase, [run[level] for run in steps]))
+        for phase in ("steady", "cold_window", "noisy_tenant", "restart"):
+            selected.append((phase, [next(e for e in run if e["phase"] == phase) for run in entries]))
+        for phase, samples in selected:
+            values = {}
+            if phase == "restart":
+                values["recovery_seconds"] = ("higher", [e["recovery_seconds"] for e in samples])
+            else:
+                values["query_p99_seconds"] = ("higher", [e["query"]["latency_seconds"]["p99"] for e in samples])
+                values["peak_rss_kib"] = ("higher", [sum(e["telemetry"]["rss_kib_peak_by_role"].values()) for e in samples])
+                values["object_requests_per_operation"] = ("higher", [e["telemetry"]["object_requests"] /
+                    (e["ingest"]["attempts"] + e["query"]["attempts"]) for e in samples])
+                if phase != "cold_window":
+                    values["durable_rows_per_sec"] = ("lower", [e["ingest"]["durable_rows_per_sec"] for e in samples])
+                    values["write_p99_seconds"] = ("higher", [e["ingest"]["latency_seconds"]["p99"] for e in samples])
+            for metric, (direction, numbers) in values.items():
+                if any(not isinstance(n, (float, int)) or not math.isfinite(n) or n < 0 for n in numbers):
+                    raise ValueError(f"{signal}/{phase}/{metric} is not a finite nonnegative number")
+                mean = statistics.fmean(numbers)
+                name = f"{signal}/{phase}/{metric}"
+                metrics[name] = {"direction": direction, "median": statistics.median(numbers),
+                                 "minimum": min(numbers), "maximum": max(numbers), "mean": mean,
+                                 "cv": statistics.pstdev(numbers) / mean if mean else 0}
+                if baseline:
+                    allowed = baseline["metrics"][name]["median"]
+                    if direction == "lower" and min(numbers) < allowed / 1.5 or (
+                        direction == "higher" and max(numbers) > max(allowed * 1.5,
+                            2 if metric == "recovery_seconds" else 0.02 if metric.endswith("p99_seconds") else 1)):
+                        raise ValueError(f"{name}: {numbers} regressed against {allowed} (1.5x tolerance)")
+    return {"reference": reference, "limits": limits, "metrics": metrics,
+            "run_ids": [r["run_id"] for r in reports], "image_commit": first["image_commit"],
+            "image_digest": first["image_digest"], "harness_commit": first["harness_commit"]}
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", help="Content-addressed Krabka image")
     parser.add_argument("--image-digest", help="OCI manifest digest for an image built locally")
+    parser.add_argument("--image-commit", help="Source commit of the measured image")
+    parser.add_argument("--reports", nargs="+", type=pathlib.Path, help="Qualify complete independent reports")
+    parser.add_argument("--record", type=pathlib.Path, help="Write the measured qualification baseline")
+    parser.add_argument("--baseline", type=pathlib.Path, help="Apply a recorded stable-runner baseline")
     parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("qualification/evidence/deployment"))
     parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--self-test", action="store_true")
     options = parser.parse_args()
     if options.self_test:
         self_test()
+    elif options.reports:
+        try:
+            result = qualification([json.loads(p.read_text()) for p in options.reports],
+                                   json.loads(options.baseline.read_text()) if options.baseline else None)
+            if options.record:
+                options.record.write_text(json.dumps(result, indent=2) + "\n")
+            else:
+                print(json.dumps(result, indent=2))
+        except (ValueError, KeyError, OSError) as error:
+            parser.exit(1, f"deployment qualification failed: {error}\n")
     else:
         digest = options.image_digest or (options.image or "").split("@")[-1]
         if not options.image or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest) or options.seconds <= 0:

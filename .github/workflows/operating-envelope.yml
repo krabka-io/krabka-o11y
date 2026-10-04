@@ -24,6 +24,10 @@ on:
         description: Optional immutable deployment image (empty builds this commit)
         type: string
         default: ''
+      image_commit:
+        description: Source commit of the optional immutable deployment image
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -145,18 +149,35 @@ jobs:
         env:
           IMAGE: ${{ steps.image.outputs.image }}
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          IMAGE_COMMIT: ${{ inputs.image == '' && github.sha || inputs.image_commit }}
           PHASE_SECONDS: ${{ inputs.phase_seconds }}
           REPETITIONS: ${{ inputs.repetitions }}
           KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
         run: |
           set -euo pipefail
           python3 tools/deployment-envelope.py --self-test
+          for field in instance/machine-type instance/zone instance/image; do
+            curl -fsS -H 'Metadata-Flavor: Google' \
+              "http://metadata.google.internal/computeMetadata/v1/${field}"
+            echo
+          done > qualification/gce-deployment.txt
           digest=()
           if [[ -n "${IMAGE_DIGEST}" ]]; then digest=(--image-digest "${IMAGE_DIGEST}"); fi
           for run in $(seq 1 "${REPETITIONS}"); do
             python3 tools/deployment-envelope.py --image "${IMAGE}" \
-              "${digest[@]}" --seconds "${PHASE_SECONDS}" --output "qualification/evidence/deployment-${run}"
+              "${digest[@]}" --image-commit "${IMAGE_COMMIT}" --seconds "${PHASE_SECONDS}" \
+              --output "qualification/evidence/deployment-${run}"
           done
+          cp qualification/gce-deployment.txt qualification/evidence/gce.txt
+          if [[ "${PHASE_SECONDS}" -ge 60 && "${REPETITIONS}" -ge 3 ]]; then
+            python3 tools/deployment-envelope.py --reports qualification/evidence/deployment-*/deployment-report.json \
+              --record qualification/evidence/deployment-baseline.json
+          fi
+      - name: Apply the deployment regression gate
+        if: '!inputs.record'
+        run: |
+          python3 tools/deployment-envelope.py --reports qualification/evidence/deployment-*/deployment-report.json \
+            --baseline qualification/deployment-envelope-baseline.json
       - name: Hash artifacts
         if: always()
         run: |
