@@ -194,6 +194,10 @@ class ComparisonDeployment(env.Deployment):
             raise RuntimeError(product + ' did not become ready')
         self.ids = {product: self.run('ps', '-q', product), 'minio': self.run('ps', '-q', 'minio')}
         self.refresh_pids()
+        config_path = '/status/config' if self.signal == 'traces' else '/config'
+        status, config = http(port, config_path)
+        (self.evidence / 'effective-config.txt').write_bytes(config)
+        (self.evidence / 'effective-config-status.json').write_text(json.dumps({'path': config_path, 'status': status}))
         (self.evidence / 'containers.json').write_text(json.dumps({name: json.loads(env.command('docker', 'inspect', identity))[0] for name, identity in self.ids.items()}, indent=2))
 
     def close(self):
@@ -252,7 +256,7 @@ def run(args):
               'acknowledgements': 'API accepted; native durability contracts differ',
               'image_commit': args.image_commit, 'image_digest': args.image_digest,
               'dataset': {'metric_samples_per_request': 1000, 'metric_points_per_series': 1,
-                          'other_signals': 'deployment-envelope dataset; profile units=nanoseconds', 'seed_concurrency': 64},
+                          'other_signals': 'deployment-envelope dataset; profile units=nanoseconds, unquoted legacy labels, sampleRate=1e9', 'seed_concurrency': 64},
               'host': {'cpu_count': os.cpu_count(), 'kernel': env.command('uname', '-r'), 'lscpu': json.loads(env.command('lscpu', '-J'))},
               'entries': [], 'workload': {'writers': [n for n in env.WRITERS if n <= args.max_writers],
                          'cardinalities': [n for n in (1000, 5000, 20000) if n <= args.max_cardinality]}}
@@ -300,7 +304,9 @@ def run(args):
 
 def self_test():
     assert write_request('metrics', 1, 1000)[3] == 1000
-    assert 'units=nanoseconds' in write_request('profiles', 1, 100)[0]
+    query = env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(write_request('profiles', 1, 100)[0]).query)
+    assert query['units'] == ['nanoseconds'] and query['sampleRate'] == ['1000000000']
+    assert chr(34) not in query['name'][0] and query['from'] == query['until']
     sample = {'cpu_usec': {'a': 10}, 'throttled_usec': {'a': 1}, 'rss_kib': {'a': 100},
               's3': {'minio_s3_requests_total{api="GetObject"}': 2, 'minio_s3_traffic_sent_bytes': 10}}
     after = {'cpu_usec': {'a': 1000010}, 'throttled_usec': {'a': 2}, 'rss_kib': {'a': 200},
