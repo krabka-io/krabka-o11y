@@ -201,40 +201,82 @@ The template has 16 vCPUs, 64 GiB RAM, and a 600 GB SSD boot disk.
 The workflow records the actual machine type, image, CPU model, kernel, and Docker configuration.
 The label uses dashes because GCE refuses a dot in a VM label value.
 
-The storage job builds with `-c opt`. It runs three repetitions on one VM.
-Each repetition starts a new process and a new MinIO container.
-It discards a 15-second warm-up before each 60-second phase.
-It retains all three reports, commands, logs, and artifact checksums.
-The baseline uses the median of each metric across the three reports.
-The numeric gate refuses an unseeded baseline or a different workload, toolchain, or host.
-An envelope computation also refuses a failed non-stepped phase.
+The default `deployment` job uses `tools/deployment-envelope.py` and the
+checked-in Compose topology. Each signal has one distributor, block builder,
+and querier. Metrics, traces, and profiles also have one compactor; traces
+have a separate live store. Every role has a one-vCPU, one-GiB limit. The
+broker and MinIO each have two-vCPU, two-GiB limits. Every container has a
+65,536-file descriptor limit. The WAL has one partition, replication factor
+one, and 900-second retention. Blocks are retained without an age limit,
+except that the deletion phase enables 60-second retention on tenant
+`expired`. Maintenance runs every two seconds. Block flushes have a
+two-second maximum age; the traces poll window is five seconds. Profiles and
+traces use a 30-second hot retention window, and metrics use five minutes.
+The resolved Compose file and all role configurations are raw artifacts.
+This shape qualifies direct querier APIs on one node; it does not qualify
+query frontends, replication, failover, or an external object-store provider.
 
-The deployment job adds the broker and public HTTP APIs. It uses
-`tools/deployment-envelope.py` and the checked-in Compose topology.
-Each signal has one distributor, block builder, and querier.
-Metrics, traces, and profiles also have one compactor.
-Each role has a one-vCPU, one-GiB limit. The broker and MinIO each have
-two-vCPU, two-GiB limits. Every container has a 65,536-file descriptor limit.
-The resolved Compose file and every role configuration are raw artifacts.
-The deployment keeps the WAL retention and replication settings of the base topology.
+The HTTP dataset uses seed `267`. Metrics and logs send 100 series with ten
+points per request. Traces send ten series with ten spans per request.
+Profiles send one labelled profile with ten stack samples. A fresh tenant is
+used at each load level. The cardinality search loads every label value before
+measurement, and retains seed requests as JSON Lines. Ingest caps are disabled
+on the capacity tenants, and the logs querier has no series-count cap. A
+failed higher load, including an OOM during preload, remains failure evidence.
+The deployment is reset before subsequent phases use the last passing corpus.
 
-The HTTP dataset uses seed `267`. Metrics, logs, and traces send 100 series
-with 10 points per request. Profiles send one labelled profile with 10 stack samples.
-The cardinality search seeds every label value before each measured step.
-Tenant `soak` has no ingest-rate cap. The logs querier has no series-count cap.
-These settings prevent a configured maximum from acting as measured saturation.
-The noisy phase puts four unpaced writers beside two paced writers on `quiet`.
+Each full phase measures 60 seconds after a 15-second warm-up. Burst and
+cardinality steps measure 30 seconds after 7.5 seconds of warm-up. Writers at
+burst levels 1 through 512 send one request per second each. Cardinality
+steps are 100, 1,000, 5,000, 20,000, 100,000, and 500,000, with two writers
+sending one request each 250 ms. The search stops at its first failure. The
+write and query p99 objectives are two seconds, with zero errors and no empty
+query results. Accepted writes must become durable within ten seconds after
+the phase. The reported durable rate includes that drain time.
 
-The deployment report includes HTTP status counts, accepted rate, query quantiles,
-RSS by role, object requests and bytes, and broker-reported WAL lag.
-Its raw operation and telemetry samples are JSON Lines files.
-A restart stops the block builder, appends ten batches, then times its readiness after restart.
-The storage soak supplies the cold-block, compaction, and retention measurements.
-The deployment's `cold_window` reads a wider time window; it does not prove that every cache is cold.
+The `cold_blocks` phase reads a ten-minute-old corpus over a 30-minute window,
+with no concurrent writes to that tenant. It must transfer object bytes. This
+measures block reads; it does not promise a cold operating-system cache. The
+`compaction` phase requires observed output blocks and no maintenance errors
+while writes and queries run. The `deletion` phase first verifies an aged
+corpus exists, then enables retention during the measured round and verifies
+that it disappears while the control tenant keeps writing and querying.
+The noisy phase runs four unpaced writers beside two paced writers on
+`quiet`. Noisy limits are 2,000 rows or spans per second for metrics and
+traces, 20 profiles per second, and a broker `producer_byte_rate` quota of
+65,536 bytes per second for logs.
 
-Use `scope=checks` for the complete ordinary Bazel test suite on the GCP runner.
-Use a short phase and one repetition for diagnostics.
-Only three complete 60-second runs can support qualification.
+The report records query p50/p95/p99, HTTP status counts and errors, accepted
+and durable ingest rates, RSS by role including broker and MinIO, CPU time,
+object requests and bytes, broker-reported WAL lag, and consumer recovery
+status. Restart stops the block builder, appends ten batches, and checks that
+the durable offset advances through those records after restart. Every raw
+operation and telemetry sample, runner identity, container log, source commit,
+image digest, and checksum is retained. A locally built image is preserved as
+a checksummed `deployment-image-<commit>` artifact, including its manifest and
+configuration digests. `image_artifact_run` reuses that exact build.
+
+Three complete comparable runs support `qualification/deployment-envelope-baseline.json`.
+The gate publishes the highest passing load common to all three runs only
+when a higher load actually fails. It records median, range, and coefficient
+of variation for each metric. Future runs must retain the published workload
+and host shape, pass every full phase, sustain the published load, and remain
+within a 1.5x regression tolerance. Missing evidence or an unseeded baseline
+fails. The self-test includes negative controls for throughput, query latency,
+RSS, missing maintenance, absent expiry, empty queries, and duplicated runs.
+
+Use `scope=checks` for the complete ordinary Bazel test suite on GCP. Use a
+short phase and one repetition for diagnostics. `scope=storage` retains the
+native four-worker storage soak as a separate component diagnostic; its WAL
+lag is explicitly unmeasured. Its complete qualification, if recorded, uses
+three optimized runs and the median of each metric, with a separate native
+workload reference. The deployment and component reports describe different
+workloads and are not interchangeable.
+
+For a fresh baseline, dispatch the workflow with `scope=deployment`,
+`record=true`, `phase_seconds=60`, and `repetitions=3`. Review the three reports
+and their `deployment-baseline.json` before replacing the checked-in baseline.
+Dispatch with `record=false` to apply the stable-runner regression gate.
 
 Run the soak three times on the stable runner, with the commit and runner
 recorded, and keep each report:
@@ -259,10 +301,10 @@ Bazel can zip the test outputs into `outputs.zip`. If it does, extract
 ## Supported envelope
 
 Pending stable-runner qualification. The table below stays empty until
-`tools/soak-gate.py --envelope` gives a `saturated` result for each signal
-from three stable-runner reports.
+`tools/deployment-envelope.py --reports` accepts three complete, comparable
+reports and observes a passing load followed by saturation for every signal.
 
-| Signal | Burst writers | Accepted rows for each second | Series for each batch | Runs | Commit |
+| Signal | Burst writers | Durable rows for each second | Active series | Runs | Image commit |
 | --- | --- | --- | --- | --- | --- |
 | Metrics | Pending | Pending | Pending | 0 | None |
 | Logs | Pending | Pending | Pending | 0 | None |

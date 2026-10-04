@@ -133,19 +133,24 @@ jobs:
           bazelisk-cache: true
           repository-cache: true
           disk-cache: false
+      - name: Download the exact measured image
+        if: inputs.image_artifact_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.image_artifact_run }}
+          pattern: deployment-image-*
+          merge-multiple: true
+          path: qualification/image
       - name: Select the exact image
         id: image
         env:
           REQUESTED_IMAGE: ${{ inputs.image }}
           IMAGE_ARTIFACT_RUN: ${{ inputs.image_artifact_run }}
-          GH_TOKEN: ${{ github.token }}
           REQUESTED_COMMIT: ${{ inputs.image_commit }}
         run: |
           set -euo pipefail
           if [[ -n "${IMAGE_ARTIFACT_RUN}" ]]; then
-            mkdir -p qualification/image
-            image_sha=$(gh run view "${IMAGE_ARTIFACT_RUN}" --json headSha --jq .headSha)
-            gh run download "${IMAGE_ARTIFACT_RUN}" --name "deployment-image-${image_sha}" --dir qualification/image
             cd qualification/image
             sha256sum -c SHA256SUMS
             docker load -i image.tar
