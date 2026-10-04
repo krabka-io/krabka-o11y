@@ -1,6 +1,13 @@
-use super::{
-    Arc, COL_FINGERPRINT, COL_TIMESTAMP, MemTable, PromqlError, SessionContext, quote_ident,
+use std::collections::HashSet;
+
+use arrow::{
+    array::{AsArray, BooleanArray},
+    compute::filter_record_batch,
+    datatypes::{Int64Type, UInt64Type},
 };
+use futures::TryStreamExt as _;
+
+use super::{Arc, COL_FINGERPRINT, COL_TIMESTAMP, MemTable, PromqlError, SessionContext};
 
 pub(crate) async fn merge_scan_table<const N: usize>(
     ctx: &SessionContext,
@@ -8,70 +15,39 @@ pub(crate) async fn merge_scan_table<const N: usize>(
     schema: arrow::datatypes::SchemaRef,
     scans: [(SessionContext, Option<String>); N],
 ) -> Result<Option<String>, PromqlError> {
-    // Register each non-empty source's batches under a private alias in the
-    // output context, tagged with a `__src` priority literal. The `scans` array
-    // is ordered `[cold, hot]`, so the array index doubles as the priority:
-    // hot (higher index) is authoritative when both stores hold the same
-    // `(fingerprint, timestamp)` sample. Without this dedup, any sample present
-    // in both stores - the steady state, since hot retention is time-based and
-    // independent of compaction - is double-counted by range/rate/aggregate
-    // queries.
-    let mut sources = Vec::new();
-    for (priority, (scan_ctx, table)) in scans.into_iter().enumerate() {
+    // Read higher-priority sources first. Hot samples override cold samples
+    // with the same fingerprint and timestamp, including stale markers.
+    // One set spans every source and batch, so duplicates within a source
+    // also appear only once. No SQL window sort or source aliases are needed.
+    let mut seen = HashSet::new();
+    let mut batches = Vec::new();
+    for (scan_ctx, table) in scans.into_iter().rev() {
         let Some(table) = table else {
             continue;
         };
-        let dataframe = scan_ctx.sql(&format!("SELECT * FROM {table}")).await?;
-        let batches = dataframe.collect().await?;
-        if batches.is_empty() {
-            continue;
+        let mut stream = scan_ctx.table(&table).await?.execute_stream().await?;
+        while let Some(batch) = stream.try_next().await? {
+            let fps = batch
+                .column_by_name(COL_FINGERPRINT)
+                .expect("metric schema has fingerprints")
+                .as_primitive::<UInt64Type>();
+            let timestamps = batch
+                .column_by_name(COL_TIMESTAMP)
+                .expect("metric schema has timestamps")
+                .as_primitive::<Int64Type>();
+            let keep = BooleanArray::from_iter(
+                (0..batch.num_rows())
+                    .map(|row| Some(seen.insert((fps.value(row), timestamps.value(row))))),
+            );
+            let batch = filter_record_batch(&batch, &keep)
+                .map_err(|err| PromqlError::Exec(err.to_string()))?;
+            if batch.num_rows() > 0 {
+                batches.push(batch);
+            }
         }
-        let source_table = MemTable::try_new(schema.clone(), vec![batches])?;
-        let source_name = format!("{table_name}__src{priority}");
-        ctx.register_table(source_name.as_str(), Arc::new(source_table))?;
-        sources.push((priority, source_name));
     }
-    if sources.is_empty() {
+    if batches.is_empty() {
         return Ok(None);
-    }
-
-    // Project the real schema columns explicitly so the `__src` helper column
-    // never escapes into the output (which must equal the passed-in schema).
-    let projection = schema
-        .fields()
-        .iter()
-        .map(|field| quote_ident(field.name()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let fp_col = quote_ident(COL_FINGERPRINT);
-    let ts_col = quote_ident(COL_TIMESTAMP);
-
-    // UNION ALL the tagged sources, then keep exactly one row per
-    // `(fingerprint, timestamp)`, preferring the highest-priority source (hot).
-    let union = sources
-        .iter()
-        .map(|(priority, name)| {
-            format!(
-                "SELECT *, {priority} AS __src FROM {name}",
-                name = quote_ident(name)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" UNION ALL ");
-    let deduped = format!(
-        "SELECT {projection} FROM (\
-            SELECT *, ROW_NUMBER() OVER (\
-                PARTITION BY {fp_col}, {ts_col} ORDER BY __src DESC\
-            ) AS __rn FROM ({union}) AS __tagged\
-        ) AS __ranked WHERE __rn = 1"
-    );
-    let dataframe = ctx.sql(&deduped).await?;
-    let batches = dataframe.collect().await?;
-
-    // Drop the private source aliases and register the deduped result under the
-    // public table name so the output schema exactly equals the input schema.
-    for (_, source_name) in &sources {
-        ctx.deregister_table(source_name.as_str())?;
     }
     let table = MemTable::try_new(schema, vec![batches])?;
     ctx.register_table(table_name, Arc::new(table))?;
