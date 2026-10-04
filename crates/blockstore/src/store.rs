@@ -3,9 +3,30 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use arrow::datatypes::SchemaRef;
+use async_trait::async_trait;
 use datafusion::{
-    catalog::MemTable,
-    execution::runtime_env::{RuntimeEnv, RuntimeEnvBuilder},
+    catalog::{MemTable, Session, TableProvider},
+    common::{Result as DataFusionResult, Statistics},
+    datasource::{
+        listing::PartitionedFile,
+        object_store::ObjectStoreUrl,
+        physical_plan::{
+            FileGroup, FileScanConfigBuilder, ParquetSource,
+            parquet::{
+                CachedParquetFileReaderFactory,
+                metadata::{DFParquetMetadata, ordering_from_parquet_metadata},
+            },
+        },
+        provider::TableProviderFilterPushDown,
+        source::DataSourceExec,
+    },
+    execution::{
+        cache::cache_manager::FileMetadataCache,
+        runtime_env::{RuntimeEnv, RuntimeEnvBuilder},
+    },
+    logical_expr::TableType,
+    physical_expr::LexOrdering,
+    physical_plan::ExecutionPlan,
     prelude::{Expr, ParquetReadOptions, SessionConfig, SessionContext, col, lit},
 };
 use futures::{StreamExt, TryStreamExt, stream};
@@ -21,8 +42,8 @@ use crate::{
     labels::SeriesFingerprint,
     matcher::LabelMatcher,
     reader::{
-        BlockMetadataCache, DEFAULT_BLOCK_METADATA_CACHE_MAX, DEFAULT_BLOCK_READ_MAX, RowGroupMeta,
-        block_metadata, read_block_row_groups_cached, row_group_metadata,
+        BlockMetadataCache, DEFAULT_BLOCK_METADATA_CACHE_MAX, DEFAULT_BLOCK_READ_MAX, ProbedBlock,
+        RowGroupMeta, probe_block, read_block_row_groups_cached, row_group_metadata,
     },
     writer::BlockWriter,
 };
@@ -838,12 +859,13 @@ mod tests {
             first.iter().map(RecordBatch::num_rows).sum::<usize>()
                 == second.iter().map(RecordBatch::num_rows).sum::<usize>()
         );
-        // Measured on two blocks: the first scan makes 4 tail reads and 4
-        // other reads, the second makes 0 and 2 — the two that remain are the
-        // column chunks the query actually wants.
-        assert2::assert!(after_first.1 > 0);
-        assert2::assert!(second_scan.1 == 0);
-        assert2::assert!(second_scan.2 < after_first.2);
+        // Measured on two blocks: the probe knows each block's size from its
+        // `head`, so it reads each footer as one bounded range and makes no
+        // tail read. The first scan makes 4 bounded reads, a footer and a
+        // column chunk per block. The second makes 2, the column chunks the
+        // query actually wants.
+        assert2::assert!((after_first.1, after_first.2) == (0, 4));
+        assert2::assert!((second_scan.1, second_scan.2) == (0, 2));
         assert2::assert!(!bs.metadata_cache().is_empty());
     }
 
@@ -927,6 +949,7 @@ mod block_scan;
 mod block_store;
 mod max_fingerprint_in_list;
 mod probe_blocks;
+mod probed_block_table;
 mod require_blocks;
 mod scan_filter;
 mod scan_report;
@@ -938,6 +961,7 @@ pub use block_scan::BlockScan;
 pub use block_store::BlockStore;
 use max_fingerprint_in_list::MAX_FINGERPRINT_IN_LIST;
 use probe_blocks::probe_blocks;
+use probed_block_table::ProbedBlockTable;
 use require_blocks::require_blocks;
 use scan_filter::scan_filter;
 pub use scan_report::ScanReport;
