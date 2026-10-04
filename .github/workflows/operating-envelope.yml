@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   storage:
-    runs-on: gcp-ubuntu-24.04-16core
+    runs-on: gcp-ubuntu-24-04-16core
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v7
@@ -48,7 +48,7 @@ jobs:
       - name: Measure three independent runs
         env:
           KRABKA_SOAK_PHASE_SECONDS: ${{ inputs.phase_seconds || 60 }}
-          KRABKA_SOAK_RUNNER: gcp-ubuntu-24.04-16core
+          KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
         run: |
           set -euo pipefail
           evidence=qualification/evidence/envelope
