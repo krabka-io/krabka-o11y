@@ -1,0 +1,733 @@
+{
+  "schema_version": 1,
+  "qualification_run": {
+    "id": 37190064969,
+    "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37190064969",
+    "head_sha": "f0e47fb911571c2493c67c8654a52d625cfe6e04",
+    "run_attempt": 1,
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "raw_artifact": {
+    "id": 11303244054,
+    "name": "deployment-envelope-f0e47fb911571c2493c67c8654a52d625cfe6e04-1",
+    "digest": "sha256:476770ffbd9b3547bd49bc974ea9319ed1f8afd8e651f565de4a1dd7c25828a6",
+    "size_in_bytes": 70703719,
+    "created_at": "2026-10-04T12:44:39Z",
+    "expires_at": "2027-01-02T08:47:35Z"
+  },
+  "raw_artifact_verified_files": 680,
+  "reports": [
+    {
+      "run_id": "37190064969-1-deployment-1",
+      "path": "deployment-1/deployment-report.json",
+      "sha256": "35c7df5ef20650d7382822e3bae6c75d048cb017cde0302b4d3d4ed0411a06d1",
+      "entries": 66
+    },
+    {
+      "run_id": "37190064969-1-deployment-2",
+      "path": "deployment-2/deployment-report.json",
+      "sha256": "8f073bb80308ada64c99298dcbca42af6a015a712e5f24ce8d19d212245d81dd",
+      "entries": 68
+    },
+    {
+      "run_id": "37190064969-1-deployment-3",
+      "path": "deployment-3/deployment-report.json",
+      "sha256": "93d6120c8636c369e922a9f864bf72ee88e6bd0dfb3dddf167a6763db6076263",
+      "entries": 68
+    }
+  ],
+  "measured_image": {
+    "source_commit": "47ddda37177501c43c823f17db59ee149340b436",
+    "manifest_digest": "sha256:d9a83da975c23d56f2bcdb4f555978badcdf8687c2d3a4bf4079bbc2d34cddd3",
+    "oci_config_digest": "sha256:46118cc62d5800460c8e5964108581d355fe1e815315011b74ff969e8fcbf62c",
+    "docker_image_id": "sha256:d9a83da975c23d56f2bcdb4f555978badcdf8687c2d3a4bf4079bbc2d34cddd3",
+    "archive_sha256": "09af2dc5d62270fe1db6a9afe48c9699ce14bea2aa8ca1a8c216fa239cc70c8b",
+    "producer_run": {
+      "id": 37183330836,
+      "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37183330836",
+      "head_sha": "47ddda37177501c43c823f17db59ee149340b436",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    "artifact": {
+      "id": 11295824757,
+      "name": "deployment-image-47ddda37177501c43c823f17db59ee149340b436",
+      "digest": "sha256:3abf8f62388dc007a08f6b768b969e6539c5043cceb5130145aa15ef8141f8e1",
+      "size_in_bytes": 309558417,
+      "created_at": "2026-10-04T06:56:24Z",
+      "expires_at": "2027-01-02T06:37:11Z"
+    }
+  },
+  "harness_commit": "f0e47fb911571c2493c67c8654a52d625cfe6e04",
+  "publication_gate_sha256": "cd82808803940d5c358cbb8a87093b9f7d22326fdccbf005ce2369c194772494",
+  "runner": {
+    "project": "robot-head",
+    "zone": "us-central1-b",
+    "manager": "https://github.com/Cyclenerd/google-cloud-github-runner",
+    "label": "gcp-ubuntu-24-04-16core",
+    "template": "gcp-ubuntu-24-04-16core-20261004031232486100000008",
+    "machine_type": "e2-standard-16",
+    "boot_disk_gb": 600,
+    "boot_disk_type": "pd-ssd",
+    "host": {
+      "cpu_count": 16,
+      "kernel": "7.0.0-1011-gcp",
+      "cpu_model": "AMD EPYC 7B12",
+      "memory_kib": 65836552,
+      "runner": "gcp-ubuntu-24-04-16core"
+    },
+    "gce_metadata_lines": [
+      "projects/328552641247/machineTypes/e2-standard-16",
+      "projects/328552641247/zones/us-central1-b",
+      "projects/robot-head/global/images/ubuntu-2404-lts-amd64-v2026-10-04-1791083478"
+    ]
+  },
+  "upstream_images": {
+    "broker": {
+      "digest_ref": "ghcr.io/krabka-io/krabka-broker@sha256:54ae711e5a7c8bdb03414402722f5c41dd50980ab315ab84d0803cca775fb463",
+      "source_commit": null,
+      "source_commit_status": "The pinned image publishes no source revision; the attestation lookup returned 404. Its immutable manifest digest identifies the measured broker."
+    },
+    "object_store": {
+      "digest_ref": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba"
+    }
+  },
+  "validation": {
+    "gcp_full_suite": {
+      "id": 37183945660,
+      "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37183945660",
+      "head_sha": "7cb428367c6fe98958ee4a391009d475b3f37704",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    "gcp_test_targets_passed": 373,
+    "unchanged_cohort_passed_numeric_gate": true,
+    "negative_controls": [
+      {
+        "control": "durable throughput reduced by 90 percent",
+        "rejected": true,
+        "reason": "metrics/steady/durable_rows_per_sec: median 199.3097875217697 regressed against 1993.0978752176968 (1.5x tolerance)"
+      },
+      {
+        "control": "cohort query p99 raised to 1.9 seconds",
+        "rejected": true,
+        "reason": "logs/steady/query_p99_seconds: median 1.9 regressed against 0.11891397699946538 (1.5x tolerance)"
+      },
+      {
+        "control": "one run exceeds the two-second query SLO",
+        "rejected": true,
+        "reason": "metrics/steady exceeded its query latency objective"
+      },
+      {
+        "control": "one run loses telemetry",
+        "rejected": true,
+        "reason": "metrics/steady lost telemetry"
+      },
+      {
+        "control": "one run has five times the object bytes",
+        "rejected": true,
+        "reason": "metrics/steady/object_bytes_per_operation: maximum 800687.6116838488 regressed against 160137.52233676976 (1.5x tolerance)"
+      },
+      {
+        "control": "one run has five times the RSS",
+        "rejected": true,
+        "reason": "metrics/steady/peak_rss_kib: maximum 3623980 regressed against 735800 (1.5x tolerance)"
+      },
+      {
+        "control": "retention never verifies expiry",
+        "rejected": true,
+        "reason": "metrics/deletion did not verify expiry"
+      },
+      {
+        "control": "duplicate independent run identity",
+        "rejected": true,
+        "reason": "qualification needs at least three distinct runs"
+      }
+    ]
+  },
+  "steady_summary": {
+    "metrics": {
+      "query_seconds": {
+        "p50": 0.33283317899986287,
+        "p95": 0.5398832319997382,
+        "p99": 0.5824037219999809
+      },
+      "object_requests": 10120.0,
+      "object_bytes": 43967610.0,
+      "wal_lag_records_max_range": [
+        4000.0,
+        5922.0
+      ],
+      "ingest_errors": 0,
+      "query_errors": 0
+    },
+    "logs": {
+      "query_seconds": {
+        "p50": 0.05005172800156288,
+        "p95": 0.09403811899937864,
+        "p99": 0.11891397699946538
+      },
+      "object_requests": 618.0,
+      "object_bytes": 4154512.0,
+      "wal_lag_records_max_range": [
+        2000.0,
+        2000.0
+      ],
+      "ingest_errors": 0,
+      "query_errors": 0
+    },
+    "traces": {
+      "query_seconds": {
+        "p50": 0.1472889189990383,
+        "p95": 0.16721236999910616,
+        "p99": 0.18162435699923662
+      },
+      "object_requests": 5058.0,
+      "object_bytes": 55454406.0,
+      "wal_lag_records_max_range": [
+        135.0,
+        400.0
+      ],
+      "ingest_errors": 0,
+      "query_errors": 0
+    },
+    "profiles": {
+      "query_seconds": {
+        "p50": 0.009775180000360706,
+        "p95": 0.018557078999947407,
+        "p99": 0.02412155999991228
+      },
+      "object_requests": 2213.0,
+      "object_bytes": 4386514.0,
+      "wal_lag_records_max_range": [
+        2.0,
+        5.0
+      ],
+      "ingest_errors": 0,
+      "query_errors": 0
+    }
+  },
+  "cold_querier_object_bytes": [
+    {
+      "run_id": "37190064969-1-deployment-1",
+      "signal": "metrics",
+      "querier_object_bytes": 89670280.0
+    },
+    {
+      "run_id": "37190064969-1-deployment-1",
+      "signal": "logs",
+      "querier_object_bytes": 47799408.0
+    },
+    {
+      "run_id": "37190064969-1-deployment-1",
+      "signal": "traces",
+      "querier_object_bytes": 43337497.0
+    },
+    {
+      "run_id": "37190064969-1-deployment-1",
+      "signal": "profiles",
+      "querier_object_bytes": 89054698.0
+    },
+    {
+      "run_id": "37190064969-1-deployment-2",
+      "signal": "metrics",
+      "querier_object_bytes": 89752383.0
+    },
+    {
+      "run_id": "37190064969-1-deployment-2",
+      "signal": "logs",
+      "querier_object_bytes": 47891423.0
+    },
+    {
+      "run_id": "37190064969-1-deployment-2",
+      "signal": "traces",
+      "querier_object_bytes": 43421986.0
+    },
+    {
+      "run_id": "37190064969-1-deployment-2",
+      "signal": "profiles",
+      "querier_object_bytes": 90482164.0
+    },
+    {
+      "run_id": "37190064969-1-deployment-3",
+      "signal": "metrics",
+      "querier_object_bytes": 93048799.0
+    },
+    {
+      "run_id": "37190064969-1-deployment-3",
+      "signal": "logs",
+      "querier_object_bytes": 47436128.0
+    },
+    {
+      "run_id": "37190064969-1-deployment-3",
+      "signal": "traces",
+      "querier_object_bytes": 43607872.0
+    },
+    {
+      "run_id": "37190064969-1-deployment-3",
+      "signal": "profiles",
+      "querier_object_bytes": 90520772.0
+    }
+  ],
+  "saturation_failures": [
+    {
+      "run_id": "37190064969-1-deployment-1",
+      "signal": "metrics",
+      "phase": "burst",
+      "writers": 32,
+      "cardinality": 100,
+      "query_p99_seconds": 1.062699612999495,
+      "write_p99_seconds": 0.4497948130001532,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.7468354430379747,
+      "catchup": {
+        "recovered": true,
+        "seconds": 1.5135909860000538,
+        "broker_end_offset": 2552000
+      },
+      "seed_error": null,
+      "oom_roles": [
+        "metrics-querier"
+      ]
+    },
+    {
+      "run_id": "37190064969-1-deployment-1",
+      "signal": "metrics",
+      "phase": "high_cardinality",
+      "writers": 2,
+      "cardinality": 20000,
+      "query_p99_seconds": 2.591562918000818,
+      "write_p99_seconds": 0.03606050899998081,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 0.7575756580008601,
+        "broker_end_offset": 565000
+      },
+      "seed_error": null,
+      "oom_roles": []
+    },
+    {
+      "run_id": "37190064969-1-deployment-1",
+      "signal": "logs",
+      "phase": "burst",
+      "writers": 64,
+      "cardinality": 100,
+      "query_p99_seconds": 0.4111487330001182,
+      "write_p99_seconds": 2.034095846999662,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 0.5062120219999997,
+        "broker_end_offset": 3993000
+      },
+      "seed_error": null,
+      "oom_roles": []
+    },
+    {
+      "run_id": "37190064969-1-deployment-1",
+      "signal": "logs",
+      "phase": "high_cardinality",
+      "writers": 2,
+      "cardinality": 5000,
+      "query_p99_seconds": null,
+      "write_p99_seconds": null,
+      "ingest_error_rate": null,
+      "query_error_rate": null,
+      "catchup": {},
+      "seed_error": "logs/cardinality-5000 query never became present=True: [{'status': 0, 'has_data': False, 'elapsed_seconds': 119.298112296}, {'status': 0, 'has_data': False, 'elapsed_seconds': 119.54878112299957}, {'status': 0, 'has_data': False, 'elapsed_seconds': 119.7993699210001}]",
+      "oom_roles": [
+        "logs-querier"
+      ]
+    },
+    {
+      "run_id": "37190064969-1-deployment-1",
+      "signal": "traces",
+      "phase": "burst",
+      "writers": 16,
+      "cardinality": 100,
+      "query_p99_seconds": 0.8897391270002117,
+      "write_p99_seconds": 0.021934309999778634,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.5949367088607594,
+      "catchup": {
+        "recovered": true,
+        "seconds": 1.5125892679989192,
+        "broker_end_offset": 138900
+      },
+      "seed_error": null,
+      "oom_roles": [
+        "traces-live-store"
+      ]
+    },
+    {
+      "run_id": "37190064969-1-deployment-1",
+      "signal": "traces",
+      "phase": "high_cardinality",
+      "writers": 2,
+      "cardinality": 5000,
+      "query_p99_seconds": 0.06971547899956931,
+      "write_p99_seconds": 0.0096381500006828,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 1.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 1.2615053110002918,
+        "broker_end_offset": 83800
+      },
+      "seed_error": null,
+      "oom_roles": [
+        "traces-live-store"
+      ]
+    },
+    {
+      "run_id": "37190064969-1-deployment-1",
+      "signal": "profiles",
+      "phase": "burst",
+      "writers": 256,
+      "cardinality": 100,
+      "query_p99_seconds": 0.14262066799892636,
+      "write_p99_seconds": 2.0992841240004054,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 2.0173001949988247,
+        "broker_end_offset": 16061
+      },
+      "seed_error": null,
+      "oom_roles": []
+    },
+    {
+      "run_id": "37190064969-1-deployment-1",
+      "signal": "profiles",
+      "phase": "high_cardinality",
+      "writers": 2,
+      "cardinality": 100000,
+      "query_p99_seconds": 4.5602645950002625,
+      "write_p99_seconds": 0.016207909999138792,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 7.806581752000056,
+        "broker_end_offset": 142541
+      },
+      "seed_error": null,
+      "oom_roles": []
+    },
+    {
+      "run_id": "37190064969-1-deployment-2",
+      "signal": "metrics",
+      "phase": "burst",
+      "writers": 32,
+      "cardinality": 100,
+      "query_p99_seconds": 1.2389411109998036,
+      "write_p99_seconds": 0.4494840950010257,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.7777777777777778,
+      "catchup": {
+        "recovered": true,
+        "seconds": 1.5139964249992772,
+        "broker_end_offset": 2552000
+      },
+      "seed_error": null,
+      "oom_roles": [
+        "metrics-querier"
+      ]
+    },
+    {
+      "run_id": "37190064969-1-deployment-2",
+      "signal": "metrics",
+      "phase": "high_cardinality",
+      "writers": 2,
+      "cardinality": 20000,
+      "query_p99_seconds": 2.3779000680005993,
+      "write_p99_seconds": 0.03909658800148463,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 0.002265029001137009,
+        "broker_end_offset": 565000
+      },
+      "seed_error": null,
+      "oom_roles": []
+    },
+    {
+      "run_id": "37190064969-1-deployment-2",
+      "signal": "logs",
+      "phase": "burst",
+      "writers": 128,
+      "cardinality": 100,
+      "query_p99_seconds": 0.39949435100061237,
+      "write_p99_seconds": 3.486708243000976,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 0.5049353989998053,
+        "broker_end_offset": 5853000
+      },
+      "seed_error": null,
+      "oom_roles": []
+    },
+    {
+      "run_id": "37190064969-1-deployment-2",
+      "signal": "logs",
+      "phase": "high_cardinality",
+      "writers": 2,
+      "cardinality": 5000,
+      "query_p99_seconds": null,
+      "write_p99_seconds": null,
+      "ingest_error_rate": null,
+      "query_error_rate": null,
+      "catchup": {},
+      "seed_error": "logs/cardinality-5000 query never became present=True: [{'status': 0, 'has_data': False, 'elapsed_seconds': 119.25461417800034}, {'status': 0, 'has_data': False, 'elapsed_seconds': 119.50519124200036}, {'status': 0, 'has_data': False, 'elapsed_seconds': 119.75586796700009}]",
+      "oom_roles": [
+        "logs-querier"
+      ]
+    },
+    {
+      "run_id": "37190064969-1-deployment-2",
+      "signal": "traces",
+      "phase": "burst",
+      "writers": 16,
+      "cardinality": 100,
+      "query_p99_seconds": 0.8835882479997963,
+      "write_p99_seconds": 0.019353470001078676,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.6049382716049383,
+      "catchup": {
+        "recovered": true,
+        "seconds": 1.7634819570012041,
+        "broker_end_offset": 138900
+      },
+      "seed_error": null,
+      "oom_roles": [
+        "traces-live-store"
+      ]
+    },
+    {
+      "run_id": "37190064969-1-deployment-2",
+      "signal": "traces",
+      "phase": "high_cardinality",
+      "writers": 2,
+      "cardinality": 5000,
+      "query_p99_seconds": 0.07083714899999904,
+      "write_p99_seconds": 0.009633728999688174,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 1.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 1.2623538980005833,
+        "broker_end_offset": 83800
+      },
+      "seed_error": null,
+      "oom_roles": [
+        "traces-live-store"
+      ]
+    },
+    {
+      "run_id": "37190064969-1-deployment-2",
+      "signal": "profiles",
+      "phase": "burst",
+      "writers": 512,
+      "cardinality": 100,
+      "query_p99_seconds": 0.12572869500036177,
+      "write_p99_seconds": 3.9702996509986406,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 2.015269026000169,
+        "broker_end_offset": 21936
+      },
+      "seed_error": null,
+      "oom_roles": []
+    },
+    {
+      "run_id": "37190064969-1-deployment-2",
+      "signal": "profiles",
+      "phase": "high_cardinality",
+      "writers": 2,
+      "cardinality": 100000,
+      "query_p99_seconds": 2.485167607001131,
+      "write_p99_seconds": 0.016277310000077705,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 3.0235403059996315,
+        "broker_end_offset": 148416
+      },
+      "seed_error": null,
+      "oom_roles": []
+    },
+    {
+      "run_id": "37190064969-1-deployment-3",
+      "signal": "metrics",
+      "phase": "burst",
+      "writers": 32,
+      "cardinality": 100,
+      "query_p99_seconds": 0.9556875109992689,
+      "write_p99_seconds": 0.38422752199949173,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.7931034482758621,
+      "catchup": {
+        "recovered": true,
+        "seconds": 1.5125404489990615,
+        "broker_end_offset": 2552000
+      },
+      "seed_error": null,
+      "oom_roles": [
+        "metrics-querier"
+      ]
+    },
+    {
+      "run_id": "37190064969-1-deployment-3",
+      "signal": "metrics",
+      "phase": "high_cardinality",
+      "writers": 2,
+      "cardinality": 20000,
+      "query_p99_seconds": 2.358201361999818,
+      "write_p99_seconds": 0.03564906899919151,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 0.50526913000067,
+        "broker_end_offset": 565000
+      },
+      "seed_error": null,
+      "oom_roles": []
+    },
+    {
+      "run_id": "37190064969-1-deployment-3",
+      "signal": "logs",
+      "phase": "burst",
+      "writers": 128,
+      "cardinality": 100,
+      "query_p99_seconds": 0.40517734099921654,
+      "write_p99_seconds": 3.1562241849969723,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 0.5057832399979816,
+        "broker_end_offset": 6022000
+      },
+      "seed_error": null,
+      "oom_roles": []
+    },
+    {
+      "run_id": "37190064969-1-deployment-3",
+      "signal": "logs",
+      "phase": "high_cardinality",
+      "writers": 2,
+      "cardinality": 5000,
+      "query_p99_seconds": 0.18533267499879003,
+      "write_p99_seconds": 0.03306375900137937,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.8833333333333333,
+      "catchup": {
+        "recovered": true,
+        "seconds": 0.0019267800016677938,
+        "broker_end_offset": 6311000
+      },
+      "seed_error": null,
+      "oom_roles": [
+        "logs-querier"
+      ]
+    },
+    {
+      "run_id": "37190064969-1-deployment-3",
+      "signal": "traces",
+      "phase": "burst",
+      "writers": 16,
+      "cardinality": 100,
+      "query_p99_seconds": 0.8619785420014523,
+      "write_p99_seconds": 0.019072368999331957,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.5975609756097561,
+      "catchup": {
+        "recovered": true,
+        "seconds": 1.5118277090004995,
+        "broker_end_offset": 138900
+      },
+      "seed_error": null,
+      "oom_roles": [
+        "traces-live-store"
+      ]
+    },
+    {
+      "run_id": "37190064969-1-deployment-3",
+      "signal": "traces",
+      "phase": "high_cardinality",
+      "writers": 2,
+      "cardinality": 5000,
+      "query_p99_seconds": 0.06021822800175869,
+      "write_p99_seconds": 0.010022559999924852,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 1.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 1.2595226700032072,
+        "broker_end_offset": 83800
+      },
+      "seed_error": null,
+      "oom_roles": [
+        "traces-live-store"
+      ]
+    },
+    {
+      "run_id": "37190064969-1-deployment-3",
+      "signal": "profiles",
+      "phase": "burst",
+      "writers": 512,
+      "cardinality": 100,
+      "query_p99_seconds": 0.10830592699858244,
+      "write_p99_seconds": 3.792260261998308,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 0.5051884259992221,
+        "broker_end_offset": 22630
+      },
+      "seed_error": null,
+      "oom_roles": []
+    },
+    {
+      "run_id": "37190064969-1-deployment-3",
+      "signal": "profiles",
+      "phase": "high_cardinality",
+      "writers": 2,
+      "cardinality": 100000,
+      "query_p99_seconds": 2.4983251230005408,
+      "write_p99_seconds": 0.01534723900113022,
+      "ingest_error_rate": 0.0,
+      "query_error_rate": 0.0,
+      "catchup": {
+        "recovered": true,
+        "seconds": 3.7766541439996217,
+        "broker_end_offset": 149110
+      },
+      "seed_error": null,
+      "oom_roles": []
+    }
+  ],
+  "limitations": [
+    "One active signal at a time; rates are not additive.",
+    "Single node, direct querier APIs, one WAL partition and replication factor one.",
+    "Cold means aged object-store data, not a flushed operating-system cache.",
+    "RSS is the sum of sampled per-role peaks, not a simultaneous peak.",
+    "Broker-reported lag can lag the workload; durable catch-up separately checks current broker end offsets.",
+    "Raw GitHub artifacts expire at the recorded timestamps; the numeric baseline and provenance are retained in Git."
+  ]
+}

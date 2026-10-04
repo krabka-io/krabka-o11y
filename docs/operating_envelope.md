@@ -1,8 +1,9 @@
 # Operating envelope
 
-Krabka does not publish a numeric production limit until the complete workload
-has reached saturation on the stable qualification runner. Configured tenant
-limits are safety controls, not performance claims.
+Krabka publishes the measured limits below for one fixed deployment and workload.
+Three complete runs on the Google Cloud qualification runner reached saturation
+for every signal. Configured tenant limits are safety controls; supported limits
+come from these measurements.
 
 ## Fixed qualification shape
 
@@ -12,6 +13,75 @@ digests, WAL partitions, retention, replication, dataset, warm-up, measurement
 duration, and actual runner hardware. It records the measured image source
 commit separately from the harness commit. The checked-in Kubernetes topology
 and its HA deployment are separate shapes that need their own qualification.
+
+## Supported envelope
+
+Three complete runs on 2026-10-04 qualified the fixed single-node shape below.
+Each published load passed in all three runs, and a higher tested load failed.
+These limits apply to the stated dataset, query mix, and phase order. They do
+not add across signals. Burst rates are 30-second measurements; the separate
+steady-state phase measures 60 seconds.
+
+| Signal | Row unit | Burst writers: passed / higher failed | Durable burst rows/s: median (range) | Cardinality: passed / higher failed |
+| --- | --- | --- | --- | --- |
+| Metrics | samples | 16 / 32 | 15,084.4 (15,083.4–15,707.8) | 5,000 / 20,000 series |
+| Logs | log lines | 32 / 64 | 31,088.2 (30,980.4–31,125.5) | 1,000 / 5,000 streams |
+| Traces | spans | 8 / 16 | 744.4 (744.0–748.4) | 1,000 / 5,000 resource label sets |
+| Profiles | stack samples | 128 / 256 | 1,194.6 (1,193.7–1,199.8) | 20,000 / 100,000 profile label sets |
+
+The higher failing level is the earliest failure above the published point in
+any run; individual runs sometimes passed a higher point. Cardinality uses
+two paced requests per second, independently of the burst writer limit.
+Profiles carry ten stack samples per profile, so divide their row rate by ten
+to get profiles per second. Metrics and logs carry 1,000 rows per request;
+traces carry 100 spans per request.
+
+Steady-state results use 100 label sets and two paced writers. Latencies are
+medians of the three per-run quantiles, rather than quantiles of pooled requests.
+All supported phases had zero ingest or query errors and no empty queries.
+
+| Signal | Durable steady rows/s: median (range) | Query p50 / p95 / p99 (ms) | Maximum sum of role RSS peaks (MiB) |
+| --- | --- | --- | --- |
+| Metrics | 1,993.1 (1,969.0–1,996.2) | 332.8 / 539.9 / 582.4 | 718.6 |
+| Logs | 1,970.2 (1,969.2–1,974.1) | 50.1 / 94.0 / 118.9 | 596.3 |
+| Traces | 197.3 (197.1–199.4) | 147.3 / 167.2 / 181.6 | 805.8 |
+| Profiles | 19.7 (19.6–19.7) | 9.8 / 18.6 / 24.1 | 539.4 |
+
+| Signal | Steady object requests / transferred MiB (median) | Maximum reported WAL lag (records, range) | Restart catch-up seconds: median (range) |
+| --- | --- | --- | --- |
+| Metrics | 10,120 / 41.9 | 4,000–5,922 | 9.1 (8.7–9.3) |
+| Logs | 618 / 4.0 | 2,000–2,000 | 8.0 (7.6–8.1) |
+| Traces | 5,058 / 52.9 | 135–400 | 9.6 (9.4–9.7) |
+| Profiles | 2,213 / 4.2 | 2–5 | 9.5 (9.1–9.8) |
+
+Object-store counts include writes, reads, and maintenance for the active signal.
+Broker and MinIO RSS are included. Reported lag is periodically refreshed;
+every successful drain separately verified consumption and durable commit
+through the current broker WAL end. Restart includes starting the block builder
+and durably consuming ten newly appended batches.
+
+The [numeric baseline](../qualification/deployment-envelope-baseline.json)
+contains 164 gated metrics across all eight phases, with median, minimum,
+maximum, mean, and coefficient of variation. The
+[provenance record](../qualification/deployment-envelope-provenance.json)
+identifies the three reports, measured image, runner, upstream image digests,
+raw checksums, saturation failures, and rejected regression controls.
+The [successful qualification run](https://github.com/krabka-io/krabka-o11y/actions/runs/37190064969) retains
+`deployment-envelope-f0e47fb911571c2493c67c8654a52d625cfe6e04-1`; its ZIP digest is
+`sha256:476770ffbd9b3547bd49bc974ea9319ed1f8afd8e651f565de4a1dd7c25828a6`.
+Every raw artifact file was checksum-verified, and each cold phase transferred
+bytes through the querier itself. Raw artifacts include request-level latency
+and status records, telemetry, resolved Compose/configuration files, and logs.
+The raw artifact expires on 2027-01-02; the numeric
+baseline and provenance remain in Git.
+
+Measured image source: `47ddda37177501c43c823f17db59ee149340b436`.
+OCI manifest: `sha256:d9a83da975c23d56f2bcdb4f555978badcdf8687c2d3a4bf4079bbc2d34cddd3`.
+Measurement harness: `f0e47fb911571c2493c67c8654a52d625cfe6e04`.
+The gate compares cohort medians for timing and throughput. It compares
+worst-run bounds for memory and object-store cost. The measured reports pass
+that gate; deliberately degraded copies fail. The provenance records the
+gate file checksum.
 
 ## Broker-backed deployment qualification
 
@@ -113,7 +183,10 @@ The gate publishes the highest passing load common to all three runs only
 when a higher load actually fails. It records median, range, and coefficient
 of variation for each metric. Future runs must retain the published workload
 and host shape, pass every full phase, sustain the published load, and remain
-within a 1.5x regression tolerance. Missing evidence or an unseeded baseline
+within a 1.5x regression tolerance. Timing, recovery, and throughput compare
+the three-run medians. Memory and object-store cost compare the worst run with
+the recorded worst-run bound. Every run must still meet the absolute latency
+and zero-error objectives. Missing evidence or an unseeded baseline
 fails. The self-test includes negative controls for throughput, query latency,
 RSS, missing maintenance, absent expiry, empty queries, and duplicated runs.
 
@@ -131,23 +204,6 @@ For a fresh baseline, dispatch the workflow with `scope=deployment`,
 `record=true`, `phase_seconds=60`, and `repetitions=3`. Review the three reports
 and their `deployment-baseline.json` before replacing the checked-in baseline.
 Dispatch with `record=false` to apply the stable-runner regression gate.
-
-## Supported envelope
-
-Pending stable-runner qualification. The table below stays empty until
-`tools/deployment-envelope.py --reports` accepts three complete, comparable
-reports and observes a passing load followed by saturation for every signal.
-
-| Signal | Burst writers | Durable rows for each second | Active series | Runs | Image commit |
-| --- | --- | --- | --- | --- | --- |
-| Metrics | Pending | Pending | Pending | 0 | None |
-| Logs | Pending | Pending | Pending | 0 | None |
-| Traces | Pending | Pending | Pending | 0 | None |
-| Profiles | Pending | Pending | Pending | 0 | None |
-
-Until the stable-runner report covers every workload and all four signals,
-the supported numeric envelope remains unpublished. Raw shared-runner results
-are diagnostic evidence, not a capacity promise.
 
 ## Native storage component workload
 

@@ -824,7 +824,7 @@ def self_test():
                     "writers": level, "cardinality": 100 if phase == "cold_blocks" else level,
                     "recovered": True, "recovery_seconds": 1,
                     "duration_seconds": 60, "cold_fixture_age_seconds": 600, "deletion_verification": {"verified": True},
-                    "ingest": {"attempts": 10, "durable_rows_per_sec": rate, "latency_seconds": {"p99": 0.1}},
+                    "ingest": {"attempts": 10, "error_rate": 0, "durable_rows_per_sec": rate, "latency_seconds": {"p99": 0.1}},
                     "query": {"attempts": 10, "error_rate": 0, "empty_queries": 0, "latency_seconds": {"p99": 0.1}},
                     "telemetry": {"rss_kib_peak_by_role": {"querier": 1000}, "object_requests": 20,
                                   "object_bytes": 100, "scrape_errors": 0, "maintenance": {"krabka_compaction_blocks_total": 2}}})
@@ -833,6 +833,10 @@ def self_test():
     assert baseline["limits"]["logs"]["burst"]["level"] == 1
     assert baseline["metrics"]["metrics/steady/durable_rows_per_sec"]["median"] == 200
     qualification(reports, baseline)
+    jitter = json.loads(json.dumps(reports))
+    jitter[0]["entries"][0]["query"]["latency_seconds"]["p99"] = 0.4
+    # A three-run median tolerates one timing outlier within the absolute SLO.
+    qualification(jitter, baseline)
     faster = json.loads(json.dumps(reports))
     for report in faster:
         for entry in report["entries"]:
@@ -851,8 +855,11 @@ def self_test():
         lambda rs: rs[1].update(run_id="0"),
         lambda rs: rs[1].update(host={"cpu_count": 8}),
         lambda rs: rs[0]["entries"][0]["telemetry"]["rss_kib_peak_by_role"].update(querier=5000),
-        lambda rs: rs[0]["entries"][0]["ingest"].update(durable_rows_per_sec=10),
-        lambda rs: rs[0]["entries"][0]["query"]["latency_seconds"].update(p99=0.4),
+        lambda rs: [r["entries"][0]["ingest"].update(durable_rows_per_sec=10) for r in rs],
+        lambda rs: rs[0]["entries"][0]["ingest"].update(durable_rows_per_sec=0),
+        lambda rs: rs[0]["entries"][1]["ingest"].update(error_rate=0.1),
+        lambda rs: [r["entries"][0]["query"]["latency_seconds"].update(p99=0.4) for r in rs],
+        lambda rs: rs[0]["entries"][0]["query"]["latency_seconds"].update(p99=3),
         lambda rs: rs[0]["entries"][0].update(duration_seconds=4),
         lambda rs: rs[0]["entries"][1].update(duration_seconds=4),
         lambda rs: rs[0]["entries"][0]["query"].update(empty_queries=1),
@@ -955,6 +962,15 @@ def qualification(reports, baseline=None):
             if phase == "restart":
                 values["recovery_seconds"] = ("higher", [e["recovery_seconds"] for e in samples])
             else:
+                for entry in samples:
+                    if entry["query"]["attempts"] <= 0 or entry["query"]["error_rate"] != 0 or entry["query"]["empty_queries"] != 0:
+                        raise ValueError(f"{signal}/{phase} did not query successfully")
+                    if phase != "cold_blocks" and (entry["ingest"]["attempts"] <= 0 or entry["ingest"]["error_rate"] != 0 or entry["ingest"]["durable_rows_per_sec"] <= 0):
+                        raise ValueError(f"{signal}/{phase} did not ingest successfully")
+                    if not 0 <= entry["query"]["latency_seconds"]["p99"] <= first["objectives"].get("query_p99_seconds", P99_SECONDS):
+                        raise ValueError(f"{signal}/{phase} exceeded its query latency objective")
+                    if phase != "cold_blocks" and not 0 <= entry["ingest"]["latency_seconds"]["p99"] <= first["objectives"].get("ingest_p99_seconds", P99_SECONDS):
+                        raise ValueError(f"{signal}/{phase} exceeded its write latency objective")
                 values["query_p99_seconds"] = ("higher", [e["query"]["latency_seconds"]["p99"] for e in samples])
                 values["peak_rss_kib"] = ("higher", [sum(e["telemetry"]["rss_kib_peak_by_role"].values()) for e in samples])
                 values["object_requests_per_operation"] = ("higher", [e["telemetry"]["object_requests"] /
@@ -973,11 +989,15 @@ def qualification(reports, baseline=None):
                                  "minimum": min(numbers), "maximum": max(numbers), "mean": mean,
                                  "cv": statistics.pstdev(numbers) / mean if mean else 0}
                 if baseline:
-                    allowed = baseline["metrics"][name]["median"]
-                    if direction == "lower" and min(numbers) < allowed / 1.5 or (
-                        direction == "higher" and max(numbers) > max(allowed * 1.5,
+                    # Compare timing/rate cohorts by the same median used to
+                    # seed them. Memory and cost keep their worst-run bound.
+                    statistic = "maximum" if metric in ("peak_rss_kib", "object_requests_per_operation", "object_bytes_per_operation") else "median"
+                    observed = metrics[name][statistic]
+                    allowed = baseline["metrics"][name][statistic]
+                    if direction == "lower" and observed < allowed / 1.5 or (
+                        direction == "higher" and observed > max(allowed * 1.5,
                             2 if metric == "recovery_seconds" else 0.02 if metric.endswith("p99_seconds") else 1)):
-                        raise ValueError(f"{name}: {numbers} regressed against {allowed} (1.5x tolerance)")
+                        raise ValueError(f"{name}: {statistic} {observed} regressed against {allowed} (1.5x tolerance)")
     return {"reference": reference, "limits": limits, "metrics": metrics,
             "run_ids": [r["run_id"] for r in reports], "image_commit": first["image_commit"],
             "image_digest": first["image_digest"], "harness_commit": first["harness_commit"]}
