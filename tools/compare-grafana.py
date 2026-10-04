@@ -15,6 +15,7 @@ import pathlib
 import re
 import statistics
 import struct
+import tempfile
 import threading
 import time
 
@@ -148,8 +149,28 @@ def cost(samples):
             's3_requests': requests, 's3_read_bytes': read_bytes, 's3_write_bytes': write_bytes}
 
 
+def configure_profiles_all(services, roles, admin_ports):
+    """Reuse the shipped all target without changing the aggregate budget."""
+    names = [name for name in services if name.startswith('profiles-')]
+    application_cpu = sum(float(services[name]['cpus']) for name in names)
+    service = services['profiles-distributor']
+    port = admin_ports['profiles-distributor']
+    for name in names:
+        del services[name]
+    service.update(command=['krabka-profiles', '--config.file=/etc/krabka/profiles-all.yaml'],
+                   cpus=application_cpu, mem_limit=f'{application_cpu:g}g',
+                   stop_grace_period='180s')
+    services['profiles-all'] = service
+    config = roles / 'profiles-all.yaml'
+    config.write_text(config.read_text() + '\nblock-builder-flush-records: 4096\n'
+                      'block-builder-flush-max-age: 2s\ncompactor-interval: 2s\n'
+                      'hot-store-max-age: 30s\nquery-frontend-shard-width: 1h\n'
+                      'profiles-limits-overrides-config: /etc/krabka/profiles-limits.yaml\n')
+    return {'broker': admin_ports['broker'], 'profiles-all': port}
+
+
 class ComparisonDeployment(env.Deployment):
-    def __init__(self, evidence, image, signal, native):
+    def __init__(self, evidence, image, signal, native, profiles_target='split'):
         super().__init__(evidence, image)
         self.signal, self.native = signal, native
         data = json.loads(self.file.read_text())
@@ -192,7 +213,14 @@ class ComparisonDeployment(env.Deployment):
             env.INGEST[signal] = {'metrics': 4041, 'logs': 3100, 'traces': 4318, 'profiles': 4040}[signal]
             env.QUERY[signal] = {'metrics': 9090, 'logs': 3101, 'traces': 3201, 'profiles': 4042}[signal]
             self.admin_ports = {name: port for name, port in self.admin_ports.items() if name == 'broker' or name.startswith(signal + '-')}
+            if signal == 'profiles' and profiles_target == 'all':
+                self.admin_ports = configure_profiles_all(services, self.evidence / 'roles', self.admin_ports)
+                self.role_locks = {name: threading.Lock() for name in self.admin_ports}
+                env.QUERY[signal] = 4040
         self.file.write_text(json.dumps(data, indent=2))
+
+    def drain(self, signal, timeout=180):
+        return super().drain(signal, timeout, admin_port=self.admin_ports.get(f'{signal}-all'))
 
     def start(self):
         if not self.native:
@@ -295,12 +323,20 @@ class ComparisonDeployment(env.Deployment):
 def run(args):
     env.SIGNALS = (args.signal,)
     env.write_request, env.query_request, env.http = write_request, query_request, http
+    identity = json.loads(env.command('docker', 'inspect', args.image))[0]
+    known_digests = {value.rsplit('@', 1)[-1] for value in (identity.get('RepoDigests') or [])}
+    descriptor_digest = (identity.get('Descriptor') or {}).get('digest')
+    if descriptor_digest:
+        known_digests.add(descriptor_digest)
+    if known_digests and args.image_digest not in known_digests:
+        raise RuntimeError('supplied image manifest digest does not match the loaded image')
     report = {'schema_version': 1, 'commit': env.command('git', 'rev-parse', 'HEAD'),
               'signal': args.signal, 'seed': env.SEED, 'phase_seconds': args.seconds,
               'acknowledgements': 'API accepted; native durability contracts differ',
               'write_interval_seconds': 1, 'query_interval_seconds': 0.25,
               'image_commit': args.image_commit, 'image_digest': args.image_digest,
-              'image_identity': json.loads(env.command('docker', 'inspect', args.image))[0],
+              'image_identity': identity,
+              'profiles_target': args.profiles_target if args.signal == 'profiles' else None,
               'harness_sha256': {name: hashlib.sha256(pathlib.Path(__file__).with_name(name).read_bytes()).hexdigest()
                                  for name in ('compare-grafana.py', 'deployment-envelope.py', 'fuzz-corpus.py')},
               'dataset': {'metric_samples_per_request': 1000, 'metric_points_per_series': 1,
@@ -320,7 +356,7 @@ def run(args):
             backend = PRODUCTS[args.signal][0] if native else 'krabka'
             for phase in args.phases:
                 output = args.output / f'{repetition + 1}-{backend}-{phase}'
-                deployment = ComparisonDeployment(output, args.image, args.signal, native)
+                deployment = ComparisonDeployment(output, args.image, args.signal, native, args.profiles_target)
                 try:
                     deployment.start()
                     levels = report['workload']['writers'] if phase == 'burst' else report['workload']['cardinalities'] if phase == 'high_cardinality' else [2]
@@ -347,6 +383,7 @@ def run(args):
                             result = {'signal': args.signal, 'writers': writers, 'cardinality': cardinality,
                                       'objectives_met': False, 'seed_error': str(error)}
                         result.update(backend=backend, repetition=repetition + 1, phase=phase,
+                                      deployment_target='native' if native else args.profiles_target if args.signal == 'profiles' else 'split',
                                       service_cpu=deployment.service_cpu, service_memory_gib=deployment.service_memory_gib,
                                       minio_cpu=2, minio_memory_gib=2)
                         result['container_states'] = {name: json.loads(env.command('docker', 'inspect', '--format', '{{json .State}}', identity)) for name, identity in deployment.ids.items()}
@@ -392,6 +429,19 @@ def self_test():
     result = cost([sample, after])
     assert result['cpu_seconds_total'] == 1 and result['s3_requests'] == 3 and result['s3_read_bytes'] == 20
     assert result['rss_kib_simultaneous_peak'] == 200
+    with tempfile.TemporaryDirectory() as directory:
+        roles = pathlib.Path(directory)
+        (roles / 'profiles-all.yaml').write_text('target: all\n')
+        services = {'broker': {'cpus': 2, 'mem_limit': '2g'},
+                    **{f'profiles-{role}': {'cpus': 1, 'mem_limit': '1g'}
+                       for role in ('distributor', 'querier', 'block-builder', 'compactor')}}
+        ports = {'broker': 15000, 'profiles-distributor': 15001}
+        selected = configure_profiles_all(services, roles, ports)
+        assert set(services) == set(selected) == {'broker', 'profiles-all'}
+        assert sum(float(s['cpus']) for s in services.values()) == 6
+        assert services['profiles-all']['mem_limit'] == '4g'
+        assert selected['profiles-all'] == 15001
+        assert 'query-frontend-shard-width: 1h' in (roles / 'profiles-all.yaml').read_text()
     print('compare-grafana self-test passed')
 
 
@@ -401,6 +451,8 @@ if __name__ == '__main__':
     p.add_argument('--image')
     p.add_argument('--image-digest')
     p.add_argument('--image-commit')
+    p.add_argument('--profiles-target', choices=('split', 'all'), default='split',
+                   help='Separate profiles role containers or the existing all target; same aggregate budget')
     p.add_argument('--seconds', type=int, default=60)
     p.add_argument('--repetitions', type=int, default=3)
     p.add_argument('--max-writers', type=int, default=256)
@@ -417,6 +469,8 @@ if __name__ == '__main__':
         if (not options.signal or not options.image or not options.image_digest or not options.image_commit
                 or min(options.seconds, options.repetitions, options.max_writers, options.max_cardinality) <= 0):
             p.error('signal, image, image digest, image commit and positive load/duration values are required')
+        if not re.fullmatch(r'sha256:[0-9a-f]{64}', options.image_digest):
+            p.error('image digest must be sha256 followed by exactly 64 lowercase hexadecimal digits')
         if len(set(options.phases)) != len(options.phases) or len(set(options.backends)) != len(options.backends):
             p.error('phases and backends must be unique')
         run(options)
