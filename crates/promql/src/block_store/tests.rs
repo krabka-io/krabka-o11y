@@ -28,31 +28,40 @@ use crate::{
     TsdbHeadStats, TsdbStats, prometheus_router, test_support::tenant_id,
 };
 
+mod a_block_deleted_after_the_manifest_listing_is_skipped_and_warned;
 mod a_corrupt_block_still_fails_the_query;
+mod a_float_only_store_says_it_holds_no_histograms;
 mod a_query_answers_around_a_deleted_block_and_warns;
 mod a_query_over_present_blocks_raises_no_warning;
 mod an_http_query_over_a_deleted_block_warns_in_the_response;
+mod an_instant_query_reads_each_float_block_a_fixed_number_of_times;
+mod counting_object_store;
 mod exemplar_batch;
 mod exemplar_batch_from_rows;
 mod exemplars_answer_around_a_deleted_block_and_warn;
 mod exemplars_include_closed_range_boundaries_and_filter_outside_rows;
 mod exemplars_reads_compacted_exemplar_sidecar_blocks;
 mod expected_stats;
+mod histogram_blocks_answer_count_over_time_and_rate;
 mod index_metadata_methods_report_float_and_histogram_series;
+mod instant_offset_and_at_selectors_read_the_right_blocks;
 mod labels;
 mod metadata_answers_around_a_deleted_block_and_warns;
 mod metadata_batch;
 mod metadata_reads_compacted_metadata_sidecar_blocks;
 mod prometheus_query_reads_float_samples_from_blockstore;
 mod prometheus_query_rebuilds_float_index_from_compaction_manifest;
+mod request_counts;
 mod sidecar_manifest;
 mod tsdb_blocks_reports_compaction_manifest_blocks;
 mod write_float_block;
 
+use counting_object_store::CountingObjectStore;
 use exemplar_batch::exemplar_batch;
 use exemplar_batch_from_rows::exemplar_batch_from_rows;
 use expected_stats::expected_stats;
 use labels::labels;
 use metadata_batch::metadata_batch;
+use request_counts::RequestCounts;
 use sidecar_manifest::sidecar_manifest;
 use write_float_block::write_float_block;

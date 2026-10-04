@@ -1,4 +1,7 @@
-use std::cell::RefCell;
+use std::{
+    cell::RefCell,
+    sync::{Arc, Mutex},
+};
 
 use krabka_blockstore::TenantId;
 use promql_parser::parser::Expr;
@@ -7,6 +10,7 @@ use super::{
     AT_MODIFIER_BOUNDS, AtModifierBounds, PromqlEngine,
     annotations::{ANNOTATION_SOURCE, ANNOTATIONS},
     result_utils::{finalize_metric_names, validate_unique_instant_labelsets},
+    row_cache::{RANGE_SCAN_CACHE, RangeScanCache, RangeScanCacheInner},
 };
 use crate::{
     DurationExprContext, PromqlError,
@@ -115,11 +119,20 @@ impl<S: MetricStore> PromqlEngine<S> {
         expr: &Expr,
         time_ms: i64,
     ) -> Result<QueryResult> {
-        let Some(planned) = self.plan_instant_expr(tenant, expr, time_ms).await? else {
-            return Err(PromqlError::Plan(
-                "planner returned no result for a valid instant query".to_string(),
-            ));
-        };
-        self.assemble_planned_instant(planned, time_ms).await
+        // One store scan per matcher set and window answers every request
+        // inside that window, so a selector's histogram probe and its float
+        // read share one scan. A subquery opens a scope of its own for its
+        // grid and restores this one on exit.
+        let cache: RangeScanCache = Arc::new(Mutex::new(RangeScanCacheInner::instant()));
+        RANGE_SCAN_CACHE
+            .scope(cache, async {
+                let Some(planned) = self.plan_instant_expr(tenant, expr, time_ms).await? else {
+                    return Err(PromqlError::Plan(
+                        "planner returned no result for a valid instant query".to_string(),
+                    ));
+                };
+                self.assemble_planned_instant(planned, time_ms).await
+            })
+            .await
     }
 }

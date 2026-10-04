@@ -115,6 +115,28 @@ impl MetricStore for MetricBlockStore {
         })
     }
 
+    /// Asks the histogram index the question that [`Self::scan`] asks it. A
+    /// `false` answer is a scan that registers no histogram table.
+    async fn may_have_histograms(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<bool> {
+        let Some(histograms) = &self.histograms else {
+            return Ok(false);
+        };
+        let fingerprints = histograms
+            .index()
+            .resolve(tenant, matchers)
+            .map_err(blockstore_error)?;
+        Ok(!histograms
+            .index()
+            .candidate_blocks(tenant, &fingerprints, start_ms, end_ms)
+            .is_empty())
+    }
+
     async fn label_names(
         &self,
         tenant: &str,

@@ -85,6 +85,25 @@ where
         })
     }
 
+    /// Answers `false` only when both stores answer `false`, because a scan
+    /// merges the histogram tables of both.
+    async fn may_have_histograms(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<bool, PromqlError> {
+        Ok(self
+            .cold
+            .may_have_histograms(tenant, matchers, start_ms, end_ms)
+            .await?
+            || self
+                .hot
+                .may_have_histograms(tenant, matchers, start_ms, end_ms)
+                .await?)
+    }
+
     async fn label_names(
         &self,
         tenant: &str,

@@ -178,6 +178,24 @@ impl MetricStore for RefreshingMetricBlockStore {
             .await
     }
 
+    /// Does not read the tenant-deletion marker that [`Self::scan`] reads.
+    /// For a tenant that is not deleted, the answer comes from the store that
+    /// the scan reads. A deleted tenant scans with no histogram table, so any
+    /// answer is correct for it, and the marker read would cost one more
+    /// object-store request for each probe.
+    async fn may_have_histograms(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<bool, krabka_promql::PromqlError> {
+        self.current_store(start_ms, end_ms)
+            .await?
+            .may_have_histograms(tenant, matchers, start_ms, end_ms)
+            .await
+    }
+
     #[tracing::instrument(
         level = "debug",
         name = "metrics.store.label_names",

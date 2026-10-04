@@ -255,15 +255,12 @@ impl<S: MetricStore> PromqlEngine<S> {
         // union starts at the first step's lookback floor (`start - lookback`)
         // and ends at the last step (`end`). Scans outside this window
         // (offset/@-modifier or a `[range]` longer than the lookback) fall back to
-        // a direct scan inside `scan_float_rows`, so results are unchanged.
+        // a direct scan inside `scanned_rows`, so results are unchanged.
         let cache: RangeScanCache =
-            std::sync::Arc::new(std::sync::Mutex::new(RangeScanCacheInner {
-                full_start_ms: start_ms.saturating_sub(self.opts.lookback_delta.millis_i64()),
-                full_end_ms: end_ms,
-                floats: std::collections::HashMap::new(),
-                histograms: std::collections::HashMap::new(),
-                labels: std::collections::HashMap::new(),
-            }));
+            std::sync::Arc::new(std::sync::Mutex::new(RangeScanCacheInner::range(
+                start_ms.saturating_sub(self.opts.lookback_delta.millis_i64()),
+                end_ms,
+            )));
         // Plan each operator leaf once over the whole grid rather than once per
         // step, and let the loop read the memo. Scoped like the scan cache
         // above, so a nested range evaluation (a subquery's own grid) shadows it
