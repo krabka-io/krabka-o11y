@@ -42,7 +42,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        signal: [metrics, logs, traces, profiles]
+        signal: ${{ fromJSON(inputs.signal == 'all' && '["metrics","logs","traces","profiles"]' || format('["{0}"]', inputs.signal)) }}
     runs-on: gcp-ubuntu-24-04-16core
     timeout-minutes: 300
     concurrency:
