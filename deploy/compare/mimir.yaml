@@ -1,0 +1,58 @@
+# Mimir 3.2.1; classic native monolith, API acknowledgements only.
+# This deliberately differs from preferred Kafka ingest-storage durability.
+# Use -config.expand-env=true; create the three named MinIO buckets.
+target: all
+multitenancy_enabled: true
+server:
+  http_listen_port: 9009
+  grpc_listen_port: 9095
+common:
+  storage:
+    backend: s3
+    s3:
+      endpoint: minio:9000
+      access_key_id: ${MINIO_ROOT_USER}
+      secret_access_key: ${MINIO_ROOT_PASSWORD}
+      insecure: true
+ingest_storage:
+  enabled: false
+distributor:
+  influx_endpoint_enabled: true
+ingester:
+  ring:
+    instance_id: ingester-0
+    instance_addr: 127.0.0.1
+    replication_factor: 1
+blocks_storage:
+  s3:
+    bucket_name: mimir-blocks
+  tsdb:
+    dir: /data/mimir/tsdb
+    block_ranges_period: [2h]
+    retention_period: 13h
+    ship_interval: 2s
+  bucket_store:
+    sync_dir: /data/mimir/tsdb-sync
+    sync_interval: 2s
+querier:
+  query_store_after: 0s
+store_gateway:
+  sharding_ring:
+    replication_factor: 1
+compactor:
+  data_dir: /data/mimir/compactor
+ruler_storage:
+  s3:
+    bucket_name: mimir-ruler
+alertmanager_storage:
+  s3:
+    bucket_name: mimir-alertmanager
+alertmanager:
+  data_dir: /data/mimir/alertmanager
+limits:
+  ingestion_rate: 1000000000
+  ingestion_burst_size: 1000000000
+  max_global_series_per_user: 0
+  max_global_series_per_metric: 0
+usage_stats:
+  enabled: false

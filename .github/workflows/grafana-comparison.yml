@@ -1,0 +1,98 @@
+name: Grafana performance comparison
+on:
+  workflow_dispatch:
+    inputs:
+      phase_seconds:
+        description: Measured seconds (60 for comparison)
+        type: number
+        default: 60
+      repetitions:
+        description: Independent paired repetitions
+        type: number
+        default: 3
+      max_writers:
+        description: Highest writer ramp level
+        type: number
+        default: 256
+      max_cardinality:
+        description: Highest cardinality ramp level (up to 20000)
+        type: number
+        default: 20000
+      signal:
+        description: Signal to measure
+        type: choice
+        options: [all, metrics, logs, traces, profiles]
+        default: all
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        signal: [metrics, logs, traces, profiles]
+    runs-on: gcp-ubuntu-24-04-16core
+    timeout-minutes: 300
+    concurrency:
+      group: grafana-comparison-${{ matrix.signal }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download the qualified Krabka image
+        if: inputs.signal == 'all' || inputs.signal == matrix.signal
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37183330836
+          pattern: deployment-image-*
+          merge-multiple: true
+          path: qualification/image
+      - name: Load the exact image
+        if: inputs.signal == 'all' || inputs.signal == matrix.signal
+        run: |
+          set -euo pipefail
+          cd qualification/image
+          sha256sum -c SHA256SUMS
+          docker load -i image.tar
+          [[ "$(docker inspect --format '{{.Id}}' "$(cat tag)")" == "$(cat config-digest)" ]]
+      - name: Compare both backends on this host
+        if: inputs.signal == 'all' || inputs.signal == matrix.signal
+        env:
+          PHASE_SECONDS: ${{ inputs.phase_seconds }}
+          REPETITIONS: ${{ inputs.repetitions }}
+          MAX_WRITERS: ${{ inputs.max_writers }}
+          MAX_CARDINALITY: ${{ inputs.max_cardinality }}
+          SIGNAL: ${{ matrix.signal }}
+          KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
+        run: |
+          set -euo pipefail
+          mkdir -p qualification/evidence/comparison
+          for value in "${PHASE_SECONDS}" "${REPETITIONS}" "${MAX_WRITERS}" "${MAX_CARDINALITY}"; do
+            [[ "${value}" =~ ^[1-9][0-9]*$ ]]
+          done
+          python3 tools/compare-grafana.py --self-test
+          for field in instance/machine-type instance/zone instance/image; do
+            curl -fsS -H 'Metadata-Flavor: Google' \
+              "http://metadata.google.internal/computeMetadata/v1/${field}"
+            echo
+          done > qualification/evidence/comparison/gce.txt
+          python3 -u tools/compare-grafana.py --signal "${SIGNAL}" \
+            --image "$(cat qualification/image/tag)" \
+            --image-digest "$(cat qualification/image/manifest-digest)" \
+            --image-commit "$(cat qualification/image/commit)" \
+            --seconds "${PHASE_SECONDS}" --repetitions "${REPETITIONS}" \
+            --max-writers "${MAX_WRITERS}" --max-cardinality "${MAX_CARDINALITY}"
+      - name: Hash evidence
+        if: always() && (inputs.signal == 'all' || inputs.signal == matrix.signal)
+        run: |
+          mkdir -p qualification/evidence/comparison
+          cd qualification/evidence/comparison
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always() && (inputs.signal == 'all' || inputs.signal == matrix.signal)
+        with:
+          name: grafana-comparison-${{ matrix.signal }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: qualification/evidence/comparison
+          if-no-files-found: error
