@@ -68,11 +68,12 @@ impl StreamQuery {
         initial_fields: &Labels,
         timestamp_ns: Option<i64>,
     ) -> Option<PipelineEvaluation> {
-        let mut fields = labels.clone();
-        fields.extend(initial_fields.clone());
         if !self.matchers.iter().all(|matcher| matcher.matches(labels)) {
             return None;
         }
+
+        let mut fields = labels.clone();
+        fields.extend(initial_fields.clone());
 
         let mut line = line.to_string();
         for stage in &self.pipeline {

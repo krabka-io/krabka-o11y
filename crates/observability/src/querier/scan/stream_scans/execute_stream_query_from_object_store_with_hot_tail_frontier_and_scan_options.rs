@@ -28,6 +28,7 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
         }
         sort_loki_stream_values(&mut streams);
         apply_distinct_to_streams(&mut streams, &plan.query);
+        options.trim_before_encoding(&mut streams);
         return Ok(ObjectStoreStreamScan {
             value: loki_streams_response(streams, options.encoding),
             scanned_blocks: Vec::new(),
@@ -105,6 +106,7 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
     }
     sort_loki_stream_values(&mut streams);
     apply_distinct_to_streams(&mut streams, &plan.query);
+    options.trim_before_encoding(&mut streams);
 
     Ok(ObjectStoreStreamScan {
         value: loki_streams_response_with_warnings(streams, &warnings, options.encoding),
