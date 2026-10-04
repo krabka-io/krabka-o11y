@@ -1,3 +1,7 @@
+// The PromQL router's query future holds the per-query scan cache, whose
+// entries keep a `DataFusion` session. Proving that future `Send` for axum
+// overflows the default depth, as in `krabka-promql`, so raise it.
+#![recursion_limit = "512"]
 //! traces -> metrics: a span-metrics exemplar keeps its trace id across the
 //! `remote_write` boundary.
 //!
