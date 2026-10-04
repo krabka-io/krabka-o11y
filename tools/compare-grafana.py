@@ -36,7 +36,14 @@ def write_request(signal, sequence, cardinality, tenant='soak', age_seconds=0):
     if signal != 'metrics':
         path, body, content, rows = _original_write(signal, sequence, cardinality, tenant, age_seconds)
         if signal == 'profiles':
-            path = path.replace('units=samples', 'units=nanoseconds')
+            query = env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(path).query)
+            # Legacy Pyroscope labels use unquoted values. Quoted values are
+            # ingested literally and would not match the PromQL selector.
+            query['name'] = [query['name'][0].replace(chr(34), '')]
+            query['units'] = ['nanoseconds']
+            query['sampleRate'] = ['1000000000']
+            query['from'] = query['until']
+            path = '/ingest?' + env.urllib.parse.urlencode({key: value[0] for key, value in query.items()})
         return path, body, content, rows
     now = time.time_ns() // 1_000_000 - age_seconds * 1000
     with _timestamp_lock:
@@ -80,6 +87,7 @@ def query_request(signal, window_seconds=30):
 
 def resource_sample(deployment, sample):
     sample['cpu_usec'], sample['throttled_usec'] = {}, {}
+    sample['load_generator_cpu_seconds'] = time.process_time()
     for role, pid in deployment.pids.items():
         try:
             group = pathlib.Path(f'/proc/{pid}/cgroup').read_text().split('0::', 1)[1].strip()
@@ -91,6 +99,9 @@ def resource_sample(deployment, sample):
     code, body = _original_http(19000, '/minio/v2/metrics/cluster')
     if code == 200:
         sample['s3'] = env.prometheus(body.decode())
+        for prefix in ('minio_s3_requests_total', 'minio_s3_traffic_sent_bytes', 'minio_s3_traffic_received_bytes'):
+            if not any(key.startswith(prefix) for key in sample['s3']):
+                sample['scrape_errors'].append('minio/missing-' + prefix)
     else:
         sample['s3'] = {}
         sample['scrape_errors'].append('minio/s3-metrics')
@@ -106,7 +117,7 @@ def cost(samples):
                 before = first[field].get(role, value)
                 output[role] = output.get(role, 0) + (value - before if value >= before else value)
         for name, value in following['s3'].items():
-            before = first['s3'].get(name, value)
+            before = first['s3'].get(name, 0)
             delta = value - before if value >= before else value
             if name.startswith('minio_s3_requests_total{'):
                 requests += delta
@@ -116,6 +127,7 @@ def cost(samples):
                 write_bytes += delta
     return {'cpu_seconds_by_role': {role: value / 1e6 for role, value in cpu.items()},
             'cpu_seconds_total': sum(cpu.values()) / 1e6,
+            'load_generator_cpu_seconds': samples[-1].get('load_generator_cpu_seconds', 0) - samples[0].get('load_generator_cpu_seconds', 0),
             'throttled_seconds_by_role': {role: value / 1e6 for role, value in throttle.items()},
             'rss_kib_simultaneous_peak': max(sum(s['rss_kib'].values()) for s in samples),
             's3_requests': requests, 's3_read_bytes': read_bytes, 's3_write_bytes': write_bytes}
@@ -156,7 +168,7 @@ class ComparisonDeployment(env.Deployment):
                 'ulimits': {'nofile': {'soft': 65536, 'hard': 65536}},
                 'volumes': [{'type': 'bind', 'source': str(config), 'target': '/etc/compare.yaml', 'read_only': True},
                             {'type': 'volume', 'source': 'native-data', 'target': '/data'}],
-                'ports': ports, 'environment': {'MINIO_ROOT_USER': 'krabka', 'MINIO_ROOT_PASSWORD': 'krabka-secret'},
+                'working_dir': '/data', 'ports': ports, 'environment': {'MINIO_ROOT_USER': 'krabka', 'MINIO_ROOT_PASSWORD': 'krabka-secret'},
                 'depends_on': {'minio-buckets': {'condition': 'service_completed_successfully'}}}
             env.INGEST[signal] = 4318 if signal == 'traces' else port
             env.QUERY[signal] = port
@@ -224,6 +236,11 @@ class ComparisonDeployment(env.Deployment):
                 list(pool.map(write, range(math.ceil(cardinality / per_request))))
         finally:
             (self.evidence / f'{tenant}.seed.jsonl').write_text(''.join(json.dumps(record) + '\n' for record in records))
+        if not self.native:
+            recovery = self.drain(signal)
+            (self.evidence / f'{tenant}.seed-recovery.json').write_text(json.dumps(recovery, indent=2))
+            if not recovery['recovered']:
+                raise RuntimeError('seed WAL did not drain')
         self.wait_query(signal, tenant, True)
 
 
@@ -258,7 +275,7 @@ def run(args):
                             deployment.seed(args.signal, tenant, cardinality)
                             duration = args.seconds if phase == 'steady' else args.seconds / 2
                             result, operations, samples = env.measure(deployment, args.signal, duration, duration / 4,
-                                writers, cardinality, cold=phase == 'high_cardinality', interval=1, tenant=tenant, check_durability=False)
+                                writers, cardinality, cold=phase == 'high_cardinality', interval=0 if phase == 'burst' else 1, tenant=tenant, check_durability=False)
                             result['resources'] = cost(samples)
                             rows = result['ingest']['accepted_rows']
                             result['resources']['cpu_seconds_per_million_accepted_rows'] = result['resources']['cpu_seconds_total'] * 1e6 / rows if rows else None
@@ -276,8 +293,6 @@ def run(args):
                         (args.output / 'comparison-report.json').write_text(json.dumps(report, indent=2) + '\n')
                         print(backend, repetition + 1, phase, level, result['objectives_met'], result.get('query', {}).get('latency_seconds'), flush=True)
                         if not result['objectives_met']:
-                            if phase == 'steady':
-                                raise RuntimeError(f'{backend} steady state failed')
                             break
                 finally:
                     deployment.close()

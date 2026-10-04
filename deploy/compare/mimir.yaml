@@ -49,7 +49,10 @@ alertmanager_storage:
     bucket_name: mimir-alertmanager
 alertmanager:
   data_dir: /data/mimir/alertmanager
+activity_tracker:
+  filepath: /data/mimir-activity.log
 limits:
+  out_of_order_time_window: 30s
   ingestion_rate: 1000000000
   ingestion_burst_size: 1000000000
   max_global_series_per_user: 0

@@ -24,6 +24,7 @@ storage:
     wal:
       path: /data/tempo/wal
 live_store:
+  shutdown_marker_dir: /data/tempo/shutdown-marker
   wal:
     path: /data/tempo/live-store
   flush_check_period: 2s
