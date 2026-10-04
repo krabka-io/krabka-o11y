@@ -19,7 +19,7 @@ Resolve release tags to immutable commits and linux/amd64 OCI manifests before m
 
 ## Initial experiment and architecture references
 
-The runnable files in `deploy/compare/{loki,mimir,tempo,pyroscope}.yaml` use native single-binary RF1 shapes, matching total service-plus-broker CPU and memory budgets against Krabka. Mimir explicitly uses its classic ingester path; Tempo monolithic mode bypasses Kafka; Pyroscope selects v2. This first experiment is an API performance comparison. Kafka-based production paths below are a separate topology for later qualification. Use three 60-second steady repetitions plus burst/cardinality ramps; mark cold results unqualified unless actual object-read evidence is available.
+The runnable files in `deploy/compare/{loki,mimir,tempo,pyroscope}.yaml` use native single-binary RF1 shapes, matching total service-plus-broker CPU and memory budgets against Krabka. Mimir explicitly uses its classic ingester path; Tempo monolithic mode bypasses Kafka; Pyroscope selects v2. This first experiment is an API performance comparison. Kafka-based production paths below are a separate topology for later qualification. Use three 60-second steady repetitions plus 30-second burst/cardinality steps. Each writer sends one request per second and one reader sends a query every 250 ms, matching the issue qualification schedule; mark cold results unqualified unless actual object-read evidence is available.
 
 ## Deployment and acknowledgement boundaries
 

@@ -270,6 +270,7 @@ def run(args):
     report = {'schema_version': 1, 'commit': env.command('git', 'rev-parse', 'HEAD'),
               'signal': args.signal, 'seed': env.SEED, 'phase_seconds': args.seconds,
               'acknowledgements': 'API accepted; native durability contracts differ',
+              'write_interval_seconds': 1, 'query_interval_seconds': 0.25,
               'image_commit': args.image_commit, 'image_digest': args.image_digest,
               'dataset': {'metric_samples_per_request': 1000, 'metric_points_per_series': 1,
                           'other_signals': 'deployment-envelope dataset; profile units=nanoseconds, unquoted legacy labels, sampleRate=1e9', 'seed_concurrency': 64},
@@ -295,7 +296,7 @@ def run(args):
                             deployment.seed(args.signal, tenant, cardinality)
                             duration = args.seconds if phase == 'steady' else args.seconds / 2
                             result, operations, samples = env.measure(deployment, args.signal, duration, duration / 4,
-                                writers, cardinality, cold=phase == 'high_cardinality', interval=0 if phase == 'burst' else 1, tenant=tenant, check_durability=False)
+                                writers, cardinality, cold=phase == 'high_cardinality', interval=1, tenant=tenant, check_durability=False)
                             result['resources'] = cost(samples)
                             rows = result['ingest']['accepted_rows']
                             result['resources']['cpu_seconds_per_million_accepted_rows'] = result['resources']['cpu_seconds_total'] * 1e6 / rows if rows else None
