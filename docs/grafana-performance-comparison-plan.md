@@ -1,6 +1,6 @@
 # Grafana performance comparison: source and deployment plan
 
-Research checked on 2026-10-04. This document describes the comparison design; it contains no measured Grafana performance result. The initial experiment reruns both implementations with a common workload, including 1,000 metric series and one sample per series per request. It measures API-acknowledged throughput and labels native durability differences explicitly. Prior qualified limits are not used as direct ratio inputs. The Krabka envelope in [operating_envelope.md](operating_envelope.md) is a fixed single-node measurement, so the comparison must use that same host class, data, query mix and resource accounting.
+Research checked on 2026-10-04. Measured results and qualification failures are in [the comparison report](grafana-performance-comparison.md). This document describes the comparison design; it contains no measured Grafana performance result. The initial experiment reruns both implementations with a common workload, including 1,000 metric series and one sample per series per request. It measures API-acknowledged throughput and labels native durability differences explicitly. Prior qualified limits are not used as direct ratio inputs. The Krabka envelope in [operating_envelope.md](operating_envelope.md) is a fixed single-node measurement, so the comparison must use that same host class, data, query mix and resource accounting.
 
 ## Versions
 
@@ -19,13 +19,13 @@ Resolve release tags to immutable commits and linux/amd64 OCI manifests before m
 
 ## Initial experiment and architecture references
 
-The runnable files in `deploy/compare/{loki,mimir,tempo,pyroscope}.yaml` use native single-binary RF1 shapes, matching total service-plus-broker CPU and memory budgets against Krabka. Mimir explicitly uses its classic ingester path; Tempo monolithic mode bypasses Kafka; Pyroscope selects v2. This first experiment is an API performance comparison. Kafka-based production paths below are a separate topology for later qualification. Use three 60-second steady repetitions plus 30-second burst/cardinality steps. Each writer sends one request per second and one reader sends a query every 250 ms, matching the issue qualification schedule; mark cold results unqualified unless actual object-read evidence is available.
+The runnable files in `deploy/compare/{loki,mimir,tempo,pyroscope}.yaml` use native single-binary RF1 shapes, matching total service-plus-broker CPU and memory budgets against Krabka. Mimir explicitly uses its classic ingester path; Tempo monolithic mode bypasses Kafka; Pyroscope selects v2. This first experiment is an API performance comparison. Kafka-based production paths below are a separate topology for later qualification. Use three 60-second steady repetitions plus 30-second burst/cardinality steps. Writers are closed-loop, paced at one request per second when latency permits. One reader runs up to four queries per second and waits for each response. This matches the issue qualification policy; publish actual rates and query counts. No cold-read phase is included in this run.
 
 ## Deployment and acknowledgement boundaries
 
 Use one active signal at a time on the same GCP e2-standard-16 host with the existing digest-pinned MinIO. Compare whole deployment CPU and RSS, including brokers and metadata services, and disclose both component count and configured resource budget. RF1 here means a single copy in the measured fault domain; it does not qualify a highly available deployment.
 
-| Product | Recommended measured shape | Acknowledgement and durability boundary |
+| Product | Production reference topology | Acknowledgement and durability boundary |
 | --- | --- | --- |
 | Loki | Single binary, TSDB v13 index, S3/MinIO, RF1, persistent local WAL | The ingester WAL protects acknowledged data across process crashes. Disk-full and corruption exceptions need separate evidence. |
 | Mimir | Kafka ingest storage enabled, one partition and ingester; S3/MinIO blocks; either monolithic modules with ingester shipping or explicit distributed block builders | Kafka decouples distributor writes from ingestion/query availability. Kafka ingest storage is preferred and stable since Mimir 3.0. |
