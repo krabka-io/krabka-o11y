@@ -2092,7 +2092,7 @@ rules:
                 block_key: meta.object_key.clone(),
                 index_key: format!("metrics/{name}.index"),
                 first_offset: 0,
-                last_offset: samples.len() as i64 - 1,
+                last_offset: i64::try_from(samples.len()).unwrap() - 1,
                 row_count: meta.row_count,
             };
             manifests.push(krabka_metrics::CompactionIndexManifest::from_block_meta(
