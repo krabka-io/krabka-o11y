@@ -75,6 +75,7 @@ for signal in args.signals:
         coverage.append({'repetition':e['repetition'],'backend':e['backend'],'phase':e['phase'],'level':level,**e['resource_coverage']})
     findings=[{k:e[k] for k in ('backend','repetition','phase','cardinality','seed_error')} for e in report['entries'] if e.get('seed_error','').startswith('seed value mismatch')]
     result={'host':report['host'],'harness_commit':report['commit'],'resource_coverage':coverage,'seed_value_mismatches':findings,'correctness_disqualified':bool(findings),'backends':{}}
+    if signal=='profiles':result['profiles_target']=report.get('profiles_target','split')
     for backend in ('krabka',product):
         entries=[e for e in report['entries'] if e['backend']==backend]
         steady=[e for e in entries if e['phase']=='steady'];assert sorted(e['repetition'] for e in steady)==[1,2,3]
