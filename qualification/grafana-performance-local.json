@@ -11,9 +11,13 @@
     "reader": 1,
     "query_interval_seconds": 0.25,
     "seed": 267,
-    "cardinality": 1000,
     "baseline_native_controls": "metrics only; logs and traces baseline measured Krabka alone",
-    "host_activity": "No builds, tests, or profiles during measured runs; unrelated idle containers retained"
+    "host_activity": "No builds, tests, or profiles during measured runs; unrelated idle containers retained",
+    "cardinality_by_signal": {
+      "metrics": 1000,
+      "logs": 100,
+      "traces": 100
+    }
   },
   "final_image": {
     "commit": "23e8b1ed7162055b86974064be52d450ef3cdbf5",

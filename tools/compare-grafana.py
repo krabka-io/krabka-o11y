@@ -102,6 +102,8 @@ def query_request(signal, window_seconds=30):
 def resource_sample(deployment, sample):
     sample['cpu_usec'], sample['throttled_usec'] = {}, {}
     sample['load_generator_cpu_seconds'] = time.process_time()
+    ticks = [int(value) for value in pathlib.Path('/proc/stat').read_text().splitlines()[0].split()[1:]]
+    sample['host_cpu_seconds'] = (sum(ticks[:8]) - ticks[3] - ticks[4]) / os.sysconf('SC_CLK_TCK')
     for role, pid in deployment.pids.items():
         try:
             group = pathlib.Path(f'/proc/{pid}/cgroup').read_text().split('0::', 1)[1].strip()
@@ -141,12 +143,25 @@ def cost(samples):
                 read_bytes += delta
             elif name.startswith('minio_s3_traffic_received_bytes'):
                 write_bytes += delta
-    return {'cpu_seconds_by_role': {role: value / 1e6 for role, value in cpu.items()},
+    result = {'cpu_seconds_by_role': {role: value / 1e6 for role, value in cpu.items()},
             'cpu_seconds_total': sum(cpu.values()) / 1e6,
             'load_generator_cpu_seconds': samples[-1].get('load_generator_cpu_seconds', 0) - samples[0].get('load_generator_cpu_seconds', 0),
             'throttled_seconds_by_role': {role: value / 1e6 for role, value in throttle.items()},
             'rss_kib_simultaneous_peak': max(sum(s['rss_kib'].values()) for s in samples),
             's3_requests': requests, 's3_read_bytes': read_bytes, 's3_write_bytes': write_bytes}
+    if all('host_cpu_seconds' in sample for sample in samples):
+        def external_cores(first, following):
+            elapsed = following['time_unix'] - first['time_unix']
+            application = sum(max(0, value - first['cpu_usec'].get(role, value))
+                              for role, value in following['cpu_usec'].items()) / 1e6
+            generator = following.get('load_generator_cpu_seconds', 0) - first.get('load_generator_cpu_seconds', 0)
+            return max(0, (following['host_cpu_seconds'] - first['host_cpu_seconds'] - application - generator) / elapsed)
+        average = external_cores(samples[0], samples[-1])
+        windows = [external_cores(samples[n], samples[n + 10]) for n in range(len(samples) - 10)]
+        peak = max(windows, default=average)
+        result.update(external_cpu_cores_mean=average, external_cpu_cores_peak_window=peak,
+                      host_activity_qualified=average <= 2 and peak <= 4)
+    return result
 
 
 def configure_profiles_all(services, roles, admin_ports):
@@ -221,6 +236,18 @@ class ComparisonDeployment(env.Deployment):
 
     def drain(self, signal, timeout=180):
         return super().drain(signal, timeout, admin_port=self.admin_ports.get(f'{signal}-all'))
+
+    def wait_for_quiet_host(self, timeout):
+        deadline = time.monotonic() + timeout
+        samples = []
+        while time.monotonic() < deadline:
+            samples.append(resource_sample(self, {'time_unix': time.time(), 'rss_kib': {}, 'scrape_errors': []}))
+            if len(samples) >= 11 and cost(samples[-11:])['host_activity_qualified']:
+                (self.evidence / 'host-preflight.jsonl').write_text(''.join(json.dumps(s) + '\n' for s in samples))
+                return
+            time.sleep(1)
+        (self.evidence / 'host-preflight.jsonl').write_text(''.join(json.dumps(s) + '\n' for s in samples))
+        raise RuntimeError('host remained busy before warm-up')
 
     def start(self):
         if not self.native:
@@ -337,6 +364,9 @@ def run(args):
               'image_commit': args.image_commit, 'image_digest': args.image_digest,
               'image_identity': identity,
               'profiles_target': args.profiles_target if args.signal == 'profiles' else None,
+              'host_activity': {'wait_seconds': args.host_wait_seconds,
+                                'external_cpu_cores_mean_limit': 2, 'external_cpu_cores_window_limit': 4,
+                                'window_sample_intervals': 10},
               'harness_sha256': {name: hashlib.sha256(pathlib.Path(__file__).with_name(name).read_bytes()).hexdigest()
                                  for name in ('compare-grafana.py', 'deployment-envelope.py', 'fuzz-corpus.py')},
               'dataset': {'metric_samples_per_request': 1000, 'metric_points_per_series': 1,
@@ -366,6 +396,8 @@ def run(args):
                         tenant = f'cardinality-{level}' if phase == 'high_cardinality' else f'burst-{level}' if phase == 'burst' else 'soak'
                         try:
                             deployment.seed(args.signal, tenant, cardinality)
+                            if args.host_wait_seconds:
+                                deployment.wait_for_quiet_host(args.host_wait_seconds)
                             duration = args.seconds if phase == 'steady' else args.seconds / 2
                             result, operations, samples = env.measure(deployment, args.signal, duration, duration / 4,
                                 writers, cardinality, cold=phase == 'high_cardinality', interval=1, tenant=tenant, check_durability=False)
@@ -377,6 +409,7 @@ def run(args):
                             result['resources']['sampled_seconds'] = samples[-1]['time_unix'] - samples[0]['time_unix']
                             result['resources']['coverage_fraction'] = result['resources']['sampled_seconds'] / result['duration_seconds']
                             result['objectives_met'] &= result['resources']['coverage_fraction'] >= 0.9
+                            result['objectives_met'] &= result['resources']['host_activity_qualified']
                             rows = result['ingest']['accepted_rows']
                             result['resources']['cpu_seconds_per_million_accepted_rows'] = result['resources']['cpu_seconds_total'] * 1e6 / rows if rows else None
                         except RuntimeError as error:
@@ -429,6 +462,12 @@ def self_test():
     result = cost([sample, after])
     assert result['cpu_seconds_total'] == 1 and result['s3_requests'] == 3 and result['s3_read_bytes'] == 20
     assert result['rss_kib_simultaneous_peak'] == 200
+    sample.update(time_unix=0, host_cpu_seconds=0, load_generator_cpu_seconds=0)
+    after.update(time_unix=1, host_cpu_seconds=10, load_generator_cpu_seconds=0)
+    assert cost([sample, after])['host_activity_qualified'] is False
+    after.update(host_cpu_seconds=1.5, load_generator_cpu_seconds=0.5)
+    assert cost([sample, after])['external_cpu_cores_mean'] == 0
+    assert cost([sample, after])['host_activity_qualified'] is True
     with tempfile.TemporaryDirectory() as directory:
         roles = pathlib.Path(directory)
         (roles / 'profiles-all.yaml').write_text('target: all\n')
@@ -453,6 +492,8 @@ if __name__ == '__main__':
     p.add_argument('--image-commit')
     p.add_argument('--profiles-target', choices=('split', 'all'), default='split',
                    help='Separate profiles role containers or the existing all target; same aggregate budget')
+    p.add_argument('--host-wait-seconds', type=int, default=0,
+                   help='Wait for ten host sample intervals without excessive external CPU before warm-up')
     p.add_argument('--seconds', type=int, default=60)
     p.add_argument('--repetitions', type=int, default=3)
     p.add_argument('--max-writers', type=int, default=256)
@@ -471,6 +512,8 @@ if __name__ == '__main__':
             p.error('signal, image, image digest, image commit and positive load/duration values are required')
         if not re.fullmatch(r'sha256:[0-9a-f]{64}', options.image_digest):
             p.error('image digest must be sha256 followed by exactly 64 lowercase hexadecimal digits')
+        if options.host_wait_seconds < 0:
+            p.error('host wait must be nonnegative')
         if len(set(options.phases)) != len(options.phases) or len(set(options.backends)) != len(options.backends):
             p.error('phases and backends must be unique')
         run(options)

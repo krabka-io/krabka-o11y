@@ -33,9 +33,9 @@ on:
         options: [all, metrics, logs, traces, profiles]
         default: all
       profiles_target:
-        description: Profiles role containers or the existing all target (same budget)
+        description: Profiles layout (both compares split and all on the same VM)
         type: choice
-        options: [split, all]
+        options: [split, all, both]
         default: split
 permissions:
   contents: read
@@ -122,13 +122,24 @@ jobs:
           done > qualification/evidence/comparison/gce.txt
           phases=(steady burst high_cardinality)
           if [[ "${PHASES}" == steady ]]; then phases=(steady); fi
-          python3 -u tools/compare-grafana.py --phases "${phases[@]}" --signal "${SIGNAL}" \
-            --image "$(cat qualification/image/tag)" \
-            --image-digest "$(cat qualification/image/manifest-digest)" \
-            --image-commit "$(cat qualification/image/commit)" \
-            --profiles-target "${PROFILES_TARGET}" \
-            --seconds "${PHASE_SECONDS}" --repetitions "${REPETITIONS}" \
-            --max-writers "${MAX_WRITERS}" --max-cardinality "${MAX_CARDINALITY}"
+          targets=(split)
+          if [[ "${SIGNAL}" == profiles ]]; then
+            targets=("${PROFILES_TARGET}")
+            if [[ "${PROFILES_TARGET}" == both ]]; then targets=(split all); fi
+          fi
+          for target in "${targets[@]}"; do
+            output=qualification/evidence/comparison
+            if [[ "${SIGNAL}" == profiles && "${PROFILES_TARGET}" == both ]]; then
+              output="${output}/${target}"
+            fi
+            python3 -u tools/compare-grafana.py --phases "${phases[@]}" --signal "${SIGNAL}" \
+              --image "$(cat qualification/image/tag)" \
+              --image-digest "$(cat qualification/image/manifest-digest)" \
+              --image-commit "$(cat qualification/image/commit)" \
+              --profiles-target "${target}" --host-wait-seconds 120 --output "${output}" \
+              --seconds "${PHASE_SECONDS}" --repetitions "${REPETITIONS}" \
+              --max-writers "${MAX_WRITERS}" --max-cardinality "${MAX_CARDINALITY}"
+          done
       - name: Hash evidence
         if: always()
         run: |
