@@ -1,4 +1,4 @@
-use super::{BTreeMap, Index};
+use super::{BTreeMap, Index, ProfileWalRange};
 
 /// One grid slot of a published profile index, in memory.
 ///
@@ -11,6 +11,8 @@ use super::{BTreeMap, Index};
 #[derive(Default)]
 pub(crate) struct ProfileShard {
     pub(crate) index: Index,
+    /// Source offsets represented by each block in this shard.
+    pub(crate) wal_ranges: BTreeMap<String, Vec<ProfileWalRange>>,
     /// `object key -> stacktrace partitions`, for the blocks in this shard.
     pub(crate) partitions: BTreeMap<String, Vec<u64>>,
 }

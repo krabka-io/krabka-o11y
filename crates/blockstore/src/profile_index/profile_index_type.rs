@@ -2,8 +2,8 @@ use super::{
     Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockMeta, BlockStoreError, ByteSize,
     CompactionCandidate, DEFAULT_INDEX_SNAPSHOT_MAX, Index, IndexShardRange, IndexSnapshotRetain,
     LABEL_PROFILE_TYPE, LabelMatcher, Labels, ObjectStore, PROFILE_INDEX_SHARD_WIDTH,
-    PendingBlockAdditions, PendingBlockRemovals, PendingRemoval, ProfileShard, Result,
-    SeriesFingerprint, SnapshotManifest, TenantProfileExtras, UNBOUNDED_SHARD_RANGE,
+    PendingBlockAdditions, PendingBlockRemovals, PendingRemoval, ProfileShard, ProfileWalRange,
+    Result, SeriesFingerprint, SnapshotManifest, TenantProfileExtras, UNBOUNDED_SHARD_RANGE,
     decode_profile_shard, encode_profile_shard, instrument, level_above, profile_block_fingerprint,
     put_manifest_snapshot, put_shard_payload, read_latest_snapshot_manifest, read_shard_payload,
     render_series_labels, shard_payload_content_hash, shard_payload_object_key,
@@ -35,6 +35,8 @@ pub struct ProfileIndex {
     pub(crate) series: Index,
     pub(crate) extras: BTreeMap<String, TenantProfileExtras>,
     pub(crate) block_partitions: BTreeMap<String, Vec<u64>>,
+    /// WAL coverage travels with each block in the same published snapshot.
+    block_wal_ranges: BTreeMap<String, Vec<ProfileWalRange>>,
     /// Blocks this writer dropped and has yet to make durable. Not persisted:
     /// see [`PendingBlockRemovals`].
     pending_removals: PendingBlockRemovals,
@@ -377,6 +379,10 @@ impl ProfileIndex {
         remove_keys: &[String],
         add: &[(BlockMeta, Vec<u64>)],
     ) -> BlockLevel {
+        let inherited: BTreeSet<_> = remove_keys
+            .iter()
+            .flat_map(|key| self.wal_ranges(key))
+            .collect();
         let dropped: BTreeSet<&str> = remove_keys.iter().map(String::as_str).collect();
         self.retire_profile_blocks(tenant, &dropped);
         // A compaction may reuse the key of a block it replaces. That block is
@@ -386,6 +392,7 @@ impl ProfileIndex {
         }
         for key in remove_keys {
             self.block_partitions.remove(key);
+            self.block_wal_ranges.remove(key);
         }
         // Read before the inputs are dropped, and never below what an added
         // key already sits at: a snapshot merge re-registers blocks whose
@@ -405,6 +412,7 @@ impl ProfileIndex {
         self.series.replace_blocks(tenant, remove_keys, &metas);
         for (meta, partitions) in add {
             self.add_profile_block(tenant, &meta.object_key, partitions.clone());
+            self.set_wal_ranges(&meta.object_key, inherited.iter().copied().collect());
         }
         level
     }
@@ -429,6 +437,7 @@ impl ProfileIndex {
         self.retire_profile_blocks(tenant, &dropped);
         for key in keys {
             self.block_partitions.remove(key);
+            self.block_wal_ranges.remove(key);
         }
         self.series.remove_blocks(tenant, keys)
     }
@@ -447,7 +456,11 @@ impl ProfileIndex {
             .map(|meta| {
                 let partitions = self.stacktrace_partitions(&meta.object_key);
                 let removal = PendingRemoval {
-                    fingerprint: profile_block_fingerprint(&meta, &partitions),
+                    fingerprint: profile_block_fingerprint(
+                        &meta,
+                        &partitions,
+                        &self.wal_ranges(&meta.object_key),
+                    ),
                     min_ts: meta.min_ts,
                     max_ts: meta.max_ts,
                 };
@@ -463,6 +476,20 @@ impl ProfileIndex {
         for key in dropped {
             self.pending_additions.forget(key);
         }
+    }
+
+    /// Attach source offsets to a newly registered profile block.
+    pub fn set_wal_ranges(&mut self, object_key: &str, ranges: Vec<ProfileWalRange>) {
+        self.block_wal_ranges.insert(object_key.to_string(), ranges);
+    }
+
+    /// Source offsets represented by this block, preserved across compaction.
+    #[must_use]
+    pub fn wal_ranges(&self, object_key: &str) -> Vec<ProfileWalRange> {
+        self.block_wal_ranges
+            .get(object_key)
+            .cloned()
+            .unwrap_or_default()
     }
 
     #[must_use]
@@ -673,6 +700,7 @@ impl ProfileIndex {
                     let held = shards.entry(range).or_default();
                     held.index.merge_from(&decoded.index);
                     held.partitions.extend(decoded.partitions);
+                    held.wal_ranges.extend(decoded.wal_ranges);
                 } else {
                     carried.insert(range, shard.content.clone());
                 }
@@ -695,7 +723,15 @@ impl ProfileIndex {
                                 .get(object_key)
                                 .cloned()
                                 .unwrap_or_default();
-                            profile_block_fingerprint(&meta, &partitions) == removal.fingerprint
+                            profile_block_fingerprint(
+                                &meta,
+                                &partitions,
+                                &shard
+                                    .wal_ranges
+                                    .get(object_key)
+                                    .cloned()
+                                    .unwrap_or_default(),
+                            ) == removal.fingerprint
                         })
                 });
                 if !unchanged {
@@ -721,24 +757,35 @@ impl ProfileIndex {
                                 .get(object_key)
                                 .cloned()
                                 .unwrap_or_default();
-                            profile_block_fingerprint(&meta, &partitions) == removal.fingerprint
+                            profile_block_fingerprint(
+                                &meta,
+                                &partitions,
+                                &shard
+                                    .wal_ranges
+                                    .get(object_key)
+                                    .cloned()
+                                    .unwrap_or_default(),
+                            ) == removal.fingerprint
                         });
                     if matches {
                         shard
                             .index
                             .replace_blocks(tenant, std::slice::from_ref(object_key), &[]);
                         shard.partitions.remove(object_key);
+                        shard.wal_ranges.remove(object_key);
                     }
                 }
             }
 
             for meta in contributed {
                 let partitions = self.stacktrace_partitions(&meta.object_key);
+                let wal_ranges = self.wal_ranges(&meta.object_key);
                 for shard in shards.values_mut() {
                     shard
                         .index
                         .replace_blocks(tenant, std::slice::from_ref(&meta.object_key), &[]);
                     shard.partitions.remove(&meta.object_key);
+                    shard.wal_ranges.remove(&meta.object_key);
                 }
                 for range in
                     shard_ranges_for_span(meta.min_ts, meta.max_ts, PROFILE_INDEX_SHARD_WIDTH)
@@ -753,6 +800,9 @@ impl ProfileIndex {
                     shard
                         .partitions
                         .insert(meta.object_key.clone(), partitions.clone());
+                    shard
+                        .wal_ranges
+                        .insert(meta.object_key.clone(), wal_ranges.clone());
                 }
             }
 
@@ -913,6 +963,7 @@ impl ProfileIndex {
                 let (_, decoded) = decode_profile_shard(&object_key, &bytes)?;
                 index.series.merge_from(&decoded.index);
                 index.block_partitions.extend(decoded.partitions);
+                index.block_wal_ranges.extend(decoded.wal_ranges);
             }
         }
         index.rebuild_profile_types();

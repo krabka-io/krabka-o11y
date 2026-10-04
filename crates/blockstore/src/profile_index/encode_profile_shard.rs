@@ -25,6 +25,9 @@ pub(crate) fn encode_profile_shard(tenant: &str, shard: &ProfileShard) -> Vec<u8
             push_uvarint(&mut out, *partition);
         }
     }
+    let encoded = serde_json::to_vec(&shard.wal_ranges).expect("WAL ranges are serializable");
+    push_len(&mut out, encoded.len());
+    out.extend_from_slice(&encoded);
     out
 }
 

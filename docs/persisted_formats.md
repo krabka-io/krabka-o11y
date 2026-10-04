@@ -14,7 +14,7 @@ Each format has one current version. Writers stamp it. Readers reject a missing,
 | blockstore | log, metric, trace, and profile Parquet blocks | Parquet key `krabka.format.version=1`, required | exact version; a missing or future marker is rejected from the footer |
 | blockstore | series index shards | binary shard version 2 | exact version |
 | blockstore | trace index shards | binary shard version 1 | exact version; rebuilt from retained blocks when required |
-| blockstore | profile index and symbol shards | binary shard version 1 | exact version; symbol data is immutable per block |
+| blockstore | profile index shards with WAL coverage; symbol shards | profile shard version 2; symbol shard version 1 | exact version; symbol data is immutable per block |
 | blockstore | index snapshot manifests | JSON version 1 | exact version; snapshots are replaceable from shards |
 | blockstore | storage audit report, repair report, and repair audit log (JSONL of `intent` and `outcome` lines) | JSON `schema_version: 1` | exact version; readers reject another version before a repair acts |
 | logs | block/index manifests, shard catalogs, and compaction frontier | JSON version 1 | exact version; atomic replacement |

@@ -67,6 +67,14 @@ pub async fn flush_consumer_records_with_index(
             .await?;
             for meta in &built {
                 index.add_block(meta);
+                index.set_wal_ranges(
+                    &meta.object_key,
+                    vec![krabka_blockstore::ProfileWalRange {
+                        partition,
+                        min_offset,
+                        max_offset,
+                    }],
+                );
                 index.add_profile_block(&meta.tenant, &meta.object_key, vec![STACKTRACE_PARTITION]);
             }
             metas.extend(built);

@@ -86,6 +86,7 @@ mod tests {
         let state = |evicted, retained| super::RetainedState {
             records: std::iter::repeat_with(|| super::Retained {
                 max_ts_ms: 0,
+                position: None,
                 record: record(),
             })
             .take(retained)

@@ -1176,9 +1176,15 @@ mod tests {
             ..ingested.clone()
         };
 
-        let of = |meta: &BlockMeta| profile_block_fingerprint(meta, &[1]);
+        let of = |meta: &BlockMeta| profile_block_fingerprint(meta, &[1], &[]);
         check!(of(&ingested) == of(&ingested.clone()));
         check!(of(&ingested) != of(&compacted));
+        let range = ProfileWalRange {
+            partition: 1,
+            min_offset: 7,
+            max_offset: 9,
+        };
+        check!(of(&ingested) != profile_block_fingerprint(&ingested, &[1], &[range]));
     }
 
     #[test]
@@ -1385,3 +1391,6 @@ use profile_shard::ProfileShard;
 use profile_shard_format::{PROFILE_SHARD_FORMAT_VERSION, PROFILE_SHARD_MAGIC};
 use render_series_labels::render_series_labels;
 use tenant_profile_extras::TenantProfileExtras;
+
+mod profile_wal_range;
+pub use profile_wal_range::ProfileWalRange;

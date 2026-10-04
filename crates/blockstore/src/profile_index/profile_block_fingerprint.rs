@@ -1,4 +1,4 @@
-use super::{BlockMeta, DefaultHasher, Hash as _, Hasher as _};
+use super::{BlockMeta, DefaultHasher, Hash as _, Hasher as _, ProfileWalRange};
 
 /// Fingerprint of the profile-block record a writer holds.
 ///
@@ -9,7 +9,11 @@ use super::{BlockMeta, DefaultHasher, Hash as _, Hasher as _};
 /// be a function of everything the record says. The fields are named one by one
 /// rather than hashing [`BlockMeta`] wholesale, so a field added there is a
 /// deliberate choice here rather than a silent change of identity.
-pub(crate) fn profile_block_fingerprint(meta: &BlockMeta, partitions: &[u64]) -> u64 {
+pub(crate) fn profile_block_fingerprint(
+    meta: &BlockMeta,
+    partitions: &[u64],
+    ranges: &[ProfileWalRange],
+) -> u64 {
     let mut hasher = DefaultHasher::new();
     meta.tenant.hash(&mut hasher);
     meta.object_key.hash(&mut hasher);
@@ -19,5 +23,6 @@ pub(crate) fn profile_block_fingerprint(meta: &BlockMeta, partitions: &[u64]) ->
     meta.fingerprints.hash(&mut hasher);
     meta.level.hash(&mut hasher);
     partitions.hash(&mut hasher);
+    ranges.hash(&mut hasher);
     hasher.finish()
 }

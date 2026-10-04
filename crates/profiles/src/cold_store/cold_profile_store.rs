@@ -235,6 +235,19 @@ impl ProfileStore for ColdProfileStore {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<ProfileScan, ProfileError> {
+        self.select_with_source_ranges(tenant, profile_type, matchers, start_ms, end_ms)
+            .await
+            .map(|(scan, _)| scan)
+    }
+
+    async fn select_with_source_ranges(
+        &self,
+        tenant: &str,
+        profile_type: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<(ProfileScan, Vec<krabka_blockstore::ProfileWalRange>), ProfileError> {
         let mut index = self.current_index();
         let mut retries = 2;
         loop {
@@ -242,7 +255,21 @@ impl ProfileStore for ColdProfileStore {
                 .select_from_index(&index, tenant, profile_type, matchers, start_ms, end_ms)
                 .await
             {
-                Ok(scan) => return Ok(scan),
+                Ok(scan) => {
+                    let (blocks, _) = Self::index_block_keys(
+                        &index,
+                        tenant,
+                        profile_type,
+                        matchers,
+                        start_ms,
+                        end_ms,
+                    )?;
+                    let ranges = blocks
+                        .iter()
+                        .flat_map(|key| index.wal_ranges(key))
+                        .collect();
+                    return Ok((scan, ranges));
+                }
                 Err(error) => error,
             };
             let Some((key, max_bytes)) = &self.index_snapshot else {

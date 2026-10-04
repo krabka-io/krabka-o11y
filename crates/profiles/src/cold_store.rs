@@ -28,6 +28,7 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+    mod wal_handoff;
     use std::sync::Arc;
 
     use assert2::{assert, check};

@@ -116,7 +116,9 @@ pub use persisted_format::{
     PERSISTED_BLOCK_FORMAT_KEY, PERSISTED_BLOCK_FORMAT_VERSION, validate_persisted_block_format,
 };
 pub use profile_block::{ProfileSampleRow, encode_profile_samples};
-pub use profile_index::{LABEL_PROFILE_TYPE, MAX_PROFILE_INDEX_SNAPSHOT_BYTES, ProfileIndex};
+pub use profile_index::{
+    LABEL_PROFILE_TYPE, MAX_PROFILE_INDEX_SNAPSHOT_BYTES, ProfileIndex, ProfileWalRange,
+};
 pub use profile_schema::{
     PCOL_PROFILE_TYPE, PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION,
     PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, profile_samples_decl, profile_samples_schema,

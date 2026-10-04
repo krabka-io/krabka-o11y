@@ -5,5 +5,6 @@ use super::ProfileRecord;
 pub(crate) struct Retained {
     /// Newest sample timestamp (ms) carried by this record.
     pub(crate) max_ts_ms: i64,
+    pub(crate) position: Option<(i32, i64)>,
     pub(crate) record: ProfileRecord,
 }
