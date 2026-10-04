@@ -1,7 +1,7 @@
 use super::{
     Arc, BTreeSet, HashMap, LabelMatcher, MemTable, ProfileError, ProfileScan, ProfileStats,
-    ProfileStore, SampleRow, SessionContext, SymbolDb, compile_matchers, encode_rows,
-    fingerprint_labels, profile_samples_schema, row_matches,
+    ProfileStore, SampleRow, SymbolDb, compile_matchers, encode_rows, fingerprint_labels,
+    profile_samples_schema, row_matches,
 };
 
 /// In-memory `ProfileStore` used by engine tests.
@@ -127,7 +127,7 @@ impl ProfileStore for InMemoryProfileStore {
         let batch = encode_rows(&rows)?;
         let table = MemTable::try_new(profile_samples_schema(), vec![vec![batch]])
             .map_err(|err| ProfileError::Store(err.to_string()))?;
-        let ctx = SessionContext::new();
+        let ctx = crate::profile_session_context();
         let samples_table = "samples".to_string();
         ctx.register_table(&samples_table, Arc::new(table))
             .map_err(|err| ProfileError::Store(err.to_string()))?;

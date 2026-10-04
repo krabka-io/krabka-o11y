@@ -10,7 +10,7 @@ use arrow::{
     datatypes::Int32Type,
     record_batch::RecordBatch,
 };
-use datafusion::{catalog::MemTable, prelude::SessionContext};
+use datafusion::catalog::MemTable;
 use krabka_blockstore::{LabelMatcher, Labels, MatchOp};
 use regex::Regex;
 
