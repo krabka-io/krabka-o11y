@@ -74,7 +74,8 @@ for signal in args.signals:
         e['resource_coverage']={'sample_count':len(samples),'sampled_seconds':span,'coverage_fraction':span/e['duration_seconds'],'valid':valid}
         coverage.append({'repetition':e['repetition'],'backend':e['backend'],'phase':e['phase'],'level':level,**e['resource_coverage']})
     findings=[{k:e[k] for k in ('backend','repetition','phase','cardinality','seed_error')} for e in report['entries'] if e.get('seed_error','').startswith('seed value mismatch')]
-    result={'host':report['host'],'harness_commit':report['commit'],'resource_coverage':coverage,'seed_value_mismatches':findings,'correctness_disqualified':bool(findings),'backends':{}}
+    host_findings=[{k:e[k] for k in ('backend','repetition','phase','resources')} for e in report['entries'] if e.get('resources',{}).get('host_activity_qualified') is False]
+    result={'host':report['host'],'harness_commit':report['commit'],'resource_coverage':coverage,'seed_value_mismatches':findings,'correctness_disqualified':bool(findings),'host_activity_disqualified':bool(host_findings),'host_activity_failures':host_findings,'backends':{}}
     if signal=='profiles':result['profiles_target']=report.get('profiles_target','split')
     for backend in ('krabka',product):
         entries=[e for e in report['entries'] if e['backend']==backend]
@@ -102,7 +103,7 @@ for signal in args.signals:
         result['common_burst']={backend:distribution([e for e in report['entries'] if e['backend']==backend and e['phase']=='burst' and e['writers']==level]) for backend in ('krabka',product) if all(e['resource_coverage']['valid'] for e in report['entries'] if e['backend']==backend and e['phase']=='burst' and e['writers']==level)}
     k=result['backends']['krabka']['steady'];g=result['backends'][product]['steady']
     result['steady_krabka_divided_by_native']={field:k[field]['median']/g[field]['median'] if g[field]['median'] else None for field in ('average_cpu_cores','rss_kib','query_p99_seconds','ingest_p99_seconds')}
-    if findings:
+    if findings or host_findings or not all(row['steady_objectives_met'] for row in result['backends'].values()):
         result['diagnostic_steady_krabka_divided_by_native']=result['steady_krabka_divided_by_native']
         result['steady_krabka_divided_by_native']=None
     summary['signals'][signal]=result
