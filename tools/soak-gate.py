@@ -146,9 +146,9 @@ METRICS = {
 def annotate(level, message):
     """Prints a message, as a GitHub annotation when the run is on Actions."""
     if os.environ.get("GITHUB_ACTIONS") == "true":
-        print(f"::{level}::{message}", flush=True)
+        print(f"::{level}::{message}", file=sys.stderr, flush=True)
     else:
-        print(f"{level}: {message}", flush=True)
+        print(f"{level}: {message}", file=sys.stderr, flush=True)
 
 
 def dig(value, *path):
@@ -490,6 +490,13 @@ def envelope(reports):
     if faults:
         return None, faults
 
+    for index, report in enumerate(reports, 1):
+        for entry in report["entries"]:
+            if entry["phase"] not in STEPPED_PHASES and entry.get("objectives_met") is not True:
+                faults.append(f"run {index}: {entry['signal']} {entry['phase']} missed its objectives")
+    if faults:
+        return None, faults
+
     result = {
         "runs": len(reports),
         "commit": reports[0].get("commit"),
@@ -541,7 +548,7 @@ def envelope(reports):
 # --- modes -------------------------------------------------------------------
 
 
-def run(paths, mode, baseline_path, tolerance, noise_ceiling):
+def run(paths, mode, baseline_path, tolerance, noise_ceiling, reference_path=None, require_seeded=False):
     """Runs one mode over the reports at `paths`. Returns the exit code."""
     reports = []
     for path in paths:
@@ -555,6 +562,19 @@ def run(paths, mode, baseline_path, tolerance, noise_ceiling):
         if faults:
             return 1
         reports.append(report)
+
+    if reference_path:
+        reference, fault = read_report(reference_path)
+        if fault:
+            annotate("error", fault)
+            return 1
+        # A regression run changes the build. It keeps the workload and host.
+        fields = ("dataset", "shape", "objectives", "minio_image", "rustc", "host")
+        for path, report in zip(paths, reports):
+            different = [field for field in fields if report.get(field) != reference.get(field)]
+            if different:
+                annotate("error", f"{path}: differs from the baseline run in {', '.join(different)}")
+                return 1
 
     if mode == "structural":
         for path in paths:
@@ -579,11 +599,25 @@ def run(paths, mode, baseline_path, tolerance, noise_ceiling):
         print(json.dumps(result, indent=2, sort_keys=True), flush=True)
         return 0
     if mode == "record":
-        for name, (value, _) in sorted(measured(reports[0]).items()):
+        if len(reports) > 1:
+            _, faults = envelope(reports)
+            if faults:
+                for fault in faults:
+                    annotate("error", fault)
+                return 1
+        inventory = measured(reports[0])
+        if any(measured(report).keys() != inventory.keys() for report in reports[1:]):
+            annotate("error", "the runs measured different metric inventories")
+            return 1
+        for name in sorted(inventory):
+            value = statistics.median(measured(report)[name][0] for report in reports)
             print(f"{name} {value:.6g}", flush=True)
         return 0
 
     baseline = read_baseline(baseline_path)
+    if require_seeded and any(value is None for value in baseline.values()):
+        annotate("error", "the stable-runner gate requires a fully seeded baseline")
+        return 1
     passed = True
     for report in reports:
         passed &= ratchet(report, baseline, tolerance, noise_ceiling, str(baseline_path))
@@ -820,6 +854,9 @@ def self_test():
     check("two runs are refused", bool(faults))
     _, faults = envelope([clean, clean, clean])
     check("one report passed three times is refused", bool(faults))
+    failed_maintenance = mutated(lambda r: entry_of(r, "logs", "compaction").update(objectives_met=False))
+    _, faults = envelope(runs(clean, failed_maintenance, clean))
+    check("a failed maintenance phase cannot support an envelope", bool(faults))
     _, faults = envelope([*runs(clean, clean), mutated(lambda r: r.update(run_id="synthetic-1"))])
     check("two reports with one run ID are refused", bool(faults))
     # Each case changes one part of the workload, build or platform in the
@@ -861,6 +898,45 @@ def self_test():
         with contextlib.redirect_stdout(io.StringIO()):
             got = run([report_path], "gate", recorded, DEFAULT_TOLERANCE, DEFAULT_NOISE_CEILING)
         check("a recorded baseline reads back and passes its own report", got == 0)
+
+        changed = mutated(lambda r: r["host"].update(cpus=8))
+        report_path.write_text(json.dumps(changed))
+        reference = pathlib.Path(scratch) / "reference.json"
+        reference.write_text(json.dumps(clean))
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            got = run([report_path], "gate", recorded, DEFAULT_TOLERANCE,
+                      DEFAULT_NOISE_CEILING, reference)
+        check("a different host cannot use a numeric baseline", got == 1)
+        report_path.write_text(json.dumps(mutated(lambda r: r.update(commit="f" * 40))))
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            got = run([report_path], "gate", recorded, DEFAULT_TOLERANCE,
+                      DEFAULT_NOISE_CEILING, reference)
+        check("a new build can use the same workload and host baseline", got == 0)
+        dormant = pathlib.Path(scratch) / "unseeded.txt"
+        dormant.write_text(all_unseeded)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            got = run([report_path], "gate", dormant, DEFAULT_TOLERANCE,
+                      DEFAULT_NOISE_CEILING, reference, require_seeded=True)
+        check("the stable-runner gate refuses an unseeded baseline", got == 1)
+
+        reports = runs(clean, clean, clean)
+        for report, multiplier in zip(reports, (1, 2, 20)):
+            entry_of(report, "metrics", "steady")["query"]["latency_us"]["p99"] *= multiplier
+        paths = []
+        for index, report in enumerate(reports):
+            path = pathlib.Path(scratch) / f"run-{index}.json"
+            path.write_text(json.dumps(report))
+            paths.append(path)
+        with recorded.open("w") as sink, contextlib.redirect_stdout(sink):
+            got = run(paths, "record", None, DEFAULT_TOLERANCE, DEFAULT_NOISE_CEILING)
+        baseline = read_baseline(recorded)
+        check("three-run records use the median instead of an outlier",
+              got == 0 and baseline["metrics/steady/query_p99_us"] ==
+              2 * entry_of(clean, "metrics", "steady")["query"]["latency_us"]["p99"])
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            got = run([paths[0], paths[0], paths[2]], "record", None,
+                      DEFAULT_TOLERANCE, DEFAULT_NOISE_CEILING)
+        check("a duplicate run cannot seed a three-run baseline", got == 1)
 
     # The checked-in baseline is the inventory a real report is held to. The
     # synthetic report has every entry the soak writes, so the two must list
@@ -909,6 +985,8 @@ def main():
         "--noise-ceiling", type=float, default=DEFAULT_NOISE_CEILING,
         help="latency window CV past which a latency or throughput verdict is skipped",
     )
+    parser.add_argument("--reference", help="baseline report that fixes the workload, toolchain, and host")
+    parser.add_argument("--require-seeded", action="store_true", help="refuse a dormant numeric gate")
     args = parser.parse_args()
     if args.self_test:
         return self_test()
@@ -918,15 +996,18 @@ def main():
         parser.error("name at least one soak report")
     if args.envelope and len(args.reports) < MIN_ENVELOPE_RUNS:
         parser.error(f"--envelope needs {MIN_ENVELOPE_RUNS} or more reports")
-    if not (args.structural or args.envelope) and len(args.reports) != 1:
-        parser.error("the ratchet and --record read one report")
+    if not (args.structural or args.envelope or args.record) and len(args.reports) != 1:
+        parser.error("the ratchet reads one report")
+    if args.record and len(args.reports) not in (1,) and len(args.reports) < MIN_ENVELOPE_RUNS:
+        parser.error(f"--record needs one report or at least {MIN_ENVELOPE_RUNS} independent reports")
     selected = (
         "structural" if args.structural
         else "record" if args.record
         else "envelope" if args.envelope
         else "gate"
     )
-    return run(args.reports, selected, args.baseline, args.tolerance, args.noise_ceiling)
+    return run(args.reports, selected, args.baseline, args.tolerance, args.noise_ceiling,
+               args.reference, args.require_seeded)
 
 
 if __name__ == "__main__":

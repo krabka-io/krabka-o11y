@@ -193,6 +193,49 @@ tool says so. Only a `saturated` result can become a published limit.
 
 ### Stable-runner qualification
 
+The `operating envelope` workflow uses the installed
+[Google Cloud runner manager](https://github.com/Cyclenerd/google-cloud-github-runner).
+Its label is `gcp-ubuntu-24-04-16core`. The manager matches that label to the
+regional `e2-standard-16` template in `robot-head`, `us-central1-b`.
+The template has 16 vCPUs, 64 GiB RAM, and a 600 GB SSD boot disk.
+The workflow records the actual machine type, image, CPU model, kernel, and Docker configuration.
+The label uses dashes because GCE refuses a dot in a VM label value.
+
+The storage job builds with `-c opt`. It runs three repetitions on one VM.
+Each repetition starts a new process and a new MinIO container.
+It discards a 15-second warm-up before each 60-second phase.
+It retains all three reports, commands, logs, and artifact checksums.
+The baseline uses the median of each metric across the three reports.
+The numeric gate refuses an unseeded baseline or a different workload, toolchain, or host.
+An envelope computation also refuses a failed non-stepped phase.
+
+The deployment job adds the broker and public HTTP APIs. It uses
+`tools/deployment-envelope.py` and the checked-in Compose topology.
+Each signal has one distributor, block builder, and querier.
+Metrics, traces, and profiles also have one compactor.
+Each role has a one-vCPU, one-GiB limit. The broker and MinIO each have
+two-vCPU, two-GiB limits. Every container has a 65,536-file descriptor limit.
+The resolved Compose file and every role configuration are raw artifacts.
+The deployment keeps the WAL retention and replication settings of the base topology.
+
+The HTTP dataset uses seed `267`. Metrics, logs, and traces send 100 series
+with 10 points per request. Profiles send one labelled profile with 10 stack samples.
+The cardinality search seeds every label value before each measured step.
+Tenant `soak` has no ingest-rate cap. The logs querier has no series-count cap.
+These settings prevent a configured maximum from acting as measured saturation.
+The noisy phase puts four unpaced writers beside two paced writers on `quiet`.
+
+The deployment report includes HTTP status counts, accepted rate, query quantiles,
+RSS by role, object requests and bytes, and broker-reported WAL lag.
+Its raw operation and telemetry samples are JSON Lines files.
+A restart stops the block builder, appends ten batches, then times its readiness after restart.
+The storage soak supplies the cold-block, compaction, and retention measurements.
+The deployment's `cold_window` reads a wider time window; it does not prove that every cache is cold.
+
+Use `scope=checks` for the complete ordinary Bazel test suite on the GCP runner.
+Use a short phase and one repetition for diagnostics.
+Only three complete 60-second runs can support qualification.
+
 Run the soak three times on the stable runner, with the commit and runner
 recorded, and keep each report:
 
@@ -207,7 +250,7 @@ for run in 1 2 3; do
     "soak-report-${run}.json"
 done
 tools/soak-gate.py --envelope soak-report-1.json soak-report-2.json soak-report-3.json
-tools/soak-gate.py --record soak-report-1.json > tools/soak-baseline.txt.new
+tools/soak-gate.py --record soak-report-{1,2,3}.json > tools/soak-baseline.txt.new
 ```
 
 Bazel can zip the test outputs into `outputs.zip`. If it does, extract

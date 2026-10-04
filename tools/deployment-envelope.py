@@ -9,6 +9,7 @@ It keeps the configured tenant caps out of the saturation search.
 import argparse
 import concurrent.futures
 import hashlib
+import importlib.util
 import itertools
 import json
 import math
@@ -16,6 +17,7 @@ import os
 import pathlib
 import re
 import subprocess
+import struct
 import threading
 import time
 import urllib.error
@@ -33,6 +35,12 @@ SERIES = 100
 WRITERS = (1, 2, 4, 8, 16, 32, 64)
 CARDINALITIES = (100, 1_000, 5_000, 20_000)
 P99_SECONDS = 2
+
+# Reuse the repository's protobuf encoder. Importing it does not generate
+# corpus files; that work is behind its CLI entry point.
+_wire_spec = importlib.util.spec_from_file_location("envelope_wire", pathlib.Path(__file__).with_name("fuzz-corpus.py"))
+wire = importlib.util.module_from_spec(_wire_spec)
+_wire_spec.loader.exec_module(wire)
 
 
 def command(*args):
@@ -72,16 +80,17 @@ def write_request(signal, sequence, cardinality, tenant="soak"):
     if signal == "traces":
         groups = []
         for s in series:
-            trace = hashlib.sha256(f"{SEED}-{tenant}-{sequence}-{s}".encode()).hexdigest()[:32]
-            spans = [{
-                "traceId": trace, "spanId": f"{p + 1:016x}", "name": "envelope",
-                "startTimeUnixNano": str(now + p), "endTimeUnixNano": str(now + p + 1_000_000),
-            } for p in range(POINTS)]
-            groups.append({"resource": {"attributes": [
-                {"key": "service.name", "value": {"stringValue": "envelope"}},
-                {"key": "series", "value": {"stringValue": str(s)}},
-            ]}, "scopeSpans": [{"spans": spans}]})
-        return "/v1/traces", {"resourceSpans": groups}, "application/json", SERIES * POINTS
+            trace = hashlib.sha256(f"{SEED}-{tenant}-{sequence}-{s}".encode()).digest()[:16]
+            attributes = b"".join(wire.pb_bytes_field(1,
+                wire.pb_string_field(1, key) + wire.pb_bytes_field(2, wire.pb_string_field(1, value)))
+                for key, value in (("service.name", "envelope"), ("series", str(s))))
+            spans = b"".join(wire.pb_bytes_field(2,
+                wire.pb_bytes_field(1, trace) + wire.pb_bytes_field(2, (p + 1).to_bytes(8, "big"))
+                + wire.pb_string_field(5, "envelope")
+                + b"\x39" + struct.pack("<Q", now + p)
+                + b"\x41" + struct.pack("<Q", now + p + 1_000_000)) for p in range(POINTS))
+            groups.append(wire.pb_bytes_field(1, attributes) + wire.pb_bytes_field(2, spans))
+        return "/v1/traces", b"".join(wire.pb_bytes_field(1, g) for g in groups), "application/x-protobuf", SERIES * POINTS
     # The legacy API carries one labelled profile per request.
     name = f'envelope{{service_name="envelope",series="{sequence % cardinality}"}}'
     query = urllib.parse.urlencode({"name": name, "format": "groups", "units": "samples",
@@ -171,8 +180,8 @@ class Deployment:
         for file in pathlib.Path("deploy/roles").glob("*.yaml"):
             (roles / file.name).write_text(file.read_text())
         limits = {
-            "metrics": 'defaults:\n  ingestion_rate: "0/s"\n  out_of_order_time_window: "30s"\noverrides: {}\n',
-            "logs": "defaults: {}\noverrides: {}\n",
+            "metrics": 'defaults:\n  ingestion_rate: "0/s"\n  out_of_order_time_window: "30s"\noverrides:\n  noisy:\n    ingestion_rate: "2000/s"\n',
+            "logs": "defaults:\n  max_query_series: 0\noverrides: {}\n",
             "traces": "overrides:\n  soak:\n    ingestion_rate_spans_per_sec: 0\n  quiet:\n    ingestion_rate_spans_per_sec: 0\n  noisy:\n    ingestion_rate_spans_per_sec: 2000\n",
             "profiles": "defaults:\n  ingestion_rate_profiles_per_sec: 0\noverrides:\n  noisy:\n    ingestion_rate_profiles_per_sec: 20\n",
         }
@@ -185,6 +194,9 @@ class Deployment:
         for signal in SIGNALS:
             file = roles / f"{signal}-distributor.yaml"
             file.write_text(file.read_text() + f"\n{flags[signal]}: /etc/krabka/{signal}-limits.yaml\n")
+            if signal == "logs":
+                file = roles / "logs-querier.yaml"
+                file.write_text(file.read_text() + "\nlogs-limits-overrides-config: /etc/krabka/logs-limits.yaml\n")
             if signal != "logs":
                 services[f"{signal}-compactor"] = {
                     "image": image, "command": [f"krabka-{signal}",
@@ -368,8 +380,9 @@ def run(args):
         for signal in SIGNALS:
             # Seed the hot tier before the first query can measure an empty result.
             path, body, content, _ = write_request(signal, 0, 100)
-            if not 200 <= http(INGEST[signal], path, body=body, content_type=content)[0] < 300:
-                raise RuntimeError(f"{signal} did not accept the initial corpus")
+            status, response = http(INGEST[signal], path, body=body, content_type=content)
+            if not 200 <= status < 300:
+                raise RuntimeError(f"{signal} did not accept the initial corpus: {status} {response[:200]!r}")
             deadline = time.monotonic() + 120
             while time.monotonic() < deadline:
                 path, body = query_request(signal)

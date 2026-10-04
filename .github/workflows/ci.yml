@@ -288,6 +288,7 @@ jobs:
       # the soak is a scheduled job, and a gate checked only there would be
       # checked once a day.
       - run: tools/soak-gate.py --self-test
+      - run: python3 tools/deployment-envelope.py --self-test
       # //tools/mutants-record.py checks the two Milestone 19 records under
       # //qualification. Each record must name the commit, toolchain, host
       # shape, command, duration and checksums of its run, and each number in

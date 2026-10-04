@@ -6,7 +6,7 @@ on:
       scope:
         description: Paths to measure
         type: choice
-        options: [both, storage, deployment]
+        options: [both, storage, deployment, checks]
         default: both
       record:
         description: Record measurements for baseline review
@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   storage:
-    if: inputs.scope != 'deployment'
+    if: inputs.scope == 'both' || inputs.scope == 'storage'
     concurrency:
       group: operating-envelope-storage
       cancel-in-progress: false
@@ -83,12 +83,13 @@ jobs:
             tools/soak-gate.py --structural "${evidence}/soak-report-${run}.json"
           done
           tools/soak-gate.py --envelope "${evidence}"/soak-report-*.json > "${evidence}/envelope.json"
-          tools/soak-gate.py --record "${evidence}/soak-report-1.json" > "${evidence}/soak-baseline.txt"
+          tools/soak-gate.py --record "${evidence}"/soak-report-*.json > "${evidence}/soak-baseline.txt"
       - name: Apply the numeric gate
         if: github.event_name == 'workflow_dispatch' && !inputs.record
         run: |
           for report in qualification/evidence/envelope/soak-report-*.json; do
-            tools/soak-gate.py "${report}"
+            tools/soak-gate.py --require-seeded \
+              --reference qualification/operating-envelope-reference.json "${report}"
           done
       - name: Hash artifacts
         if: always()
@@ -106,7 +107,7 @@ jobs:
             bazel-testlogs/crates/integration/soak_envelope_docker_test/test.outputs/**
           if-no-files-found: error
   deployment:
-    if: inputs.scope != 'storage'
+    if: inputs.scope == 'both' || inputs.scope == 'deployment'
     concurrency:
       group: operating-envelope-deployment
       cancel-in-progress: false
@@ -169,3 +170,18 @@ jobs:
           name: deployment-envelope-${{ github.sha }}-${{ github.run_attempt }}
           path: qualification/evidence
           if-no-files-found: error
+  checks:
+    if: inputs.scope == 'checks'
+    runs-on: gcp-ubuntu-24-04-16core
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: false
+      - run: tools/soak-gate.py --self-test
+      - run: python3 tools/deployment-envelope.py --self-test
+      - run: bazel run //tools/format -- .github/workflows/operating-envelope.yml .github/workflows/ci.yml && git diff --exit-code
+      - run: bazel test //... --remote_cache= --bes_backend=
