@@ -196,6 +196,33 @@ def set_noisy_byte_quota():
         raise RuntimeError(f"broker refused noisy tenant quota: {body.hex()}")
 
 
+def wal_topic(signal):
+    return "__krabka_observability_logs_wal" if signal == "logs" else f"__krabka_{signal}_wal"
+
+
+def broker_end_offset(signal):
+    """Read the single WAL partition's current end with Kafka ListOffsets v1.
+
+    https://github.com/apache/kafka/blob/4.0/clients/src/main/resources/common/message/ListOffsetsResponse.json
+    """
+    topic = wal_topic(signal).encode()
+    client = b"operating-envelope"
+    request = struct.pack(">hhih", 2, 1, SEED, len(client)) + client
+    request += struct.pack(">iih", -1, 1, len(topic)) + topic + struct.pack(">iiq", 1, 0, -1)
+    with socket.create_connection(("127.0.0.1", 9092), timeout=30) as connection:
+        connection.sendall(struct.pack(">i", len(request)) + request)
+        with connection.makefile("rb") as response:
+            size = struct.unpack(">i", response.read(4))[0]
+            body = response.read(size)
+    expected = struct.pack(">iih", SEED, 1, len(topic)) + topic + struct.pack(">iih", 1, 0, 0)
+    if len(body) != len(expected) + 16 or not body.startswith(expected):
+        raise RuntimeError(f"broker refused WAL end-offset lookup: {body.hex()}")
+    offset = struct.unpack(">q", body[-8:])[0]
+    if offset < 0:
+        raise RuntimeError(f"broker returned a negative WAL end offset: {offset}")
+    return offset
+
+
 class Deployment:
     def __init__(self, evidence, image):
         self.evidence = evidence.resolve()
@@ -350,15 +377,18 @@ class Deployment:
 
     def drain(self, signal, timeout=180):
         started = time.monotonic()
+        end_offset = broker_end_offset(signal)
         status = None
         while time.monotonic() - started < timeout:
             code, body = http(self.admin_ports[f"{signal}-block-builder"], "/status/recovery")
             if code == 200:
                 status = json.loads(body)
-                if durably_caught_up(status):
-                    return {"recovered": True, "seconds": time.monotonic() - started, "status": status}
+                if durably_caught_up(status, end_offset):
+                    return {"recovered": True, "seconds": time.monotonic() - started,
+                            "broker_end_offset": end_offset, "status": status}
             time.sleep(0.25)
-        return {"recovered": False, "seconds": time.monotonic() - started, "status": status}
+        return {"recovered": False, "seconds": time.monotonic() - started,
+                "broker_end_offset": end_offset, "status": status}
 
     def seed(self, signal, tenant, cardinality, age_seconds=0):
         per_request = 1 if signal == "profiles" else 10 if signal == "traces" else SERIES
@@ -430,7 +460,7 @@ class Deployment:
 
 
 def telemetry(samples, signal):
-    topic = "__krabka_observability_logs_wal" if signal == "logs" else f"__krabka_{signal}_wal"
+    topic = wal_topic(signal)
     lag = [v for sample in samples for key, v in sample["metrics"].get("broker", {}).items()
            if key.startswith("krabka_broker_consumer_group_lag_records{") and f'topic="{topic}"' in key]
     last = samples[-1]
@@ -463,12 +493,14 @@ def telemetry(samples, signal):
             "scrape_errors": sum(len(s["scrape_errors"]) for s in samples)}
 
 
-def durably_caught_up(status):
+def durably_caught_up(status, end_offset=0):
     consumers = status.get("wal_consumers", [])
     partitions = [p for c in consumers for p in c["partitions"] if p["assigned"]]
     return bool(consumers and partitions) and status["ready"] and all(c["caught_up"] for c in consumers) and all(
         p["consumed_offset"] is not None and p["committed_offset"] is not None
-        and p["committed_offset"] > p["consumed_offset"] for p in partitions)
+        and p["committed_offset"] > p["consumed_offset"]
+        and p["consumed_offset"] >= end_offset - 1
+        and p["committed_offset"] >= end_offset for p in partitions)
 
 
 def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, interval=0.25, tenant="soak", on_measurement=None):
@@ -719,6 +751,8 @@ def self_test():
     assert not durably_caught_up(status)  # Readiness alone does not prove a durable append.
     status["wal_consumers"][0]["partitions"][0]["committed_offset"] = 100
     assert durably_caught_up(status)
+    assert not durably_caught_up(status, 120)  # A previous caught-up observation cannot settle new appends.
+    assert durably_caught_up(status, 100)
     # Three independently measured rates have a median of 200; one outlier
     # must not shift the baseline. Use a model report, not the HTTP generator.
     reports = []
