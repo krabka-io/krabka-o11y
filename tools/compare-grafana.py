@@ -277,6 +277,19 @@ class ComparisonDeployment(env.Deployment):
             return
         if observed != expected:
             raise RuntimeError(f'seed value mismatch: expected {expected}, observed {observed}')
+        if signal == 'profiles':
+            # Drain guarantees publication, but the querier refreshes its
+            # index every 15s. Recheck the immutable seed after that handoff.
+            # Both backends get this untimed wait before warm-up.
+            time.sleep(20)
+            status, response = http(env.QUERY[signal], path, tenant, body)
+            (self.evidence / f'{tenant}.seed-handoff-query.json').write_bytes(response)
+            if status != 200 or not env.has_data(signal, response):
+                raise RuntimeError('seed handoff query lost visibility')
+            observed = float(json.loads(response)['flamegraph']['total'])
+            if observed != expected:
+                raise RuntimeError(f'seed value mismatch after cold handoff: expected {expected}, observed {observed}')
+
 
 
 def run(args):

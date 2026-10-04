@@ -62,6 +62,28 @@ impl WalTailProfileStore {
         &self,
         records: impl IntoIterator<Item = ProfileRecord>,
     ) -> Result<(), ProfilesError> {
+        self.append_source_records(records.into_iter().map(|record| (None, record)))
+    }
+
+    /// Append WAL records with their stable partition and offset identities.
+    ///
+    /// # Errors
+    /// Returns an error when a record is invalid or the store lock is poisoned.
+    pub fn append_positioned_records(
+        &self,
+        records: impl IntoIterator<Item = ((i32, i64), ProfileRecord)>,
+    ) -> Result<(), ProfilesError> {
+        self.append_source_records(
+            records
+                .into_iter()
+                .map(|(position, record)| (Some(position), record)),
+        )
+    }
+
+    fn append_source_records(
+        &self,
+        records: impl IntoIterator<Item = (Option<(i32, i64)>, ProfileRecord)>,
+    ) -> Result<(), ProfilesError> {
         let mut fresh = Vec::new();
         {
             let mut guard = self
@@ -69,7 +91,7 @@ impl WalTailProfileStore {
                 .write()
                 .map_err(|_| ProfilesError::Wal("hot profile store lock poisoned".to_string()))?;
             let store = Arc::make_mut(&mut guard);
-            for record in records {
+            for (position, record) in records {
                 let max_ts_ms = record
                     .samples
                     .iter()
@@ -80,7 +102,11 @@ impl WalTailProfileStore {
                 // retention bookkeeping; it contributed nothing to the store
                 // either.
                 if let Some(max_ts_ms) = max_ts_ms {
-                    fresh.push(Retained { max_ts_ms, record });
+                    fresh.push(Retained {
+                        max_ts_ms,
+                        position,
+                        record,
+                    });
                 }
             }
         }
@@ -175,6 +201,43 @@ impl ProfileStore for WalTailProfileStore {
     ) -> Result<ProfileScan, ProfileError> {
         self.snapshot()?
             .select(tenant, profile_type, matchers, start_ms, end_ms)
+            .await
+    }
+
+    async fn select_excluding_source_ranges(
+        &self,
+        tenant: &str,
+        profile_type: &str,
+        matchers: &[LabelMatcher],
+        bounds: (i64, i64),
+        ranges: &[krabka_blockstore::ProfileWalRange],
+    ) -> Result<ProfileScan, ProfileError> {
+        if ranges.is_empty() {
+            return self
+                .select(tenant, profile_type, matchers, bounds.0, bounds.1)
+                .await;
+        }
+        let mut store = InMemoryProfileStore::new();
+        {
+            let retained = self
+                .retained
+                .read()
+                .map_err(|_| ProfileError::Store("hot profile retention lock poisoned".into()))?;
+            for item in &retained.records {
+                if item.record.tenant != tenant
+                    || item.record.profile_type != profile_type
+                    || item.position.is_some_and(|(partition, offset)| {
+                        ranges.iter().any(|range| range.contains(partition, offset))
+                    })
+                {
+                    continue;
+                }
+                apply_record(&mut store, &item.record)
+                    .map_err(|error| ProfileError::Store(error.to_string()))?;
+            }
+        }
+        store
+            .select(tenant, profile_type, matchers, bounds.0, bounds.1)
             .await
     }
 

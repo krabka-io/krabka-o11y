@@ -12,6 +12,35 @@ pub trait ProfileStore: Send + Sync {
         end_ms: i64,
     ) -> Result<ProfileScan, ProfileError>;
 
+    /// Select cold samples with the source offsets represented by that snapshot.
+    async fn select_with_source_ranges(
+        &self,
+        tenant: &str,
+        profile_type: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<(ProfileScan, Vec<krabka_blockstore::ProfileWalRange>), ProfileError> {
+        Ok((
+            self.select(tenant, profile_type, matchers, start_ms, end_ms)
+                .await?,
+            Vec::new(),
+        ))
+    }
+
+    /// Select hot samples whose source records are absent from the cold snapshot.
+    async fn select_excluding_source_ranges(
+        &self,
+        tenant: &str,
+        profile_type: &str,
+        matchers: &[LabelMatcher],
+        bounds: (i64, i64),
+        _ranges: &[krabka_blockstore::ProfileWalRange],
+    ) -> Result<ProfileScan, ProfileError> {
+        self.select(tenant, profile_type, matchers, bounds.0, bounds.1)
+            .await
+    }
+
     async fn query_stats(
         &self,
         tenant: &str,

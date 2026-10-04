@@ -31,13 +31,21 @@ where
         start_ms: i64,
         end_ms: i64,
     ) -> Result<ProfileScan, ProfileError> {
+        // Coverage and cold rows come from one index snapshot. A refresh after
+        // this point cannot hide a hot row that this cold scan did not include.
+        let (cold, ranges) = self
+            .cold
+            .select_with_source_ranges(tenant, profile_type, matchers, start_ms, end_ms)
+            .await?;
         let hot = self
             .hot
-            .select(tenant, profile_type, matchers, start_ms, end_ms)
-            .await?;
-        let cold = self
-            .cold
-            .select(tenant, profile_type, matchers, start_ms, end_ms)
+            .select_excluding_source_ranges(
+                tenant,
+                profile_type,
+                matchers,
+                (start_ms, end_ms),
+                &ranges,
+            )
             .await?;
 
         let mut batches = Vec::new();
