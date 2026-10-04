@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::{
     BTreeMap, CompactionFrontier, Labels, StreamPlan, Value, WalLogRecord, json_object_to_labels,
     matching_loki_stream_entry,
@@ -9,9 +11,22 @@ pub(crate) fn count_loki_stream_result_hot_tail_lines(
     hot_tail: &[WalLogRecord],
     frontier: &CompactionFrontier,
 ) -> u64 {
+    let Some(streams) = value.pointer("/data/result").and_then(Value::as_array) else {
+        return 0;
+    };
+    // Pipeline evaluation preserves timestamps. Only hot records at returned
+    // timestamps can account for a response line, so limited queries need not
+    // evaluate and index every other matching record again for statistics.
+    let returned_timestamps = streams
+        .iter()
+        .filter_map(|stream| stream.get("values").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|entry| entry.get(0).and_then(Value::as_str)?.parse::<i64>().ok())
+        .collect::<HashSet<_>>();
     let mut hot_counts: BTreeMap<(Labels, String, String), u64> = BTreeMap::new();
     for record in hot_tail {
         if record.tenant != plan.tenant
+            || !returned_timestamps.contains(&record.timestamp_ns)
             || frontier.is_compacted(record)
             || record.timestamp_ns < plan.time_range.start_ns
             || record.timestamp_ns > plan.time_range.end_ns
@@ -34,9 +49,6 @@ pub(crate) fn count_loki_stream_result_hot_tail_lines(
             .or_insert(1);
     }
 
-    let Some(streams) = value.pointer("/data/result").and_then(Value::as_array) else {
-        return 0;
-    };
     let mut matched = 0_u64;
     for stream in streams {
         let Some(labels) = stream.get("stream").and_then(json_object_to_labels) else {
