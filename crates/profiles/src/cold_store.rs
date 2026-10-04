@@ -134,7 +134,7 @@ mod tests {
                 &store,
                 "t",
                 0,
-                &[rec.clone()],
+                std::slice::from_ref(&rec),
                 (offset, offset),
                 &krabka_blockstore::ObjectStoreMetrics::unregistered(),
             )

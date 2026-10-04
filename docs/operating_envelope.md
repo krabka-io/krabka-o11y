@@ -212,6 +212,7 @@ except that the deletion phase enables 60-second retention on tenant
 `expired`. Maintenance runs every two seconds. Block flushes have a
 two-second maximum age; the traces poll window is five seconds. Profiles and
 traces use a 30-second hot retention window, and metrics use five minutes.
+Rates apply to one active signal at a time, with the other signal roles idle.
 The resolved Compose file and all role configurations are raw artifacts.
 This shape qualifies direct querier APIs on one node; it does not qualify
 query frontends, replication, failover, or an external object-store provider.

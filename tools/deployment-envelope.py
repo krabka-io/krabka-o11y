@@ -214,7 +214,7 @@ class Deployment:
             "metrics": 'defaults:\n  ingestion_rate: "0/s"\n  out_of_order_time_window: "30s"\noverrides:\n  noisy:\n    ingestion_rate: "2000/s"\n',
             "logs": "defaults:\n  max_query_series: 0\noverrides: {}\n",
             "traces": "overrides:\n" + "".join(f"  {tenant}:\n    ingestion_rate_spans_per_sec: 0\n"
-                for tenant in ("soak", "quiet", "cold", "expired", *(f"burst-{n}" for n in WRITERS),
+                for tenant in ("soak", "quiet", "cold", *(f"burst-{n}" for n in WRITERS),
                                *(f"cardinality-{n}" for n in CARDINALITIES)))
                 + "  noisy:\n    ingestion_rate_spans_per_sec: 2000\n",
             "profiles": "defaults:\n  ingestion_rate_profiles_per_sec: 0\noverrides:\n  noisy:\n    ingestion_rate_profiles_per_sec: 20\n",
@@ -727,7 +727,8 @@ def self_test():
                                       ("cold_blocks", 0, True), ("compaction", 0, True), ("deletion", 0, True),
                                       ("noisy_tenant", 0, True), ("restart", 0, True)):
                 report["entries"].append({"signal": signal, "phase": phase, "objectives_met": met,
-                    "writers": level, "cardinality": level, "recovered": True, "recovery_seconds": 1,
+                    "writers": level, "cardinality": 100 if phase == "cold_blocks" else level,
+                    "recovered": True, "recovery_seconds": 1,
                     "duration_seconds": 60, "cold_fixture_age_seconds": 600, "deletion_verification": {"verified": True},
                     "ingest": {"attempts": 10, "durable_rows_per_sec": rate, "latency_seconds": {"p99": 0.1}},
                     "query": {"attempts": 10, "error_rate": 0, "empty_queries": 0, "latency_seconds": {"p99": 0.1}},
@@ -748,6 +749,7 @@ def self_test():
         lambda rs: rs[0]["entries"][0]["query"].update(empty_queries=1),
         lambda rs: rs[0]["entries"][6]["telemetry"].update(maintenance={}),
         lambda rs: rs[0]["entries"][7]["deletion_verification"].update(verified=False),
+        lambda rs: rs[0]["entries"][5].update(cardinality=10),
     ):
         changed = json.loads(json.dumps(reports))
         mutate(changed)
@@ -824,6 +826,9 @@ def qualification(reports, baseline=None):
                 raise ValueError(f"{signal}/{phase} did not reach measured saturation")
             limits[signal][phase] = {"level": level, "first_failing_level": min(failures), "unit": unit}
             selected.append((phase, [run[level] for run in steps]))
+        if any(next(e for e in run if e["phase"] == "cold_blocks")["cardinality"] <
+               limits[signal]["high_cardinality"]["level"] for run in entries):
+            raise ValueError(f"{signal}/cold_blocks used less than the published cardinality")
         for phase in ("steady", "cold_blocks", "compaction", "deletion", "noisy_tenant", "restart"):
             selected.append((phase, [next(e for e in run if e["phase"] == phase) for run in entries]))
         for phase, samples in selected:
