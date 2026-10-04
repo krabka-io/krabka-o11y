@@ -6,6 +6,7 @@ pub struct KrabkaSpanStore {
     pub(crate) trace_index: SharedTraceIndex,
     pub(crate) live: Option<LiveTier>,
     pub(crate) scan_concat_max: ByteSize,
+    index_snapshot: Option<(String, ByteSize)>,
 }
 
 impl KrabkaSpanStore {
@@ -30,6 +31,79 @@ impl KrabkaSpanStore {
             trace_index,
             live,
             scan_concat_max,
+            index_snapshot: None,
+        }
+    }
+
+    /// Reloads this durable index when compaction retires a cached block.
+    #[must_use]
+    pub fn with_index_snapshot(mut self, key: String, max_bytes: ByteSize) -> Self {
+        self.index_snapshot = Some((key, max_bytes));
+        self
+    }
+
+    async fn indexed_batches(
+        &self,
+        candidates: impl Fn(&TraceIndex) -> Vec<String> + Send,
+    ) -> Result<Vec<RecordBatch>, TraceqlError> {
+        let mut index = self.trace_index.load_full();
+        let mut retries = 2;
+        loop {
+            let keys = candidates(&index);
+            let (failure, missing) = match self
+                .blocks
+                .scan_block_keys(&keys, span_block_schema())
+                .await
+            {
+                Ok((ctx, table)) => {
+                    let query = ctx.table(&table).await?;
+                    match query.collect().await {
+                        Ok(batches) => return Ok(batches),
+                        Err(error) => {
+                            let missing = missing_object(&error).and_then(|path| {
+                                keys.iter()
+                                    .find(|key| path == *key || path.ends_with(&format!("/{key}")))
+                                    .cloned()
+                            });
+                            (TraceqlError::from(error), missing)
+                        }
+                    }
+                }
+                Err(error) => {
+                    let missing = error.is_block_missing().then(|| {
+                        error
+                            .unreadable_block()
+                            .expect("a missing block has its key")
+                            .0
+                            .to_string()
+                    });
+                    (block_err(&error), missing)
+                }
+            };
+            let Some((key, max_bytes)) = &self.index_snapshot else {
+                return Err(failure);
+            };
+            let Some(missing) = missing else {
+                return Err(failure);
+            };
+            if retries == 0 {
+                return Err(failure);
+            }
+            let latest = TraceIndex::load_latest_snapshot_with_max_bytes(
+                &self.blocks.object_store(),
+                key,
+                *max_bytes,
+            )
+            .await
+            .map_err(|error| block_err(&error))?;
+            // An object still named by the durable index is missing data.
+            // Only a retired candidate permits replanning the complete scan.
+            if candidates(&latest).contains(&missing) {
+                return Err(failure);
+            }
+            index = Arc::new(latest);
+            self.trace_index.store(Arc::clone(&index));
+            retries -= 1;
         }
     }
 
@@ -43,8 +117,13 @@ impl KrabkaSpanStore {
         if end_ns < start_ns {
             return Ok(Vec::new());
         }
+        let Some(job) = job else {
+            return self
+                .indexed_batches(|index| index.candidate_blocks(tenant, start_ns, end_ns))
+                .await;
+        };
         let trace_index = self.trace_index.load();
-        let (ctx, table) = if let Some(job) = job {
+        let (ctx, table) = {
             if !trace_index.trace_blocks(tenant).iter().any(|block| {
                 block.object_key == job.object_key
                     && block.min_ts <= end_ns
@@ -60,12 +139,6 @@ impl KrabkaSpanStore {
             let schema = block_span_schema(&self.blocks, &job.object_key).await?;
             self.blocks
                 .scan_block_row_groups(&job.object_key, &row_groups, schema)
-                .await
-                .map_err(|err| block_err(&err))?
-        } else {
-            let keys = trace_index.candidate_blocks(tenant, start_ns, end_ns);
-            self.blocks
-                .scan_block_keys(&keys, span_block_schema())
                 .await
                 .map_err(|err| block_err(&err))?
         };
@@ -152,14 +225,12 @@ impl KrabkaSpanStore {
         start_ns: i64,
         end_ns: i64,
     ) -> Result<Option<TraceSpans>, TraceqlError> {
-        let trace_index = self.trace_index.load();
-        let keys = trace_index.candidate_blocks_for_trace(tenant, trace_id, start_ns, end_ns);
-        let (ctx, table) = self
-            .blocks
-            .scan_block_keys(&keys, span_block_schema())
-            .await
-            .map_err(|err| block_err(&err))?;
-        let mut spans = trace_from_batches(trace_id, collect_table(&ctx, &table).await?)?;
+        let batches = self
+            .indexed_batches(|index| {
+                index.candidate_blocks_for_trace(tenant, trace_id, start_ns, end_ns)
+            })
+            .await?;
+        let mut spans = trace_from_batches(trace_id, batches)?;
 
         if let Some(live_trace) = match &self.live {
             Some(live) => live.trace_spans(tenant, trace_id).await?,
@@ -429,5 +500,16 @@ impl KrabkaSpanStore {
             .into_iter()
             .map(|(type_, value)| TypedValue { type_, value })
             .collect())
+    }
+}
+
+fn missing_object<'a>(mut error: &'a (dyn std::error::Error + 'static)) -> Option<&'a str> {
+    loop {
+        if let Some(object_store::Error::NotFound { path, .. }) =
+            error.downcast_ref::<object_store::Error>()
+        {
+            return Some(path);
+        }
+        error = error.source()?;
     }
 }

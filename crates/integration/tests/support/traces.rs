@@ -10,7 +10,8 @@ use std::{
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use krabka_blockstore::{
-    BlockLevel, BlockStore, BlockTimestampUnit, BlockWriter, CompactionPolicy, TraceIndex,
+    BlockLevel, BlockStore, BlockTimestampUnit, BlockWriter, CompactionPolicy,
+    DEFAULT_INDEX_SNAPSHOT_MAX, TraceIndex,
 };
 use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
@@ -83,7 +84,10 @@ impl TracesSignal {
         let base = url::Url::parse("memory:///").map_err(err)?;
         let blocks = Arc::new(BlockStore::new(Arc::clone(&self.stores.read), base));
         let engine = Arc::new(TraceqlEngine::new(
-            Arc::new(KrabkaSpanStore::new(blocks, shared, None)),
+            Arc::new(
+                KrabkaSpanStore::new(blocks, shared, None)
+                    .with_index_snapshot(INDEX_KEY.into(), DEFAULT_INDEX_SNAPSHOT_MAX),
+            ),
             EngineOpts::default(),
         ));
         *reader = Some((Instant::now(), Arc::clone(&engine)));

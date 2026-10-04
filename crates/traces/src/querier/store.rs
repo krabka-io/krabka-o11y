@@ -670,7 +670,9 @@ mod tests {
         EventRef, LinkRef, ScanJob, ScanOptions, TraceqlEngine,
     };
     use krabka_units::nanos;
-    use object_store::{ObjectStore, buffered::BufWriter, memory::InMemory, path::Path};
+    use object_store::{
+        ObjectStore, ObjectStoreExt, buffered::BufWriter, memory::InMemory, path::Path,
+    };
     use parquet::{arrow::AsyncArrowWriter, file::properties::WriterProperties};
     use url::Url;
 
@@ -3953,6 +3955,106 @@ mod tests {
             events: Vec::new(),
             links: Vec::new(),
         }
+    }
+
+    #[tokio::test]
+    async fn queries_replan_a_retired_block_without_hiding_missing_live_data() {
+        let objects = Arc::new(InMemory::new());
+        let backing: Arc<dyn ObjectStore> = objects.clone();
+        let first = span_with_nested_refs();
+        let mut second = first.clone();
+        second.span_id = [3; 8];
+        let old_key = "blocks/old.parquet";
+        let new_key = "blocks/replacement.parquet";
+        let snapshot = "index/traces.json";
+        let old = flushed_block_index(&objects, old_key, std::slice::from_ref(&first)).await;
+        old.save_latest_snapshot(&backing, snapshot).await.unwrap();
+        let cached = Arc::new(
+            TraceIndex::load_latest_snapshot(&backing, snapshot)
+                .await
+                .unwrap(),
+        );
+        let handle = Arc::new(ArcSwap::from(cached.clone()));
+        let blocks = Arc::new(BlockStore::new(
+            backing.clone(),
+            Url::parse("memory:///").unwrap(),
+        ));
+        let store = Arc::new(
+            KrabkaSpanStore::new(blocks, handle.clone(), None)
+                .with_index_snapshot(snapshot.into(), krabka_units::mebibytes(10)),
+        );
+
+        let engine = TraceqlEngine::new(store.clone(), EngineOpts::default());
+        let before = engine
+            .search(
+                "tenant",
+                "{ resource.service.name = \"api\" }",
+                0,
+                10_000,
+                10,
+            )
+            .await
+            .unwrap();
+        check!(before.traces.len() == 1 && before.traces[0].span_sets[0].spans.len() == 1);
+
+        // Compaction publishes both original spans in the replacement before
+        // it removes the source. The reader still holds the old generation.
+        let written = flushed_block_index(&objects, new_key, &[first.clone(), second]).await;
+        let mut replacement = TraceIndex::load_latest_snapshot(&backing, snapshot)
+            .await
+            .unwrap();
+        replacement.replace_trace_blocks(
+            "tenant",
+            &[old_key.into()],
+            written.trace_blocks("tenant")[0].clone(),
+        );
+        replacement
+            .save_latest_snapshot(&backing, snapshot)
+            .await
+            .unwrap();
+        objects.delete(&Path::from(old_key)).await.unwrap();
+        let result = engine
+            .search(
+                "tenant",
+                "{ resource.service.name = \"api\" }",
+                0,
+                10_000,
+                10,
+            )
+            .await
+            .unwrap();
+        check!(result.traces.len() == 1);
+        let mut span_ids = result.traces[0].span_sets[0]
+            .spans
+            .iter()
+            .map(|span| span.span_id)
+            .collect::<Vec<_>>();
+        span_ids.sort_unstable();
+        check!(span_ids == vec![[2; 8], [3; 8]]);
+
+        // By-id callers must also recover the complete trace, not return a
+        // successful empty response from the obsolete source block.
+        handle.store(cached);
+        let trace = store
+            .trace_by_id("tenant", &first.trace_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut span_ids = trace
+            .spans
+            .iter()
+            .map(|span| span.span_id)
+            .collect::<Vec<_>>();
+        span_ids.sort_unstable();
+        check!(span_ids == vec![[2; 8], [3; 8]]);
+
+        // Deleting a block that the latest generation still names is data
+        // loss, not retirement. The same recovery path must return an error.
+        objects.delete(&Path::from(new_key)).await.unwrap();
+        let blocks = Arc::new(BlockStore::new(backing, Url::parse("memory:///").unwrap()));
+        let broken = KrabkaSpanStore::new(blocks, handle, None)
+            .with_index_snapshot(snapshot.into(), krabka_units::mebibytes(10));
+        check!(broken.scan("tenant", &[], 0, 10_000).await.is_err());
     }
 
     #[tokio::test]

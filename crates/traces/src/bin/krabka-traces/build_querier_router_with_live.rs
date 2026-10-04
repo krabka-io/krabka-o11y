@@ -64,12 +64,15 @@ pub(crate) async fn build_querier_router_with_live(
     } else {
         None
     };
-    let store = Arc::new(KrabkaSpanStore::new_with_scan_concat_max(
-        blocks,
-        Arc::clone(&trace_index),
-        live,
-        cli.scan_concat_max,
-    ));
+    let store = Arc::new(
+        KrabkaSpanStore::new_with_scan_concat_max(
+            blocks,
+            Arc::clone(&trace_index),
+            live,
+            cli.scan_concat_max,
+        )
+        .with_index_snapshot(trace_index_key.clone(), cli.index_snapshot_max),
+    );
     let engine = Arc::new(TraceqlEngine::new(store, engine_opts_from_cli(cli)?));
     let router = trace_querier::http::router_with_config_and_metrics(
         engine,

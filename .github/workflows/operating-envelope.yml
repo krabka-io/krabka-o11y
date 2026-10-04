@@ -24,6 +24,10 @@ on:
         description: Optional immutable deployment image (empty builds this commit)
         type: string
         default: ''
+      image_artifact_run:
+        description: Reuse a deployment-image artifact from this workflow run
+        type: string
+        default: ''
       image_commit:
         description: Source commit of the optional immutable deployment image
         type: string
@@ -31,6 +35,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   storage:
@@ -120,7 +125,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
-        if: inputs.image == ''
+        if: inputs.image == '' && inputs.image_artifact_run == ''
         with:
           bazelisk-cache: true
           repository-cache: true
@@ -129,12 +134,27 @@ jobs:
         id: image
         env:
           REQUESTED_IMAGE: ${{ inputs.image }}
+          IMAGE_ARTIFACT_RUN: ${{ inputs.image_artifact_run }}
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_COMMIT: ${{ inputs.image_commit }}
         run: |
           set -euo pipefail
-          if [[ -n "${REQUESTED_IMAGE}" ]]; then
+          if [[ -n "${IMAGE_ARTIFACT_RUN}" ]]; then
+            mkdir -p qualification/image
+            image_sha=$(gh run view "${IMAGE_ARTIFACT_RUN}" --json headSha --jq .headSha)
+            gh run download "${IMAGE_ARTIFACT_RUN}" --name "deployment-image-${image_sha}" --dir qualification/image
+            cd qualification/image
+            sha256sum -c SHA256SUMS
+            docker load -i image.tar
+            [[ "$(docker inspect --format '{{.Id}}' "$(cat tag)")" == "$(cat config-digest)" ]]
+            echo "image=$(cat tag)" >> "$GITHUB_OUTPUT"
+            echo "digest=$(cat manifest-digest)" >> "$GITHUB_OUTPUT"
+            echo "commit=$(cat commit)" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${REQUESTED_IMAGE}" ]]; then
             [[ "${REQUESTED_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]]
             docker pull "${REQUESTED_IMAGE}"
             echo "image=${REQUESTED_IMAGE}" >> "$GITHUB_OUTPUT"
+            echo "commit=${REQUESTED_COMMIT}" >> "$GITHUB_OUTPUT"
           else
             bazel run -c opt --remote_cache= --bes_backend= //bazel/images/krabka:load
             manifest=$(bazel cquery -c opt //bazel/images/krabka:image_manifest_blob --output=files)
@@ -144,12 +164,27 @@ jobs:
             docker tag "${identity}" "${image}"
             echo "image=${image}" >> "$GITHUB_OUTPUT"
             echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+            echo "commit=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            mkdir -p qualification/image
+            docker save -o qualification/image/image.tar "${image}"
+            echo "${image}" > qualification/image/tag
+            echo "${digest}" > qualification/image/manifest-digest
+            echo "${GITHUB_SHA}" > qualification/image/commit
+            docker inspect --format '{{.Id}}' "${image}" > qualification/image/config-digest
+            (cd qualification/image && sha256sum image.tar tag manifest-digest commit config-digest > SHA256SUMS)
           fi
+      - name: Preserve the measured image
+        if: inputs.image == '' && inputs.image_artifact_run == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-image-${{ github.sha }}
+          path: qualification/image
+          if-no-files-found: error
       - name: Measure the broker-backed deployment
         env:
           IMAGE: ${{ steps.image.outputs.image }}
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
-          IMAGE_COMMIT: ${{ inputs.image == '' && github.sha || inputs.image_commit }}
+          IMAGE_COMMIT: ${{ steps.image.outputs.commit }}
           PHASE_SECONDS: ${{ inputs.phase_seconds }}
           REPETITIONS: ${{ inputs.repetitions }}
           KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core

@@ -65,7 +65,8 @@ impl ProfilesSignal {
             return Ok(Arc::clone(engine));
         }
         let index = Self::load(&self.stores.read).await?;
-        let cold = ColdProfileStore::new(Arc::clone(&self.stores.read), Arc::new(index));
+        let cold = ColdProfileStore::new(Arc::clone(&self.stores.read), Arc::new(index))
+            .with_index_snapshot(INDEX_KEY.to_string(), DEFAULT_INDEX_SNAPSHOT_MAX);
         let engine = Arc::new(FlameEngine::new(Arc::new(cold), EngineOpts::default()));
         *reader = Some((Instant::now(), Arc::clone(&engine)));
         Ok(engine)
@@ -75,9 +76,10 @@ impl ProfilesSignal {
         let _serial = self.compactor.lock().await;
         let store = &self.stores.maintenance;
         let mut index = Self::load(store).await?;
-        // A merge policy whose jobs never fill turns the pass into retention
-        // alone.
-        let max_blocks = if merge { 8 } else { usize::MAX };
+        // The fan-in is a cap, not a minimum: the planner also closes a
+        // partial run. A one-row target makes every existing block ineligible
+        // when this pass is retention alone.
+        let target_rows = if merge { usize::MAX } else { 1 };
         let report = run_lifecycle_pass(
             store,
             &mut index,
@@ -85,8 +87,8 @@ impl ProfilesSignal {
                 index_key: INDEX_KEY,
                 index_snapshot_retain: IndexSnapshotRetain::default(),
                 policy: CompactionPolicy::new(
-                    max_blocks,
-                    usize::MAX,
+                    8,
+                    target_rows,
                     BlockLevel(4),
                     hours(2),
                     BlockTimestampUnit::Millis,
