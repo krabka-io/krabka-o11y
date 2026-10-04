@@ -579,6 +579,7 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
 
 
 def run(args):
+    baseline = json.loads(args.baseline.read_text()) if args.baseline else None
     deployment = Deployment(args.output, args.image)
     report = {"schema_version": 1, "harness_commit": command("git", "rev-parse", "HEAD"),
               "image": args.image, "image_digest": args.image_digest or args.image.split("@")[-1],
@@ -643,7 +644,7 @@ def run(args):
                     # saturation search has deliberately exhausted resources.
                     deployment.run("down", "--volumes", "--remove-orphans", "--timeout", "5")
                     deployment.start()
-                    cardinality = last_cardinality
+                    cardinality = baseline["limits"][signal]["high_cardinality"]["level"] if baseline else last_cardinality
                     deployment.seed(signal, "cold", cardinality, age_seconds=600)
                 if phase == "deletion":
                     deployment.seed(signal, "expired", 100, age_seconds=600)
@@ -792,6 +793,9 @@ def self_test():
         lambda rs: rs[0]["entries"][6]["telemetry"].update(maintenance={}),
         lambda rs: rs[0]["entries"][7]["deletion_verification"].update(verified=False),
         lambda rs: rs[0]["entries"][5].update(cardinality=10),
+        lambda rs: rs[0]["entries"][0]["telemetry"].update(object_bytes=1000),
+        lambda rs: [r["entries"][5].update(cardinality=10) for r in rs],
+        lambda rs: [r.update(image_digest="latest") for r in rs],
     ):
         changed = json.loads(json.dumps(reports))
         mutate(changed)
@@ -816,6 +820,8 @@ def qualification(reports, baseline=None):
     reference = {key: first[key] for key in REFERENCE_FIELDS}
     if first["phase_seconds"] < 60:
         raise ValueError("qualification needs at least 60 measured seconds per phase")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", first["image_digest"] or ""):
+        raise ValueError("qualification requires an immutable image digest")
     for report in reports:
         for key in (*REFERENCE_FIELDS, "image_commit", "image_digest", "harness_commit"):
             if report[key] != first[key]:
@@ -827,6 +833,9 @@ def qualification(reports, baseline=None):
     limits, metrics = {}, {}
     for signal in SIGNALS:
         entries = [[e for e in report["entries"] if e["signal"] == signal] for report in reports]
+        cold_sizes = {e["cardinality"] for run in entries for e in run if e["phase"] == "cold_blocks"}
+        if len(cold_sizes) != 1:
+            raise ValueError(f"{signal}/cold_blocks used different corpora across runs")
         for run in entries:
             for phase in ("steady", "cold_blocks", "compaction", "deletion", "noisy_tenant", "restart"):
                 found = [e for e in run if e["phase"] == phase]
@@ -868,9 +877,8 @@ def qualification(reports, baseline=None):
                 raise ValueError(f"{signal}/{phase} did not reach measured saturation")
             limits[signal][phase] = {"level": level, "first_failing_level": min(failures), "unit": unit}
             selected.append((phase, [run[level] for run in steps]))
-        if any(next(e for e in run if e["phase"] == "cold_blocks")["cardinality"] <
-               limits[signal]["high_cardinality"]["level"] for run in entries):
-            raise ValueError(f"{signal}/cold_blocks used less than the published cardinality")
+        if cold_sizes != {limits[signal]["high_cardinality"]["level"]}:
+            raise ValueError(f"{signal}/cold_blocks differs from the published cardinality")
         for phase in ("steady", "cold_blocks", "compaction", "deletion", "noisy_tenant", "restart"):
             selected.append((phase, [next(e for e in run if e["phase"] == phase) for run in entries]))
         for phase, samples in selected:
@@ -881,6 +889,8 @@ def qualification(reports, baseline=None):
                 values["query_p99_seconds"] = ("higher", [e["query"]["latency_seconds"]["p99"] for e in samples])
                 values["peak_rss_kib"] = ("higher", [sum(e["telemetry"]["rss_kib_peak_by_role"].values()) for e in samples])
                 values["object_requests_per_operation"] = ("higher", [e["telemetry"]["object_requests"] /
+                    (e["ingest"]["attempts"] + e["query"]["attempts"]) for e in samples])
+                values["object_bytes_per_operation"] = ("higher", [e["telemetry"]["object_bytes"] /
                     (e["ingest"]["attempts"] + e["query"]["attempts"]) for e in samples])
                 if phase != "cold_blocks":
                     values["durable_rows_per_sec"] = ("lower", [e["ingest"]["durable_rows_per_sec"] for e in samples])

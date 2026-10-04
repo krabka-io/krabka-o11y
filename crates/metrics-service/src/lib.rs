@@ -425,11 +425,17 @@ mod tests {
         }
     }
 
+    struct ManifestRetirement {
+        key: Path,
+        replacement: Option<(Path, PutPayload)>,
+    }
+
     struct CountingObjectStore {
         inner: Arc<InMemory>,
         list_calls: Arc<AtomicUsize>,
         get_calls: Arc<AtomicUsize>,
         list_delay: Time,
+        retire_on_get: std::sync::Mutex<Option<ManifestRetirement>>,
     }
 
     impl CountingObjectStore {
@@ -439,6 +445,7 @@ mod tests {
                 list_calls,
                 get_calls: Arc::new(AtomicUsize::new(0)),
                 list_delay,
+                retire_on_get: std::sync::Mutex::new(None),
             }
         }
     }
@@ -479,6 +486,28 @@ mod tests {
             location: &Path,
             options: GetOptions,
         ) -> object_store::Result<GetResult> {
+            let retirement = {
+                let mut action = self.retire_on_get.lock().unwrap();
+                if action
+                    .as_ref()
+                    .is_some_and(|action| action.key == *location)
+                {
+                    action.take()
+                } else {
+                    None
+                }
+            };
+            if let Some(ManifestRetirement { key, replacement }) = retirement {
+                if let Some((replacement_key, payload)) = replacement {
+                    self.inner.put(&replacement_key, payload).await?;
+                    self.inner.delete(&key).await?;
+                } else {
+                    return Err(object_store::Error::NotFound {
+                        path: key.to_string(),
+                        source: std::io::Error::from(std::io::ErrorKind::NotFound).into(),
+                    });
+                }
+            }
             if std::path::Path::new(location.as_ref())
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("index"))
@@ -2025,6 +2054,99 @@ rules:
         let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
         assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
+    }
+
+    #[tokio::test]
+    async fn a_query_relists_retired_sidecars_but_preserves_current_manifest_errors() {
+        let counting = Arc::new(CountingObjectStore::new(Arc::default(), millis(0)));
+        let store: Arc<dyn ObjectStore> = counting.clone();
+        let base = Url::parse("memory:///").unwrap();
+        let blocks = krabka_blockstore::BlockStore::new(store.clone(), base.clone());
+        let mut labels = krabka_blockstore::Labels::new();
+        labels.insert("__name__", "up");
+        labels.insert("job", "api");
+        let fp = labels.fingerprint();
+        let mut manifests = Vec::new();
+        for (name, samples) in [
+            ("old", vec![(10_000, 1.0)]),
+            ("replacement", vec![(10_000, 1.0), (11_000, 7.0)]),
+        ] {
+            let rows = samples
+                .iter()
+                .map(|&(ts, value)| (fp, ts, value, None))
+                .collect::<Vec<_>>();
+            let batch = krabka_metrics::encode_float_samples(&rows).unwrap();
+            let meta = blocks
+                .writer()
+                .write_block(
+                    "tenant-a",
+                    &format!("metrics/{name}.parquet"),
+                    krabka_metrics::float_sample_schema(),
+                    &[batch],
+                )
+                .await
+                .unwrap();
+            let plan = krabka_metrics::CompactionObjectPlan {
+                block_key: meta.object_key.clone(),
+                index_key: format!("metrics/{name}.index"),
+                first_offset: 0,
+                last_offset: samples.len() as i64 - 1,
+                row_count: meta.row_count,
+            };
+            manifests.push(krabka_metrics::CompactionIndexManifest::from_block_meta(
+                krabka_metrics::MetricBlockKind::Float,
+                &plan,
+                &meta,
+                vec![krabka_metrics::CompactionSeriesLabels {
+                    fingerprint: fp,
+                    labels: labels.clone(),
+                }],
+            ));
+        }
+        let old_key = Path::from(manifests[0].index_key.clone());
+        let replacement_key = Path::from(manifests[1].index_key.clone());
+        store
+            .put(&old_key, PutPayload::from(manifests[0].encode().unwrap()))
+            .await
+            .unwrap();
+        // Publish a replacement containing both samples between list and get,
+        // then physically retire the listed sidecar.
+        *counting.retire_on_get.lock().unwrap() = Some(ManifestRetirement {
+            key: old_key,
+            replacement: Some((
+                replacement_key.clone(),
+                PutPayload::from(manifests[1].encode().unwrap()),
+            )),
+        });
+        let query = || {
+            Request::builder()
+                .uri("/api/v1/query?query=sum_over_time(up%5B5s%5D)&time=11")
+                .header("x-scope-orgid", "tenant-a")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let router = authenticated(super::refreshing_blockstore_prometheus_router(
+            store.clone(),
+            base.clone(),
+            "metrics",
+        ));
+        let response = router.oneshot(query()).await.unwrap();
+        assert2::assert!(response.status().is_success());
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert2::assert!(body["data"]["result"].as_array().unwrap().len() == 1);
+        assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("8"));
+        // A GET failure while the same sidecar remains in the live listing is
+        // an integrity error, even though a second GET could succeed.
+        *counting.retire_on_get.lock().unwrap() = Some(ManifestRetirement {
+            key: replacement_key,
+            replacement: None,
+        });
+        let router = authenticated(super::refreshing_blockstore_prometheus_router(
+            store, base, "metrics",
+        ));
+        let response = router.oneshot(query()).await.unwrap();
+        assert2::assert!(response.status() == axum::http::StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[tokio::test]

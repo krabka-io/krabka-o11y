@@ -6,7 +6,7 @@ on:
       scope:
         description: Paths to measure
         type: choice
-        options: [both, storage, deployment, checks]
+        options: [both, storage, deployment, image, checks]
         default: deployment
       record:
         description: Record measurements for baseline review
@@ -119,14 +119,27 @@ jobs:
             bazel-testlogs/crates/integration/soak_envelope_docker_test/test.outputs/**
           if-no-files-found: error
   deployment:
-    if: inputs.scope == 'both' || inputs.scope == 'deployment'
+    if: inputs.scope == 'both' || inputs.scope == 'deployment' || inputs.scope == 'image'
     concurrency:
-      group: operating-envelope-deployment
+      group: operating-envelope-${{ inputs.scope == 'image' && 'image' || 'deployment' }}
       cancel-in-progress: false
     runs-on: gcp-ubuntu-24-04-16core
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v7
+      - name: Validate qualification inputs
+        if: inputs.scope != 'image'
+        env:
+          PHASE_SECONDS: ${{ inputs.phase_seconds }}
+          REPETITIONS: ${{ inputs.repetitions }}
+          RECORD_BASELINE: ${{ inputs.record }}
+        run: |
+          set -euo pipefail
+          [[ "${PHASE_SECONDS}" =~ ^[1-9][0-9]*$ && "${REPETITIONS}" =~ ^[1-9][0-9]*$ ]]
+          if [[ "${RECORD_BASELINE}" != true ]]; then
+            [[ "${PHASE_SECONDS}" -ge 60 && "${REPETITIONS}" -ge 3 ]]
+            test -s qualification/deployment-envelope-baseline.json
+          fi
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         if: inputs.image == '' && inputs.image_artifact_run == ''
         with:
@@ -189,6 +202,7 @@ jobs:
           path: qualification/image
           if-no-files-found: error
       - name: Measure the broker-backed deployment
+        if: inputs.scope != 'image'
         env:
           IMAGE: ${{ steps.image.outputs.image }}
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
@@ -196,6 +210,7 @@ jobs:
           PHASE_SECONDS: ${{ inputs.phase_seconds }}
           REPETITIONS: ${{ inputs.repetitions }}
           KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
+          RECORD_BASELINE: ${{ inputs.record }}
         run: |
           set -euo pipefail
           python3 tools/deployment-envelope.py --self-test
@@ -207,9 +222,13 @@ jobs:
           done > qualification/evidence/gce.txt
           digest=()
           if [[ -n "${IMAGE_DIGEST}" ]]; then digest=(--image-digest "${IMAGE_DIGEST}"); fi
+          reference=()
+          if [[ "${RECORD_BASELINE}" != true ]]; then
+            reference=(--baseline qualification/deployment-envelope-baseline.json)
+          fi
           for run in $(seq 1 "${REPETITIONS}"); do
             python3 tools/deployment-envelope.py --image "${IMAGE}" \
-              "${digest[@]}" --image-commit "${IMAGE_COMMIT}" --seconds "${PHASE_SECONDS}" \
+              "${digest[@]}" "${reference[@]}" --image-commit "${IMAGE_COMMIT}" --seconds "${PHASE_SECONDS}" \
               --output "qualification/evidence/deployment-${run}"
           done
           if [[ "${PHASE_SECONDS}" -ge 60 && "${REPETITIONS}" -ge 3 ]]; then
@@ -217,18 +236,18 @@ jobs:
               --record qualification/evidence/deployment-baseline.json
           fi
       - name: Apply the deployment regression gate
-        if: '!inputs.record'
+        if: inputs.scope != 'image' && !inputs.record
         run: |
           python3 tools/deployment-envelope.py --reports qualification/evidence/deployment-*/deployment-report.json \
             --baseline qualification/deployment-envelope-baseline.json
       - name: Hash artifacts
-        if: always()
+        if: always() && inputs.scope != 'image'
         run: |
           mkdir -p qualification/evidence
           cd qualification/evidence
           find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS
       - name: Upload raw deployment evidence
-        if: always()
+        if: always() && inputs.scope != 'image'
         uses: actions/upload-artifact@v4
         with:
           name: deployment-envelope-${{ github.sha }}-${{ github.run_attempt }}
