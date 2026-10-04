@@ -18,15 +18,15 @@ use crate::{
     metrics::ServiceMetrics,
     querier::live::{LiveSource, Result as LiveResult},
     span::{
-        AttrValue, EventRecord, KeyValue, LinkRecord, Span,
-        batch::{span_batch, span_batch_for_window},
-        nested_set,
+        AttrValue, EventRecord, KeyValue, LinkRecord, Span, batch::span_rows_for_window, nested_set,
     },
     wal::SpanRecord,
 };
 
 #[cfg(test)]
 mod tests {
+    mod span_batch_packing;
+
     use assert2::check;
     use krabka_traceql::TagScope;
 

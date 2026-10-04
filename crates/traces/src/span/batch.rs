@@ -308,6 +308,7 @@ mod span_batch_for_window;
 mod span_batch_with_promoted_attrs;
 mod span_events;
 mod span_links;
+mod span_rows_for_window;
 
 use block_attr_value::block_attr_value;
 use block_kind::block_kind;
@@ -327,3 +328,4 @@ pub use span_batch_for_window::span_batch_for_window;
 pub use span_batch_with_promoted_attrs::span_batch_with_promoted_attrs;
 use span_events::span_events;
 use span_links::span_links;
+pub(crate) use span_rows_for_window::span_rows_for_window;
