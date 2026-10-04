@@ -246,6 +246,22 @@ class ComparisonDeployment(env.Deployment):
             if not recovery['recovered']:
                 raise RuntimeError('seed WAL did not drain')
         self.wait_query(signal, tenant, True)
+        path, body = query_request(signal, 1800)
+        status, response = http(env.QUERY[signal], path, tenant, body)
+        (self.evidence / f'{tenant}.seed-query.json').write_bytes(response)
+        if status != 200 or not env.has_data(signal, response):
+            raise RuntimeError('seed query lost visibility')
+        data = json.loads(response)
+        if signal == 'metrics':
+            observed = float(data['data']['result'][0]['value'][1])
+            expected = sum((env.SEED + label) % 97 for label in range(cardinality))
+        elif signal == 'profiles':
+            observed = float(data['flamegraph']['total'])
+            expected = len(records) * env.POINTS
+        else:
+            return
+        if observed != expected:
+            raise RuntimeError(f'seed value mismatch: expected {expected}, observed {observed}')
 
 
 def run(args):
