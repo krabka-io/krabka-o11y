@@ -385,12 +385,13 @@ class Deployment:
             samples["scrape_errors"].append("minio/rss")
         return samples
 
-    def drain(self, signal, timeout=180):
+    def drain(self, signal, timeout=180, admin_port=None):
         started = time.monotonic()
         end_offset = broker_end_offset(signal)
         status = None
+        port = admin_port if admin_port is not None else self.admin_ports[f"{signal}-block-builder"]
         while time.monotonic() - started < timeout:
-            code, body = http(self.admin_ports[f"{signal}-block-builder"], "/status/recovery")
+            code, body = http(port, "/status/recovery")
             if code == 200:
                 status = json.loads(body)
                 if durably_caught_up(status, end_offset):

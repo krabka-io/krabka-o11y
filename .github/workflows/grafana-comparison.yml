@@ -32,6 +32,11 @@ on:
         type: choice
         options: [all, metrics, logs, traces, profiles]
         default: all
+      profiles_target:
+        description: Profiles role containers or the existing all target (same budget)
+        type: choice
+        options: [split, all]
+        default: split
 permissions:
   contents: read
   actions: read
@@ -101,6 +106,7 @@ jobs:
           MAX_CARDINALITY: ${{ inputs.max_cardinality }}
           SIGNAL: ${{ matrix.signal }}
           PHASES: ${{ inputs.phases }}
+          PROFILES_TARGET: ${{ inputs.profiles_target }}
           KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
         run: |
           set -euo pipefail
@@ -120,6 +126,7 @@ jobs:
             --image "$(cat qualification/image/tag)" \
             --image-digest "$(cat qualification/image/manifest-digest)" \
             --image-commit "$(cat qualification/image/commit)" \
+            --profiles-target "${PROFILES_TARGET}" \
             --seconds "${PHASE_SECONDS}" --repetitions "${REPETITIONS}" \
             --max-writers "${MAX_WRITERS}" --max-cardinality "${MAX_CARDINALITY}"
       - name: Hash evidence
