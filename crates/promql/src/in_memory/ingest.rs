@@ -21,6 +21,26 @@ impl InMemoryMetricStore {
         self.exemplars.remove(tenant);
         self.metadata.remove(tenant);
         self.blocks.remove(tenant);
+        self.series_labels.remove(tenant);
+    }
+
+    fn intern_series_labels(
+        &mut self,
+        tenant: &str,
+        labels: Arc<Labels>,
+    ) -> (SeriesFingerprint, Arc<Labels>) {
+        let fp = labels.fingerprint();
+        let cache = self.series_labels.entry(tenant.to_string()).or_default();
+        let candidates = Arc::make_mut(cache).entry(fp).or_default();
+        candidates.retain(|candidate| candidate.strong_count() > 0);
+        for candidate in candidates.iter().filter_map(std::sync::Weak::upgrade) {
+            // Equality matters even when two label sets have the same hash.
+            if candidate.as_ref() == labels.as_ref() {
+                return (fp, candidate);
+            }
+        }
+        candidates.push(Arc::downgrade(&labels));
+        (fp, labels)
     }
 
     /// Appends a float sample.
@@ -48,8 +68,7 @@ impl InMemoryMetricStore {
         value: f64,
         start_timestamp_ms: Option<i64>,
     ) {
-        let labels = labels.into();
-        let fp = labels.fingerprint();
+        let (fp, labels) = self.intern_series_labels(tenant, labels.into());
         self.floats
             .entry(tenant.to_string())
             .or_default()
@@ -71,8 +90,7 @@ impl InMemoryMetricStore {
         ts_ms: i64,
         hist: impl Into<Arc<NativeHistogram>>,
     ) {
-        let labels = labels.into();
-        let fp = labels.fingerprint();
+        let (fp, labels) = self.intern_series_labels(tenant, labels.into());
         self.hists
             .entry(tenant.to_string())
             .or_default()
@@ -94,11 +112,12 @@ impl InMemoryMetricStore {
         ts_ms: i64,
         value: f64,
     ) {
+        let (_, series_labels) = self.intern_series_labels(tenant, series_labels.into());
         self.exemplars
             .entry(tenant.to_string())
             .or_default()
             .push(ExemplarRow {
-                series_labels: series_labels.into(),
+                series_labels,
                 labels: labels.into(),
                 ts_ms,
                 value,
@@ -293,6 +312,20 @@ impl InMemoryMetricStore {
         self.floats.retain(|_, rows| !rows.is_empty());
         self.hists.retain(|_, rows| !rows.is_empty());
         self.exemplars.retain(|_, rows| !rows.is_empty());
+
+        self.series_labels.retain(|tenant, cache| {
+            if !self.floats.contains_key(tenant)
+                && !self.hists.contains_key(tenant)
+                && !self.exemplars.contains_key(tenant)
+            {
+                return false;
+            }
+            Arc::make_mut(cache).retain(|_, candidates| {
+                candidates.retain(|candidate| candidate.strong_count() > 0);
+                !candidates.is_empty()
+            });
+            !cache.is_empty()
+        });
 
         stats.series_dropped = seen.difference(&live).count();
         stats

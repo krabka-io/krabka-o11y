@@ -27,6 +27,7 @@ mod expected_label_value_cardinality;
 mod expected_label_value_count_stats;
 mod expected_metric_name_stats;
 mod float_record;
+mod interned_series_labels;
 mod label_values_returns_distinct_for_name;
 mod lbls;
 mod native_histogram;

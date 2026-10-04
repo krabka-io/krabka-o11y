@@ -1,8 +1,12 @@
+use std::sync::{Arc, Weak};
+
 use super::{
     BTreeMap, DEFAULT_RETENTION, ExemplarRow, FloatRow, HashMap, HistRow, LabelMatcher, Labels,
     MetadataRecord, PartitionIndex, PartitionWatermark, Result, RowChunks, SeriesFingerprint, Time,
     TsdbBlock, prepare_matchers, row_matches,
 };
+
+type SeriesLabelCache = HashMap<SeriesFingerprint, Vec<Weak<Labels>>>;
 
 /// In-memory metric store keyed by tenant.
 ///
@@ -16,6 +20,9 @@ pub struct InMemoryMetricStore {
     pub(crate) hists: HashMap<String, RowChunks<HistRow>>,
     pub(crate) exemplars: HashMap<String, RowChunks<ExemplarRow>>,
     pub(crate) metadata: HashMap<String, RowChunks<MetadataRecord>>,
+    /// Share a series' immutable labels across WAL records, not just within
+    /// one record. Weak entries let rows and snapshots determine their lifetime.
+    pub(crate) series_labels: HashMap<String, Arc<SeriesLabelCache>>,
     /// Not WAL-written: blocks arrive from the compaction manifest, are few per
     /// tenant, and do not grow with ingest, so a plain vector is enough.
     pub(crate) blocks: HashMap<String, Vec<TsdbBlock>>,
@@ -35,6 +42,7 @@ impl Default for InMemoryMetricStore {
             hists: HashMap::new(),
             exemplars: HashMap::new(),
             metadata: HashMap::new(),
+            series_labels: HashMap::new(),
             blocks: HashMap::new(),
             retention: DEFAULT_RETENTION,
             watermarks: BTreeMap::new(),
