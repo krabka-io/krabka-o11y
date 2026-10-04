@@ -80,7 +80,9 @@ impl InMemoryMetricStore {
         let mut by_fp: BTreeMap<SeriesFingerprint, Labels> = BTreeMap::new();
         if let Some(rows) = self.floats.get(tenant) {
             for row in rows.iter() {
-                if row_matches(row.fp, &row.labels, row.ts_ms, &matchers, start_ms, end_ms) {
+                if !by_fp.contains_key(&row.fp)
+                    && row_matches(row.fp, &row.labels, row.ts_ms, &matchers, start_ms, end_ms)
+                {
                     by_fp
                         .entry(row.fp)
                         .or_insert_with(|| row.labels.as_ref().clone());
@@ -89,7 +91,9 @@ impl InMemoryMetricStore {
         }
         if let Some(rows) = self.hists.get(tenant) {
             for row in rows.iter() {
-                if row_matches(row.fp, &row.labels, row.ts_ms, &matchers, start_ms, end_ms) {
+                if !by_fp.contains_key(&row.fp)
+                    && row_matches(row.fp, &row.labels, row.ts_ms, &matchers, start_ms, end_ms)
+                {
                     by_fp
                         .entry(row.fp)
                         .or_insert_with(|| row.labels.as_ref().clone());

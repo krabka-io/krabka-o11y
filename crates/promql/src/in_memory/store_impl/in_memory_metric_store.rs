@@ -26,7 +26,8 @@ impl MetricStore for InMemoryMetricStore {
                 }
             }
         }
-        float_rows.sort_by_key(|(fp, ts, _, _)| (*fp, *ts));
+        // A scan has no row-order contract. The engine's FloatWindow orders
+        // the merged rows once; sorting each hot scan here repeats that work.
         let float_table = if float_rows.is_empty() {
             None
         } else {
