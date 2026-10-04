@@ -14,7 +14,8 @@ pub(crate) const MIMIR_TENANT_DELETION_PREFIX: &str = "mimir-tenant-deletions";
 
 pub struct RefreshingMetricBlockStore {
     pub(crate) store: Arc<dyn ObjectStore>,
-    pub(crate) base: Url,
+    // Index snapshots change with the window; block caches belong to the service.
+    pub(crate) blocks: BlockStore,
     pub(crate) manifest_prefix: String,
     pub(crate) hot_store: WalHead,
     pub(crate) manifest_cache: Arc<tokio::sync::RwLock<BTreeMap<String, CompactionIndexManifest>>>,
@@ -33,8 +34,8 @@ impl RefreshingMetricBlockStore {
         hot_store: WalHead,
     ) -> Self {
         Self {
+            blocks: BlockStore::new(Arc::clone(&store), base),
             store,
-            base,
             manifest_prefix: manifest_prefix.into(),
             hot_store,
             manifest_cache: Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
@@ -74,10 +75,10 @@ impl RefreshingMetricBlockStore {
         ));
         match self.store.head(&marker).await {
             Ok(_) => {
-                let float = BlockStore::new(self.store.clone(), self.base.clone());
+                let float = self.blocks.empty_like();
                 let cold = MetricBlockStore::from_compaction_manifests(
                     float,
-                    Some(BlockStore::new(self.store.clone(), self.base.clone())),
+                    Some(self.blocks.empty_like()),
                     &[],
                 );
                 Ok(MergedMetricStore::new(cold, WalHead::new()))
@@ -140,8 +141,8 @@ impl RefreshingMetricBlockStore {
         )
         .await?;
         let cold = MetricBlockStore::from_compaction_manifests(
-            BlockStore::new(self.store.clone(), self.base.clone()),
-            Some(BlockStore::new(self.store.clone(), self.base.clone())),
+            self.blocks.empty_like(),
+            Some(self.blocks.empty_like()),
             &manifests,
         );
         let merged = MergedMetricStore::new(cold.clone(), self.hot_store.clone());
