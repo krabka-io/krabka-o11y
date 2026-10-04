@@ -1,0 +1,97 @@
+name: operating envelope
+
+on:
+  push:
+    branches: [codex/issue-267-gcp-envelope]
+    paths: [.github/workflows/operating-envelope.yml]
+  workflow_dispatch:
+    inputs:
+      record:
+        description: Record measurements for baseline review
+        type: boolean
+        default: false
+      phase_seconds:
+        description: Measured seconds per phase (60 for qualification)
+        type: number
+        default: 60
+
+permissions:
+  contents: read
+
+concurrency:
+  group: operating-envelope
+  cancel-in-progress: false
+
+jobs:
+  storage:
+    runs-on: gcp-ubuntu-24.04-16core
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: false
+      - name: Record runner identity
+        run: |
+          set -euo pipefail
+          mkdir -p qualification/evidence/envelope
+          for field in instance/machine-type instance/zone instance/image; do
+            curl -fsS -H 'Metadata-Flavor: Google' \
+              "http://metadata.google.internal/computeMetadata/v1/${field}"
+            echo
+          done > qualification/evidence/envelope/gce.txt
+          lscpu > qualification/evidence/envelope/lscpu.txt
+          uname -a > qualification/evidence/envelope/kernel.txt
+          docker info > qualification/evidence/envelope/docker.txt
+      - name: Measure three independent runs
+        env:
+          KRABKA_SOAK_PHASE_SECONDS: ${{ inputs.phase_seconds || 60 }}
+          KRABKA_SOAK_RUNNER: gcp-ubuntu-24.04-16core
+        run: |
+          set -euo pipefail
+          evidence=qualification/evidence/envelope
+          target=//crates/integration:soak_envelope_docker_test
+          bazel build -c opt --remote_cache= --bes_backend= "${target}"
+          for run in 1 2 3; do
+            bazel test -c opt --config=scale --remote_cache= --bes_backend= \
+              --cache_test_results=no --flaky_test_attempts=1 --test_timeout=7200 \
+              --test_env=KRABKA_SOAK_COMMIT="${GITHUB_SHA}" \
+              --test_env=KRABKA_SOAK_RUNNER \
+              --test_env=KRABKA_SOAK_PHASE_SECONDS \
+              --test_env=KRABKA_SOAK_RUN_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${run}" \
+              --test_env=KRABKA_SOAK_RUSTC='rustc 1.98.1 (MODULE.bazel)' \
+              --test_env=KRABKA_SOAK_COMMAND='bazel test -c opt --config=scale --cache_test_results=no --flaky_test_attempts=1 --test_timeout=7200 //crates/integration:soak_envelope_docker_test' \
+              "${target}" 2>&1 | tee "${evidence}/run-${run}.log"
+            outputs=bazel-testlogs/crates/integration/soak_envelope_docker_test/test.outputs
+            if [[ -f "${outputs}/soak-report.json" ]]; then
+              cp "${outputs}/soak-report.json" "${evidence}/soak-report-${run}.json"
+            else
+              unzip -p "${outputs}/outputs.zip" soak-report.json > "${evidence}/soak-report-${run}.json"
+            fi
+            tools/soak-gate.py --structural "${evidence}/soak-report-${run}.json"
+          done
+          tools/soak-gate.py --envelope "${evidence}"/soak-report-*.json > "${evidence}/envelope.json"
+          tools/soak-gate.py --record "${evidence}/soak-report-1.json" > "${evidence}/soak-baseline.txt"
+      - name: Apply the numeric gate
+        if: github.event_name == 'workflow_dispatch' && !inputs.record
+        run: |
+          for report in qualification/evidence/envelope/soak-report-*.json; do
+            tools/soak-gate.py "${report}"
+          done
+      - name: Hash artifacts
+        if: always()
+        run: |
+          cd qualification/evidence/envelope
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS
+      - name: Upload raw evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operating-envelope-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            qualification/evidence/envelope
+            bazel-testlogs/crates/integration/soak_envelope_docker_test/test.log
+            bazel-testlogs/crates/integration/soak_envelope_docker_test/test.outputs/**
+          if-no-files-found: error
