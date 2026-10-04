@@ -2,9 +2,11 @@ use super::{
     BTreeMap, BTreeSet, EVENT_TAGS, INTRINSIC_TAGS, LINK_TAGS, LiveResult, LiveSource, MemTable,
     RecordBatch, Span, SpanRecord, TracesError, UnixNano, collect_event_values,
     collect_link_values, collect_span_intrinsic_value, collect_trace_intrinsic_values,
-    in_time_range, order_spans, scoped_attribute_tag, span_batch, span_batch_for_window,
-    trace_spans, typed_value_parts,
+    in_time_range, order_spans, scoped_attribute_tag, span_rows_for_window, trace_spans,
+    typed_value_parts,
 };
+
+const SPAN_BATCH_ROWS: usize = 8_192;
 
 /// In-memory recent span store keyed by tenant and trace id.
 #[derive(Debug)]
@@ -58,15 +60,50 @@ impl LiveStore {
     /// Returns an error when the query is malformed, an expression has incompatible operand types, or the backing span store fails.
     pub fn mem_table(&self, tenant: &str) -> Result<MemTable, TracesError> {
         let schema = krabka_blockstore::span_block_schema();
+        let batches = self.batches_in_window(tenant, i64::MIN, i64::MAX)?;
+        MemTable::try_new(schema, vec![batches]).map_err(|err| TracesError::Block(err.to_string()))
+    }
+
+    fn batches_in_window(
+        &self,
+        tenant: &str,
+        start_ns: i64,
+        end_ns: i64,
+    ) -> Result<Vec<RecordBatch>, TracesError> {
         let mut batches = Vec::new();
+        let mut rows = Vec::new();
         if let Some(traces) = self.by_tenant.get(tenant) {
             for spans in traces.values() {
-                let mut ordered = spans.clone();
-                order_spans(&mut ordered);
-                batches.push(span_batch(&ordered)?);
+                let mut in_range = spans
+                    .iter()
+                    .filter(|span| in_time_range(span, UnixNano(start_ns), UnixNano(end_ns)))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if in_range.is_empty() {
+                    continue;
+                }
+                order_spans(&mut in_range);
+                // Nested sets describe this trace's selected rows; root columns
+                // describe its complete span set, even when the window clips it.
+                for row in span_rows_for_window(&in_range, spans) {
+                    rows.push(row);
+                    if rows.len() == SPAN_BATCH_ROWS {
+                        batches.push(
+                            krabka_blockstore::encode_span_rows(&rows)
+                                .map_err(|err| TracesError::Block(err.to_string()))?,
+                        );
+                        rows.clear();
+                    }
+                }
             }
         }
-        MemTable::try_new(schema, vec![batches]).map_err(|err| TracesError::Block(err.to_string()))
+        if !rows.is_empty() {
+            batches.push(
+                krabka_blockstore::encode_span_rows(&rows)
+                    .map_err(|err| TracesError::Block(err.to_string()))?,
+            );
+        }
+        Ok(batches)
     }
 
     pub(crate) fn evict_old(&mut self) {
@@ -92,28 +129,8 @@ impl LiveSource for LiveStore {
         start_ns: i64,
         end_ns: i64,
     ) -> LiveResult<Vec<RecordBatch>> {
-        let mut batches = Vec::new();
-        if let Some(traces) = self.by_tenant.get(tenant) {
-            for spans in traces.values() {
-                let mut in_range = spans
-                    .iter()
-                    .filter(|span| in_time_range(span, UnixNano(start_ns), UnixNano(end_ns)))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if !in_range.is_empty() {
-                    order_spans(&mut in_range);
-                    // Rows come from the in-window subset, but trace-level
-                    // columns (root service/name, start, duration) must reflect
-                    // the FULL trace so a window that clips the trace does not
-                    // skew them. `spans` is the complete per-trace span set.
-                    batches.push(
-                        span_batch_for_window(&in_range, spans, &[])
-                            .map_err(|err| krabka_traceql::TraceqlError::Store(err.to_string()))?,
-                    );
-                }
-            }
-        }
-        Ok(batches)
+        self.batches_in_window(tenant, start_ns, end_ns)
+            .map_err(|err| krabka_traceql::TraceqlError::Store(err.to_string()))
     }
 
     async fn trace_spans(
