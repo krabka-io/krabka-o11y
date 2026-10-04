@@ -101,6 +101,18 @@ fn check_report(report: &Value) {
             "{signal} steady errored: {}",
             steady["error_samples"]
         );
+        for phase in ["compaction", "deletion"] {
+            let maintenance = &entry(signal, phase)["maintenance"];
+            check!(
+                maintenance["passes"].as_u64().unwrap_or(0) > 0,
+                "{signal} {phase} did no maintenance"
+            );
+            check!(
+                maintenance["errors"].as_u64() == Some(0),
+                "{signal} {phase} failed: {}",
+                entry(signal, phase)["error_samples"]
+            );
+        }
         let restart = entry(signal, "restart");
         check!(
             restart["recovery"]["status"] == "recovered",

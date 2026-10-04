@@ -124,6 +124,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_cached_query_replans_compacted_blocks_and_preserves_missing_data_errors() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let mut index = ProfileIndex::new();
+        let mut input_keys = Vec::new();
+        for (offset, value) in [(0, 5), (1, 7)] {
+            let rec = record("t", "api", vec![0], value);
+            let meta = build_block(
+                &store,
+                "t",
+                0,
+                std::slice::from_ref(&rec),
+                (offset, offset),
+                &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+            )
+            .await
+            .unwrap()
+            .remove(0);
+            let labels = Labels::from_pairs(rec.labels.iter().cloned());
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
+            index.add_block(&meta);
+            index.add_profile_block("t", &meta.object_key, vec![STACKTRACE_PARTITION]);
+            input_keys.push(meta.object_key);
+        }
+        let snapshot = "index/profiles.json";
+        index.save_latest_snapshot(&store, snapshot).await.unwrap();
+        let cold = Arc::new(
+            ColdProfileStore::new(
+                Arc::clone(&store),
+                Arc::new(
+                    ProfileIndex::load_latest_snapshot(&store, snapshot)
+                        .await
+                        .unwrap(),
+                ),
+            )
+            .with_index_snapshot(
+                snapshot.to_string(),
+                krabka_blockstore::DEFAULT_INDEX_SNAPSHOT_MAX,
+            ),
+        );
+        let engine = FlameEngine::new(cold, EngineOpts::default());
+        let before = engine
+            .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
+            .await
+            .unwrap();
+        check!(before.total == 12);
+
+        let output = crate::compactor::compact_blocks(
+            &store,
+            &mut index,
+            "t",
+            &input_keys,
+            "blocks/t/compacted.parquet",
+        )
+        .await
+        .unwrap();
+        index.save_latest_snapshot(&store, snapshot).await.unwrap();
+        for key in input_keys {
+            store
+                .delete(&Path::from(format!("{key}.symdb")))
+                .await
+                .unwrap();
+            store.delete(&Path::from(key)).await.unwrap();
+        }
+        let after = engine
+            .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
+            .await
+            .unwrap();
+        check!(after.total == before.total);
+        check!(after.names == before.names);
+
+        // The published index still names this output: its loss is an error.
+        store.delete(&Path::from(output.object_key)).await.unwrap();
+        assert!(
+            engine
+                .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0,)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn cold_store_merges_blocks_with_local_symbol_partitions() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let rec_a = record("t", "api", vec![0], 5);

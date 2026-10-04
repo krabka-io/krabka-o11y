@@ -1,0 +1,270 @@
+name: operating envelope
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Paths to measure
+        type: choice
+        options: [both, storage, deployment, image, checks]
+        default: deployment
+      record:
+        description: Record measurements for baseline review
+        type: boolean
+        default: false
+      phase_seconds:
+        description: Measured seconds per phase (60 for qualification)
+        type: number
+        default: 60
+      repetitions:
+        description: Independent repetitions (3 for qualification)
+        type: number
+        default: 3
+      image:
+        description: Optional immutable deployment image (empty builds this commit)
+        type: string
+        default: ''
+      image_artifact_run:
+        description: Reuse a deployment-image artifact from this workflow run
+        type: string
+        default: ''
+      image_commit:
+        description: Source commit of the optional immutable deployment image
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  storage:
+    if: inputs.scope == 'both' || inputs.scope == 'storage'
+    concurrency:
+      group: operating-envelope-storage
+      cancel-in-progress: false
+    runs-on: gcp-ubuntu-24-04-16core
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: false
+      - name: Record runner identity
+        run: |
+          set -euo pipefail
+          mkdir -p qualification/evidence/envelope
+          for field in instance/machine-type instance/zone instance/image; do
+            curl -fsS -H 'Metadata-Flavor: Google' \
+              "http://metadata.google.internal/computeMetadata/v1/${field}"
+            echo
+          done > qualification/evidence/envelope/gce.txt
+          lscpu > qualification/evidence/envelope/lscpu.txt
+          uname -a > qualification/evidence/envelope/kernel.txt
+          docker info > qualification/evidence/envelope/docker.txt
+      - name: Measure independent runs
+        env:
+          KRABKA_SOAK_PHASE_SECONDS: ${{ inputs.phase_seconds || 60 }}
+          KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
+          REPETITIONS: ${{ inputs.repetitions }}
+        run: |
+          set -euo pipefail
+          evidence=qualification/evidence/envelope
+          target=//crates/integration:soak_envelope_docker_test
+          bazel build -c opt --remote_cache= --bes_backend= "${target}"
+          for run in $(seq 1 "${REPETITIONS}"); do
+            bazel test -c opt --config=scale --remote_cache= --bes_backend= \
+              --cache_test_results=no --flaky_test_attempts=1 --test_timeout=7200 \
+              --test_env=KRABKA_SOAK_COMMIT="${GITHUB_SHA}" \
+              --test_env=KRABKA_SOAK_RUNNER \
+              --test_env=KRABKA_SOAK_PHASE_SECONDS \
+              --test_env=KRABKA_SOAK_RUN_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${run}" \
+              --test_env=KRABKA_SOAK_RUSTC='rustc 1.98.1 (MODULE.bazel)' \
+              --test_env=KRABKA_SOAK_COMMAND='bazel test -c opt --config=scale --cache_test_results=no --flaky_test_attempts=1 --test_timeout=7200 //crates/integration:soak_envelope_docker_test' \
+              "${target}" 2>&1 | tee "${evidence}/run-${run}.log"
+            outputs=bazel-testlogs/crates/integration/soak_envelope_docker_test/test.outputs
+            if [[ -f "${outputs}/soak-report.json" ]]; then
+              cp "${outputs}/soak-report.json" "${evidence}/soak-report-${run}.json"
+            else
+              unzip -p "${outputs}/outputs.zip" soak-report.json > "${evidence}/soak-report-${run}.json"
+            fi
+            tools/soak-gate.py --structural "${evidence}/soak-report-${run}.json"
+          done
+          if [[ "${REPETITIONS}" -ge 3 && "${KRABKA_SOAK_PHASE_SECONDS}" -ge 60 ]]; then
+            tools/soak-gate.py --envelope "${evidence}"/soak-report-*.json > "${evidence}/envelope.json"
+            tools/soak-gate.py --record "${evidence}"/soak-report-*.json > "${evidence}/soak-baseline.txt"
+          fi
+      - name: Apply the numeric gate
+        if: github.event_name == 'workflow_dispatch' && !inputs.record
+        run: |
+          for report in qualification/evidence/envelope/soak-report-*.json; do
+            tools/soak-gate.py --require-seeded \
+              --reference qualification/operating-envelope-reference.json "${report}"
+          done
+      - name: Hash artifacts
+        if: always()
+        run: |
+          cd qualification/evidence/envelope
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS
+      - name: Upload raw evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operating-envelope-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            qualification/evidence/envelope
+            bazel-testlogs/crates/integration/soak_envelope_docker_test/test.log
+            bazel-testlogs/crates/integration/soak_envelope_docker_test/test.outputs/**
+          if-no-files-found: error
+  deployment:
+    if: inputs.scope == 'both' || inputs.scope == 'deployment' || inputs.scope == 'image'
+    concurrency:
+      group: operating-envelope-${{ inputs.scope == 'image' && 'image' || 'deployment' }}
+      cancel-in-progress: false
+    runs-on: gcp-ubuntu-24-04-16core
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate qualification inputs
+        if: inputs.scope != 'image'
+        env:
+          PHASE_SECONDS: ${{ inputs.phase_seconds }}
+          REPETITIONS: ${{ inputs.repetitions }}
+          RECORD_BASELINE: ${{ inputs.record }}
+        run: |
+          set -euo pipefail
+          [[ "${PHASE_SECONDS}" =~ ^[1-9][0-9]*$ && "${REPETITIONS}" =~ ^[1-9][0-9]*$ ]]
+          if [[ "${RECORD_BASELINE}" != true ]]; then
+            [[ "${PHASE_SECONDS}" -ge 60 && "${REPETITIONS}" -ge 3 ]]
+            test -s qualification/deployment-envelope-baseline.json
+          fi
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        if: inputs.image == '' && inputs.image_artifact_run == ''
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: false
+      - name: Download the exact measured image
+        if: inputs.image_artifact_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.image_artifact_run }}
+          pattern: deployment-image-*
+          merge-multiple: true
+          path: qualification/image
+      - name: Select the exact image
+        id: image
+        env:
+          REQUESTED_IMAGE: ${{ inputs.image }}
+          IMAGE_ARTIFACT_RUN: ${{ inputs.image_artifact_run }}
+          REQUESTED_COMMIT: ${{ inputs.image_commit }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${IMAGE_ARTIFACT_RUN}" ]]; then
+            cd qualification/image
+            sha256sum -c SHA256SUMS
+            docker load -i image.tar
+            [[ "$(docker inspect --format '{{.Id}}' "$(cat tag)")" == "$(cat config-digest)" ]]
+            echo "image=$(cat tag)" >> "$GITHUB_OUTPUT"
+            echo "digest=$(cat manifest-digest)" >> "$GITHUB_OUTPUT"
+            echo "commit=$(cat commit)" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${REQUESTED_IMAGE}" ]]; then
+            [[ "${REQUESTED_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]]
+            docker pull "${REQUESTED_IMAGE}"
+            echo "image=${REQUESTED_IMAGE}" >> "$GITHUB_OUTPUT"
+            echo "commit=${REQUESTED_COMMIT}" >> "$GITHUB_OUTPUT"
+          else
+            bazel run -c opt --remote_cache= --bes_backend= //bazel/images/krabka:load
+            manifest=$(bazel cquery -c opt //bazel/images/krabka:image_manifest_blob --output=files)
+            digest="sha256:$(sha256sum "${manifest}" | cut -d ' ' -f 1)"
+            identity=$(docker image ls --filter reference=krabka-o11y:dev --format '{{.ID}}' | head -1)
+            image="localhost/krabka-o11y:sha-${GITHUB_SHA::12}"
+            docker tag "${identity}" "${image}"
+            echo "image=${image}" >> "$GITHUB_OUTPUT"
+            echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+            echo "commit=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            mkdir -p qualification/image
+            docker save -o qualification/image/image.tar "${image}"
+            echo "${image}" > qualification/image/tag
+            echo "${digest}" > qualification/image/manifest-digest
+            echo "${GITHUB_SHA}" > qualification/image/commit
+            docker inspect --format '{{.Id}}' "${image}" > qualification/image/config-digest
+            (cd qualification/image && sha256sum image.tar tag manifest-digest commit config-digest > SHA256SUMS)
+          fi
+      - name: Preserve the measured image
+        if: inputs.image == '' && inputs.image_artifact_run == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-image-${{ github.sha }}
+          path: qualification/image
+          if-no-files-found: error
+      - name: Measure the broker-backed deployment
+        if: inputs.scope != 'image'
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          IMAGE_COMMIT: ${{ steps.image.outputs.commit }}
+          PHASE_SECONDS: ${{ inputs.phase_seconds }}
+          REPETITIONS: ${{ inputs.repetitions }}
+          KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
+          RECORD_BASELINE: ${{ inputs.record }}
+        run: |
+          set -euo pipefail
+          python3 tools/deployment-envelope.py --self-test
+          mkdir -p qualification/evidence
+          for field in instance/machine-type instance/zone instance/image; do
+            curl -fsS -H 'Metadata-Flavor: Google' \
+              "http://metadata.google.internal/computeMetadata/v1/${field}"
+            echo
+          done > qualification/evidence/gce.txt
+          digest=()
+          if [[ -n "${IMAGE_DIGEST}" ]]; then digest=(--image-digest "${IMAGE_DIGEST}"); fi
+          reference=()
+          if [[ "${RECORD_BASELINE}" != true ]]; then
+            reference=(--baseline qualification/deployment-envelope-baseline.json)
+          fi
+          for run in $(seq 1 "${REPETITIONS}"); do
+            python3 tools/deployment-envelope.py --image "${IMAGE}" \
+              "${digest[@]}" "${reference[@]}" --image-commit "${IMAGE_COMMIT}" --seconds "${PHASE_SECONDS}" \
+              --output "qualification/evidence/deployment-${run}"
+          done
+          if [[ "${PHASE_SECONDS}" -ge 60 && "${REPETITIONS}" -ge 3 ]]; then
+            python3 tools/deployment-envelope.py --reports qualification/evidence/deployment-*/deployment-report.json \
+              "${reference[@]}" --record qualification/evidence/deployment-baseline.json
+          fi
+      - name: Apply the deployment regression gate
+        if: inputs.scope != 'image' && !inputs.record
+        run: |
+          python3 tools/deployment-envelope.py --reports qualification/evidence/deployment-*/deployment-report.json \
+            --baseline qualification/deployment-envelope-baseline.json
+      - name: Hash artifacts
+        if: always() && inputs.scope != 'image'
+        run: |
+          mkdir -p qualification/evidence
+          cd qualification/evidence
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS
+      - name: Upload raw deployment evidence
+        if: always() && inputs.scope != 'image'
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-envelope-${{ github.sha }}-${{ github.run_attempt }}
+          path: qualification/evidence
+          if-no-files-found: error
+  checks:
+    if: inputs.scope == 'checks'
+    runs-on: gcp-ubuntu-24-04-16core
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: false
+      - run: tools/soak-gate.py --self-test
+      - run: python3 tools/deployment-envelope.py --self-test
+      - run: bazel run //tools/format -- .github/workflows/operating-envelope.yml .github/workflows/ci.yml && git diff --exit-code
+      - run: bazel test //... --remote_cache= --bes_backend=

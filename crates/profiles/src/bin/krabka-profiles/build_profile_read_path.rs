@@ -40,12 +40,15 @@ pub(crate) async fn build_profile_read_path(
         ) => loaded?,
     };
     index_gate.mark_ready();
-    let cold = Arc::new(ColdProfileStore::new_with_debuginfod_config(
-        Arc::clone(&store),
-        Arc::new(index),
-        cli.debuginfod_urls.clone(),
-        debuginfod,
-    )?);
+    let cold = Arc::new(
+        ColdProfileStore::new_with_debuginfod_config(
+            Arc::clone(&store),
+            Arc::new(index),
+            cli.debuginfod_urls.clone(),
+            debuginfod,
+        )?
+        .with_index_snapshot(index_key.clone(), cli.index_snapshot_max),
+    );
     let hot = WalTailProfileStore::with_retention(RetentionConfig {
         max_age: cli.hot_store_max_age,
         max_records: cli.hot_store_max_records,

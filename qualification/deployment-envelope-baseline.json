@@ -1,0 +1,1445 @@
+{
+  "reference": {
+    "schema_version": 1,
+    "seed": 267,
+    "phase_seconds": 60,
+    "shape": {
+      "role_cpu": 1,
+      "role_memory_gib": 1,
+      "broker_cpu": 2,
+      "broker_memory_gib": 2,
+      "object_store_cpu": 2,
+      "object_store_memory_gib": 2,
+      "replicas": 1,
+      "wal_partitions": 1,
+      "replication": 1,
+      "wal_retention_seconds": 900,
+      "block_retention": "unlimited except expired tenant: 60s during deletion",
+      "flush_max_age_seconds": 2,
+      "profiles_hot_retention_seconds": 30,
+      "traces_hot_retention_seconds": 30,
+      "metrics_hot_retention_seconds": 300,
+      "cold_fixture_age_seconds": 600,
+      "maintenance_interval_seconds": 2,
+      "nofile": 65536,
+      "write_interval_seconds": 1,
+      "noisy_logs_bytes_per_sec": 65536,
+      "broker_image": "ghcr.io/krabka-io/krabka-broker@sha256:54ae711e5a7c8bdb03414402722f5c41dd50980ab315ab84d0803cca775fb463",
+      "object_store_image": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba"
+    },
+    "dataset": {
+      "points_per_series": 10,
+      "series_per_request": {
+        "metrics": 100,
+        "logs": 100,
+        "traces": 10,
+        "profiles": 1
+      }
+    },
+    "objectives": {
+      "ingest_p99_seconds": 2,
+      "query_p99_seconds": 2,
+      "error_rate": 0,
+      "durable_catchup_seconds": 10
+    },
+    "host": {
+      "cpu_count": 16,
+      "kernel": "7.0.0-1011-gcp",
+      "cpu_model": "AMD EPYC 7B12",
+      "memory_kib": 65836552,
+      "runner": "gcp-ubuntu-24-04-16core"
+    },
+    "burst_levels": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      64,
+      128,
+      256,
+      512
+    ],
+    "cardinality_levels": [
+      100,
+      1000,
+      5000,
+      20000,
+      100000,
+      500000
+    ]
+  },
+  "limits": {
+    "metrics": {
+      "burst": {
+        "level": 16,
+        "first_failing_level": 32,
+        "unit": "writers"
+      },
+      "high_cardinality": {
+        "level": 5000,
+        "first_failing_level": 20000,
+        "unit": "cardinality"
+      }
+    },
+    "logs": {
+      "burst": {
+        "level": 32,
+        "first_failing_level": 64,
+        "unit": "writers"
+      },
+      "high_cardinality": {
+        "level": 1000,
+        "first_failing_level": 5000,
+        "unit": "cardinality"
+      }
+    },
+    "traces": {
+      "burst": {
+        "level": 8,
+        "first_failing_level": 16,
+        "unit": "writers"
+      },
+      "high_cardinality": {
+        "level": 1000,
+        "first_failing_level": 5000,
+        "unit": "cardinality"
+      }
+    },
+    "profiles": {
+      "burst": {
+        "level": 128,
+        "first_failing_level": 256,
+        "unit": "writers"
+      },
+      "high_cardinality": {
+        "level": 20000,
+        "first_failing_level": 100000,
+        "unit": "cardinality"
+      }
+    }
+  },
+  "metrics": {
+    "metrics/burst/query_p99_seconds": {
+      "direction": "higher",
+      "median": 1.2952374679998684,
+      "minimum": 1.2244569960002991,
+      "maximum": 1.31194629699894,
+      "mean": 1.2772135869997026,
+      "cv": 0.029692040124775256
+    },
+    "metrics/burst/peak_rss_kib": {
+      "direction": "higher",
+      "median": 1521848,
+      "minimum": 1521528,
+      "maximum": 1540184,
+      "mean": 1527853.3333333333,
+      "cv": 0.005707404281477313
+    },
+    "metrics/burst/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 5.055876685934489,
+      "minimum": 5.040462427745664,
+      "maximum": 5.264875239923224,
+      "mean": 5.120404784534459,
+      "cv": 0.019988590763614707
+    },
+    "metrics/burst/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 61037.40847784201,
+      "minimum": 59650.36994219653,
+      "maximum": 63335.71593090211,
+      "mean": 61341.16478364688,
+      "cv": 0.024776029144881362
+    },
+    "metrics/burst/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 15084.41370321218,
+      "minimum": 15083.427252998199,
+      "maximum": 15707.842575768635,
+      "mean": 15291.894510659671,
+      "cv": 0.019233717114647605
+    },
+    "metrics/burst/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.2385708670008171,
+      "minimum": 0.19767014600074617,
+      "maximum": 0.2464597029993456,
+      "mean": 0.2275669053336363,
+      "cv": 0.09396847721264961
+    },
+    "metrics/high_cardinality/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.9569408700008353,
+      "minimum": 0.9288509549996888,
+      "maximum": 0.9990792049993615,
+      "mean": 0.9616236766666285,
+      "cv": 0.03001292790503888
+    },
+    "metrics/high_cardinality/peak_rss_kib": {
+      "direction": "higher",
+      "median": 930772,
+      "minimum": 930412,
+      "maximum": 936252,
+      "mean": 932478.6666666666,
+      "cv": 0.0028656894431701974
+    },
+    "metrics/high_cardinality/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 24.87378640776699,
+      "minimum": 23.826923076923077,
+      "maximum": 24.87735849056604,
+      "mean": 24.5260226584187,
+      "cv": 0.02015574284779768
+    },
+    "metrics/high_cardinality/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 742057.708737864,
+      "minimum": 731346.7403846154,
+      "maximum": 746669.2264150943,
+      "mean": 740024.5585125246,
+      "cv": 0.008673305085999075
+    },
+    "metrics/high_cardinality/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 1891.4454241572816,
+      "minimum": 1886.8860065371225,
+      "maximum": 1896.9918480729891,
+      "mean": 1891.7744262557978,
+      "cv": 0.002184322988491724
+    },
+    "metrics/high_cardinality/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.03224419999969541,
+      "minimum": 0.03056647900120879,
+      "maximum": 0.03699146000053588,
+      "mean": 0.03326737966714669,
+      "cv": 0.08179001569007005
+    },
+    "metrics/steady/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.5824037219999809,
+      "minimum": 0.5390041190003103,
+      "maximum": 0.9563242179992812,
+      "mean": 0.6925773529998575,
+      "cv": 0.2704924282254852
+    },
+    "metrics/steady/peak_rss_kib": {
+      "direction": "higher",
+      "median": 724796,
+      "minimum": 708848,
+      "maximum": 735800,
+      "mean": 723148.0,
+      "cv": 0.015300662533598974
+    },
+    "metrics/steady/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 34.776632302405496,
+      "minimum": 33.973584905660374,
+      "maximum": 34.891891891891895,
+      "mean": 34.54736969998592,
+      "cv": 0.011822798730300852
+    },
+    "metrics/steady/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 148539.22297297296,
+      "minimum": 147194.61886792452,
+      "maximum": 160137.52233676976,
+      "mean": 151957.12139255574,
+      "cv": 0.03823713536685518
+    },
+    "metrics/steady/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 1993.0978752176968,
+      "minimum": 1969.042995797535,
+      "maximum": 1996.2221551276186,
+      "mean": 1986.1210087142836,
+      "cv": 0.006114003612604488
+    },
+    "metrics/steady/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.032079878999866196,
+      "minimum": 0.031135679000726668,
+      "maximum": 0.04395926800134475,
+      "mean": 0.035724942000645875,
+      "cv": 0.16333947594296305
+    },
+    "metrics/cold_blocks/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.4067991970005096,
+      "minimum": 0.3851712920004502,
+      "maximum": 0.40737734399954206,
+      "mean": 0.39978261100016727,
+      "cv": 0.02585019487322748
+    },
+    "metrics/cold_blocks/peak_rss_kib": {
+      "direction": "higher",
+      "median": 637684,
+      "minimum": 634056,
+      "maximum": 657204,
+      "mean": 642981.3333333334,
+      "cv": 0.01580982825115669
+    },
+    "metrics/cold_blocks/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 19.28048780487805,
+      "minimum": 19.27485380116959,
+      "maximum": 19.363636363636363,
+      "mean": 19.30632598989467,
+      "cv": 0.0021024080201680934
+    },
+    "metrics/cold_blocks/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 780608.2926829269,
+      "minimum": 768410.9883040936,
+      "maximum": 784122.296969697,
+      "mean": 777713.8593189059,
+      "cv": 0.008657087087222208
+    },
+    "metrics/compaction/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.5716070189992024,
+      "minimum": 0.5490605300001334,
+      "maximum": 0.6625715889995263,
+      "mean": 0.5944130459996207,
+      "cv": 0.08254606886834631
+    },
+    "metrics/compaction/peak_rss_kib": {
+      "direction": "higher",
+      "median": 800000,
+      "minimum": 789648,
+      "maximum": 811944,
+      "mean": 800530.6666666666,
+      "cv": 0.011379995147103335
+    },
+    "metrics/compaction/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 35.46735395189003,
+      "minimum": 34.897350993377486,
+      "maximum": 36.352348993288594,
+      "mean": 35.57235131285204,
+      "cv": 0.01682830504851964
+    },
+    "metrics/compaction/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 285122.97986577183,
+      "minimum": 283724.21523178805,
+      "maximum": 289841.88659793814,
+      "mean": 286229.6938984993,
+      "cv": 0.009143920741799608
+    },
+    "metrics/compaction/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 1966.8502053544016,
+      "minimum": 1963.7382098444207,
+      "maximum": 1977.0562500265273,
+      "mean": 1969.21488840845,
+      "cv": 0.002888649077306148
+    },
+    "metrics/compaction/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.030037239001103444,
+      "minimum": 0.029730000000199652,
+      "maximum": 0.03364797999984148,
+      "mean": 0.031138406333714858,
+      "cv": 0.05713085956976996
+    },
+    "metrics/deletion/query_p99_seconds": {
+      "direction": "higher",
+      "median": 1.1974564459997055,
+      "minimum": 1.192029674000878,
+      "maximum": 1.265031549000014,
+      "mean": 1.2181725563335324,
+      "cv": 0.02726074854232237
+    },
+    "metrics/deletion/peak_rss_kib": {
+      "direction": "higher",
+      "median": 973928,
+      "minimum": 958980,
+      "maximum": 978628,
+      "mean": 970512.0,
+      "cv": 0.008631591007087784
+    },
+    "metrics/deletion/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 34.82702702702703,
+      "minimum": 33.68852459016394,
+      "maximum": 35.68648648648649,
+      "mean": 34.734012701225815,
+      "cv": 0.023559384341142114
+    },
+    "metrics/deletion/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 426820.52432432433,
+      "minimum": 420810.71584699454,
+      "maximum": 444400.4648648649,
+      "mean": 430677.23501206125,
+      "cv": 0.02324049795610079
+    },
+    "metrics/deletion/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 1963.2204539695936,
+      "minimum": 1956.7279474376128,
+      "maximum": 1963.400615561327,
+      "mean": 1961.1163389895112,
+      "cv": 0.0015827378071122831
+    },
+    "metrics/deletion/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.027702079998562112,
+      "minimum": 0.027700358999936725,
+      "maximum": 0.02820777000124508,
+      "mean": 0.027870069666581305,
+      "cv": 0.008568016984885287
+    },
+    "metrics/noisy_tenant/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.8310042540033464,
+      "minimum": 0.7905499930002406,
+      "maximum": 0.8705311859994254,
+      "mean": 0.8306951443343374,
+      "cv": 0.03930794237900163
+    },
+    "metrics/noisy_tenant/peak_rss_kib": {
+      "direction": "higher",
+      "median": 1266388,
+      "minimum": 1255476,
+      "maximum": 1279828,
+      "mean": 1267230.6666666667,
+      "cv": 0.007859265855506887
+    },
+    "metrics/noisy_tenant/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 36.431372549019606,
+      "minimum": 35.476,
+      "maximum": 37.73828125,
+      "mean": 36.54855126633987,
+      "cv": 0.02537123220981928
+    },
+    "metrics/noisy_tenant/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 349563.16,
+      "minimum": 339005.6392156863,
+      "maximum": 356064.9921875,
+      "mean": 348211.2638010621,
+      "cv": 0.020188178039944438
+    },
+    "metrics/noisy_tenant/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 1964.1310557478623,
+      "minimum": 1952.9520262697627,
+      "maximum": 1965.6786758179255,
+      "mean": 1960.9205859451833,
+      "cv": 0.002891465749278508
+    },
+    "metrics/noisy_tenant/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.19852549599818303,
+      "minimum": 0.19177220600067812,
+      "maximum": 0.2084298569998282,
+      "mean": 0.19957585299956312,
+      "cv": 0.034277169003813196
+    },
+    "metrics/restart/recovery_seconds": {
+      "direction": "higher",
+      "median": 9.147375927999747,
+      "minimum": 8.720756875001825,
+      "maximum": 9.312619127999824,
+      "mean": 9.060250643667132,
+      "cv": 0.02752208227935587
+    },
+    "logs/burst/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.36009404300057213,
+      "minimum": 0.3493132319999859,
+      "maximum": 0.4138305340002262,
+      "mean": 0.3744126030002614,
+      "cv": 0.07536615212400888
+    },
+    "logs/burst/peak_rss_kib": {
+      "direction": "higher",
+      "median": 963476,
+      "minimum": 963432,
+      "maximum": 984380,
+      "mean": 970429.3333333334,
+      "cv": 0.010165219679555932
+    },
+    "logs/burst/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 7.099720410065237,
+      "minimum": 6.949720670391062,
+      "maximum": 7.420411985018727,
+      "mean": 7.156617688491675,
+      "cv": 0.027432721678257457
+    },
+    "logs/burst/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 59387.25046554935,
+      "minimum": 58435.15449438202,
+      "maximum": 60008.65610438024,
+      "mean": 59277.02035477053,
+      "cv": 0.01091638612000327
+    },
+    "logs/burst/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 31088.248813941846,
+      "minimum": 30980.408882272633,
+      "maximum": 31125.502755069694,
+      "mean": 31064.720150428057,
+      "cv": 0.001980589296516461
+    },
+    "logs/burst/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.5225275410002723,
+      "minimum": 0.49759789899690077,
+      "maximum": 0.5804482080002344,
+      "mean": 0.5335245493324692,
+      "cv": 0.06505014692145923
+    },
+    "logs/high_cardinality/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.19355443699987518,
+      "minimum": 0.14118543799850158,
+      "maximum": 0.2484825150004326,
+      "mean": 0.19440746333293646,
+      "cv": 0.2253411480242039
+    },
+    "logs/high_cardinality/peak_rss_kib": {
+      "direction": "higher",
+      "median": 1498608,
+      "minimum": 1465592,
+      "maximum": 1572544,
+      "mean": 1512248.0,
+      "cv": 0.029568922376154654
+    },
+    "logs/high_cardinality/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 0.7333333333333333,
+      "minimum": 0.7333333333333333,
+      "maximum": 5.533333333333333,
+      "mean": 2.3333333333333335,
+      "cv": 0.9697464427701222
+    },
+    "logs/high_cardinality/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 16907.366666666665,
+      "minimum": 16907.366666666665,
+      "maximum": 35579.9,
+      "mean": 23131.544444444444,
+      "cv": 0.380533027057285
+    },
+    "logs/high_cardinality/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 1962.6697009338513,
+      "minimum": 1936.1515961903272,
+      "maximum": 1962.8783920639203,
+      "mean": 1953.899896396033,
+      "cv": 0.006423170726880915
+    },
+    "logs/high_cardinality/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.038454620000266004,
+      "minimum": 0.03639906900207279,
+      "maximum": 0.05039518900048279,
+      "mean": 0.04174962600094053,
+      "cv": 0.1478016604577441
+    },
+    "logs/steady/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.11891397699946538,
+      "minimum": 0.10357390700301039,
+      "maximum": 0.12585129800027062,
+      "mean": 0.11611306066758213,
+      "cv": 0.08016204159332571
+    },
+    "logs/steady/peak_rss_kib": {
+      "direction": "higher",
+      "median": 608580,
+      "minimum": 580520,
+      "maximum": 610624,
+      "mean": 599908.0,
+      "cv": 0.022894774918054354
+    },
+    "logs/steady/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 1.7214484679665738,
+      "minimum": 0.7166666666666667,
+      "maximum": 4.128133704735376,
+      "mean": 2.188749613122872,
+      "cv": 0.6539749174521402
+    },
+    "logs/steady/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 11572.456824512536,
+      "minimum": 8205.755555555555,
+      "maximum": 19597.68245125348,
+      "mean": 13125.298277107191,
+      "cv": 0.36407532349395655
+    },
+    "logs/steady/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 1970.1864818546603,
+      "minimum": 1969.2011749687272,
+      "maximum": 1974.1324540541457,
+      "mean": 1971.173370292511,
+      "cv": 0.001080931067876642
+    },
+    "logs/steady/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.03278066900020349,
+      "minimum": 0.029425878999973065,
+      "maximum": 0.033517799000037485,
+      "mean": 0.03190811566673801,
+      "cv": 0.055810788636409175
+    },
+    "logs/cold_blocks/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.11070877699967241,
+      "minimum": 0.10948058800022409,
+      "maximum": 0.13380170799973712,
+      "mean": 0.1179970243332112,
+      "cv": 0.0948061316148078
+    },
+    "logs/cold_blocks/peak_rss_kib": {
+      "direction": "higher",
+      "median": 879548,
+      "minimum": 865772,
+      "maximum": 1229636,
+      "mean": 991652.0,
+      "cv": 0.16979147251052457
+    },
+    "logs/cold_blocks/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 27.10041841004184,
+      "minimum": 27.10041841004184,
+      "maximum": 27.10041841004184,
+      "mean": 27.10041841004184,
+      "cv": 0.0
+    },
+    "logs/cold_blocks/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 199997.5230125523,
+      "minimum": 198477.5230125523,
+      "maximum": 200382.5230125523,
+      "mean": 199619.18967921895,
+      "cv": 0.004120038692750126
+    },
+    "logs/compaction/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.10277309699995385,
+      "minimum": 0.10147866700208397,
+      "maximum": 0.1176957580000817,
+      "mean": 0.10731584066737317,
+      "cv": 0.06857057714932382
+    },
+    "logs/compaction/peak_rss_kib": {
+      "direction": "higher",
+      "median": 954868,
+      "minimum": 944164,
+      "maximum": 1307512,
+      "mean": 1068848.0,
+      "cv": 0.15794341218796148
+    },
+    "logs/compaction/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 0.7186629526462396,
+      "minimum": 0.7186629526462396,
+      "maximum": 0.7186629526462396,
+      "mean": 0.7186629526462397,
+      "cv": 0.0
+    },
+    "logs/compaction/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 8228.679665738162,
+      "minimum": 8228.679665738162,
+      "maximum": 8228.679665738162,
+      "mean": 8228.679665738162,
+      "cv": 0.0
+    },
+    "logs/compaction/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 1973.0733256713906,
+      "minimum": 1969.824179512348,
+      "maximum": 1975.2109409866946,
+      "mean": 1972.7028153901445,
+      "cv": 0.0011226663479995784
+    },
+    "logs/compaction/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.026281608999852324,
+      "minimum": 0.02474440999867511,
+      "maximum": 0.03158564000023034,
+      "mean": 0.027537219666252593,
+      "cv": 0.10642489154112686
+    },
+    "logs/deletion/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.13005002699901524,
+      "minimum": 0.11565140699894982,
+      "maximum": 0.1458524279996709,
+      "mean": 0.13051795399921198,
+      "cv": 0.09450005675104149
+    },
+    "logs/deletion/peak_rss_kib": {
+      "direction": "higher",
+      "median": 1074556,
+      "minimum": 1072556,
+      "maximum": 1443432,
+      "mean": 1196848.0,
+      "cv": 0.14568527520764812
+    },
+    "logs/deletion/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 11.743732590529248,
+      "minimum": 11.495821727019498,
+      "maximum": 11.994428969359332,
+      "mean": 11.744661095636026,
+      "cv": 0.01733184222740786
+    },
+    "logs/deletion/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 235513.25905292478,
+      "minimum": 234376.8885793872,
+      "maximum": 239367.75766016712,
+      "mean": 236419.3017641597,
+      "cv": 0.009034224060804126
+    },
+    "logs/deletion/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 1971.3294103375142,
+      "minimum": 1968.3451515473375,
+      "maximum": 1972.0857177000473,
+      "mean": 1970.586759861633,
+      "cv": 0.0008194762405350096
+    },
+    "logs/deletion/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.029992370000400115,
+      "minimum": 0.027115909000713145,
+      "maximum": 0.03299508899999637,
+      "mean": 0.030034456000369875,
+      "cv": 0.079919864954087
+    },
+    "logs/noisy_tenant/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.14068816700091702,
+      "minimum": 0.13742938899849833,
+      "maximum": 0.14955031800036522,
+      "mean": 0.14255595799992685,
+      "cv": 0.035926731142060964
+    },
+    "logs/noisy_tenant/peak_rss_kib": {
+      "direction": "higher",
+      "median": 1135356,
+      "minimum": 1131488,
+      "maximum": 1505976,
+      "mean": 1257606.6666666667,
+      "cv": 0.13965474542956335
+    },
+    "logs/noisy_tenant/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 17.320224719101123,
+      "minimum": 17.23249299719888,
+      "maximum": 17.442577030812323,
+      "mean": 17.33176491570411,
+      "cv": 0.004970859436157233
+    },
+    "logs/noisy_tenant/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 351214.11204481794,
+      "minimum": 350335.3781512605,
+      "maximum": 352302.55056179775,
+      "mean": 351284.0135859587,
+      "cv": 0.0022904953430465083
+    },
+    "logs/noisy_tenant/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 1989.9703635708122,
+      "minimum": 1989.444256526989,
+      "maximum": 1990.1621633917603,
+      "mean": 1989.8589278298539,
+      "cv": 0.00015251931007203196
+    },
+    "logs/noisy_tenant/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.18563962700045522,
+      "minimum": 0.16527084599874797,
+      "maximum": 0.1879877999999735,
+      "mean": 0.17963275766639222,
+      "cv": 0.056785583380956045
+    },
+    "logs/restart/recovery_seconds": {
+      "direction": "higher",
+      "median": 8.012284963999264,
+      "minimum": 7.624264142999891,
+      "maximum": 8.138945302999673,
+      "mean": 7.925164803332943,
+      "cv": 0.027628715216845907
+    },
+    "traces/burst/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.552161667999826,
+      "minimum": 0.5140863899978285,
+      "maximum": 0.5716629910002666,
+      "mean": 0.5459703496659737,
+      "cv": 0.0437931634351754
+    },
+    "traces/burst/peak_rss_kib": {
+      "direction": "higher",
+      "median": 1378244,
+      "minimum": 1375324,
+      "maximum": 1384760,
+      "mean": 1379442.6666666667,
+      "cv": 0.002859396590753644
+    },
+    "traces/burst/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 6.8390092879256965,
+      "minimum": 6.629283489096573,
+      "maximum": 7.037617554858934,
+      "mean": 6.8353034439604015,
+      "cv": 0.024391349992345514
+    },
+    "traces/burst/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 82167.91536050157,
+      "minimum": 81197.5046728972,
+      "maximum": 83243.4427244582,
+      "mean": 82202.95425261899,
+      "cv": 0.010165305011623849
+    },
+    "traces/burst/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 744.3988939761847,
+      "minimum": 743.9646129765529,
+      "maximum": 748.418490482654,
+      "mean": 745.5939991451305,
+      "cv": 0.0026892260683999522
+    },
+    "traces/burst/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.012789028998668073,
+      "minimum": 0.011771638999562128,
+      "maximum": 0.017901019999044365,
+      "mean": 0.014153895999091523,
+      "cv": 0.18948660422247146
+    },
+    "traces/high_cardinality/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.3272012990000803,
+      "minimum": 0.30618636299914215,
+      "maximum": 0.33346661499854235,
+      "mean": 0.32228475899925496,
+      "cv": 0.03620125782176003
+    },
+    "traces/high_cardinality/peak_rss_kib": {
+      "direction": "higher",
+      "median": 1173264,
+      "minimum": 1163684,
+      "maximum": 1185784,
+      "mean": 1174244.0,
+      "cv": 0.007706115564590411
+    },
+    "traces/high_cardinality/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 13.444444444444445,
+      "minimum": 12.636904761904763,
+      "maximum": 13.487951807228916,
+      "mean": 13.189767004526042,
+      "cv": 0.029669662212410883
+    },
+    "traces/high_cardinality/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 206990.89759036145,
+      "minimum": 199565.30952380953,
+      "maximum": 211740.68421052632,
+      "mean": 206098.9637748991,
+      "cv": 0.02431079132062702
+    },
+    "traces/high_cardinality/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 186.8956744952185,
+      "minimum": 186.71022239913145,
+      "maximum": 186.94251137596837,
+      "mean": 186.84946942343944,
+      "cv": 0.0005368062146483179
+    },
+    "traces/high_cardinality/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.016165580000233604,
+      "minimum": 0.01495584000076633,
+      "maximum": 0.01978337000036845,
+      "mean": 0.016968263333789462,
+      "cv": 0.12086874022863156
+    },
+    "traces/steady/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.18162435699923662,
+      "minimum": 0.17138239899941254,
+      "maximum": 0.19940006700016966,
+      "mean": 0.18413560766627293,
+      "cv": 0.06286226179927024
+    },
+    "traces/steady/peak_rss_kib": {
+      "direction": "higher",
+      "median": 818844,
+      "minimum": 816004,
+      "maximum": 825088,
+      "mean": 819978.6666666666,
+      "cv": 0.004627347284310954
+    },
+    "traces/steady/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 14.288135593220339,
+      "minimum": 14.234463276836157,
+      "maximum": 14.461756373937677,
+      "mean": 14.328118414664724,
+      "cv": 0.006770146599089479
+    },
+    "traces/steady/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 156650.86440677967,
+      "minimum": 155449.62711864407,
+      "maximum": 158466.09631728046,
+      "mean": 156855.5292809014,
+      "cv": 0.007904999275672819
+    },
+    "traces/steady/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 197.31140348633235,
+      "minimum": 197.1255259720773,
+      "maximum": 199.3684670031637,
+      "mean": 197.93513215385778,
+      "cv": 0.005134801512452089
+    },
+    "traces/steady/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.012620129999959318,
+      "minimum": 0.01183192999815219,
+      "maximum": 0.014060059998882934,
+      "mean": 0.012837373332331481,
+      "cv": 0.07186126744554883
+    },
+    "traces/cold_blocks/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.2231823700003588,
+      "minimum": 0.21363289299915778,
+      "maximum": 0.2375698369996826,
+      "mean": 0.22479503333306639,
+      "cv": 0.04376664350736135
+    },
+    "traces/cold_blocks/peak_rss_kib": {
+      "direction": "higher",
+      "median": 903852,
+      "minimum": 900536,
+      "maximum": 904284,
+      "mean": 902890.6666666666,
+      "cv": 0.0018543942379361895
+    },
+    "traces/cold_blocks/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 5.155172413793103,
+      "minimum": 5.150862068965517,
+      "maximum": 5.180257510729613,
+      "mean": 5.1620973311627445,
+      "cv": 0.002510838920873003
+    },
+    "traces/cold_blocks/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 189036.4051724138,
+      "minimum": 188672.22844827586,
+      "maximum": 189084.77253218883,
+      "mean": 188931.1353842928,
+      "cv": 0.0009746230361293374
+    },
+    "traces/compaction/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.17762799900083337,
+      "minimum": 0.16592231500180787,
+      "maximum": 0.19004016700091597,
+      "mean": 0.1778634936678524,
+      "cv": 0.055365379724132566
+    },
+    "traces/compaction/peak_rss_kib": {
+      "direction": "higher",
+      "median": 1002892,
+      "minimum": 986568,
+      "maximum": 1015024,
+      "mean": 1001494.6666666666,
+      "cv": 0.011641655865677919
+    },
+    "traces/compaction/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 13.768361581920903,
+      "minimum": 13.121468926553673,
+      "maximum": 13.991549295774648,
+      "mean": 13.627126601416407,
+      "cv": 0.02707694708983873
+    },
+    "traces/compaction/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 149434.20621468927,
+      "minimum": 143509.9011299435,
+      "maximum": 152782.3014084507,
+      "mean": 148575.46958436116,
+      "cv": 0.025803949184074616
+    },
+    "traces/compaction/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 197.200322924141,
+      "minimum": 197.18163218970489,
+      "maximum": 197.91617633294965,
+      "mean": 197.43271048226518,
+      "cv": 0.0017319679556481852
+    },
+    "traces/compaction/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.011268769998423522,
+      "minimum": 0.010933399000350619,
+      "maximum": 0.011832939999294467,
+      "mean": 0.011345036332689537,
+      "cv": 0.03271691925970168
+    },
+    "traces/deletion/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.18446754900105589,
+      "minimum": 0.18005724400063627,
+      "maximum": 0.18602274699878762,
+      "mean": 0.1835158466668266,
+      "cv": 0.013768142446787724
+    },
+    "traces/deletion/peak_rss_kib": {
+      "direction": "higher",
+      "median": 1039120,
+      "minimum": 1032512,
+      "maximum": 1042848,
+      "mean": 1038160.0,
+      "cv": 0.004116809730444422
+    },
+    "traces/deletion/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 15.203389830508474,
+      "minimum": 15.104815864022664,
+      "maximum": 15.492917847025495,
+      "mean": 15.267041180518879,
+      "cv": 0.010788643967076305
+    },
+    "traces/deletion/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 172957.8672316384,
+      "minimum": 168138.54107648725,
+      "maximum": 173017.4419263456,
+      "mean": 171371.2834114904,
+      "cv": 0.013339594379231878
+    },
+    "traces/deletion/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 197.22074482852312,
+      "minimum": 196.71951760302994,
+      "maximum": 197.64741166740018,
+      "mean": 197.19589136631774,
+      "cv": 0.0019230552783683337
+    },
+    "traces/deletion/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.010703549000027124,
+      "minimum": 0.010446090000186814,
+      "maximum": 0.014242739000110305,
+      "mean": 0.011797459333441415,
+      "cv": 0.14683377796840344
+    },
+    "traces/noisy_tenant/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.23558162900008028,
+      "minimum": 0.2120342130001518,
+      "maximum": 0.23945593600001303,
+      "mean": 0.2290239260000817,
+      "cv": 0.05290807182470254
+    },
+    "traces/noisy_tenant/peak_rss_kib": {
+      "direction": "higher",
+      "median": 1098248,
+      "minimum": 1091448,
+      "maximum": 1102744,
+      "mean": 1097480.0,
+      "cv": 0.00423099993340448
+    },
+    "traces/noisy_tenant/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 23.337110481586404,
+      "minimum": 23.099431818181817,
+      "maximum": 24.03409090909091,
+      "mean": 23.490211069619708,
+      "cv": 0.01688503852925613
+    },
+    "traces/noisy_tenant/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 182051.04261363635,
+      "minimum": 181465.6373937677,
+      "maximum": 186812.14772727274,
+      "mean": 183442.9425782256,
+      "cv": 0.013052260366612523
+    },
+    "traces/noisy_tenant/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 193.76858945343488,
+      "minimum": 192.25494707052977,
+      "maximum": 194.53959718208526,
+      "mean": 193.52104456868332,
+      "cv": 0.004903793884198179
+    },
+    "traces/noisy_tenant/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.02392223999959242,
+      "minimum": 0.02095236999957706,
+      "maximum": 0.02610131000074034,
+      "mean": 0.02365863999996994,
+      "cv": 0.08919759293102898
+    },
+    "traces/restart/recovery_seconds": {
+      "direction": "higher",
+      "median": 9.643189588001405,
+      "minimum": 9.405904762999853,
+      "maximum": 9.742392269999982,
+      "mean": 9.597162207000414,
+      "cv": 0.014709900255914685
+    },
+    "profiles/burst/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.13476777399955608,
+      "minimum": 0.12091005600086646,
+      "maximum": 0.13561200799995277,
+      "mean": 0.1304299460001251,
+      "cv": 0.05167828734461748
+    },
+    "profiles/burst/peak_rss_kib": {
+      "direction": "higher",
+      "median": 701264,
+      "minimum": 700632,
+      "maximum": 702756,
+      "mean": 701550.6666666666,
+      "cv": 0.0012693266960416884
+    },
+    "profiles/burst/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 0.43282828282828284,
+      "minimum": 0.420959595959596,
+      "maximum": 0.4348484848484849,
+      "mean": 0.4295454545454545,
+      "cv": 0.014263641297337135
+    },
+    "profiles/burst/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 1545.9598484848484,
+      "minimum": 1521.981313131313,
+      "maximum": 1594.2022727272727,
+      "mean": 1554.0478114478112,
+      "cv": 0.019326063585916344
+    },
+    "profiles/burst/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 1194.6395674786295,
+      "minimum": 1193.7161141274012,
+      "maximum": 1199.8131939600003,
+      "mean": 1196.0562918553435,
+      "cv": 0.0022433293839483983
+    },
+    "profiles/burst/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.8475142240004061,
+      "minimum": 0.7759622360026697,
+      "maximum": 0.8485676849995798,
+      "mean": 0.8240147150008852,
+      "cv": 0.041238287152524936
+    },
+    "profiles/high_cardinality/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.5642514890005259,
+      "minimum": 0.5281795190021512,
+      "maximum": 0.6046271139985038,
+      "mean": 0.5656860406670603,
+      "cv": 0.055200372981906255
+    },
+    "profiles/high_cardinality/peak_rss_kib": {
+      "direction": "higher",
+      "median": 1108384,
+      "minimum": 1048620,
+      "maximum": 1114976,
+      "mean": 1090660.0,
+      "cv": 0.027367224263981
+    },
+    "profiles/high_cardinality/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 13.429411764705883,
+      "minimum": 12.188235294117646,
+      "maximum": 13.470238095238095,
+      "mean": 13.029295051353875,
+      "cv": 0.045662682723070315
+    },
+    "profiles/high_cardinality/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 1668000.3352941177,
+      "minimum": 1469813.8411764705,
+      "maximum": 1675600.4166666667,
+      "mean": 1604471.5310457516,
+      "cv": 0.059376500283933785
+    },
+    "profiles/high_cardinality/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 18.678985126449167,
+      "minimum": 18.252423859914106,
+      "maximum": 19.22423894780828,
+      "mean": 18.718549311390518,
+      "cv": 0.021247746330547667
+    },
+    "profiles/high_cardinality/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.0166321489996335,
+      "minimum": 0.015635168998414883,
+      "maximum": 0.02263349900022149,
+      "mean": 0.018300272332756624,
+      "cv": 0.16890288601832273
+    },
+    "profiles/steady/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.02412155999991228,
+      "minimum": 0.021781430001283297,
+      "maximum": 0.026181170000199927,
+      "mean": 0.0240280533337985,
+      "cv": 0.07480434844176198
+    },
+    "profiles/steady/peak_rss_kib": {
+      "direction": "higher",
+      "median": 549668,
+      "minimum": 545128,
+      "maximum": 552300,
+      "mean": 549032.0,
+      "cv": 0.005395482969469977
+    },
+    "profiles/steady/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 6.147222222222222,
+      "minimum": 6.044444444444444,
+      "maximum": 6.222222222222222,
+      "mean": 6.137962962962963,
+      "cv": 0.011872374336974523
+    },
+    "profiles/steady/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 12184.761111111111,
+      "minimum": 11826.469444444445,
+      "maximum": 12324.819444444445,
+      "mean": 12112.016666666668,
+      "cv": 0.017325960563558545
+    },
+    "profiles/steady/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 19.709031357591076,
+      "minimum": 19.637053554749503,
+      "maximum": 19.748628577915742,
+      "mean": 19.698237830085443,
+      "cv": 0.0023446407323923033
+    },
+    "profiles/steady/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.016382949999751872,
+      "minimum": 0.016132599997945363,
+      "maximum": 0.01758116000019072,
+      "mean": 0.016698903332629318,
+      "cv": 0.03785675720692011
+    },
+    "profiles/cold_blocks/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.1908911270002136,
+      "minimum": 0.18256198599920026,
+      "maximum": 0.19673063899972476,
+      "mean": 0.19006125066637955,
+      "cv": 0.030590231812040368
+    },
+    "profiles/cold_blocks/peak_rss_kib": {
+      "direction": "higher",
+      "median": 980928,
+      "minimum": 974572,
+      "maximum": 981096,
+      "mean": 978865.3333333334,
+      "cv": 0.003102183369600205
+    },
+    "profiles/cold_blocks/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 7.133333333333334,
+      "minimum": 5.121338912133891,
+      "maximum": 7.166666666666667,
+      "mean": 6.473779637377963,
+      "cv": 0.1477370065728825
+    },
+    "profiles/cold_blocks/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 795742.3833333333,
+      "minimum": 792836.9790794979,
+      "maximum": 809536.0,
+      "mean": 799371.7874709438,
+      "cv": 0.009112657612078906
+    },
+    "profiles/compaction/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.30579387299985683,
+      "minimum": 0.2882979010028066,
+      "maximum": 0.4132251980008732,
+      "mean": 0.3357723240011789,
+      "cv": 0.1644902080393684
+    },
+    "profiles/compaction/peak_rss_kib": {
+      "direction": "higher",
+      "median": 957432,
+      "minimum": 948608,
+      "maximum": 971352,
+      "mean": 959130.6666666666,
+      "cv": 0.00976151333174858
+    },
+    "profiles/compaction/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 6.5,
+      "minimum": 6.4692737430167595,
+      "maximum": 6.730113636363637,
+      "mean": 6.566462459793466,
+      "cv": 0.017725945198589162
+    },
+    "profiles/compaction/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 470897.3715083799,
+      "minimum": 470727.2402234637,
+      "maximum": 488669.66761363635,
+      "mean": 476764.7597818266,
+      "cv": 0.017657193434753717
+    },
+    "profiles/compaction/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 19.84987292454473,
+      "minimum": 19.740896592556943,
+      "maximum": 19.902662866047347,
+      "mean": 19.83114412771634,
+      "cv": 0.0033964536782650303
+    },
+    "profiles/compaction/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.01629675999902247,
+      "minimum": 0.015809200001967838,
+      "maximum": 0.018442809001498972,
+      "mean": 0.016849589667496428,
+      "cv": 0.06789630821734256
+    },
+    "profiles/deletion/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.3086807229992701,
+      "minimum": 0.30587729299986677,
+      "maximum": 0.39241331800076296,
+      "mean": 0.33565711133329995,
+      "cv": 0.1196131801554888
+    },
+    "profiles/deletion/peak_rss_kib": {
+      "direction": "higher",
+      "median": 958952,
+      "minimum": 953048,
+      "maximum": 974128,
+      "mean": 962042.6666666666,
+      "cv": 0.009229351758415761
+    },
+    "profiles/deletion/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 7.474719101123595,
+      "minimum": 7.03641456582633,
+      "maximum": 7.6752136752136755,
+      "mean": 7.395449114054533,
+      "cv": 0.03606872415464478
+    },
+    "profiles/deletion/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 496040.32303370786,
+      "minimum": 465530.1792717087,
+      "maximum": 502792.6296296296,
+      "mean": 488121.04397834867,
+      "cv": 0.03320950830317076
+    },
+    "profiles/deletion/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 19.836914294473242,
+      "minimum": 19.625093570773682,
+      "maximum": 19.86790739087588,
+      "mean": 19.776638418707602,
+      "cv": 0.005456074229174177
+    },
+    "profiles/deletion/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.016304939999827184,
+      "minimum": 0.015659988999686902,
+      "maximum": 0.018952378999529174,
+      "mean": 0.016972435999681085,
+      "cv": 0.0839346256391757
+    },
+    "profiles/noisy_tenant/query_p99_seconds": {
+      "direction": "higher",
+      "median": 0.37795493100020394,
+      "minimum": 0.35985827300100937,
+      "maximum": 0.8737021819997608,
+      "mean": 0.537171795333658,
+      "cv": 0.4432056519507049
+    },
+    "profiles/noisy_tenant/peak_rss_kib": {
+      "direction": "higher",
+      "median": 952632,
+      "minimum": 949296,
+      "maximum": 954864,
+      "mean": 952264.0,
+      "cv": 0.00240266567653617
+    },
+    "profiles/noisy_tenant/object_requests_per_operation": {
+      "direction": "higher",
+      "median": 12.86685552407932,
+      "minimum": 12.553977272727273,
+      "maximum": 13.414414414414415,
+      "mean": 12.945082403740336,
+      "cv": 0.02746993150980201
+    },
+    "profiles/noisy_tenant/object_bytes_per_operation": {
+      "direction": "higher",
+      "median": 549697.7528409091,
+      "minimum": 539001.4560906516,
+      "maximum": 581340.9399399399,
+      "mean": 556680.0496238335,
+      "cv": 0.03229202085150855
+    },
+    "profiles/noisy_tenant/durable_rows_per_sec": {
+      "direction": "lower",
+      "median": 19.68331472843888,
+      "minimum": 19.362554852055215,
+      "maximum": 19.770876173422753,
+      "mean": 19.605581917972284,
+      "cv": 0.008952790922753017
+    },
+    "profiles/noisy_tenant/write_p99_seconds": {
+      "direction": "higher",
+      "median": 0.02372289000049932,
+      "minimum": 0.023215979999804404,
+      "maximum": 0.03238889800013567,
+      "mean": 0.0264425893334798,
+      "cv": 0.15920395491060454
+    },
+    "profiles/restart/recovery_seconds": {
+      "direction": "higher",
+      "median": 9.54879766600061,
+      "minimum": 9.062106864999805,
+      "maximum": 9.759484668000368,
+      "mean": 9.456796399666928,
+      "cv": 0.03088162450419633
+    }
+  },
+  "run_ids": [
+    "37190064969-1-deployment-1",
+    "37190064969-1-deployment-2",
+    "37190064969-1-deployment-3"
+  ],
+  "image_commit": "47ddda37177501c43c823f17db59ee149340b436",
+  "image_digest": "sha256:d9a83da975c23d56f2bcdb4f555978badcdf8687c2d3a4bf4079bbc2d34cddd3",
+  "harness_commit": "f0e47fb911571c2493c67c8654a52d625cfe6e04"
+}

@@ -1,5 +1,7 @@
 use std::time::{Duration, Instant};
 
+use krabka_units::ByteSize;
+
 use super::{
     AddressFallbackResolver, Arc, AsArray, BTreeMap, BTreeSet, ChainedResolver, CompositeSymbols,
     DebuginfodConfig, DebuginfodResolver, ExternalPartition, FileSystemResolver, HashMap,
@@ -25,6 +27,7 @@ pub struct ColdProfileStore {
     pub(crate) index: Arc<RwLock<Arc<ProfileIndex>>>,
     pub(crate) resolver: Arc<ChainedResolver>,
     pub(crate) symdb_cache: Arc<Mutex<SymbolDbCache>>,
+    index_snapshot: Option<(String, ByteSize)>,
 }
 
 fn cached_symbol_db(cache: &mut SymbolDbCache, block_key: &str, now: Instant) -> Option<SymbolDb> {
@@ -70,6 +73,7 @@ impl ColdProfileStore {
             index: Arc::new(RwLock::new(index)),
             resolver: local_native_resolver(),
             symdb_cache: Arc::default(),
+            index_snapshot: None,
         }
     }
 
@@ -109,7 +113,15 @@ impl ColdProfileStore {
             index: Arc::new(RwLock::new(index)),
             resolver: Arc::new(ChainedResolver::new(resolvers)),
             symdb_cache: Arc::default(),
+            index_snapshot: None,
         })
+    }
+
+    /// Reloads this durable index when compaction retires a cached block.
+    #[must_use]
+    pub fn with_index_snapshot(mut self, key: String, max_bytes: ByteSize) -> Self {
+        self.index_snapshot = Some((key, max_bytes));
+        self
     }
 
     /// Current block index snapshot. The method clones the inner `Arc`, which is
@@ -133,39 +145,34 @@ impl ColdProfileStore {
         *self.index.write().expect("profile index lock poisoned") = index;
     }
 
-    pub(crate) fn block_keys(
-        &self,
+    fn index_block_keys(
+        index: &ProfileIndex,
         tenant: &str,
         profile_type: &str,
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<(Vec<String>, std::collections::BTreeSet<SeriesFingerprint>), ProfileError> {
-        let fps = self
-            .current_index()
+    ) -> Result<(Vec<String>, BTreeSet<SeriesFingerprint>), ProfileError> {
+        let fps = index
             .select_fingerprints(tenant, profile_type, matchers)
             .map_err(|err| ProfileError::Store(err.to_string()))?;
         if fps.is_empty() {
             return Ok((Vec::new(), fps));
         }
-        let blocks = self
-            .current_index()
-            .candidate_blocks_for_series(tenant, &fps, start_ms, end_ms);
+        let blocks = index.candidate_blocks_for_series(tenant, &fps, start_ms, end_ms);
         Ok((blocks, fps))
     }
-}
-
-#[async_trait::async_trait]
-impl ProfileStore for ColdProfileStore {
-    async fn select(
+    async fn select_from_index(
         &self,
+        index: &ProfileIndex,
         tenant: &str,
         profile_type: &str,
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
     ) -> Result<ProfileScan, ProfileError> {
-        let (blocks, fps) = self.block_keys(tenant, profile_type, matchers, start_ms, end_ms)?;
+        let (blocks, fps) =
+            Self::index_block_keys(index, tenant, profile_type, matchers, start_ms, end_ms)?;
         let mut batches = Vec::new();
         let mut symbols = CompositeSymbols::default();
         for (block_idx, block_key) in blocks.iter().enumerate() {
@@ -175,7 +182,7 @@ impl ProfileStore for ColdProfileStore {
             // fresh base straight onto them folds bits together and can collide
             // across blocks (e.g. `1<<32 | (2<<32)` and `2<<32 | (1<<32)` both ==
             // `3<<32`). Dense re-basing keeps each block's external keys unique.
-            let stored_partitions = self.current_index().stacktrace_partitions(block_key);
+            let stored_partitions = index.stacktrace_partitions(block_key);
             let partition_map = block_partition_map(block_idx, &stored_partitions)?;
             let symdb = self.load_symdb(block_key).await?;
             let source = Arc::new(LazySymbolizer::new(symdb, Arc::clone(&self.resolver)));
@@ -215,6 +222,52 @@ impl ProfileStore for ColdProfileStore {
             samples_table,
             symbols: Arc::new(symbols),
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl ProfileStore for ColdProfileStore {
+    async fn select(
+        &self,
+        tenant: &str,
+        profile_type: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<ProfileScan, ProfileError> {
+        let mut index = self.current_index();
+        let mut retries = 2;
+        loop {
+            let failure = match self
+                .select_from_index(&index, tenant, profile_type, matchers, start_ms, end_ms)
+                .await
+            {
+                Ok(scan) => return Ok(scan),
+                Err(error) => error,
+            };
+            let Some((key, max_bytes)) = &self.index_snapshot else {
+                return Err(failure);
+            };
+            if retries == 0 {
+                return Err(failure);
+            }
+            let latest =
+                ProfileIndex::load_latest_snapshot_with_max_bytes(&self.store, key, *max_bytes)
+                    .await
+                    .map_err(|error| ProfileError::Store(error.to_string()))?;
+            let (old_blocks, _) =
+                Self::index_block_keys(&index, tenant, profile_type, matchers, start_ms, end_ms)?;
+            let (new_blocks, _) =
+                Self::index_block_keys(&latest, tenant, profile_type, matchers, start_ms, end_ms)?;
+            // Replan the whole query only when its selected blocks were retired.
+            // A failing block still in the durable index remains an error.
+            if !old_blocks.iter().any(|block| !new_blocks.contains(block)) {
+                return Err(failure);
+            }
+            index = Arc::new(latest);
+            self.replace_index(Arc::clone(&index));
+            retries -= 1;
+        }
     }
 
     async fn query_stats(
