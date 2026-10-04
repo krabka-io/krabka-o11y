@@ -384,8 +384,8 @@ class Deployment:
                 for _ in pool.map(write, range(count)):
                     pass
         finally:
-            (self.evidence / f"{signal}-{tenant}.seed.jsonl").write_text(
-                "".join(json.dumps(record) + "\n" for record in records))
+            with (self.evidence / f"{signal}-{tenant}.seed.jsonl").open("a") as output:
+                output.write("".join(json.dumps(record) + "\n" for record in records))
         if not self.drain(signal)["recovered"]:
             raise RuntimeError(f"{signal}/{tenant} seed did not become durable")
         self.wait_query(signal, tenant, True)
@@ -422,6 +422,9 @@ class Deployment:
         return self.wait_query(signal, "expired", False)
 
     def close(self):
+        (self.evidence / "final-container-states.json").write_text(json.dumps({
+            name: json.loads(command("docker", "inspect", "--format", "{{json .State}}", identity))
+            for name, identity in self.ids.items()}, indent=2))
         (self.evidence / "containers.log").write_text(self.run("logs", "--no-color"))
         self.run("down", "--volumes", "--remove-orphans", "--timeout", "5")
 
@@ -594,7 +597,6 @@ def run(args):
             plans += [("cold_blocks", 0, 100, False, True), ("compaction", 2, 100, False, False),
                       ("deletion", 2, 100, False, False), ("noisy_tenant", 2, 100, True, False)]
             failed = set()
-            last_cardinality_tenant = "soak"
             last_cardinality = 100
             for phase, writers, cardinality, noisy, cold in plans:
                 if phase in failed:
@@ -604,6 +606,10 @@ def run(args):
                     f"cardinality-{cardinality}" if phase == "high_cardinality" else (
                         "cold" if cold else "quiet" if noisy else "soak"))
                 if cold:
+                    # Cold reads qualify this corpus on its own, after the
+                    # saturation search has deliberately exhausted resources.
+                    deployment.run("down", "--volumes", "--remove-orphans", "--timeout", "5")
+                    deployment.start()
                     cardinality = last_cardinality
                     deployment.seed(signal, "cold", cardinality, age_seconds=600)
                 if phase == "deletion":
@@ -658,11 +664,10 @@ def run(args):
                         # A deliberately overloaded dataset is evidence of
                         # saturation. Later phases use the last passing size.
                         (args.output / f"{name}.containers.log").write_text(deployment.run("logs", "--no-color"))
-                        deployment.run("down", "--volumes", "--remove-orphans", "--timeout", "5")
-                        deployment.start()
-                        deployment.seed(signal, last_cardinality_tenant, last_cardinality)
+                        if phase == "burst":
+                            deployment.run("down", "--volumes", "--remove-orphans", "--timeout", "5")
+                            deployment.start()
                 elif phase == "high_cardinality":
-                    last_cardinality_tenant = tenant
                     last_cardinality = cardinality
             # Stop the durable consumer, append a backlog, then time catch-up.
             builder = f"{signal}-block-builder"
