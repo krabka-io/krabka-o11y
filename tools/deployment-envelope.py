@@ -15,7 +15,6 @@ import math
 import os
 import pathlib
 import re
-import statistics
 import subprocess
 import threading
 import time
@@ -203,6 +202,7 @@ class Deployment:
                 service["image"] = image
             service["cpus"] = 2.0 if name in ("broker", "minio") else 1.0
             service["mem_limit"] = "2g" if name in ("broker", "minio") else "1g"
+            service["ulimits"] = {"nofile": {"soft": 65536, "hard": 65536}}
             service.pop("restart", None)
             for volume in service.get("volumes", []):
                 if volume.get("target") == "/etc/krabka":
@@ -291,14 +291,14 @@ def telemetry(samples, signal):
             "scrape_errors": sum(len(s["scrape_errors"]) for s in samples)}
 
 
-def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, paced=True):
+def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, interval=0.25):
     records = []
     stop = threading.Event()
     started = time.monotonic()
     begin = started + warmup
     until = begin + seconds
 
-    def worker(kind, tenant, paced):
+    def worker(kind, tenant, pace):
         while time.monotonic() < until:
             seq = next(deployment.sequence) if kind == "write" else None
             if kind == "write":
@@ -316,16 +316,16 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
                                 "status": status, "rows": rows,
                                 "has_data": has_data(signal, response) if kind == "query" else None,
                                 "error": response[:200].decode(errors="replace") if status >= 300 or status == 0 else None})
-            if paced:
-                stop.wait(max(0, 0.25 - elapsed))
+            if pace:
+                stop.wait(max(0, pace - elapsed))
 
-    tenants = [("quiet" if noisy else "soak", writers, paced)]
+    tenants = [("quiet" if noisy else "soak", writers, interval)]
     if noisy:
-        tenants.append(("noisy", 4, False))
+        tenants.append(("noisy", 4, 0))
     with concurrent.futures.ThreadPoolExecutor(max_workers=writers + 6) as pool:
-        tasks = [pool.submit(worker, "query", "quiet" if noisy else "soak", True)]
-        for tenant, count, paced in tenants:
-            tasks.extend(pool.submit(worker, "write", tenant, paced) for _ in range(count))
+        tasks = [pool.submit(worker, "query", "quiet" if noisy else "soak", 0.25)]
+        for tenant, count, pace in tenants:
+            tasks.extend(pool.submit(worker, "write", tenant, pace) for _ in range(count))
         samples = []
         while time.monotonic() < until:
             if time.monotonic() >= begin:
@@ -339,7 +339,7 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
     writes = summarize([r for r in records if r["kind"] == "write" and r["tenant"] == main], duration)
     queries = summarize([r for r in records if r["kind"] == "query"], duration)
     result = {"signal": signal, "writers": writers, "cardinality": cardinality,
-              "warmup_seconds": warmup, "duration_seconds": duration,
+              "warmup_seconds": warmup, "duration_seconds": duration, "write_interval_seconds": interval,
               "ingest": writes, "query": queries, "telemetry": telemetry(samples, signal),
               "tenants": {t: summarize([r for r in records if r["tenant"] == t and r["kind"] == "write"], duration)
                           for t, _, _ in tenants}}
@@ -356,7 +356,11 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
 def run(args):
     deployment = Deployment(args.output, args.image)
     report = {"schema_version": 1, "harness_commit": command("git", "rev-parse", "HEAD"),
-              "image": args.image, "seed": SEED, "phase_seconds": args.seconds,
+              "image": args.image, "image_digest": args.image_digest or args.image.split("@")[-1],
+              "seed": SEED, "phase_seconds": args.seconds,
+              "host": {"cpu_count": os.cpu_count(), "kernel": command("uname", "-r"),
+                       "cpu_model": command("lscpu", "-J"),
+                       "runner": os.environ.get("KRABKA_SOAK_RUNNER")},
               "burst_levels": WRITERS, "cardinality_levels": CARDINALITIES, "entries": []}
     sequence = 0
     try:
@@ -392,7 +396,7 @@ def run(args):
                         if not 200 <= status < 300:
                             raise RuntimeError(f"{signal} cardinality seed failed: {status} {response[:200]!r}")
                 result, records, samples = measure(deployment, signal, args.seconds, args.seconds / 4,
-                                                    writers, cardinality, noisy, cold, phase != "burst")
+                                                    writers, cardinality, noisy, cold, 1.0 if phase == "burst" else 0.25)
                 result["phase"] = phase
                 report["entries"].append(result)
                 name = f"{sequence:02d}-{signal}-{phase}"
@@ -450,6 +454,7 @@ def self_test():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", help="Content-addressed Krabka image")
+    parser.add_argument("--image-digest", help="OCI manifest digest for an image built locally")
     parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("qualification/evidence/deployment"))
     parser.add_argument("--seconds", type=int, default=60)
     parser.add_argument("--self-test", action="store_true")
@@ -457,6 +462,7 @@ if __name__ == "__main__":
     if options.self_test:
         self_test()
     else:
-        if not options.image or "@sha256:" not in options.image or options.seconds <= 0:
+        digest = options.image_digest or (options.image or "").split("@")[-1]
+        if not options.image or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest) or options.seconds <= 0:
             parser.error("--image needs an immutable digest and --seconds must be positive")
         run(options)
