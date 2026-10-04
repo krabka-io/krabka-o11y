@@ -6,6 +6,7 @@ reports accepted throughput, not equivalent durable throughput.
 """
 import argparse
 import functools
+import hashlib
 import importlib.util
 import json
 import math
@@ -287,6 +288,8 @@ def run(args):
               'write_interval_seconds': 1, 'query_interval_seconds': 0.25,
               'image_commit': args.image_commit, 'image_digest': args.image_digest,
               'image_identity': json.loads(env.command('docker', 'inspect', args.image))[0],
+              'harness_sha256': {name: hashlib.sha256(pathlib.Path(__file__).with_name(name).read_bytes()).hexdigest()
+                                 for name in ('compare-grafana.py', 'deployment-envelope.py', 'fuzz-corpus.py')},
               'dataset': {'metric_samples_per_request': 1000, 'metric_points_per_series': 1,
                           'other_signals': 'deployment-envelope dataset; profile units=nanoseconds, unquoted legacy labels, sampleRate=1e9', 'seed_concurrency': 64},
               'host': {'cpu_count': os.cpu_count(), 'kernel': env.command('uname', '-r'), 'lscpu': json.loads(env.command('lscpu', '-J'))},
@@ -341,6 +344,13 @@ def run(args):
                             break
                 finally:
                     deployment.close()
+    checksums = []
+    for path in sorted(args.output.rglob('*')):
+        if path.is_file() and path.name != 'SHA256SUMS':
+            with path.open('rb') as source:
+                digest = hashlib.file_digest(source, 'sha256').hexdigest()
+            checksums.append(f'{digest}  {path.relative_to(args.output)}\n')
+    (args.output / 'SHA256SUMS').write_text(''.join(checksums))
 
 
 def self_test():
