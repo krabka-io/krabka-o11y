@@ -1,7 +1,8 @@
 # Krabka versus Loki, Mimir, Tempo and Pyroscope
 
 For subsequent changes on this branch, see the
-[local optimization measurements](grafana-performance-optimization.md).
+[local optimization measurements](grafana-performance-optimization.md) and
+[Pyroscope handoff and performance work](pyroscope-performance-optimization.md).
 The tables below retain the historical issue 267 results.
 
 Measured on 2026-10-04 using the installed [Cyclenerd Google Cloud GitHub runner](https://github.com/Cyclenerd/google-cloud-github-runner). This compares accepted API work in fixed, single-node deployment shapes, with one active signal at a time. The backends acknowledge writes at different durability boundaries; these are not equivalent durable-throughput results. The issue 267 [operating envelope](operating_envelope.md) and its durability qualification remain separate.
@@ -104,8 +105,8 @@ It preserves the image, source commit, manifest digest, and raw measurements.
 Use `image_artifact_run` to compare an image preserved by the operating-envelope workflow.
 Use run `37183330836` to reproduce the historical measurements above.
 
-After this workflow is merged into the default branch, dispatch the branch
-you want to measure:
+The workflow is registered on the default branch. Dispatch the branch you want
+to measure:
 
 ```sh
 gh workflow run grafana-comparison.yml --repo krabka-io/krabka-o11y \
@@ -114,7 +115,15 @@ gh workflow run grafana-comparison.yml --repo krabka-io/krabka-o11y \
 ```
 
 Set `signal=all` and `phases=all` for the complete comparison.
-Run metrics, logs, and traces in that order for performance optimization.
+Run metrics, logs, traces, and profiles in that order for performance optimization.
+For profiles, `profiles_target=both` measures the separate role containers and
+the shipped `all` target sequentially on one private Google Cloud runner, using
+the same image and aggregate resource budget. Each layout gets three fresh
+pairs. Their reports are in the artifact's `split/` and `all/` directories.
+The workflow waits for low background CPU before warm-up. The harness records
+host CPU and rejects runs averaging more than two external cores or exceeding
+four external cores over ten sample intervals; the summarizer suppresses
+qualified ratios for failed steady objectives.
 Use a quiet qualification host for published ratios. A local diagnostic run
 uses the same payloads and reports its actual host:
 
