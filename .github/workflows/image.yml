@@ -33,6 +33,13 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing qualified source tag to finish releasing
+        type: string
+      release_digest:
+        description: Existing image index digest to qualify without rebuilding
+        type: string
 
 permissions:
   actions: read
@@ -52,25 +59,36 @@ jobs:
     timeout-minutes: 10
     outputs:
       qualified-run: ${{ steps.qualification.outputs.run }}
+      source-sha: ${{ steps.qualification.outputs.source-sha }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
       - name: require exact qualification and completed prerequisites
         id: qualification
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.release_tag
         env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_DIGEST: ${{ inputs.release_digest }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [[ -n "${RELEASE_TAG}" ]]; then
+            test -n "${RELEASE_DIGEST}"
+            [[ ${RELEASE_DIGEST} =~ ^sha256:[0-9a-f]{64}$ ]]
+          fi
+          sha="$(git rev-parse HEAD)"
           for issue in 272 273 274; do
             test "$(gh issue view "${issue}" --json state --jq .state)" = CLOSED
           done
-          run="$(gh run list --workflow qualification.yml --commit "${GITHUB_SHA}" \
+          run="$(gh run list --workflow qualification.yml --commit "${sha}" \
             --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
           test -n "${run}"
           gh run download "${run}" \
-            --name "milestone-21-qualification-${GITHUB_SHA}" --dir qualified
+            --name "milestone-21-qualification-${sha}" --dir qualified
           tools/qualification-report.py \
             --report qualified/milestone-21-qualified.json \
-            --final --commit "${GITHUB_SHA}"
+            --final --commit "${sha}"
+          echo "source-sha=${sha}" >> "${GITHUB_OUTPUT}"
           echo "run=${run}" >> "${GITHUB_OUTPUT}"
 
   # Two minutes, no Bazel. It catches the manifest errors that only appear when
@@ -90,6 +108,7 @@ jobs:
 
   image:
     name: build · publish
+    if: ${{ !inputs.release_tag }}
     needs: [manifests, release-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -169,7 +188,7 @@ jobs:
 
   release:
     name: release · qualify published digest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: ${{ always() && needs.release-gate.result == 'success' && (startsWith(github.ref, 'refs/tags/') && needs.image.result == 'success' || inputs.release_tag && inputs.release_digest) }}
     needs: [image, release-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -182,14 +201,39 @@ jobs:
       packages: write
     env:
       GH_TOKEN: ${{ github.token }}
-      IMAGE: ghcr.io/krabka-io/krabka-o11y@${{ needs.image.outputs.digest }}
+      IMAGE: ghcr.io/krabka-io/krabka-o11y@${{ inputs.release_digest || needs.image.outputs.digest }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      SOURCE_SHA: ${{ needs.release-gate.outputs.source-sha }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag || github.ref }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: verify and reuse original build provenance
+        if: inputs.release_tag
+        run: |
+          gh attestation verify "oci://${IMAGE}" --repo "${GITHUB_REPOSITORY}" \
+            --source-digest "${SOURCE_SHA}" --source-ref "refs/tags/${RELEASE_TAG}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/image.yml"
+          mkdir -p original-provenance
+          cd original-provenance
+          gh attestation download "oci://${IMAGE}" --repo "${GITHUB_REPOSITORY}" \
+            --predicate-type https://slsa.dev/provenance/v1
+          mv "${IMAGE##*@}.jsonl" ../original-provenance.jsonl
       - name: verify release platforms are pullable
         run: |
           mkdir -p release-assets
+          docker buildx imagetools inspect "${IMAGE}" --raw > release-assets/image-index.json
           for platform in linux/arm64 linux/amd64; do
-            docker pull --platform "${platform}" "${IMAGE}"
+            child="$(jq -er --arg architecture "${platform#linux/}" \
+              '.manifests[] | select(.platform.os == "linux" and .platform.architecture == $architecture) | .digest' \
+              release-assets/image-index.json)"
+            [[ ${child} =~ ^sha256:[0-9a-f]{64}$ ]]
+            docker pull --platform "${platform}" "${IMAGE%@*}@${child}"
             printf '%s %s\n' "${platform}" "${IMAGE}" >> release-assets/platforms.txt
           done
       - name: clean four-signal install and query smoke
@@ -202,18 +246,19 @@ jobs:
           output-file: release-assets/sbom.spdx.json
           upload-artifact: false
       - name: attest release provenance
+        if: ${{ !inputs.release_tag }}
         id: provenance
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-name: ghcr.io/krabka-io/krabka-o11y
-          subject-digest: ${{ needs.image.outputs.digest }}
+          subject-digest: ${{ inputs.release_digest || needs.image.outputs.digest }}
           push-to-registry: true
       - name: attest release SBOM
         id: sbom-attestation
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
         with:
           subject-name: ghcr.io/krabka-io/krabka-o11y
-          subject-digest: ${{ needs.image.outputs.digest }}
+          subject-digest: ${{ inputs.release_digest || needs.image.outputs.digest }}
           sbom-path: release-assets/sbom.spdx.json
           push-to-registry: true
       - name: assemble and publish release
@@ -222,11 +267,15 @@ jobs:
           PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
           SBOM_BUNDLE: ${{ steps.sbom-attestation.outputs.bundle-path }}
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
+          tag="${RELEASE_TAG}"
           test -f "docs/releases/${tag}.md"
           gh run download "${QUALIFICATION_RUN}" \
-            --name "milestone-21-qualification-${GITHUB_SHA}" --dir release-assets
-          cp "${PROVENANCE_BUNDLE}" release-assets/provenance.jsonl
+            --name "milestone-21-qualification-${SOURCE_SHA}" --dir release-assets
+          if [[ -n "${PROVENANCE_BUNDLE}" ]]; then
+            cp "${PROVENANCE_BUNDLE}" release-assets/provenance.jsonl
+          else
+            cp original-provenance.jsonl release-assets/provenance.jsonl
+          fi
           cp "${SBOM_BUNDLE}" release-assets/sbom-attestation.jsonl
           printf '%s\n' "${IMAGE}" > release-assets/image.txt
           tar -C release-assets -czf release-assets/four-signal-smoke.tgz smoke
