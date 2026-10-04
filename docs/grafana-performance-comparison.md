@@ -1,5 +1,9 @@
 # Krabka versus Loki, Mimir, Tempo and Pyroscope
 
+For subsequent changes on this branch, see the
+[local optimization measurements](grafana-performance-optimization.md).
+The tables below retain the historical issue 267 results.
+
 Measured on 2026-10-04 using the installed [Cyclenerd Google Cloud GitHub runner](https://github.com/Cyclenerd/google-cloud-github-runner). This compares accepted API work in fixed, single-node deployment shapes, with one active signal at a time. The backends acknowledge writes at different durability boundaries; these are not equivalent durable-throughput results. The issue 267 [operating envelope](operating_envelope.md) and its durability qualification remain separate.
 
 ## Steady workload
@@ -99,6 +103,9 @@ The comparison workflow builds the selected branch's optimized image by default.
 It preserves the image, source commit, manifest digest, and raw measurements.
 Use `image_artifact_run` to compare an image preserved by the operating-envelope workflow.
 Use run `37183330836` to reproduce the historical measurements above.
+
+After this workflow is merged into the default branch, dispatch the branch
+you want to measure:
 
 ```sh
 gh workflow run grafana-comparison.yml --repo krabka-io/krabka-o11y \
