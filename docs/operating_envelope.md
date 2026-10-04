@@ -6,15 +6,12 @@ limits are safety controls, not performance claims.
 
 ## Fixed qualification shape
 
-The candidate deployment is the checked-in Kubernetes topology: one replica
-per role, one broker, one object store, one partition per WAL/state topic,
-replication factor one, 15-minute WAL retention, and the CPU/memory requests
-and limits in `deploy/kustomization.yaml`. The HA phase renders two WAL
-partitions so two block builders and two queriers per signal can own work; it
-leaves state topics and replication at one. A report is comparable only when it
-names the exact Krabka and broker commits, container digests, Kubernetes
-version, node CPU and memory, object-store provider, retention, replication,
-dataset seed, warm-up, measurement duration, and command.
+The stable qualification uses the broker-backed Compose deployment described
+below. Its report fixes the role CPU and memory limits, broker and object-store
+digests, WAL partitions, retention, replication, dataset, warm-up, measurement
+duration, and actual runner hardware. It records the measured image source
+commit separately from the harness commit. The checked-in Kubernetes topology
+and its HA deployment are separate shapes that need their own qualification.
 
 The soak harness is `//crates/integration:soak_envelope_docker_test`. It runs
 each signal's real block writer, compactor, retention pass, and query engine in
@@ -230,7 +227,9 @@ Each full phase measures 60 seconds after a 15-second warm-up. Burst and
 cardinality steps measure 30 seconds after 7.5 seconds of warm-up. Writers at
 burst levels 1 through 512 send one request per second each. Cardinality
 steps are 100, 1,000, 5,000, 20,000, 100,000, and 500,000, with two writers
-sending one request each 250 ms. The search stops at its first failure. The
+sending one request per second each. Steady, compaction, deletion, and quiet
+tenant loads also use two writers sending one request per second each. The
+search stops at its first failure. The
 write and query p99 objectives are two seconds, with zero errors and no empty
 query results. Accepted writes must become durable within ten seconds after
 the phase. The reported durable rate includes that drain time.
@@ -248,11 +247,14 @@ traces, 20 profiles per second, and a broker `producer_byte_rate` quota of
 65,536 bytes per second for logs.
 
 The report records query p50/p95/p99, HTTP status counts and errors, accepted
-and durable ingest rates, RSS by role including broker and MinIO, CPU time,
+and durable ingest rates, RSS by role including broker and MinIO,
 object requests and bytes, broker-reported WAL lag, and consumer recovery
-status. Restart stops the block builder, appends ten batches, and checks that
-the durable offset advances through those records after restart. Every raw
-operation and telemetry sample, runner identity, container log, source commit,
+status. CPU time is included when the process exports it. Restart stops the
+block builder, appends ten batches, and checks that
+the durable offset advances through those records after restart. Every drain
+reads the broker's current WAL end offset and requires the consumed and
+committed offsets to reach it. Every raw operation and telemetry sample,
+runner identity, container log, source commit,
 image digest, and checksum is retained. A locally built image is preserved as
 a checksummed `deployment-image-<commit>` artifact, including its manifest and
 Docker image IDs. `image_artifact_run` reuses that exact build.

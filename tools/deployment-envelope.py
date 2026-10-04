@@ -591,6 +591,7 @@ def run(args):
                         "profiles_hot_retention_seconds": 30, "traces_hot_retention_seconds": 30,
                         "metrics_hot_retention_seconds": 300, "cold_fixture_age_seconds": 600,
                         "maintenance_interval_seconds": 2, "nofile": 65536,
+                        "write_interval_seconds": 1,
                         "noisy_logs_bytes_per_sec": 65536,
                         "broker_image": json.loads(deployment.file.read_text())["services"]["broker"]["image"],
                         "object_store_image": json.loads(deployment.file.read_text())["services"]["minio"]["image"]},
@@ -670,7 +671,7 @@ def run(args):
                 else:
                     result, records, samples = measure(deployment, signal, phase_seconds, phase_seconds / 4,
                                                         writers, cardinality, noisy, cold or phase == "high_cardinality",
-                                                        1.0 if phase == "burst" else 0.25, tenant,
+                                                        1.0, tenant,
                                                         (lambda: deployment.enable_retention(signal)) if phase == "deletion" else None)
                 result["phase"] = phase
                 if phase == "cold_blocks":
@@ -690,6 +691,8 @@ def run(args):
                 (args.output / f"{name}.operations.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
                 (args.output / f"{name}.telemetry.jsonl").write_text("".join(json.dumps(s) + "\n" for s in samples))
                 (args.output / "deployment-report.json").write_text(json.dumps(report, indent=2))
+                if args.seconds >= 60 and phase not in ("burst", "high_cardinality") and not result["objectives_met"]:
+                    raise RuntimeError(f"{signal}/{phase} missed the qualification objectives")
                 if phase in ("burst", "high_cardinality") and not result["objectives_met"]:
                     failed.add(phase)
                     if phase == "high_cardinality" or any(s["OOMKilled"] for s in result["containers_after_phase"].values()):
