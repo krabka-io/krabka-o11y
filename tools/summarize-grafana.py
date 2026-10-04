@@ -1,13 +1,33 @@
 #!/usr/bin/env python3
 import argparse,hashlib,json,pathlib,statistics,zipfile
 parser=argparse.ArgumentParser(description='Summarize three paired Grafana comparison artifacts after verifying their archive digests.')
-parser.add_argument('--evidence',type=pathlib.Path,required=True,help='Directory with SIGNAL.zip files and provenance.json')
+sources=parser.add_mutually_exclusive_group(required=True)
+sources.add_argument('--evidence',type=pathlib.Path,help='Directory with SIGNAL.zip files and provenance.json')
+sources.add_argument('--reports',nargs='+',type=pathlib.Path,help='Fresh paired comparison-report.json files with sibling SHA256SUMS')
 parser.add_argument('--output',type=pathlib.Path,required=True)
 parser.add_argument('--signals', nargs='+', choices=['metrics','logs','traces','profiles'],
-                    default=['metrics','logs','traces','profiles'])
+                    default=None)
 args=parser.parse_args()
 ROOT=args.evidence
-proof=json.loads((ROOT/'provenance.json').read_text())
+proof=json.loads((ROOT/'provenance.json').read_text()) if ROOT else None
+local={}
+for path in args.reports or []:
+    report=json.loads(path.read_text())
+    signal=report['signal']
+    if signal in local: raise ValueError(f'duplicate signal: {signal}')
+    local[signal]=path
+    checksums=path.with_name('SHA256SUMS')
+    covered=set()
+    for line in checksums.read_text().splitlines():
+        expected,name=line.split('  ',1)
+        raw=path.parent/name
+        if not raw.resolve().is_relative_to(path.parent.resolve()): raise ValueError(f'invalid evidence path: {name}')
+        with raw.open('rb') as source: actual=hashlib.file_digest(source,'sha256').hexdigest()
+        if actual != expected: raise ValueError(f'evidence checksum mismatch: {raw}')
+        covered.add(name)
+    if path.name not in covered: raise ValueError(f'unhashed report: {path}')
+    local[signal]=(path,covered)
+args.signals=args.signals or list(local) or ['metrics','logs','traces','profiles']
 PRODUCTS={'metrics':'mimir','logs':'loki','traces':'tempo','profiles':'pyroscope'}
 def stats(values):
     return {'median':statistics.median(values),'min':min(values),'max':max(values),'values':values}
@@ -25,26 +45,34 @@ summary={'schema_version':1,'scope':'Fixed deployment-shape, single-node API-acc
 reports=[]
 for signal in args.signals:
     product=PRODUCTS[signal]
-    archive_path=ROOT/(signal+'.zip')
-    with archive_path.open('rb') as source: digest=hashlib.file_digest(source,'sha256').hexdigest()
-    assert digest==proof['signals'][signal]['artifact_sha256'],(signal,'archive digest')
-    with zipfile.ZipFile(archive_path) as archive:report=json.loads(archive.read('comparison-report.json'))
-    assert report['commit']==proof['signals'][signal]['harness_commit'],(signal,'harness commit')
-    assert proof['signals'][signal]['job_conclusion']=='success',signal
+    if ROOT:
+        archive_path=ROOT/(signal+'.zip')
+        with archive_path.open('rb') as source: digest=hashlib.file_digest(source,'sha256').hexdigest()
+        assert digest==proof['signals'][signal]['artifact_sha256'],(signal,'archive digest')
+        with zipfile.ZipFile(archive_path) as archive: report=json.loads(archive.read('comparison-report.json'))
+        assert report['commit']==proof['signals'][signal]['harness_commit'],(signal,'harness commit')
+        assert proof['signals'][signal]['job_conclusion']=='success',signal
+    else:
+        path,covered=local[signal]
+        report=json.loads(path.read_text())
     reports.append(report)
     assert report['phase_seconds']==60 and report['signal']==signal
     assert report['write_interval_seconds']==1 and report['query_interval_seconds']==0.25
     coverage=[]
-    with zipfile.ZipFile(ROOT/(signal+'.zip')) as archive:
-        for e in report['entries']:
-            if 'resources' not in e:continue
-            level=e['writers'] if e['phase']=='burst' else e['cardinality'] if e['phase']=='high_cardinality' else 2
-            name=f'{e["repetition"]}-{e["backend"]}-{e["phase"]}/{level}.telemetry.jsonl'
-            samples=[json.loads(line) for line in archive.read(name).splitlines()]
-            span=samples[-1]['time_unix']-samples[0]['time_unix'] if len(samples)>1 else 0
-            valid=len(samples)>=2 and span/e['duration_seconds']>=0.9
-            e['resource_coverage']={'sample_count':len(samples),'sampled_seconds':span,'coverage_fraction':span/e['duration_seconds'],'valid':valid}
-            coverage.append({'repetition':e['repetition'],'backend':e['backend'],'phase':e['phase'],'level':level,**e['resource_coverage']})
+    for e in report['entries']:
+        if 'resources' not in e:continue
+        level=e['writers'] if e['phase']=='burst' else e['cardinality'] if e['phase']=='high_cardinality' else 2
+        name=f'{e["repetition"]}-{e["backend"]}-{e["phase"]}/{level}.telemetry.jsonl'
+        if ROOT:
+            with zipfile.ZipFile(archive_path) as archive: raw=archive.read(name)
+        else:
+            if name not in covered: raise ValueError(f'unhashed telemetry: {name}')
+            raw=(path.parent/name).read_bytes()
+        samples=[json.loads(line) for line in raw.splitlines()]
+        span=samples[-1]['time_unix']-samples[0]['time_unix'] if len(samples)>1 else 0
+        valid=len(samples)>=2 and span/e['duration_seconds']>=0.9
+        e['resource_coverage']={'sample_count':len(samples),'sampled_seconds':span,'coverage_fraction':span/e['duration_seconds'],'valid':valid}
+        coverage.append({'repetition':e['repetition'],'backend':e['backend'],'phase':e['phase'],'level':level,**e['resource_coverage']})
     findings=[{k:e[k] for k in ('backend','repetition','phase','cardinality','seed_error')} for e in report['entries'] if e.get('seed_error','').startswith('seed value mismatch')]
     result={'host':report['host'],'harness_commit':report['commit'],'resource_coverage':coverage,'seed_value_mismatches':findings,'correctness_disqualified':bool(findings),'backends':{}}
     for backend in ('krabka',product):

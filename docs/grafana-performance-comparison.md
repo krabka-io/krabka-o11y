@@ -125,6 +125,18 @@ length, dataset, host, and harness when comparing a baseline and candidate.
 A faster query completes more requests in this closed-loop workload.
 Check completed query counts when interpreting CPU ratios.
 
+Each run records the harness file hashes and writes `SHA256SUMS` for its raw
+evidence. Summarize fresh reports directly after three paired repetitions:
+
+```sh
+python3 tools/summarize-grafana.py \
+  --reports qualification/evidence/metrics-candidate/comparison-report.json \
+  --output qualification/evidence/metrics-candidate-summary.json
+```
+
+Pass additional signal reports to summarize them together. The summarizer
+checks file hashes, telemetry coverage, and matching image identities.
+
 The harness self-test checks the payload encoder against independent bytes
 and checks CPU, S3, and RSS accounting. CI runs it on each pull request:
 
