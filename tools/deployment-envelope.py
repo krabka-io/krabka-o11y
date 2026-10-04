@@ -135,7 +135,7 @@ def has_data(signal, body):
         if signal == "traces":
             return bool(data.get("traces"))
         flamegraph = data.get("flamegraph", {})
-        return bool(flamegraph.get("levels"))
+        return bool(flamegraph.get("levels")) and float(flamegraph.get("total", 0)) > 0
     except (ValueError, AttributeError, TypeError):
         return False
 
@@ -697,6 +697,8 @@ def self_test():
     assert quantiles([0.3, 0.1, 0.2]) == {"count": 3, "p50": 0.2, "p95": 0.3, "p99": 0.3}
     assert not has_data("metrics", b'{"status":"success","data":{"result":[]}}')
     assert has_data("logs", b'{"status":"success","data":{"result":[{}]}}')
+    assert not has_data("profiles", b'{"flamegraph":{"levels":[{"values":[0,0,0,0]}],"total":0}}')
+    assert has_data("profiles", b'{"flamegraph":{"levels":[{"values":[0,5,0,0]}],"total":"5"}}')
     for signal in SIGNALS:
         path, body, content, rows = write_request(signal, 1, 100)
         assert rows == (10 if signal == "profiles" else 100 if signal == "traces" else 1000)
