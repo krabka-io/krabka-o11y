@@ -36,6 +36,7 @@ per signal above them.
 - [Getting started](docs/getting_started.md)
 - [Observing Krabka clusters](docs/observing_krabka_clusters.md)
 - [Operations](docs/operations.md)
+- [Measured operating envelope](docs/operating_envelope.md)
 - [Architecture](docs/architecture_design.md)
 - [Grafana datasource setup](docs/grafana.md)
 - [Test coverage](docs/test_coverage_report.md)

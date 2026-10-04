@@ -322,6 +322,7 @@ class Deployment:
         self.compose = ["docker", "compose", "-p", self.project, "-f", str(self.file)]
         self.ids = {}
         self.pids = {}
+        self.role_locks = {name: threading.Lock() for name in self.admin_ports}
         self.sequence = itertools.count()
 
     def run(self, *args):
@@ -351,23 +352,32 @@ class Deployment:
             self.pids[name] = int(command("docker", "inspect", "--format", "{{.State.Pid}}", identity))
 
     def sample(self, signal):
-        samples = {"time_unix": time.time(), "rss_kib": {}, "metrics": {}, "recovery": {}, "scrape_errors": []}
+        samples = {"time_unix": time.time(), "rss_kib": {}, "metrics": {}, "recovery": {},
+                   "scrape_errors": [], "expected_restart_gaps": []}
         names = [name for name in self.admin_ports if name == "broker" or name.startswith(signal + "-")]
         for name in names:
-            status, body = http(self.admin_ports[name], "/metrics")
-            if status != 200:
-                samples["scrape_errors"].append(name)
+            # The retention hook owns this role's lock until its new PID and
+            # metrics endpoint are ready. Keep sampling every other role.
+            if not self.role_locks[name].acquire(blocking=False):
+                samples["expected_restart_gaps"].append(name)
                 continue
-            samples["metrics"][name] = prometheus(body.decode())
-            if name != "broker":
-                status, body = http(self.admin_ports[name], "/status/recovery")
-                if status == 200:
-                    samples["recovery"][name] = json.loads(body)
             try:
-                text = pathlib.Path(f"/proc/{self.pids[name]}/status").read_text()
-                samples["rss_kib"][name] = int(re.search(r"^VmRSS:\s+(\d+)", text, re.M)[1])
-            except (OSError, TypeError):
-                samples["scrape_errors"].append(f"{name}/rss")
+                status, body = http(self.admin_ports[name], "/metrics")
+                if status != 200:
+                    samples["scrape_errors"].append(name)
+                    continue
+                samples["metrics"][name] = prometheus(body.decode())
+                if name != "broker":
+                    status, body = http(self.admin_ports[name], "/status/recovery")
+                    if status == 200:
+                        samples["recovery"][name] = json.loads(body)
+                try:
+                    text = pathlib.Path(f"/proc/{self.pids[name]}/status").read_text()
+                    samples["rss_kib"][name] = int(re.search(r"^VmRSS:\s+(\d+)", text, re.M)[1])
+                except (OSError, TypeError):
+                    samples["scrape_errors"].append(f"{name}/rss")
+            finally:
+                self.role_locks[name].release()
         try:
             text = pathlib.Path(f"/proc/{self.pids['minio']}/status").read_text()
             samples["rss_kib"]["minio"] = int(re.search(r"^VmRSS:\s+(\d+)", text, re.M)[1])
@@ -447,8 +457,16 @@ class Deployment:
         # Every role reads overrides at startup. Restart the owner of retention
         # while writers and queries on the control tenant remain active.
         role = f"{signal}-block-builder" if signal in ("metrics", "logs") else f"{signal}-compactor"
-        self.run("restart", "--timeout", "120", role)
-        self.refresh_pids()
+        with self.role_locks[role]:
+            self.run("restart", "--timeout", "120", role)
+            self.refresh_pids()
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if http(self.admin_ports[role], "/metrics")[0] == 200:
+                    break
+                time.sleep(0.1)
+            else:
+                raise RuntimeError(f"{role} did not become healthy after the retention restart")
         return self.wait_query(signal, "expired", False)
 
     def close(self):
@@ -487,9 +505,10 @@ def telemetry(samples, signal):
                                      if key.startswith("krabka_broker_consumer_group_lag_records{")
                                      and f'topic="{topic}"' in key],
             "rss_kib_peak_by_role": {name: max(s["rss_kib"].get(name, 0) for s in samples)
-                                     for name in last["rss_kib"]},
+                                     for name in {name for s in samples for name in s["rss_kib"]}},
             "object_requests": requests, "object_bytes": bytes_, "maintenance": maintenance,
             "cpu_seconds_by_role": cpu_seconds,
+            "expected_restart_gaps": sum(len(s.get("expected_restart_gaps", [])) for s in samples),
             "scrape_errors": sum(len(s["scrape_errors"]) for s in samples)}
 
 
@@ -736,6 +755,8 @@ def run(args):
 
 
 def self_test():
+    from unittest.mock import patch
+
     records = [{"status": 204, "seconds": 0.1, "rows": 100},
                {"status": 429, "seconds": 0.2, "rows": 100}]
     result = summarize(records, 2)
@@ -750,6 +771,36 @@ def self_test():
         assert rows == (10 if signal == "profiles" else 100 if signal == "traces" else 1000)
         assert path and body and content
     assert prometheus('# comment\nx{label="a"} 3\nx_invalid garbage\n') == {'x{label="a"}': 3}
+    # A role killed by an overload still has a measured memory peak.
+    samples = [{"rss_kib": {"querier": 120}, "metrics": {}, "scrape_errors": []},
+               {"rss_kib": {}, "metrics": {}, "scrape_errors": ["querier"]}]
+    assert telemetry(samples, "metrics")["rss_kib_peak_by_role"] == {"querier": 120}
+    # Fault injection: an intentional owner restart leaves the querier
+    # observable. A missing PID or failed querier outside that lock is fatal.
+    deployment = object.__new__(Deployment)
+    deployment.admin_ports = {"broker": 0, "metrics-block-builder": 1, "metrics-querier": 2}
+    deployment.pids = {name: os.getpid() for name in (*deployment.admin_ports, "minio")}
+    deployment.role_locks = {name: threading.Lock() for name in deployment.admin_ports}
+    owner = deployment.role_locks["metrics-block-builder"]
+    def probe(port, path):
+        return 200, b'{"ready":true}' if path == "/status/recovery" else b"up 1\n"
+    owner.acquire()
+    with patch.dict(globals(), http=probe):
+        sample = deployment.sample("metrics")
+        assert sample["expected_restart_gaps"] == ["metrics-block-builder"]
+        assert not sample["scrape_errors"] and sample["rss_kib"]["metrics-querier"] > 0
+        owner.release()
+        deployment.pids["metrics-block-builder"] = 0
+        sample = deployment.sample("metrics")
+        assert sample["scrape_errors"] == ["metrics-block-builder/rss"]
+        assert not sample["expected_restart_gaps"]
+    owner.acquire()
+    with patch.dict(globals(), http=lambda port, path:
+                    (500, b"failed") if port == 2 else probe(port, path)):
+        sample = deployment.sample("metrics")
+        assert sample["expected_restart_gaps"] == ["metrics-block-builder"]
+        assert sample["scrape_errors"] == ["metrics-querier"]
+    owner.release()
     status = {"ready": True, "wal_consumers": [{"caught_up": True, "partitions": [
         {"assigned": True, "consumed_offset": 99, "committed_offset": 99}]}]}
     assert not durably_caught_up(status)  # Readiness alone does not prove a durable append.
@@ -782,6 +833,20 @@ def self_test():
     assert baseline["limits"]["logs"]["burst"]["level"] == 1
     assert baseline["metrics"]["metrics/steady/durable_rows_per_sec"]["median"] == 200
     qualification(reports, baseline)
+    faster = json.loads(json.dumps(reports))
+    for report in faster:
+        for entry in report["entries"]:
+            if entry["phase"] in ("burst", "high_cardinality"):
+                entry["objectives_met"] = True
+    # An improved build can retain a published load without reaching its new
+    # saturation point. It still cannot publish a new limit from that search.
+    assert qualification(faster, baseline)["limits"]["profiles"]["burst"]["level"] == 1
+    try:
+        qualification(faster)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an unsaturated search published a new limit")
     for mutate in (
         lambda rs: rs[1].update(run_id="0"),
         lambda rs: rs[1].update(host={"cpu_count": 8}),
@@ -789,7 +854,9 @@ def self_test():
         lambda rs: rs[0]["entries"][0]["ingest"].update(durable_rows_per_sec=10),
         lambda rs: rs[0]["entries"][0]["query"]["latency_seconds"].update(p99=0.4),
         lambda rs: rs[0]["entries"][0].update(duration_seconds=4),
+        lambda rs: rs[0]["entries"][1].update(duration_seconds=4),
         lambda rs: rs[0]["entries"][0]["query"].update(empty_queries=1),
+        lambda rs: rs[0]["entries"][0]["telemetry"].update(scrape_errors=1),
         lambda rs: rs[0]["entries"][6]["telemetry"].update(maintenance={}),
         lambda rs: rs[0]["entries"][7]["deletion_verification"].update(verified=False),
         lambda rs: rs[0]["entries"][5].update(cardinality=10),
@@ -873,9 +940,11 @@ def qualification(reports, baseline=None):
                 if any(level not in run or not run[level]["objectives_met"] for run in steps):
                     raise ValueError(f"{signal}/{phase} missed the published load {level}")
             failures = [n for n in configured if n > level and any(n in run and not run[n]["objectives_met"] for run in steps)]
-            if not failures:
+            if not failures and not baseline:
                 raise ValueError(f"{signal}/{phase} did not reach measured saturation")
-            limits[signal][phase] = {"level": level, "first_failing_level": min(failures), "unit": unit}
+            if any(run[level]["duration_seconds"] < first["phase_seconds"] / 2 for run in steps):
+                raise ValueError(f"{signal}/{phase} measured the published load too briefly")
+            limits[signal][phase] = {"level": level, "first_failing_level": min(failures) if failures else None, "unit": unit}
             selected.append((phase, [run[level] for run in steps]))
         if cold_sizes != {limits[signal]["high_cardinality"]["level"]}:
             raise ValueError(f"{signal}/cold_blocks differs from the published cardinality")

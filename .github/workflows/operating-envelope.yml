@@ -233,7 +233,7 @@ jobs:
           done
           if [[ "${PHASE_SECONDS}" -ge 60 && "${REPETITIONS}" -ge 3 ]]; then
             python3 tools/deployment-envelope.py --reports qualification/evidence/deployment-*/deployment-report.json \
-              --record qualification/evidence/deployment-baseline.json
+              "${reference[@]}" --record qualification/evidence/deployment-baseline.json
           fi
       - name: Apply the deployment regression gate
         if: inputs.scope != 'image' && !inputs.record
