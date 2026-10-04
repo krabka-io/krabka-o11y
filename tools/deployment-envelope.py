@@ -1,0 +1,462 @@
+#!/usr/bin/env python3
+"""Measure the public ingest, query, and WAL paths of the Compose deployment.
+
+The storage soak measures compaction, retention, and cold block reads separately.
+This harness adds HTTP admission, broker lag, and restart catch-up evidence.
+It keeps the configured tenant caps out of the saturation search.
+"""
+
+import argparse
+import concurrent.futures
+import hashlib
+import itertools
+import json
+import math
+import os
+import pathlib
+import re
+import statistics
+import subprocess
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+SIGNALS = ("metrics", "logs", "traces", "profiles")
+INGEST = {"metrics": 4041, "logs": 3100, "traces": 4318, "profiles": 4040}
+QUERY = {"metrics": 9090, "logs": 3101, "traces": 3201, "profiles": 4042}
+ROLES = ("distributor", "block-builder", "querier")
+SEED = 267
+POINTS = 10
+SERIES = 100
+WRITERS = (1, 2, 4, 8, 16, 32, 64)
+CARDINALITIES = (100, 1_000, 5_000, 20_000)
+P99_SECONDS = 2
+
+
+def command(*args):
+    return subprocess.check_output(args, text=True).strip()
+
+
+def http(port, path, tenant="soak", body=None, content_type="application/json"):
+    headers = {"X-Scope-OrgID": tenant, "Content-Type": content_type}
+    if isinstance(body, dict):
+        body = json.dumps(body, separators=(",", ":")).encode()
+    if isinstance(body, str):
+        body = body.encode()
+    request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", body, headers)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, error.read()
+    except (OSError, TimeoutError) as error:
+        return 0, str(error).encode()
+
+
+def write_request(signal, sequence, cardinality, tenant="soak"):
+    now = time.time_ns()
+    series = [(sequence * SERIES + i) % cardinality for i in range(SERIES)]
+    if signal == "metrics":
+        lines = [
+            f"envelope_samples,series={s} value={(SEED + s + p) % 97} {now // 1_000_000 + p}"
+            for s in series for p in range(POINTS)
+        ]
+        return "/api/v1/push/influx/write?precision=ms", "\n".join(lines), "text/plain", len(lines)
+    if signal == "logs":
+        streams = [{"stream": {"job": "envelope", "series": str(s)}, "values": [
+            [str(now + p), f"envelope-{SEED}-{sequence}-{p}"] for p in range(POINTS)
+        ]} for s in series]
+        return "/loki/api/v1/push", {"streams": streams}, "application/json", SERIES * POINTS
+    if signal == "traces":
+        groups = []
+        for s in series:
+            trace = hashlib.sha256(f"{SEED}-{tenant}-{sequence}-{s}".encode()).hexdigest()[:32]
+            spans = [{
+                "traceId": trace, "spanId": f"{p + 1:016x}", "name": "envelope",
+                "startTimeUnixNano": str(now + p), "endTimeUnixNano": str(now + p + 1_000_000),
+            } for p in range(POINTS)]
+            groups.append({"resource": {"attributes": [
+                {"key": "service.name", "value": {"stringValue": "envelope"}},
+                {"key": "series", "value": {"stringValue": str(s)}},
+            ]}, "scopeSpans": [{"spans": spans}]})
+        return "/v1/traces", {"resourceSpans": groups}, "application/json", SERIES * POINTS
+    # The legacy API carries one labelled profile per request.
+    name = f'envelope{{service_name="envelope",series="{sequence % cardinality}"}}'
+    query = urllib.parse.urlencode({"name": name, "format": "groups", "units": "samples",
+                                    "until": now // 1_000_000})
+    body = "\n".join(f"envelope;frame_{p} 1" for p in range(POINTS))
+    return f"/ingest?{query}", body, "text/plain", POINTS
+
+
+def query_request(signal, window_seconds=30):
+    now = time.time()
+    if signal == "metrics":
+        query = urllib.parse.urlencode({"query": "sum(envelope_samples)", "time": now})
+        return f"/api/v1/query?{query}", None
+    if signal == "logs":
+        query = urllib.parse.urlencode({"query": '{job="envelope"}', "limit": 1000,
+                                      "start": int((now - window_seconds) * 1e9), "end": int(now * 1e9)})
+        return f"/loki/api/v1/query_range?{query}", None
+    if signal == "traces":
+        query = urllib.parse.urlencode({"q": '{resource.service.name="envelope"}',
+                                      "start": int(now - window_seconds), "end": int(now + 1), "limit": 1000})
+        return f"/api/search?{query}", None
+    return "/querier.v1.QuerierService/SelectMergeStacktraces", {
+        "profileTypeID": "process_cpu:cpu:nanoseconds:cpu:nanoseconds",
+        "labelSelector": '{service_name="envelope"}', "start": int((now - window_seconds) * 1000),
+        "end": int((now + 1) * 1000), "maxNodes": 1024,
+    }
+
+
+def has_data(signal, body):
+    try:
+        data = json.loads(body)
+        if signal in ("metrics", "logs"):
+            return data.get("status") == "success" and bool(data.get("data", {}).get("result"))
+        if signal == "traces":
+            return bool(data.get("traces"))
+        flamegraph = data.get("flamegraph", {})
+        return bool(flamegraph.get("levels"))
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def quantiles(values):
+    values = sorted(values)
+    return {"count": len(values), **{
+        f"p{q}": values[max(0, math.ceil(len(values) * q / 100) - 1)] if values else None
+        for q in (50, 95, 99)
+    }}
+
+
+def summarize(records, duration):
+    attempts = len(records)
+    errors = sum(r["status"] == 0 or r["status"] >= 300 for r in records)
+    accepted = sum(r.get("rows", 0) for r in records if 200 <= r["status"] < 300)
+    return {"attempts": attempts, "errors": errors, "error_rate": errors / attempts if attempts else None,
+            "accepted_rows": accepted, "accepted_rows_per_sec": accepted / duration,
+            "latency_seconds": quantiles([r["seconds"] for r in records]),
+            "empty_queries": sum(r.get("has_data") is False for r in records),
+            "status_counts": {str(s): sum(r["status"] == s for r in records)
+                              for s in sorted({r["status"] for r in records})}}
+
+
+def prometheus(text):
+    samples = {}
+    for line in text.splitlines():
+        if line and not line.startswith("#"):
+            fields = line.split()
+            if len(fields) >= 2:
+                try:
+                    samples[fields[0]] = float(fields[1])
+                except ValueError:
+                    continue
+    return samples
+
+
+class Deployment:
+    def __init__(self, evidence, image):
+        self.evidence = evidence.resolve()
+        self.evidence.mkdir(parents=True, exist_ok=True)
+        self.project = f"envelope-{os.environ.get('GITHUB_RUN_ID', os.getpid())}"
+        base = json.loads(command("docker", "compose", "-f", "deploy/compose/docker-compose.yaml",
+                                  "config", "--format", "json"))
+        base.pop("name", None)
+        services = base["services"]
+        services.pop("alloy", None)
+        roles = self.evidence / "roles"
+        roles.mkdir(exist_ok=True)
+        for file in pathlib.Path("deploy/roles").glob("*.yaml"):
+            (roles / file.name).write_text(file.read_text())
+        limits = {
+            "metrics": 'defaults:\n  ingestion_rate: "0/s"\n  out_of_order_time_window: "30s"\noverrides: {}\n',
+            "logs": "defaults: {}\noverrides: {}\n",
+            "traces": "overrides:\n  soak:\n    ingestion_rate_spans_per_sec: 0\n  quiet:\n    ingestion_rate_spans_per_sec: 0\n  noisy:\n    ingestion_rate_spans_per_sec: 2000\n",
+            "profiles": "defaults:\n  ingestion_rate_profiles_per_sec: 0\noverrides:\n  noisy:\n    ingestion_rate_profiles_per_sec: 20\n",
+        }
+        for signal, content in limits.items():
+            (roles / f"{signal}-limits.yaml").write_text(content)
+        # The deployment keeps all blocks for the HTTP phases. Retention is
+        # qualified by the storage soak, where it cannot erase HTTP fixtures.
+        flags = {"metrics": "runtime-overrides", "logs": "logs-limits-overrides-config",
+                 "traces": "traces-limits-overrides-config", "profiles": "profiles-limits-overrides-config"}
+        for signal in SIGNALS:
+            file = roles / f"{signal}-distributor.yaml"
+            file.write_text(file.read_text() + f"\n{flags[signal]}: /etc/krabka/{signal}-limits.yaml\n")
+            if signal != "logs":
+                services[f"{signal}-compactor"] = {
+                    "image": image, "command": [f"krabka-{signal}",
+                        f"--config.file=/etc/krabka/{signal}-compactor.yaml"],
+                    "environment": dict(services[f"{signal}-block-builder"]["environment"]),
+                    "volumes": [{"type": "bind", "source": str(roles), "target": "/etc/krabka", "read_only": True}],
+                    "depends_on": services[f"{signal}-block-builder"]["depends_on"],
+                }
+                file = roles / f"{signal}-compactor.yaml"
+                content = file.read_text().replace("5m", "2s")
+                file.write_text(content)
+        self.admin_ports = {}
+        for number, (name, service) in enumerate(sorted(services.items())):
+            if "krabka-o11y" in service["image"]:
+                service["image"] = image
+            service["cpus"] = 2.0 if name in ("broker", "minio") else 1.0
+            service["mem_limit"] = "2g" if name in ("broker", "minio") else "1g"
+            service.pop("restart", None)
+            for volume in service.get("volumes", []):
+                if volume.get("target") == "/etc/krabka":
+                    volume["source"] = str(roles)
+            if name == "broker" or name.startswith(tuple(f"{s}-" for s in SIGNALS)):
+                self.admin_ports[name] = 15000 + number
+                service.setdefault("ports", []).append({"target": 9404, "published": str(15000 + number),
+                                                         "host_ip": "127.0.0.1", "protocol": "tcp"})
+            # Bind public test ports to the runner's loopback interface.
+            for port in service.get("ports", []):
+                port["host_ip"] = "127.0.0.1"
+        self.file = self.evidence / "compose.json"
+        self.file.write_text(json.dumps(base, indent=2))
+        self.compose = ["docker", "compose", "-p", self.project, "-f", str(self.file)]
+        self.ids = {}
+        self.pids = {}
+        self.sequence = itertools.count()
+
+    def run(self, *args):
+        return command(*self.compose, *args)
+
+    def start(self):
+        self.run("up", "-d", "--wait", "--wait-timeout", "300")
+        for signal in SIGNALS:
+            until = time.monotonic() + 180
+            while time.monotonic() < until:
+                if http(QUERY[signal], "/ready")[0] == 200:
+                    break
+                time.sleep(1)
+            else:
+                raise RuntimeError(f"{signal} querier did not become ready")
+        for name in self.admin_ports:
+            self.ids[name] = self.run("ps", "-q", name)
+        self.refresh_pids()
+        images = {name: json.loads(command("docker", "inspect", identity))[0]
+                  for name, identity in self.ids.items()}
+        (self.evidence / "containers.json").write_text(json.dumps(images, indent=2))
+
+    def refresh_pids(self):
+        for name, identity in self.ids.items():
+            self.pids[name] = int(command("docker", "inspect", "--format", "{{.State.Pid}}", identity))
+
+    def sample(self, signal):
+        samples = {"time_unix": time.time(), "rss_kib": {}, "metrics": {}, "scrape_errors": []}
+        names = [name for name in self.admin_ports if name == "broker" or name.startswith(signal + "-")]
+        for name in names:
+            status, body = http(self.admin_ports[name], "/metrics")
+            if status != 200:
+                samples["scrape_errors"].append(name)
+                continue
+            samples["metrics"][name] = prometheus(body.decode())
+            try:
+                text = pathlib.Path(f"/proc/{self.pids[name]}/status").read_text()
+                samples["rss_kib"][name] = int(re.search(r"^VmRSS:\s+(\d+)", text, re.M)[1])
+            except (OSError, TypeError):
+                samples["scrape_errors"].append(f"{name}/rss")
+        return samples
+
+    def close(self):
+        (self.evidence / "containers.log").write_text(self.run("logs", "--no-color"))
+        self.run("down", "--volumes", "--remove-orphans", "--timeout", "5")
+
+
+def telemetry(samples, signal):
+    topic = "__krabka_observability_logs_wal" if signal == "logs" else f"__krabka_{signal}_wal"
+    lag = [v for sample in samples for key, v in sample["metrics"].get("broker", {}).items()
+           if key.startswith("krabka_broker_consumer_group_lag_records{") and f'topic="{topic}"' in key]
+    first, last = samples[0], samples[-1]
+    requests = bytes_ = 0
+    for name, metrics in last["metrics"].items():
+        if name == "broker":
+            continue
+        for key, value in metrics.items():
+            delta = max(0, value - first["metrics"].get(name, {}).get(key, 0))
+            if "_objstore_operations_total" in key:
+                requests += delta
+            if "_objstore_operation_transferred_bytes_total" in key:
+                bytes_ += delta
+    return {"wal_lag_records_max": max(lag) if lag else None,
+            "wal_lag_records_last": [v for key, v in last["metrics"].get("broker", {}).items()
+                                     if key.startswith("krabka_broker_consumer_group_lag_records{")
+                                     and f'topic="{topic}"' in key],
+            "rss_kib_peak_by_role": {name: max(s["rss_kib"].get(name, 0) for s in samples)
+                                     for name in last["rss_kib"]},
+            "object_requests": requests, "object_bytes": bytes_,
+            "scrape_errors": sum(len(s["scrape_errors"]) for s in samples)}
+
+
+def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, paced=True):
+    records = []
+    stop = threading.Event()
+    started = time.monotonic()
+    begin = started + warmup
+    until = begin + seconds
+
+    def worker(kind, tenant, paced):
+        while time.monotonic() < until:
+            seq = next(deployment.sequence) if kind == "write" else None
+            if kind == "write":
+                path, body, content, rows = write_request(signal, seq, cardinality, tenant)
+                port = INGEST[signal]
+            else:
+                path, body = query_request(signal, 1800 if cold else 30)
+                content, rows, port = "application/json", 0, QUERY[signal]
+            before = time.monotonic()
+            status, response = http(port, path, tenant, body, content)
+            elapsed = time.monotonic() - before
+            if before >= begin:
+                records.append({"kind": kind, "tenant": tenant, "sequence": seq,
+                                "time_unix": time.time(), "seconds": elapsed,
+                                "status": status, "rows": rows,
+                                "has_data": has_data(signal, response) if kind == "query" else None,
+                                "error": response[:200].decode(errors="replace") if status >= 300 or status == 0 else None})
+            if paced:
+                stop.wait(max(0, 0.25 - elapsed))
+
+    tenants = [("quiet" if noisy else "soak", writers, paced)]
+    if noisy:
+        tenants.append(("noisy", 4, False))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=writers + 6) as pool:
+        tasks = [pool.submit(worker, "query", "quiet" if noisy else "soak", True)]
+        for tenant, count, paced in tenants:
+            tasks.extend(pool.submit(worker, "write", tenant, paced) for _ in range(count))
+        samples = []
+        while time.monotonic() < until:
+            if time.monotonic() >= begin:
+                samples.append(deployment.sample(signal))
+            stop.wait(1)
+        for task in tasks:
+            task.result()
+    duration = time.monotonic() - begin
+    samples.append(deployment.sample(signal))
+    main = "quiet" if noisy else "soak"
+    writes = summarize([r for r in records if r["kind"] == "write" and r["tenant"] == main], duration)
+    queries = summarize([r for r in records if r["kind"] == "query"], duration)
+    result = {"signal": signal, "writers": writers, "cardinality": cardinality,
+              "warmup_seconds": warmup, "duration_seconds": duration,
+              "ingest": writes, "query": queries, "telemetry": telemetry(samples, signal),
+              "tenants": {t: summarize([r for r in records if r["tenant"] == t and r["kind"] == "write"], duration)
+                          for t, _, _ in tenants}}
+    result["objectives_met"] = (
+        (writers == 0 or writes["attempts"] > 0 and writes["error_rate"] == 0
+         and writes["latency_seconds"]["p99"] <= P99_SECONDS)
+        and queries["attempts"] > 0 and queries["error_rate"] == 0
+        and queries["empty_queries"] == 0 and queries["latency_seconds"]["p99"] <= P99_SECONDS
+        and result["telemetry"]["scrape_errors"] == 0
+    )
+    return result, records, samples
+
+
+def run(args):
+    deployment = Deployment(args.output, args.image)
+    report = {"schema_version": 1, "harness_commit": command("git", "rev-parse", "HEAD"),
+              "image": args.image, "seed": SEED, "phase_seconds": args.seconds,
+              "burst_levels": WRITERS, "cardinality_levels": CARDINALITIES, "entries": []}
+    sequence = 0
+    try:
+        deployment.start()
+        for signal in SIGNALS:
+            # Seed the hot tier before the first query can measure an empty result.
+            path, body, content, _ = write_request(signal, 0, 100)
+            if not 200 <= http(INGEST[signal], path, body=body, content_type=content)[0] < 300:
+                raise RuntimeError(f"{signal} did not accept the initial corpus")
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline:
+                path, body = query_request(signal)
+                status, response = http(QUERY[signal], path, body=body)
+                if status == 200 and has_data(signal, response):
+                    break
+                time.sleep(1)
+            else:
+                raise RuntimeError(f"{signal} query did not see the initial corpus")
+            plans = [("steady", 2, 100, False, False)]
+            plans += [("burst", level, 100, False, False) for level in WRITERS]
+            plans += [("high_cardinality", 2, level, False, False) for level in CARDINALITIES]
+            plans += [("cold_window", 0, 100, False, True), ("noisy_tenant", 2, 100, True, False)]
+            failed = set()
+            for phase, writers, cardinality, noisy, cold in plans:
+                if phase in failed:
+                    continue
+                print(f"{signal} {phase} writers={writers} cardinality={cardinality}", flush=True)
+                if phase == "high_cardinality":
+                    count = cardinality if signal == "profiles" else math.ceil(cardinality / SERIES)
+                    for _ in range(count):
+                        path, body, content, _ = write_request(signal, next(deployment.sequence), cardinality)
+                        status, response = http(INGEST[signal], path, body=body, content_type=content)
+                        if not 200 <= status < 300:
+                            raise RuntimeError(f"{signal} cardinality seed failed: {status} {response[:200]!r}")
+                result, records, samples = measure(deployment, signal, args.seconds, args.seconds / 4,
+                                                    writers, cardinality, noisy, cold, phase != "burst")
+                result["phase"] = phase
+                report["entries"].append(result)
+                name = f"{sequence:02d}-{signal}-{phase}"
+                sequence += 1
+                (args.output / f"{name}.operations.jsonl").write_text("".join(json.dumps(r) + "\n" for r in records))
+                (args.output / f"{name}.telemetry.jsonl").write_text("".join(json.dumps(s) + "\n" for s in samples))
+                (args.output / "deployment-report.json").write_text(json.dumps(report, indent=2))
+                if phase in ("burst", "high_cardinality") and not result["objectives_met"]:
+                    failed.add(phase)
+            # Stop the durable consumer, append a backlog, then time catch-up.
+            builder = f"{signal}-block-builder"
+            deployment.run("stop", "--timeout", "120", builder)
+            for seq in range(10):
+                path, body, content, _ = write_request(signal, seq, 100)
+                status, _ = http(INGEST[signal], path, body=body, content_type=content)
+                if not 200 <= status < 300:
+                    raise RuntimeError(f"{signal} could not append the restart backlog: {status}")
+            before = time.monotonic()
+            deployment.run("start", builder)
+            deployment.refresh_pids()
+            recovered = False
+            while time.monotonic() - before < 180:
+                status, _ = http(deployment.admin_ports[builder], "/ready")
+                if status == 200:
+                    recovered = True
+                    break
+                time.sleep(0.25)
+            report["entries"].append({"signal": signal, "phase": "restart",
+                                      "backlog_batches": 10, "recovered": recovered,
+                                      "recovery_seconds": time.monotonic() - before,
+                                      "telemetry": deployment.sample(signal)})
+            if not recovered:
+                raise RuntimeError(f"{signal} did not catch up after restart")
+    finally:
+        (args.output / "deployment-report.json").write_text(json.dumps(report, indent=2))
+        deployment.close()
+
+
+def self_test():
+    records = [{"status": 204, "seconds": 0.1, "rows": 100},
+               {"status": 429, "seconds": 0.2, "rows": 100}]
+    result = summarize(records, 2)
+    assert result["accepted_rows_per_sec"] == 50 and result["error_rate"] == 0.5
+    assert quantiles([0.3, 0.1, 0.2]) == {"count": 3, "p50": 0.2, "p95": 0.3, "p99": 0.3}
+    assert not has_data("metrics", b'{"status":"success","data":{"result":[]}}')
+    assert has_data("logs", b'{"status":"success","data":{"result":[{}]}}')
+    for signal in SIGNALS:
+        path, body, content, rows = write_request(signal, 1, 100)
+        assert rows == (10 if signal == "profiles" else 1000)
+        assert path and body and content
+    assert prometheus('# comment\nx{label="a"} 3\nx_invalid garbage\n') == {'x{label="a"}': 3}
+    print("deployment-envelope self-test passed")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--image", help="Content-addressed Krabka image")
+    parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("qualification/evidence/deployment"))
+    parser.add_argument("--seconds", type=int, default=60)
+    parser.add_argument("--self-test", action="store_true")
+    options = parser.parse_args()
+    if options.self_test:
+        self_test()
+    else:
+        if not options.image or "@sha256:" not in options.image or options.seconds <= 0:
+            parser.error("--image needs an immutable digest and --seconds must be positive")
+        run(options)

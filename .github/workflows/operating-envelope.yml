@@ -1,11 +1,13 @@
 name: operating envelope
 
 on:
-  push:
-    branches: [codex/issue-267-gcp-envelope]
-    paths: [.github/workflows/operating-envelope.yml]
   workflow_dispatch:
     inputs:
+      scope:
+        description: Paths to measure
+        type: choice
+        options: [both, storage, deployment]
+        default: both
       record:
         description: Record measurements for baseline review
         type: boolean
@@ -14,16 +16,24 @@ on:
         description: Measured seconds per phase (60 for qualification)
         type: number
         default: 60
+      repetitions:
+        description: Independent repetitions (3 for qualification)
+        type: number
+        default: 3
+      image:
+        description: Optional immutable deployment image (empty builds this commit)
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
-concurrency:
-  group: operating-envelope
-  cancel-in-progress: false
-
 jobs:
   storage:
+    if: inputs.scope != 'deployment'
+    concurrency:
+      group: operating-envelope-storage
+      cancel-in-progress: false
     runs-on: gcp-ubuntu-24-04-16core
     timeout-minutes: 300
     steps:
@@ -94,4 +104,62 @@ jobs:
             qualification/evidence/envelope
             bazel-testlogs/crates/integration/soak_envelope_docker_test/test.log
             bazel-testlogs/crates/integration/soak_envelope_docker_test/test.outputs/**
+          if-no-files-found: error
+  deployment:
+    if: inputs.scope != 'storage'
+    concurrency:
+      group: operating-envelope-deployment
+      cancel-in-progress: false
+    runs-on: gcp-ubuntu-24-04-16core
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        if: inputs.image == ''
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: false
+      - name: Select the exact image
+        id: image
+        env:
+          REQUESTED_IMAGE: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${REQUESTED_IMAGE}" ]]; then
+            [[ "${REQUESTED_IMAGE}" =~ @sha256:[0-9a-f]{64}$ ]]
+            docker pull "${REQUESTED_IMAGE}"
+            echo "image=${REQUESTED_IMAGE}" >> "$GITHUB_OUTPUT"
+          else
+            bazel run -c opt --remote_cache= --bes_backend= //bazel/images/krabka:load
+            manifest=$(bazel cquery -c opt //bazel/images/krabka:image_manifest_blob --output=files)
+            digest="sha256:$(sha256sum "${manifest}" | cut -d ' ' -f 1)"
+            identity=$(docker image ls --filter reference=krabka-o11y:dev --format '{{.ID}}' | head -1)
+            docker tag "${identity}" "localhost/krabka-o11y@${digest}"
+            echo "image=localhost/krabka-o11y@${digest}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Measure the broker-backed deployment
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          PHASE_SECONDS: ${{ inputs.phase_seconds }}
+          REPETITIONS: ${{ inputs.repetitions }}
+        run: |
+          set -euo pipefail
+          python3 tools/deployment-envelope.py --self-test
+          for run in $(seq 1 "${REPETITIONS}"); do
+            python3 tools/deployment-envelope.py --image "${IMAGE}" \
+              --seconds "${PHASE_SECONDS}" --output "qualification/evidence/deployment-${run}"
+          done
+      - name: Hash artifacts
+        if: always()
+        run: |
+          mkdir -p qualification/evidence
+          cd qualification/evidence
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS
+      - name: Upload raw deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-envelope-${{ github.sha }}-${{ github.run_attempt }}
+          path: qualification/evidence
           if-no-files-found: error
