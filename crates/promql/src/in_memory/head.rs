@@ -202,6 +202,21 @@ impl MetricStore for WalHead {
         store.scan(tenant, matchers, start_ms, end_ms).await
     }
 
+    /// Answers from the current snapshot. A histogram sample that arrives
+    /// after this answer is the same race that a scan has with ingest.
+    async fn may_have_histograms(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<bool> {
+        let store = self.snapshot();
+        store
+            .may_have_histograms(tenant, matchers, start_ms, end_ms)
+            .await
+    }
+
     async fn label_names(
         &self,
         tenant: &str,

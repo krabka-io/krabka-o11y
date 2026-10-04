@@ -100,10 +100,11 @@ pub(crate) async fn range_query_scans_store_once_per_matcher_set_not_per_step() 
         EngineOpts::default(),
     );
 
-    // 20 steps at 15s. Pre-fix this scanned the store ~2× per step (float +
-    // histogram probe) plus a per-step series resolution. With the union-window
-    // cache it is one float scan + one histogram scan + one series resolution
-    // total, reused across every step.
+    // 20 steps at 15s. Without the union-window cache the driver scans the
+    // store about twice per step (float and histogram probe) and resolves the
+    // series once per step. With it, one store scan answers the histogram
+    // probe and the float read of every step, and one series resolution
+    // answers every step.
     let result = engine
         .eval_range_via_planner_forced(
             "t",
@@ -116,8 +117,8 @@ pub(crate) async fn range_query_scans_store_once_per_matcher_set_not_per_step() 
         .unwrap();
     assert2::assert!(matches!(result, QueryResult::RangeMatrix(_)));
     check!(
-        scans.load(Ordering::SeqCst) == 2,
-        "store scans should collapse to one float + one histogram union scan, got {}",
+        scans.load(Ordering::SeqCst) == 1,
+        "store scans should collapse to one union scan, got {}",
         scans.load(Ordering::SeqCst)
     );
     check!(

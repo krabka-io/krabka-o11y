@@ -18,6 +18,19 @@ pub trait MetricStore: Send + Sync {
         end_ms: i64,
     ) -> Result<ScanResult, PromqlError>;
 
+    /// Returns whether a scan of the matched series in `[start_ms, end_ms]` can return a histogram table.
+    ///
+    /// The engine asks this before a scan that looks only for histogram samples, and does not scan when the answer is `false`. A store answers `false` only when [`Self::scan`] with the same arguments returns no histogram table. The default answer is `true`, which is correct for every store.
+    async fn may_have_histograms(
+        &self,
+        _tenant: &str,
+        _matchers: &[LabelMatcher],
+        _start_ms: i64,
+        _end_ms: i64,
+    ) -> Result<bool, PromqlError> {
+        Ok(true)
+    }
+
     /// Returns the distinct label names across matched series.
     async fn label_names(
         &self,

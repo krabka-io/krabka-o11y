@@ -7,10 +7,7 @@ use super::{
     annotations::emit_warning,
     merge_by_fingerprint::merge_by_fingerprint,
     record_queryable_samples,
-    row_cache::{
-        FloatRow, FloatWindow, HistogramRow, RANGE_SCAN_CACHE, collect_float_rows,
-        collect_histogram_rows, matchers_cache_key,
-    },
+    row_cache::{FloatRow, FloatWindow, HistogramRow, ScannedRows, through_scan_cache},
     samples_per_query_exceeded, series_per_query_exceeded,
 };
 use crate::{
@@ -35,6 +32,14 @@ fn emit_scan_warnings(scan: &ScanResult) {
 }
 
 impl<S: MetricStore> PromqlEngine<S> {
+    /// The series of one matcher set over `[start_ms, end_ms]`, by fingerprint.
+    ///
+    /// A range query resolves the same selector's series at every step. Labels
+    /// are window-independent, so a range query keeps one resolution of its
+    /// union window per matcher set, and every step reads it (see
+    /// `RANGE_SCAN_CACHE`). An instant query does not keep the resolution: a
+    /// wider window can hold more series, and the series limit of each
+    /// selector counts only its own window.
     async fn labels_by_fingerprint(
         &self,
         tenant: &str,
@@ -42,47 +47,17 @@ impl<S: MetricStore> PromqlEngine<S> {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<Arc<BTreeMap<SeriesFingerprint, Arc<Labels>>>> {
-        // Range queries resolve the same selector's series at every step. Labels
-        // are window-independent, so cache the union-window resolution once per
-        // matcher set and reuse it across steps (see RANGE_SCAN_CACHE). Requests
-        // outside the pre-scanned union fall back to a direct resolution.
-        if let Ok(cache) = RANGE_SCAN_CACHE.try_with(Arc::clone) {
-            let (full_start_ms, full_end_ms) = {
-                let guard = cache.lock().expect("range scan cache poisoned");
-                (guard.full_start_ms, guard.full_end_ms)
-            };
-            if start_ms >= full_start_ms && end_ms <= full_end_ms {
-                let key = matchers_cache_key(matchers);
-                let cached = {
-                    let guard = cache.lock().expect("range scan cache poisoned");
-                    guard.labels.get(&key).cloned()
-                };
-                let resolved = if let Some(map) = cached {
-                    map
-                } else {
-                    let map = Arc::new(
-                        self.labels_by_fingerprint_uncached(
-                            tenant,
-                            matchers,
-                            full_start_ms,
-                            full_end_ms,
-                        )
-                        .await?,
-                    );
-                    cache
-                        .lock()
-                        .expect("range scan cache poisoned")
-                        .labels
-                        .insert(key, Arc::clone(&map));
-                    map
-                };
-                return Ok(resolved);
-            }
-        }
-        Ok(Arc::new(
-            self.labels_by_fingerprint_uncached(tenant, matchers, start_ms, end_ms)
-                .await?,
-        ))
+        through_scan_cache(
+            |cache| &mut cache.labels,
+            true,
+            matchers,
+            start_ms,
+            end_ms,
+            |start_ms, end_ms| {
+                self.labels_by_fingerprint_uncached(tenant, matchers, start_ms, end_ms)
+            },
+        )
+        .await
     }
 
     async fn labels_by_fingerprint_uncached(
@@ -140,16 +115,42 @@ impl<S: MetricStore> PromqlEngine<S> {
         Ok(resolved)
     }
 
+    /// The tables of one store scan that covers `[start_ms, end_ms]` for one
+    /// matcher set.
+    ///
+    /// Inside a query scope (see `RANGE_SCAN_CACHE`) the scan is shared: a
+    /// range query scans its union window once for every step, and an instant
+    /// query scans a selector once for its histogram probe and its floats. A
+    /// request that the cache does not keep scans the store directly, so
+    /// results are identical and only redundant scans are removed. The scan may
+    /// therefore cover more than `[start_ms, end_ms]`, and every caller narrows
+    /// its rows before use.
+    async fn scanned_rows(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<Arc<ScannedRows>> {
+        through_scan_cache(
+            |cache| &mut cache.rows,
+            false,
+            matchers,
+            start_ms,
+            end_ms,
+            |start_ms, end_ms| async move {
+                let scan = self.store.scan(tenant, matchers, start_ms, end_ms).await?;
+                emit_scan_warnings(&scan);
+                Ok(ScannedRows::new(scan))
+            },
+        )
+        .await
+    }
+
     /// The indexed float rows covering `[start_ms, end_ms]` for one matcher set.
     ///
-    /// Inside a range query (see `RANGE_SCAN_CACHE`) this is the union-window
-    /// index, shared across every step: overlapping per-step scans are served
-    /// from it by binary search instead of re-scanning the store. A request that
-    /// falls outside the pre-scanned union (offset/`@`-modifier, or a `[range]`
-    /// longer than the lookback) bypasses the cache and scans directly, so
-    /// results are identical — only redundant re-scans are eliminated. The
-    /// returned window may therefore cover more than `[start_ms, end_ms]`, and
-    /// every caller narrows it before use.
+    /// The rows may cover more than `[start_ms, end_ms]`. See
+    /// [`Self::scanned_rows`].
     async fn float_window(
         &self,
         tenant: &str,
@@ -157,51 +158,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<Arc<FloatWindow>> {
-        if let Ok(cache) = RANGE_SCAN_CACHE.try_with(Arc::clone) {
-            let (full_start_ms, full_end_ms) = {
-                let guard = cache.lock().expect("range scan cache poisoned");
-                (guard.full_start_ms, guard.full_end_ms)
-            };
-            if start_ms >= full_start_ms && end_ms <= full_end_ms {
-                let key = matchers_cache_key(matchers);
-                let cached = {
-                    let guard = cache.lock().expect("range scan cache poisoned");
-                    guard.floats.get(&key).cloned()
-                };
-                if let Some(window) = cached {
-                    return Ok(window);
-                }
-                let window = Arc::new(FloatWindow::new(
-                    self.scan_float_rows_uncached(tenant, matchers, full_start_ms, full_end_ms)
-                        .await?,
-                ));
-                cache
-                    .lock()
-                    .expect("range scan cache poisoned")
-                    .floats
-                    .insert(key, Arc::clone(&window));
-                return Ok(window);
-            }
-        }
-        Ok(Arc::new(FloatWindow::new(
-            self.scan_float_rows_uncached(tenant, matchers, start_ms, end_ms)
-                .await?,
-        )))
-    }
-
-    async fn scan_float_rows_uncached(
-        &self,
-        tenant: &str,
-        matchers: &[LabelMatcher],
-        start_ms: i64,
-        end_ms: i64,
-    ) -> Result<Vec<FloatRow>> {
-        let scan = self.store.scan(tenant, matchers, start_ms, end_ms).await?;
-        emit_scan_warnings(&scan);
-        let Some(table) = scan.float_table.clone() else {
-            return Ok(Vec::new());
-        };
-        collect_float_rows(scan, &table, self.opts.max_samples).await
+        self.scanned_rows(tenant, matchers, start_ms, end_ms)
+            .await?
+            .floats(self.opts.max_samples)
+            .await
     }
 
     /// Every matcher set's float rows over `[start_ms, end_ms]`, flattened.
@@ -305,6 +265,10 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// The two `*_has_histogram_series` gates ask only this. Materializing the
     /// whole window to answer it would deep-copy a `NativeHistogram` per row per
     /// step, so stop at the first hit instead.
+    ///
+    /// The store can often tell from its index alone that no histogram matches,
+    /// for example when it holds no histogram blocks. Then the probe makes no
+    /// scan.
     pub(super) async fn histogram_rows_present_sets(
         &self,
         tenant: &str,
@@ -312,12 +276,25 @@ impl<S: MetricStore> PromqlEngine<S> {
         after_ms: i64,
         through_ms: i64,
     ) -> Result<bool> {
+        // The window is left-open, and timestamps are whole milliseconds, so the
+        // first included instant is one millisecond after the bound. This is
+        // the window of the float read that follows on the operator path, so
+        // the probe and that read share one scan, and the scan holds no row
+        // that the float read did not already hold.
+        let from_ms = after_ms.saturating_add(1);
         for matchers in matcher_sets {
+            if !self
+                .store
+                .may_have_histograms(tenant, matchers, from_ms, through_ms)
+                .await?
+            {
+                continue;
+            }
             if self
-                .cached_histogram_rows(tenant, matchers, after_ms, through_ms)
+                .cached_histogram_rows(tenant, matchers, from_ms, through_ms)
                 .await?
                 .iter()
-                .any(|row| row.ts_ms > after_ms && row.ts_ms <= through_ms)
+                .any(|row| row.ts_ms >= from_ms && row.ts_ms <= through_ms)
             {
                 return Ok(true);
             }
@@ -325,8 +302,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         Ok(false)
     }
 
-    /// The histogram rows covering `[start_ms, end_ms]` for one matcher set,
-    /// borrowed from the range cache when it holds them.
+    /// The histogram rows covering `[start_ms, end_ms]` for one matcher set.
     ///
     /// Like [`Self::float_window`], the returned rows may cover more than
     /// `[start_ms, end_ms]`, so every caller narrows them.
@@ -337,36 +313,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<Arc<Vec<HistogramRow>>> {
-        if let Ok(cache) = RANGE_SCAN_CACHE.try_with(Arc::clone) {
-            let (full_start_ms, full_end_ms) = {
-                let guard = cache.lock().expect("range scan cache poisoned");
-                (guard.full_start_ms, guard.full_end_ms)
-            };
-            if start_ms >= full_start_ms && end_ms <= full_end_ms {
-                let key = matchers_cache_key(matchers);
-                let cached = {
-                    let guard = cache.lock().expect("range scan cache poisoned");
-                    guard.histograms.get(&key).cloned()
-                };
-                if let Some(rows) = cached {
-                    return Ok(rows);
-                }
-                let rows = Arc::new(
-                    self.scan_histogram_rows_uncached(tenant, matchers, full_start_ms, full_end_ms)
-                        .await?,
-                );
-                cache
-                    .lock()
-                    .expect("range scan cache poisoned")
-                    .histograms
-                    .insert(key, Arc::clone(&rows));
-                return Ok(rows);
-            }
-        }
-        Ok(Arc::new(
-            self.scan_histogram_rows_uncached(tenant, matchers, start_ms, end_ms)
-                .await?,
-        ))
+        self.scanned_rows(tenant, matchers, start_ms, end_ms)
+            .await?
+            .histograms(self.opts.max_samples)
+            .await
     }
 
     async fn scan_histogram_rows(
@@ -383,21 +333,6 @@ impl<S: MetricStore> PromqlEngine<S> {
             .filter(|row| row.ts_ms >= start_ms && row.ts_ms <= end_ms)
             .cloned()
             .collect())
-    }
-
-    async fn scan_histogram_rows_uncached(
-        &self,
-        tenant: &str,
-        matchers: &[LabelMatcher],
-        start_ms: i64,
-        end_ms: i64,
-    ) -> Result<Vec<HistogramRow>> {
-        let scan = self.store.scan(tenant, matchers, start_ms, end_ms).await?;
-        emit_scan_warnings(&scan);
-        let Some(table) = scan.histogram_table.clone() else {
-            return Ok(Vec::new());
-        };
-        collect_histogram_rows(scan, &table, self.opts.max_samples).await
     }
 
     pub(super) async fn scan_histogram_row_sets(

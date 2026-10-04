@@ -1,17 +1,17 @@
 use super::{
-    HistogramRow, PromqlError, Result, ScanResult, decode_native_histograms,
+    HistogramRow, PromqlError, Result, SessionContext, decode_native_histograms,
     samples_per_query_exceeded,
 };
 
 pub(crate) async fn collect_histogram_rows(
-    scan: ScanResult,
+    ctx: &SessionContext,
     table: &str,
     max_samples: usize,
 ) -> Result<Vec<HistogramRow>> {
     // No `ORDER BY`: the rows are re-ordered below, once, after the store has
     // narrowed them, rather than by a global sort over everything the scan
     // decoded. The sort is skipped when they already arrive ordered.
-    let dataframe = scan.ctx.sql(&format!("SELECT * FROM {table}")).await?;
+    let dataframe = ctx.sql(&format!("SELECT * FROM {table}")).await?;
     let batches = dataframe.collect().await?;
 
     let mut rows = Vec::new();

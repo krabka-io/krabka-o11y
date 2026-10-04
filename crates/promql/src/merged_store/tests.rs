@@ -11,6 +11,7 @@ use crate::{
 mod cardinality_methods_merge_cold_and_hot_series;
 mod created_timestamp_survives_cold_and_hot_merge;
 mod exemplars_merges_cold_and_hot_records;
+mod histograms_in_either_store_are_found;
 mod instant_query_uses_hot_sample_newer_than_compacted_sample;
 mod label_names_merges_cold_and_hot_series_metadata;
 mod label_values_merges_cold_and_hot_series_metadata;

@@ -64,6 +64,24 @@ impl MetricStore for InMemoryMetricStore {
         })
     }
 
+    /// Answers with the row match that [`Self::scan`] makes for its histogram
+    /// table, and stops at the first matching row.
+    async fn may_have_histograms(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<bool> {
+        let Some(rows) = self.hists.get(tenant) else {
+            return Ok(false);
+        };
+        let matchers = prepare_matchers(matchers)?;
+        Ok(rows
+            .iter()
+            .any(|row| row_matches(row.fp, &row.labels, row.ts_ms, &matchers, start_ms, end_ms)))
+    }
+
     async fn label_names(
         &self,
         tenant: &str,

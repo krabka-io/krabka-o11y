@@ -14,11 +14,11 @@ use object_store::{GetOptions, GetRange, ObjectMeta, ObjectStore, ObjectStoreExt
 use parquet::{
     arrow::{
         ParquetRecordBatchStreamBuilder,
-        arrow_reader::ArrowReaderOptions,
+        arrow_reader::{ArrowReaderMetadata, ArrowReaderOptions},
         async_reader::{AsyncFileReader, MetadataSuffixFetch},
     },
     errors::ParquetError,
-    file::metadata::{ParquetMetaData, ParquetMetaDataReader},
+    file::metadata::{PageIndexPolicy, ParquetMetaData, ParquetMetaDataReader},
 };
 use tracing::instrument;
 
@@ -564,8 +564,11 @@ mod block_metadata_cache;
 mod cached_block;
 mod default_block_metadata_cache_max;
 mod default_block_read_max;
+mod footer_prefetch;
 mod head_within_cap;
 mod object_store_reader;
+mod probe_block;
+mod probed_block;
 mod read_block;
 mod read_block_row_groups;
 mod read_block_row_groups_cached;
@@ -584,8 +587,11 @@ pub use block_metadata_cache::BlockMetadataCache;
 use cached_block::CachedBlock;
 pub use default_block_metadata_cache_max::DEFAULT_BLOCK_METADATA_CACHE_MAX;
 pub use default_block_read_max::DEFAULT_BLOCK_READ_MAX;
+use footer_prefetch::FOOTER_PREFETCH;
 use head_within_cap::head_within_cap;
 use object_store_reader::ObjectStoreReader;
+pub(crate) use probe_block::probe_block;
+pub(crate) use probed_block::ProbedBlock;
 pub use read_block::read_block;
 pub use read_block_row_groups::read_block_row_groups;
 pub(crate) use read_block_row_groups_cached::read_block_row_groups_cached;

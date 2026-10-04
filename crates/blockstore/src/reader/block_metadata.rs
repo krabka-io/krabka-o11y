@@ -1,61 +1,18 @@
-use super::{
-    Arc, BlockMetadataCache, ByteSize, CachedBlock, ObjectStore, ObjectStoreReader,
-    ParquetMetaData, ParquetRecordBatchStreamBuilder, Path, Result, head_within_cap, instrument,
-    unreadable,
-};
+use super::{Arc, BlockMetadataCache, ByteSize, ObjectStore, ParquetMetaData, Result, probe_block};
 
 /// Reads one block's Parquet footer, through `cache` when one is supplied.
 ///
-/// This is the cheapest thing that proves a block is readable: it `head`s the
-/// object and decodes the footer, and never touches a column chunk. A scan
-/// uses it to find the blocks it cannot read *before* it hands a file list to
-/// `DataFusion`, where one bad file fails the whole plan.
+/// See [`probe_block`] for what the read costs and why.
 ///
 /// # Errors
-/// Returns [`BlockStoreError::BlockUnreadable`](crate::BlockStoreError::BlockUnreadable)
-/// when the object is missing or is not a decodable Parquet block, or when the
-/// store fails; the error carries the backend error whole, so the caller can
-/// tell those apart. Returns
-/// [`BlockStoreError::InvalidBlock`](crate::BlockStoreError::InvalidBlock)
-/// when the block is larger than `max_bytes`.
-#[instrument(
-    level = "debug",
-    skip_all,
-    fields(object_key = %object_key, size = tracing::field::Empty, cached = tracing::field::Empty),
-    err
-)]
+/// See [`probe_block`].
 pub(crate) async fn block_metadata(
     store: &Arc<dyn ObjectStore>,
     object_key: &str,
     max_bytes: ByteSize,
     cache: Option<&BlockMetadataCache>,
 ) -> Result<Arc<ParquetMetaData>> {
-    let path = Path::from(object_key);
-    let meta = head_within_cap(store, &path, object_key, max_bytes).await?;
-    if let Some(cache) = cache
-        && let Some(metadata) = cache.get(&meta)
-    {
-        crate::validate_persisted_block_format(&metadata)
-            .map_err(crate::BlockStoreError::InvalidBlock)?;
-        tracing::Span::current().record("cached", true);
-        return Ok(metadata);
-    }
-    tracing::Span::current().record("cached", false);
-
-    let reader = match cache {
-        Some(cache) => ObjectStoreReader::with_cache(
-            Arc::clone(store),
-            CachedBlock {
-                meta,
-                cache: cache.clone(),
-            },
-        ),
-        None => ObjectStoreReader::new(Arc::clone(store), path),
-    };
-    let builder = ParquetRecordBatchStreamBuilder::new(reader)
+    probe_block(store, object_key, max_bytes, cache)
         .await
-        .map_err(|error| unreadable(object_key, error))?;
-    crate::validate_persisted_block_format(builder.metadata())
-        .map_err(crate::BlockStoreError::InvalidBlock)?;
-    Ok(Arc::clone(builder.metadata()))
+        .map(|probed| probed.metadata)
 }

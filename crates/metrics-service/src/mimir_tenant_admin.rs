@@ -350,4 +350,43 @@ mod tests {
                 })
         );
     }
+
+    /// A deleted tenant answers from its empty store before any manifest is
+    /// read, so a manifest that does not decode cannot fail its query. The
+    /// histogram probe of an instant query reads the deletion marker first,
+    /// as the scan does.
+    #[tokio::test]
+    async fn a_deleted_tenant_queries_without_reading_a_corrupt_manifest() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        store
+            .put(
+                &Path::from(manifest().index_key.as_str()),
+                PutPayload::from_static(b"not a manifest"),
+            )
+            .await
+            .unwrap();
+        store
+            .put(
+                &Path::from(format!(
+                    "{MIMIR_TENANT_DELETION_PREFIX}/{}.json",
+                    escape_object_path_segment("tenant-a")
+                )),
+                PutPayload::from_static(b"{}"),
+            )
+            .await
+            .unwrap();
+        let (_, query) = state(Arc::clone(&store), WalHead::new());
+        let engine = krabka_promql::PromqlEngine::new(query, krabka_promql::EngineOpts::default());
+
+        let result = engine
+            .query_instant(
+                &krabka_blockstore::TenantId::new("tenant-a").unwrap(),
+                "count_over_time(up[1m])",
+                2_000,
+            )
+            .await;
+
+        assert2::assert!(let Ok(krabka_promql::QueryResult::InstantVector(samples)) = result);
+        check!(samples.is_empty());
+    }
 }

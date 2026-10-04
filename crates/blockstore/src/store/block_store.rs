@@ -1,10 +1,10 @@
 use super::{
     Arc, BlockMetadataCache, BlockScan, BlockStoreError, BlockWriter, ByteSize, ByteSizeExt,
     DEFAULT_BLOCK_METADATA_CACHE_MAX, DEFAULT_BLOCK_READ_MAX, Index, LabelMatcher, MemTable,
-    ObjectStore, ParquetReadOptions, Result, RowGroupMeta, RuntimeEnv, RuntimeEnvBuilder,
-    ScanReport, ScanTableRequest, SchemaRef, SeriesFingerprint, SessionConfig, SessionContext,
-    TABLE_NAME, Url, instrument, probe_blocks, read_block_row_groups_cached, require_blocks,
-    row_group_metadata, scan_filter,
+    ObjectStore, ObjectStoreUrl, ParquetReadOptions, ProbedBlock, ProbedBlockTable, Result,
+    RowGroupMeta, RuntimeEnv, RuntimeEnvBuilder, ScanReport, ScanTableRequest, SchemaRef,
+    SeriesFingerprint, SessionConfig, SessionContext, TABLE_NAME, Url, instrument, probe_blocks,
+    read_block_row_groups_cached, require_blocks, row_group_metadata, scan_filter,
 };
 
 /// Owns the object store, its `DataFusion` URL prefix, the in-memory index,
@@ -189,12 +189,11 @@ impl BlockStore {
     /// Registers every block the index offers, and fails if any one of them
     /// cannot be read.
     ///
-    /// Failing is the point. `DataFusion` resolves each path as a listing, so
-    /// a key with no object behind it is not an error there: the scan answers
-    /// from the blocks that are left and reports nothing, which is a wrong
-    /// answer delivered confidently. Every candidate is checked first, so a
-    /// caller that cannot handle a partial answer at least learns that it did
-    /// not get a whole one.
+    /// Failing is the point. Every candidate is checked before the table is
+    /// registered, so a caller that cannot handle a partial answer learns that
+    /// it did not get a whole one. The check reads each footer, and the table
+    /// reads the blocks with the footers and the `ObjectMeta` that the check
+    /// returns.
     ///
     /// Use [`Self::register_scan_table_skipping_unreadable`] where a partial
     /// answer with a warning beats no answer at all.
@@ -207,15 +206,14 @@ impl BlockStore {
         request: ScanTableRequest<'_>,
     ) -> Result<bool> {
         let (fingerprints, candidates) = self.scan_candidates(&request)?;
-        require_blocks(
+        let blocks = require_blocks(
             &self.store,
             &candidates,
             self.block_read_max,
             &self.metadata_cache(),
         )
         .await?;
-        self.register_blocks(ctx, &request, &fingerprints, &candidates)
-            .await
+        self.register_blocks(ctx, &request, &fingerprints, blocks)
     }
 
     /// Registers the blocks the index offers, leaving out the ones that cannot
@@ -263,39 +261,39 @@ impl BlockStore {
             &self.metadata_cache(),
         )
         .await?;
-        let registered = self
-            .register_blocks(ctx, &request, &fingerprints, &readable)
-            .await?;
+        let registered = self.register_blocks(ctx, &request, &fingerprints, readable)?;
         Ok(ScanReport {
             registered,
             skipped,
         })
     }
 
-    /// Registers `keys` as `request.table_name`, bounded by the scan predicate.
-    async fn register_blocks(
+    /// Registers `blocks` as `request.table_name`, bounded by the scan predicate.
+    ///
+    /// The table reads the blocks with the `ObjectMeta` and the footer that the
+    /// probe already read, so planning the scan makes no request. See
+    /// [`ProbedBlockTable`].
+    fn register_blocks(
         &self,
         ctx: &SessionContext,
         request: &ScanTableRequest<'_>,
         fingerprints: &std::collections::BTreeSet<SeriesFingerprint>,
-        keys: &[String],
+        blocks: Vec<ProbedBlock>,
     ) -> Result<bool> {
         ctx.register_object_store(&self.base, self.store.clone());
-        if keys.is_empty() {
+        if blocks.is_empty() {
             let table = MemTable::try_new(request.schema.clone(), vec![Vec::new()])?;
             ctx.register_table(request.table_name, Arc::new(table))?;
             return Ok(false);
         }
 
-        let paths = self.block_urls(keys)?;
         // Late materialization. With filter pushdown on, the Parquet reader
         // evaluates the scan predicate against the fingerprint and timestamp
         // columns alone and decodes the payload columns only for the rows that
         // survive it. Without it the predicate is a `FilterExec` above a scan
         // that has already decoded everything, so only row-group pruning helps.
-        // The flag lives on the session config; `TableOptions` copies
-        // `execution.parquet` wholesale when the listing table is built below,
-        // so it has to be set before `read_parquet`.
+        // The flag lives on the session config, and the table copies
+        // `execution.parquet` from it when it plans the scan.
         {
             let state = ctx.state_ref();
             let mut state = state.write();
@@ -304,10 +302,16 @@ impl BlockStore {
             parquet.reorder_filters = true;
         }
 
-        let options = ParquetReadOptions::default().schema(request.schema.as_ref());
-        let dataframe = ctx.read_parquet(paths, options).await?;
+        let table = ProbedBlockTable {
+            schema: request.schema.clone(),
+            object_store_url: ObjectStoreUrl::parse(&self.base[..url::Position::BeforePath])?,
+            store: Arc::clone(&self.store),
+            metadata_cache: self.runtime.cache_manager.get_file_metadata_cache(),
+            blocks,
+        };
+        let dataframe = ctx.read_table(Arc::new(table))?;
         // Bound the scan to the requested window and to the matcher-resolved
-        // series. `ListingTable` reports these as inexact, so `DataFusion` keeps
+        // series. The table reports these as inexact, so `DataFusion` keeps
         // the `FilterExec` for exactness *and* hands the predicate to the
         // Parquet source, which prunes row groups and data pages by their
         // statistics. Block-level pruning alone would still decode every row of
@@ -386,6 +390,10 @@ impl BlockStore {
         )
         .await?;
         tracing::Span::current().record("skipped", skipped.len());
+        let readable = readable
+            .into_iter()
+            .map(|block| block.object_key)
+            .collect::<Vec<_>>();
         let ctx = self.session_context();
         let registered = self.register_block_keys(&ctx, &readable, schema).await?;
         Ok(BlockScan {

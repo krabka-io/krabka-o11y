@@ -1,6 +1,6 @@
 use super::{
-    Arc, BLOCK_PROBE_CONCURRENCY, BlockMetadataCache, ByteSize, ObjectStore, Result, StreamExt,
-    TryStreamExt, block_metadata, instrument, stream,
+    Arc, BLOCK_PROBE_CONCURRENCY, BlockMetadataCache, ByteSize, ObjectStore, ProbedBlock, Result,
+    StreamExt, TryStreamExt, instrument, probe_block, stream,
 };
 
 /// Fails unless every one of `keys` is readable.
@@ -12,8 +12,9 @@ use super::{
 /// rather than being left to it.
 ///
 /// The footer each probe reads is cached, so on a warm store the check costs
-/// one `head` per block — which the scan pays anyway — and one tail read per
-/// block the first time.
+/// one `head` per block, and one footer read per block the first time. The scan
+/// reads the blocks with the `ObjectMeta` and footer this returns, so it does
+/// not `head` them again.
 ///
 /// # Errors
 /// Returns [`BlockStoreError::BlockUnreadable`](crate::BlockStoreError::BlockUnreadable)
@@ -24,7 +25,7 @@ pub(crate) async fn require_blocks(
     keys: &[String],
     max_bytes: ByteSize,
     cache: &BlockMetadataCache,
-) -> Result<()> {
+) -> Result<Vec<ProbedBlock>> {
     // Every probe owns its key, its store handle and its cache handle, and is
     // built here rather than in a closure. A closure that borrowed them would
     // return a future tied to those borrows' lifetimes, so it would implement
@@ -35,14 +36,11 @@ pub(crate) async fn require_blocks(
         let store = Arc::clone(store);
         let object_key = object_key.clone();
         let cache = cache.clone();
-        probes.push(
-            async move { block_metadata(&store, &object_key, max_bytes, Some(&cache)).await },
-        );
+        probes.push(async move { probe_block(&store, &object_key, max_bytes, Some(&cache)).await });
     }
 
     stream::iter(probes)
         .buffered(BLOCK_PROBE_CONCURRENCY)
         .try_collect::<Vec<_>>()
         .await
-        .map(|_| ())
 }

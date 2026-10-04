@@ -178,6 +178,23 @@ impl MetricStore for RefreshingMetricBlockStore {
             .await
     }
 
+    /// Reads the tenant-deletion marker first, as [`Self::scan`] does. A
+    /// deleted tenant then answers from its empty store and never lists or
+    /// decodes the compaction manifests, so a manifest that cannot be read
+    /// does not fail its query.
+    async fn may_have_histograms(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<bool, krabka_promql::PromqlError> {
+        self.current_store_for_tenant(tenant, start_ms, end_ms)
+            .await?
+            .may_have_histograms(tenant, matchers, start_ms, end_ms)
+            .await
+    }
+
     #[tracing::instrument(
         level = "debug",
         name = "metrics.store.label_names",
