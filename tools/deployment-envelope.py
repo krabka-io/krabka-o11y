@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Measure the public ingest, query, and WAL paths of the Compose deployment.
 
-The storage soak measures compaction, retention, and cold block reads separately.
-This harness adds HTTP admission, broker lag, and restart catch-up evidence.
+The harness measures HTTP admission, cold reads, compaction, retention, broker
+lag, and restart catch-up in the resource-limited Compose topology.
 It keeps the configured tenant caps out of the saturation search.
 """
 
@@ -28,6 +28,7 @@ import urllib.request
 
 
 SIGNALS = ("metrics", "logs", "traces", "profiles")
+PHASES = ("steady", "burst", "high_cardinality", "cold_blocks", "compaction", "deletion", "noisy_tenant", "restart")
 INGEST = {"metrics": 4041, "logs": 3100, "traces": 4318, "profiles": 4040}
 QUERY = {"metrics": 9090, "logs": 3101, "traces": 3201, "profiles": 4042}
 ROLES = ("distributor", "block-builder", "querier")
@@ -66,8 +67,8 @@ def http(port, path, tenant="soak", body=None, content_type="application/json"):
         return 0, str(error).encode()
 
 
-def write_request(signal, sequence, cardinality, tenant="soak"):
-    now = time.time_ns()
+def write_request(signal, sequence, cardinality, tenant="soak", age_seconds=0):
+    now = time.time_ns() - int(age_seconds * 1e9)
     # Trace searches assemble spans, rather than evaluating a scalar. Keep
     # their starting batch below the query saturation point, then ramp load.
     batch_series = 10 if signal == "traces" else SERIES
@@ -213,18 +214,27 @@ class Deployment:
             "metrics": 'defaults:\n  ingestion_rate: "0/s"\n  out_of_order_time_window: "30s"\noverrides:\n  noisy:\n    ingestion_rate: "2000/s"\n',
             "logs": "defaults:\n  max_query_series: 0\noverrides: {}\n",
             "traces": "overrides:\n" + "".join(f"  {tenant}:\n    ingestion_rate_spans_per_sec: 0\n"
-                for tenant in ("soak", "quiet", *(f"burst-{n}" for n in WRITERS),
+                for tenant in ("soak", "quiet", "cold", "expired", *(f"burst-{n}" for n in WRITERS),
                                *(f"cardinality-{n}" for n in CARDINALITIES)))
                 + "  noisy:\n    ingestion_rate_spans_per_sec: 2000\n",
             "profiles": "defaults:\n  ingestion_rate_profiles_per_sec: 0\noverrides:\n  noisy:\n    ingestion_rate_profiles_per_sec: 20\n",
         }
         for signal, content in limits.items():
             (roles / f"{signal}-limits.yaml").write_text(content)
-        # The deployment keeps all blocks for the HTTP phases. Retention is
-        # qualified by the storage soak, where it cannot erase HTTP fixtures.
+        # Capacity tenants retain their fixtures. The deletion phase later
+        # enables a 60-second window on the isolated expired tenant.
         flags = {"metrics": "runtime-overrides", "logs": "logs-limits-overrides-config",
                  "traces": "traces-limits-overrides-config", "profiles": "profiles-limits-overrides-config"}
         for signal in SIGNALS:
+            if signal == "traces":
+                for file in roles.glob("traces-*.yaml"):
+                    if not file.name.endswith("limits.yaml"):
+                        file.write_text(file.read_text() + "\nblock-retention: 0s\n")
+                file = roles / "traces-live-store.yaml"
+                file.write_text(file.read_text() + "\nretention: 30s\n")
+            if signal == "profiles":
+                file = roles / "profiles-querier.yaml"
+                file.write_text(file.read_text() + "\nhot-store-max-age: 30s\n")
             if signal != "logs":
                 file = roles / f"{signal}-block-builder.yaml"
                 content = file.read_text()
@@ -235,6 +245,10 @@ class Deployment:
                 file.write_text(content)
             file = roles / f"{signal}-distributor.yaml"
             file.write_text(file.read_text() + f"\n{flags[signal]}: /etc/krabka/{signal}-limits.yaml\n")
+            if signal in ("metrics", "logs"):
+                file = roles / f"{signal}-block-builder.yaml"
+                interval = "block-builder-retention-sweep-interval" if signal == "metrics" else "compactor-retention-sweep-interval"
+                file.write_text(file.read_text() + f"\n{flags[signal]}: /etc/krabka/{signal}-limits.yaml\n{interval}: 2s\n")
             if signal == "logs":
                 file = roles / "logs-querier.yaml"
                 file.write_text(file.read_text() + "\nlogs-limits-overrides-config: /etc/krabka/logs-limits.yaml\n")
@@ -248,6 +262,7 @@ class Deployment:
                 }
                 file = roles / f"{signal}-compactor.yaml"
                 content = file.read_text().replace("5m", "2s")
+                content += f"\n{flags[signal]}: /etc/krabka/{signal}-limits.yaml\n"
                 file.write_text(content)
         self.admin_ports = {}
         for number, (name, service) in enumerate(sorted(services.items())):
@@ -340,6 +355,67 @@ class Deployment:
             time.sleep(0.25)
         return {"recovered": False, "seconds": time.monotonic() - started, "status": status}
 
+    def seed(self, signal, tenant, cardinality, age_seconds=0):
+        per_request = 1 if signal == "profiles" else 10 if signal == "traces" else SERIES
+        count = math.ceil(cardinality / per_request)
+        failed = threading.Event()
+        records = []
+        def write(_):
+            if failed.is_set():
+                return
+            sequence = next(self.sequence)
+            path, body, content, rows = write_request(signal, sequence, cardinality, tenant, age_seconds)
+            before = time.monotonic()
+            status, response = http(INGEST[signal], path, tenant, body, content)
+            records.append({"sequence": sequence, "status": status, "rows": rows,
+                            "seconds": time.monotonic() - before, "time_unix": time.time(),
+                            "tenant": tenant, "cardinality": cardinality, "age_seconds": age_seconds,
+                            "error": response[:200].decode(errors="replace") if not 200 <= status < 300 else None})
+            if not 200 <= status < 300:
+                failed.set()
+                raise RuntimeError(f"{signal}/{tenant} seed failed: {status} {response[:200]!r}")
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                for _ in pool.map(write, range(count)):
+                    pass
+        finally:
+            (self.evidence / f"{signal}-{tenant}.seed.jsonl").write_text(
+                "".join(json.dumps(record) + "\n" for record in records))
+        if not self.drain(signal)["recovered"]:
+            raise RuntimeError(f"{signal}/{tenant} seed did not become durable")
+        self.wait_query(signal, tenant, True)
+        return count
+
+    def wait_query(self, signal, tenant, present, timeout=120):
+        started = time.monotonic()
+        observations = []
+        while time.monotonic() - started < timeout:
+            path, body = query_request(signal, 1800)
+            status, response = http(QUERY[signal], path, tenant, body)
+            observations.append({"status": status, "has_data": has_data(signal, response),
+                                 "elapsed_seconds": time.monotonic() - started})
+            if status == 200 and has_data(signal, response) == present:
+                return {"verified": True, "seconds": time.monotonic() - started, "observations": observations}
+            time.sleep(0.25)
+        raise RuntimeError(f"{signal}/{tenant} query never became present={present}: {observations[-3:]}")
+
+    def enable_retention(self, signal):
+        file = self.evidence / "roles" / f"{signal}-limits.yaml"
+        key = {"metrics": "compactor_blocks_retention_period", "logs": "retention_period",
+               "traces": "block_retention", "profiles": "compactor_blocks_retention_period_secs"}[signal]
+        value = '60' if signal == "profiles" else '"60s"'
+        content = file.read_text()
+        if "overrides: {}" in content:
+            content = content.replace("overrides: {}", "overrides:")
+        content += f"  expired:\n    {key}: {value}\n"
+        file.write_text(content)
+        # Every role reads overrides at startup. Restart the owner of retention
+        # while writers and queries on the control tenant remain active.
+        role = f"{signal}-block-builder" if signal in ("metrics", "logs") else f"{signal}-compactor"
+        self.run("restart", "--timeout", "120", role)
+        self.refresh_pids()
+        return self.wait_query(signal, "expired", False)
+
     def close(self):
         (self.evidence / "containers.log").write_text(self.run("logs", "--no-color"))
         self.run("down", "--volumes", "--remove-orphans", "--timeout", "5")
@@ -349,24 +425,33 @@ def telemetry(samples, signal):
     topic = "__krabka_observability_logs_wal" if signal == "logs" else f"__krabka_{signal}_wal"
     lag = [v for sample in samples for key, v in sample["metrics"].get("broker", {}).items()
            if key.startswith("krabka_broker_consumer_group_lag_records{") and f'topic="{topic}"' in key]
-    first, last = samples[0], samples[-1]
+    last = samples[-1]
     requests = bytes_ = 0
-    for name, metrics in last["metrics"].items():
-        if name == "broker":
-            continue
-        for key, value in metrics.items():
-            delta = max(0, value - first["metrics"].get(name, {}).get(key, 0))
-            if "_objstore_operations_total" in key:
-                requests += delta
-            if "_objstore_operation_transferred_bytes_total" in key:
-                bytes_ += delta
+    maintenance, cpu_seconds = {}, {}
+    for first, following in zip(samples, samples[1:]):
+        for name, metrics in following["metrics"].items():
+            if name == "broker":
+                continue
+            for key, value in metrics.items():
+                prior = first["metrics"].get(name, {}).get(key, 0)
+                # Retention restarts a role; a reset starts a new counter series.
+                delta = value - prior if value >= prior else value
+                if "_compaction_" in key and (key.endswith("_total") or "_runs_total{" in key):
+                    maintenance[key] = maintenance.get(key, 0) + delta
+                if "_objstore_operations_total" in key:
+                    requests += delta
+                if "_objstore_operation_transferred_bytes_total" in key:
+                    bytes_ += delta
+                if key == "process_cpu_seconds_total":
+                    cpu_seconds[name] = cpu_seconds.get(name, 0) + delta
     return {"wal_lag_records_max": max(lag) if lag else None,
             "wal_lag_records_last": [v for key, v in last["metrics"].get("broker", {}).items()
                                      if key.startswith("krabka_broker_consumer_group_lag_records{")
                                      and f'topic="{topic}"' in key],
             "rss_kib_peak_by_role": {name: max(s["rss_kib"].get(name, 0) for s in samples)
                                      for name in last["rss_kib"]},
-            "object_requests": requests, "object_bytes": bytes_,
+            "object_requests": requests, "object_bytes": bytes_, "maintenance": maintenance,
+            "cpu_seconds_by_role": cpu_seconds,
             "scrape_errors": sum(len(s["scrape_errors"]) for s in samples)}
 
 
@@ -378,7 +463,7 @@ def durably_caught_up(status):
         and p["committed_offset"] > p["consumed_offset"] for p in partitions)
 
 
-def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, interval=0.25, tenant="soak"):
+def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, interval=0.25, tenant="soak", on_measurement=None):
     records = []
     stop = threading.Event()
     started = time.monotonic()
@@ -414,12 +499,16 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
         for tenant, count, pace in tenants:
             tasks.extend(pool.submit(worker, "write", tenant, pace) for _ in range(count))
         samples = []
+        maintenance_future = None
         while time.monotonic() < until:
             if time.monotonic() >= begin:
                 samples.append(deployment.sample(signal))
+                if on_measurement and maintenance_future is None:
+                    maintenance_future = pool.submit(on_measurement)
             stop.wait(1)
         for task in tasks:
             task.result()
+        maintenance_result = maintenance_future.result() if maintenance_future else None
     duration = time.monotonic() - begin
     samples.append(deployment.sample(signal))
     main = "quiet" if noisy else tenant
@@ -431,13 +520,18 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
               "tenant": main,
               "tenants": {t: summarize([r for r in records if r["tenant"] == t and r["kind"] == "write"], duration)
                           for t, _, _ in tenants}}
-    result["objectives_met"] = (
+    maintenance = result["telemetry"]["maintenance"]
+    maintenance_errors = sum(value for key, value in maintenance.items()
+                             if 'status="error"' in key or "failures_total" in key)
+    result["objectives_met"] = maintenance_errors == 0 and (
         (writers == 0 or writes["attempts"] > 0 and writes["error_rate"] == 0
          and writes["latency_seconds"]["p99"] <= P99_SECONDS)
         and queries["attempts"] > 0 and queries["error_rate"] == 0
         and queries["empty_queries"] == 0 and queries["latency_seconds"]["p99"] <= P99_SECONDS
         and result["telemetry"]["scrape_errors"] == 0
     )
+    if maintenance_result:
+        result["deletion_verification"] = maintenance_result
     result["catchup"] = deployment.drain(signal)
     result["ingest"]["durable_rows_per_sec"] = writes["accepted_rows"] / (duration + result["catchup"]["seconds"])
     result["objectives_met"] &= result["catchup"]["recovered"] and result["catchup"]["seconds"] <= CATCHUP_SECONDS
@@ -453,7 +547,10 @@ def run(args):
               "shape": {"role_cpu": 1, "role_memory_gib": 1, "broker_cpu": 2, "broker_memory_gib": 2,
                         "object_store_cpu": 2, "object_store_memory_gib": 2, "replicas": 1,
                         "wal_partitions": 1, "replication": 1, "wal_retention_seconds": 900,
-                        "block_retention": "unlimited", "flush_max_age_seconds": 2, "nofile": 65536,
+                        "block_retention": "unlimited except expired tenant: 60s during deletion", "flush_max_age_seconds": 2,
+                        "profiles_hot_retention_seconds": 30, "traces_hot_retention_seconds": 30,
+                        "metrics_hot_retention_seconds": 300, "cold_fixture_age_seconds": 600,
+                        "maintenance_interval_seconds": 2, "nofile": 65536,
                         "noisy_logs_bytes_per_sec": 65536,
                         "broker_image": json.loads(deployment.file.read_text())["services"]["broker"]["image"],
                         "object_store_image": json.loads(deployment.file.read_text())["services"]["minio"]["image"]},
@@ -489,7 +586,8 @@ def run(args):
             plans = [("steady", 2, 100, False, False)]
             plans += [("burst", level, 100, False, False) for level in WRITERS]
             plans += [("high_cardinality", 2, level, False, False) for level in CARDINALITIES]
-            plans += [("cold_window", 0, 100, False, True), ("noisy_tenant", 2, 100, True, False)]
+            plans += [("cold_blocks", 0, 100, False, True), ("compaction", 2, 100, False, False),
+                      ("deletion", 2, 100, False, False), ("noisy_tenant", 2, 100, True, False)]
             failed = set()
             last_cardinality_tenant = "soak"
             last_cardinality = 100
@@ -499,30 +597,47 @@ def run(args):
                 print(f"{signal} {phase} writers={writers} cardinality={cardinality}", flush=True)
                 tenant = f"burst-{writers}" if phase == "burst" else (
                     f"cardinality-{cardinality}" if phase == "high_cardinality" else (
-                        last_cardinality_tenant if cold else "quiet" if noisy else "soak"))
+                        "cold" if cold else "quiet" if noisy else "soak"))
                 if cold:
                     cardinality = last_cardinality
-                count = 1
-                if phase == "high_cardinality":
-                    per_request = report["dataset"]["series_per_request"][signal]
-                    count = math.ceil(cardinality / per_request)
+                    deployment.seed(signal, "cold", cardinality, age_seconds=600)
+                if phase == "deletion":
+                    deployment.seed(signal, "expired", 100, age_seconds=600)
+                count, seed_error = 0, None
+                seeded_at = time.monotonic()
                 if not cold:
-                    def seed_one(_):
-                        path, body, content, _ = write_request(signal, next(deployment.sequence), cardinality, tenant)
-                        status, response = http(INGEST[signal], path, tenant, body, content)
-                        if not 200 <= status < 300:
-                            raise RuntimeError(f"{signal} {phase} seed failed: {status} {response[:200]!r}")
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-                        for _ in pool.map(seed_one, range(count)):
-                            pass
-                    seeded = deployment.drain(signal)
-                    if not seeded["recovered"]:
-                        raise RuntimeError(f"{signal} seed did not become durable: {seeded}")
+                    try:
+                        count = deployment.seed(signal, tenant, cardinality)
+                    except RuntimeError as error:
+                        if phase not in ("burst", "high_cardinality"):
+                            raise
+                        seed_error = str(error)
                 phase_seconds = args.seconds / 2 if phase in ("burst", "high_cardinality") else args.seconds
-                result, records, samples = measure(deployment, signal, phase_seconds, phase_seconds / 4,
-                                                    writers, cardinality, noisy, cold or phase == "high_cardinality",
-                                                    1.0 if phase == "burst" else 0.25, tenant)
+                if seed_error:
+                    # Rejection or OOM while loading a label set is a measured
+                    # failure at that step, rather than a truncated search.
+                    samples = [deployment.sample(signal)]
+                    records = []
+                    result = {"signal": signal, "writers": writers, "cardinality": cardinality,
+                              "objectives_met": False, "seed_error": seed_error,
+                              "seed_seconds": time.monotonic() - seeded_at,
+                              "duration_seconds": 0, "warmup_seconds": 0,
+                              "ingest": summarize([], 1), "query": summarize([], 1),
+                              "telemetry": telemetry(samples, signal)}
+                else:
+                    result, records, samples = measure(deployment, signal, phase_seconds, phase_seconds / 4,
+                                                        writers, cardinality, noisy, cold or phase == "high_cardinality",
+                                                        1.0 if phase == "burst" else 0.25, tenant,
+                                                        (lambda: deployment.enable_retention(signal)) if phase == "deletion" else None)
                 result["phase"] = phase
+                if phase == "cold_blocks":
+                    result["cold_fixture_age_seconds"] = 600
+                    result["objectives_met"] &= result["telemetry"]["object_bytes"] > 0
+                if phase == "compaction":
+                    result["objectives_met"] &= any("_compaction_blocks_total" in key and value > 0
+                        for key, value in result["telemetry"]["maintenance"].items())
+                if phase == "deletion":
+                    result["objectives_met"] &= bool(result.get("deletion_verification", {}).get("verified"))
                 result["seed_batches"] = count if not cold else 0
                 result["containers_after_phase"] = {name: json.loads(command("docker", "inspect", "--format", "{{json .State}}", identity))
                     for name, identity in deployment.ids.items() if name.startswith(signal + "-")}
@@ -540,14 +655,7 @@ def run(args):
                         (args.output / f"{name}.containers.log").write_text(deployment.run("logs", "--no-color"))
                         deployment.run("down", "--volumes", "--remove-orphans", "--timeout", "5")
                         deployment.start()
-                        per_request = report["dataset"]["series_per_request"][signal]
-                        for _ in range(math.ceil(last_cardinality / per_request)):
-                            path, body, content, _ = write_request(signal, next(deployment.sequence), last_cardinality)
-                            status, _ = http(INGEST[signal], path, last_cardinality_tenant, body, content)
-                            if not 200 <= status < 300:
-                                raise RuntimeError(f"{signal} could not restore the passing dataset")
-                        if not deployment.drain(signal)["recovered"]:
-                            raise RuntimeError(f"{signal} restored dataset did not become durable")
+                        deployment.seed(signal, last_cardinality_tenant, last_cardinality)
                 elif phase == "high_cardinality":
                     last_cardinality_tenant = tenant
                     last_cardinality = cardinality
@@ -609,12 +717,15 @@ def self_test():
         for signal in SIGNALS:
             for phase, level, met in (("steady", 0, True), ("burst", 1, True), ("burst", 2, False),
                                       ("high_cardinality", 100, True), ("high_cardinality", 1000, False),
-                                      ("cold_window", 0, True), ("noisy_tenant", 0, True), ("restart", 0, True)):
+                                      ("cold_blocks", 0, True), ("compaction", 0, True), ("deletion", 0, True),
+                                      ("noisy_tenant", 0, True), ("restart", 0, True)):
                 report["entries"].append({"signal": signal, "phase": phase, "objectives_met": met,
                     "writers": level, "cardinality": level, "recovered": True, "recovery_seconds": 1,
+                    "duration_seconds": 60, "cold_fixture_age_seconds": 600, "deletion_verification": {"verified": True},
                     "ingest": {"attempts": 10, "durable_rows_per_sec": rate, "latency_seconds": {"p99": 0.1}},
-                    "query": {"attempts": 10, "latency_seconds": {"p99": 0.1}},
-                    "telemetry": {"rss_kib_peak_by_role": {"querier": 1000}, "object_requests": 20}})
+                    "query": {"attempts": 10, "error_rate": 0, "empty_queries": 0, "latency_seconds": {"p99": 0.1}},
+                    "telemetry": {"rss_kib_peak_by_role": {"querier": 1000}, "object_requests": 20,
+                                  "object_bytes": 100, "scrape_errors": 0, "maintenance": {"krabka_compaction_blocks_total": 2}}})
         reports.append(report)
     baseline = qualification(reports)
     assert baseline["limits"]["logs"]["burst"]["level"] == 1
@@ -626,6 +737,10 @@ def self_test():
         lambda rs: rs[0]["entries"][0]["telemetry"]["rss_kib_peak_by_role"].update(querier=5000),
         lambda rs: rs[0]["entries"][0]["ingest"].update(durable_rows_per_sec=10),
         lambda rs: rs[0]["entries"][0]["query"]["latency_seconds"].update(p99=0.4),
+        lambda rs: rs[0]["entries"][0].update(duration_seconds=4),
+        lambda rs: rs[0]["entries"][0]["query"].update(empty_queries=1),
+        lambda rs: rs[0]["entries"][6]["telemetry"].update(maintenance={}),
+        lambda rs: rs[0]["entries"][7]["deletion_verification"].update(verified=False),
     ):
         changed = json.loads(json.dumps(reports))
         mutate(changed)
@@ -662,10 +777,25 @@ def qualification(reports, baseline=None):
     for signal in SIGNALS:
         entries = [[e for e in report["entries"] if e["signal"] == signal] for report in reports]
         for run in entries:
-            for phase in ("steady", "cold_window", "noisy_tenant", "restart"):
+            for phase in ("steady", "cold_blocks", "compaction", "deletion", "noisy_tenant", "restart"):
                 found = [e for e in run if e["phase"] == phase]
                 if len(found) != 1 or not found[0].get("objectives_met", found[0].get("recovered")):
                     raise ValueError(f"{signal}/{phase} did not meet its objectives")
+                entry = found[0]
+                if phase != "restart":
+                    if entry["duration_seconds"] < report["phase_seconds"]:
+                        raise ValueError(f"{signal}/{phase} measured too briefly")
+                    if entry["query"]["attempts"] == 0 or entry["query"]["error_rate"] != 0 or entry["query"]["empty_queries"] != 0:
+                        raise ValueError(f"{signal}/{phase} did not query successfully")
+                    if entry["telemetry"]["scrape_errors"] != 0:
+                        raise ValueError(f"{signal}/{phase} lost telemetry")
+                    if phase == "cold_blocks" and (entry.get("cold_fixture_age_seconds") != 600 or entry["telemetry"]["object_bytes"] <= 0):
+                        raise ValueError(f"{signal}/{phase} did not read the cold corpus")
+                    if phase == "compaction" and not any("_compaction_blocks_total" in key and value > 0
+                            for key, value in entry["telemetry"]["maintenance"].items()):
+                        raise ValueError(f"{signal}/{phase} compacted nothing")
+                    if phase == "deletion" and not entry.get("deletion_verification", {}).get("verified"):
+                        raise ValueError(f"{signal}/{phase} did not verify expiry")
         limits[signal] = {}
         selected = []
         for phase, unit, configured in (("burst", "writers", WRITERS),
@@ -687,7 +817,7 @@ def qualification(reports, baseline=None):
                 raise ValueError(f"{signal}/{phase} did not reach measured saturation")
             limits[signal][phase] = {"level": level, "first_failing_level": min(failures), "unit": unit}
             selected.append((phase, [run[level] for run in steps]))
-        for phase in ("steady", "cold_window", "noisy_tenant", "restart"):
+        for phase in ("steady", "cold_blocks", "compaction", "deletion", "noisy_tenant", "restart"):
             selected.append((phase, [next(e for e in run if e["phase"] == phase) for run in entries]))
         for phase, samples in selected:
             values = {}
@@ -698,11 +828,11 @@ def qualification(reports, baseline=None):
                 values["peak_rss_kib"] = ("higher", [sum(e["telemetry"]["rss_kib_peak_by_role"].values()) for e in samples])
                 values["object_requests_per_operation"] = ("higher", [e["telemetry"]["object_requests"] /
                     (e["ingest"]["attempts"] + e["query"]["attempts"]) for e in samples])
-                if phase != "cold_window":
+                if phase != "cold_blocks":
                     values["durable_rows_per_sec"] = ("lower", [e["ingest"]["durable_rows_per_sec"] for e in samples])
                     values["write_p99_seconds"] = ("higher", [e["ingest"]["latency_seconds"]["p99"] for e in samples])
             for metric, (direction, numbers) in values.items():
-                if any(not isinstance(n, (float, int)) or not math.isfinite(n) or n < 0 for n in numbers):
+                if any(not isinstance(n, (float, int)) or isinstance(n, bool) or not math.isfinite(n) or n < 0 for n in numbers):
                     raise ValueError(f"{signal}/{phase}/{metric} is not a finite nonnegative number")
                 mean = statistics.fmean(numbers)
                 name = f"{signal}/{phase}/{metric}"

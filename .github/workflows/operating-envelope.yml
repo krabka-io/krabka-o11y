@@ -7,7 +7,7 @@ on:
         description: Paths to measure
         type: choice
         options: [both, storage, deployment, checks]
-        default: both
+        default: deployment
       record:
         description: Record measurements for baseline review
         type: boolean
@@ -64,16 +64,17 @@ jobs:
           lscpu > qualification/evidence/envelope/lscpu.txt
           uname -a > qualification/evidence/envelope/kernel.txt
           docker info > qualification/evidence/envelope/docker.txt
-      - name: Measure three independent runs
+      - name: Measure independent runs
         env:
           KRABKA_SOAK_PHASE_SECONDS: ${{ inputs.phase_seconds || 60 }}
           KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
+          REPETITIONS: ${{ inputs.repetitions }}
         run: |
           set -euo pipefail
           evidence=qualification/evidence/envelope
           target=//crates/integration:soak_envelope_docker_test
           bazel build -c opt --remote_cache= --bes_backend= "${target}"
-          for run in 1 2 3; do
+          for run in $(seq 1 "${REPETITIONS}"); do
             bazel test -c opt --config=scale --remote_cache= --bes_backend= \
               --cache_test_results=no --flaky_test_attempts=1 --test_timeout=7200 \
               --test_env=KRABKA_SOAK_COMMIT="${GITHUB_SHA}" \
@@ -91,8 +92,10 @@ jobs:
             fi
             tools/soak-gate.py --structural "${evidence}/soak-report-${run}.json"
           done
-          tools/soak-gate.py --envelope "${evidence}"/soak-report-*.json > "${evidence}/envelope.json"
-          tools/soak-gate.py --record "${evidence}"/soak-report-*.json > "${evidence}/soak-baseline.txt"
+          if [[ "${REPETITIONS}" -ge 3 && "${KRABKA_SOAK_PHASE_SECONDS}" -ge 60 ]]; then
+            tools/soak-gate.py --envelope "${evidence}"/soak-report-*.json > "${evidence}/envelope.json"
+            tools/soak-gate.py --record "${evidence}"/soak-report-*.json > "${evidence}/soak-baseline.txt"
+          fi
       - name: Apply the numeric gate
         if: github.event_name == 'workflow_dispatch' && !inputs.record
         run: |

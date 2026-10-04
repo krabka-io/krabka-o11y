@@ -234,7 +234,9 @@ pub async fn run(ctx: &Context, plan: &Plan) -> Value {
         writes: plan.writers.iter().any(|w| w.tenant == plan.primary),
         queries: plan.readers.iter().any(|r| r.tenant == plan.primary),
     };
-    let objectives_met = meets(&primary, exercised, error_rate, &ctx.config.objectives);
+    let objectives_met = meets(&primary, exercised, error_rate, &ctx.config.objectives)
+        && stats.maintenance.errors == 0
+        && (plan.maintenance.is_none() || stats.maintenance.passes > 0);
 
     json!({
         "tenant": plan.primary,
