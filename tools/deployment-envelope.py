@@ -35,6 +35,7 @@ SERIES = 100
 WRITERS = (1, 2, 4, 8, 16, 32, 64)
 CARDINALITIES = (100, 1_000, 5_000, 20_000)
 P99_SECONDS = 2
+CATCHUP_SECONDS = 10
 
 # Reuse the repository's protobuf encoder. Importing it does not generate
 # corpus files; that work is behind its CLI entry point.
@@ -65,7 +66,10 @@ def http(port, path, tenant="soak", body=None, content_type="application/json"):
 
 def write_request(signal, sequence, cardinality, tenant="soak"):
     now = time.time_ns()
-    series = [(sequence * SERIES + i) % cardinality for i in range(SERIES)]
+    # Trace searches assemble spans, rather than evaluating a scalar. Keep
+    # their starting batch below the query saturation point, then ramp load.
+    batch_series = 10 if signal == "traces" else SERIES
+    series = [(sequence * batch_series + i) % cardinality for i in range(batch_series)]
     if signal == "metrics":
         lines = [
             f"envelope_samples,series={s} value={(SEED + s + p) % 97} {now // 1_000_000 + p}"
@@ -90,7 +94,7 @@ def write_request(signal, sequence, cardinality, tenant="soak"):
                 + b"\x39" + struct.pack("<Q", now + p)
                 + b"\x41" + struct.pack("<Q", now + p + 1_000_000)) for p in range(POINTS))
             groups.append(wire.pb_bytes_field(1, attributes) + wire.pb_bytes_field(2, spans))
-        return "/v1/traces", b"".join(wire.pb_bytes_field(1, g) for g in groups), "application/x-protobuf", SERIES * POINTS
+        return "/v1/traces", b"".join(wire.pb_bytes_field(1, g) for g in groups), "application/x-protobuf", batch_series * POINTS
     # The legacy API carries one labelled profile per request.
     name = f'envelope{{service_name="envelope",series="{sequence % cardinality}"}}'
     query = urllib.parse.urlencode({"name": name, "format": "groups", "units": "samples",
@@ -182,7 +186,10 @@ class Deployment:
         limits = {
             "metrics": 'defaults:\n  ingestion_rate: "0/s"\n  out_of_order_time_window: "30s"\noverrides:\n  noisy:\n    ingestion_rate: "2000/s"\n',
             "logs": "defaults:\n  max_query_series: 0\noverrides: {}\n",
-            "traces": "overrides:\n  soak:\n    ingestion_rate_spans_per_sec: 0\n  quiet:\n    ingestion_rate_spans_per_sec: 0\n  noisy:\n    ingestion_rate_spans_per_sec: 2000\n",
+            "traces": "overrides:\n" + "".join(f"  {tenant}:\n    ingestion_rate_spans_per_sec: 0\n"
+                for tenant in ("soak", "quiet", *(f"burst-{n}" for n in WRITERS),
+                               *(f"cardinality-{n}" for n in CARDINALITIES)))
+                + "  noisy:\n    ingestion_rate_spans_per_sec: 2000\n",
             "profiles": "defaults:\n  ingestion_rate_profiles_per_sec: 0\noverrides:\n  noisy:\n    ingestion_rate_profiles_per_sec: 20\n",
         }
         for signal, content in limits.items():
@@ -192,6 +199,14 @@ class Deployment:
         flags = {"metrics": "runtime-overrides", "logs": "logs-limits-overrides-config",
                  "traces": "traces-limits-overrides-config", "profiles": "profiles-limits-overrides-config"}
         for signal in SIGNALS:
+            if signal != "logs":
+                file = roles / f"{signal}-block-builder.yaml"
+                content = file.read_text()
+                if "block-builder-flush-max-age:" in content:
+                    content = re.sub(r"block-builder-flush-max-age: .*", "block-builder-flush-max-age: 2s", content)
+                else:
+                    content += "\nblock-builder-flush-max-age: 2s\n"
+                file.write_text(content)
             file = roles / f"{signal}-distributor.yaml"
             file.write_text(file.read_text() + f"\n{flags[signal]}: /etc/krabka/{signal}-limits.yaml\n")
             if signal == "logs":
@@ -227,6 +242,9 @@ class Deployment:
             for port in service.get("ports", []):
                 port["host_ip"] = "127.0.0.1"
         self.file = self.evidence / "compose.json"
+        for kind in ("networks", "volumes"):
+            for config in base.get(kind, {}).values():
+                config.pop("name", None)
         self.file.write_text(json.dumps(base, indent=2))
         self.compose = ["docker", "compose", "-p", self.project, "-f", str(self.file)]
         self.ids = {}
@@ -258,7 +276,7 @@ class Deployment:
             self.pids[name] = int(command("docker", "inspect", "--format", "{{.State.Pid}}", identity))
 
     def sample(self, signal):
-        samples = {"time_unix": time.time(), "rss_kib": {}, "metrics": {}, "scrape_errors": []}
+        samples = {"time_unix": time.time(), "rss_kib": {}, "metrics": {}, "recovery": {}, "scrape_errors": []}
         names = [name for name in self.admin_ports if name == "broker" or name.startswith(signal + "-")]
         for name in names:
             status, body = http(self.admin_ports[name], "/metrics")
@@ -266,12 +284,28 @@ class Deployment:
                 samples["scrape_errors"].append(name)
                 continue
             samples["metrics"][name] = prometheus(body.decode())
+            if name != "broker":
+                status, body = http(self.admin_ports[name], "/status/recovery")
+                if status == 200:
+                    samples["recovery"][name] = json.loads(body)
             try:
                 text = pathlib.Path(f"/proc/{self.pids[name]}/status").read_text()
                 samples["rss_kib"][name] = int(re.search(r"^VmRSS:\s+(\d+)", text, re.M)[1])
             except (OSError, TypeError):
                 samples["scrape_errors"].append(f"{name}/rss")
         return samples
+
+    def drain(self, signal, timeout=180):
+        started = time.monotonic()
+        status = None
+        while time.monotonic() - started < timeout:
+            code, body = http(self.admin_ports[f"{signal}-block-builder"], "/status/recovery")
+            if code == 200:
+                status = json.loads(body)
+                if durably_caught_up(status):
+                    return {"recovered": True, "seconds": time.monotonic() - started, "status": status}
+            time.sleep(0.25)
+        return {"recovered": False, "seconds": time.monotonic() - started, "status": status}
 
     def close(self):
         (self.evidence / "containers.log").write_text(self.run("logs", "--no-color"))
@@ -303,7 +337,15 @@ def telemetry(samples, signal):
             "scrape_errors": sum(len(s["scrape_errors"]) for s in samples)}
 
 
-def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, interval=0.25):
+def durably_caught_up(status):
+    consumers = status.get("wal_consumers", [])
+    partitions = [p for c in consumers for p in c["partitions"] if p["assigned"]]
+    return bool(consumers and partitions) and status["ready"] and all(c["caught_up"] for c in consumers) and all(
+        p["consumed_offset"] is not None and p["committed_offset"] is not None
+        and p["committed_offset"] > p["consumed_offset"] for p in partitions)
+
+
+def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, interval=0.25, tenant="soak"):
     records = []
     stop = threading.Event()
     started = time.monotonic()
@@ -331,11 +373,11 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
             if pace:
                 stop.wait(max(0, pace - elapsed))
 
-    tenants = [("quiet" if noisy else "soak", writers, interval)]
+    tenants = [("quiet" if noisy else tenant, writers, interval)]
     if noisy:
         tenants.append(("noisy", 4, 0))
     with concurrent.futures.ThreadPoolExecutor(max_workers=writers + 6) as pool:
-        tasks = [pool.submit(worker, "query", "quiet" if noisy else "soak", 0.25)]
+        tasks = [pool.submit(worker, "query", "quiet" if noisy else tenant, 0.25)]
         for tenant, count, pace in tenants:
             tasks.extend(pool.submit(worker, "write", tenant, pace) for _ in range(count))
         samples = []
@@ -347,12 +389,13 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
             task.result()
     duration = time.monotonic() - begin
     samples.append(deployment.sample(signal))
-    main = "quiet" if noisy else "soak"
+    main = "quiet" if noisy else tenant
     writes = summarize([r for r in records if r["kind"] == "write" and r["tenant"] == main], duration)
     queries = summarize([r for r in records if r["kind"] == "query"], duration)
     result = {"signal": signal, "writers": writers, "cardinality": cardinality,
               "warmup_seconds": warmup, "duration_seconds": duration, "write_interval_seconds": interval,
               "ingest": writes, "query": queries, "telemetry": telemetry(samples, signal),
+              "tenant": main,
               "tenants": {t: summarize([r for r in records if r["tenant"] == t and r["kind"] == "write"], duration)
                           for t, _, _ in tenants}}
     result["objectives_met"] = (
@@ -362,6 +405,9 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
         and queries["empty_queries"] == 0 and queries["latency_seconds"]["p99"] <= P99_SECONDS
         and result["telemetry"]["scrape_errors"] == 0
     )
+    result["catchup"] = deployment.drain(signal)
+    result["ingest"]["durable_rows_per_sec"] = writes["accepted_rows"] / (duration + result["catchup"]["seconds"])
+    result["objectives_met"] &= result["catchup"]["recovered"] and result["catchup"]["seconds"] <= CATCHUP_SECONDS
     return result, records, samples
 
 
@@ -370,6 +416,11 @@ def run(args):
     report = {"schema_version": 1, "harness_commit": command("git", "rev-parse", "HEAD"),
               "image": args.image, "image_digest": args.image_digest or args.image.split("@")[-1],
               "seed": SEED, "phase_seconds": args.seconds,
+              "run_id": f"{os.environ.get('GITHUB_RUN_ID', 'local')}-{os.environ.get('GITHUB_RUN_ATTEMPT', '1')}-{args.output.name}",
+              "objectives": {"ingest_p99_seconds": P99_SECONDS, "query_p99_seconds": P99_SECONDS,
+                             "error_rate": 0, "durable_catchup_seconds": CATCHUP_SECONDS},
+              "dataset": {"points_per_series": POINTS, "series_per_request":
+                          {"metrics": SERIES, "logs": SERIES, "traces": 10, "profiles": 1}},
               "host": {"cpu_count": os.cpu_count(), "kernel": command("uname", "-r"),
                        "cpu_model": command("lscpu", "-J"),
                        "runner": os.environ.get("KRABKA_SOAK_RUNNER")},
@@ -397,20 +448,35 @@ def run(args):
             plans += [("high_cardinality", 2, level, False, False) for level in CARDINALITIES]
             plans += [("cold_window", 0, 100, False, True), ("noisy_tenant", 2, 100, True, False)]
             failed = set()
+            last_cardinality_tenant = "soak"
+            last_cardinality = 100
             for phase, writers, cardinality, noisy, cold in plans:
                 if phase in failed:
                     continue
                 print(f"{signal} {phase} writers={writers} cardinality={cardinality}", flush=True)
+                tenant = f"burst-{writers}" if phase == "burst" else (
+                    f"cardinality-{cardinality}" if phase == "high_cardinality" else (
+                        last_cardinality_tenant if cold else "quiet" if noisy else "soak"))
+                count = 1
                 if phase == "high_cardinality":
-                    count = cardinality if signal == "profiles" else math.ceil(cardinality / SERIES)
+                    per_request = report["dataset"]["series_per_request"][signal]
+                    count = math.ceil(cardinality / per_request)
+                if not cold:
                     for _ in range(count):
-                        path, body, content, _ = write_request(signal, next(deployment.sequence), cardinality)
-                        status, response = http(INGEST[signal], path, body=body, content_type=content)
+                        path, body, content, _ = write_request(signal, next(deployment.sequence), cardinality, tenant)
+                        status, response = http(INGEST[signal], path, tenant, body, content)
                         if not 200 <= status < 300:
-                            raise RuntimeError(f"{signal} cardinality seed failed: {status} {response[:200]!r}")
+                            raise RuntimeError(f"{signal} {phase} seed failed: {status} {response[:200]!r}")
+                    seeded = deployment.drain(signal)
+                    if not seeded["recovered"]:
+                        raise RuntimeError(f"{signal} seed did not become durable: {seeded}")
                 result, records, samples = measure(deployment, signal, args.seconds, args.seconds / 4,
-                                                    writers, cardinality, noisy, cold, 1.0 if phase == "burst" else 0.25)
+                                                    writers, cardinality, noisy, cold or phase == "high_cardinality",
+                                                    1.0 if phase == "burst" else 0.25, tenant)
                 result["phase"] = phase
+                result["seed_batches"] = count if not cold else 0
+                result["containers_after_phase"] = {name: json.loads(command("docker", "inspect", "--format", "{{json .State}}", identity))
+                    for name, identity in deployment.ids.items() if name.startswith(signal + "-")}
                 report["entries"].append(result)
                 name = f"{sequence:02d}-{signal}-{phase}"
                 sequence += 1
@@ -419,27 +485,41 @@ def run(args):
                 (args.output / "deployment-report.json").write_text(json.dumps(report, indent=2))
                 if phase in ("burst", "high_cardinality") and not result["objectives_met"]:
                     failed.add(phase)
+                    if phase == "high_cardinality" or any(s["OOMKilled"] for s in result["containers_after_phase"].values()):
+                        # A deliberately overloaded dataset is evidence of
+                        # saturation. Later phases use the last passing size.
+                        (args.output / f"{name}.containers.log").write_text(deployment.run("logs", "--no-color"))
+                        deployment.run("down", "--volumes", "--remove-orphans", "--timeout", "5")
+                        deployment.start()
+                        per_request = report["dataset"]["series_per_request"][signal]
+                        for _ in range(math.ceil(last_cardinality / per_request)):
+                            path, body, content, _ = write_request(signal, next(deployment.sequence), last_cardinality)
+                            status, _ = http(INGEST[signal], path, last_cardinality_tenant, body, content)
+                            if not 200 <= status < 300:
+                                raise RuntimeError(f"{signal} could not restore the passing dataset")
+                        if not deployment.drain(signal)["recovered"]:
+                            raise RuntimeError(f"{signal} restored dataset did not become durable")
+                elif phase == "high_cardinality":
+                    last_cardinality_tenant = tenant
+                    last_cardinality = cardinality
             # Stop the durable consumer, append a backlog, then time catch-up.
             builder = f"{signal}-block-builder"
             deployment.run("stop", "--timeout", "120", builder)
-            for seq in range(10):
-                path, body, content, _ = write_request(signal, seq, 100)
+            prior = deployment.sample(signal)["recovery"].get(builder)
+            for _ in range(10):
+                path, body, content, _ = write_request(signal, next(deployment.sequence), 100)
                 status, _ = http(INGEST[signal], path, body=body, content_type=content)
                 if not 200 <= status < 300:
                     raise RuntimeError(f"{signal} could not append the restart backlog: {status}")
             before = time.monotonic()
             deployment.run("start", builder)
             deployment.refresh_pids()
-            recovered = False
-            while time.monotonic() - before < 180:
-                status, _ = http(deployment.admin_ports[builder], "/ready")
-                if status == 200:
-                    recovered = True
-                    break
-                time.sleep(0.25)
+            catchup = deployment.drain(signal)
+            recovered = catchup["recovered"]
             report["entries"].append({"signal": signal, "phase": "restart",
                                       "backlog_batches": 10, "recovered": recovered,
                                       "recovery_seconds": time.monotonic() - before,
+                                      "before_stop": prior, "after_restart": catchup["status"],
                                       "telemetry": deployment.sample(signal)})
             if not recovered:
                 raise RuntimeError(f"{signal} did not catch up after restart")
@@ -458,9 +538,14 @@ def self_test():
     assert has_data("logs", b'{"status":"success","data":{"result":[{}]}}')
     for signal in SIGNALS:
         path, body, content, rows = write_request(signal, 1, 100)
-        assert rows == (10 if signal == "profiles" else 1000)
+        assert rows == (10 if signal == "profiles" else 100 if signal == "traces" else 1000)
         assert path and body and content
     assert prometheus('# comment\nx{label="a"} 3\nx_invalid garbage\n') == {'x{label="a"}': 3}
+    status = {"ready": True, "wal_consumers": [{"caught_up": True, "partitions": [
+        {"assigned": True, "consumed_offset": 99, "committed_offset": 99}]}]}
+    assert not durably_caught_up(status)  # Readiness alone does not prove a durable append.
+    status["wal_consumers"][0]["partitions"][0]["committed_offset"] = 100
+    assert durably_caught_up(status)
     print("deployment-envelope self-test passed")
 
 
