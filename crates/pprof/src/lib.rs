@@ -11,6 +11,7 @@ mod heatmap;
 mod in_memory;
 mod matcher;
 mod pprof;
+mod profile_session_context;
 mod profile_type;
 mod raw_profile;
 mod samples;
@@ -37,6 +38,7 @@ pub use heatmap::{Heatmap, LabeledHeatmap, bin_heatmap};
 pub use in_memory::InMemoryProfileStore;
 pub use matcher::parse_label_selector;
 pub use pprof::PprofProfile;
+pub use profile_session_context::profile_session_context;
 pub use profile_type::ProfileType;
 pub use raw_profile::{tree_to_pprof, tree_to_pprof_with_max_nodes};
 pub use samples::{
