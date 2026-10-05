@@ -1,3 +1,5 @@
+use krabka_units::prelude::TimeExt as _;
+
 use super::*;
 
 #[tokio::test]
@@ -55,6 +57,36 @@ pub(crate) async fn querier_state_with_request_tenant_index_reuses_shard_indexes
         check!(state.label_index.label_names(tenant) == BTreeSet::from(["app".to_string()]));
         check!(state.block_index.blocks().len() == 2);
     }
+
+    // A rolling query never repeats its exact cache key. Expired merged
+    // snapshots must disappear when a later request admits a new window.
+    for start in 6..10 {
+        let expired = std::time::Instant::now() - secs(6).to_std();
+        for entry in state
+            .dynamic_index_cache
+            .entries
+            .lock()
+            .unwrap()
+            .values_mut()
+        {
+            entry.loaded_at = expired;
+        }
+        let moving = state
+            .with_request_tenant_index(tenant, TimeRange::new(start, start + 100).unwrap())
+            .await
+            .unwrap();
+        check!(moving.block_index.blocks().len() == 2);
+        check!(
+            moving.label_index.label_values(tenant, "app")
+                == BTreeSet::from(["api".to_string(), "worker".to_string()])
+        );
+        check!(state.dynamic_index_cache.entries.lock().unwrap().len() == 1);
+    }
+    check!(first.block_index.blocks().len() == 2);
+    check!(
+        first.label_index.label_values(tenant, "app")
+            == BTreeSet::from(["api".to_string(), "worker".to_string()])
+    );
 
     let shard_prefix =
         krabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant).to_string();
