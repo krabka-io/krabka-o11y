@@ -4569,6 +4569,26 @@
       "Instrumented timings and heaptrack totals include startup and seed and do not establish uninstrumented CPU, memory or latency gains.",
       "A clone stack absent from this summarized allocation report is not proof that no such allocations occur.",
       "Both captures use Intel Xeon model 79; previous captures may use different processors. No unmatched-host performance ratio claimed."
-    ]
+    ],
+    "next_investigation": {
+      "caller_chain": [
+        "metrics_service::replay_wal_head_records",
+        "WalHead::apply_wal_records_at",
+        "InMemoryMetricStore::apply_wal_record",
+        "WalRecord::labels"
+      ],
+      "observed_string_clone_stack_calls": [
+        342000,
+        342000
+      ],
+      "observation_scope": "Two String-clone sub-stacks reached through label BTreeMap collection and InMemoryMetricStore::apply_wal_record in the verified 37315307601 summarized allocation capture. Counts include startup and seed.",
+      "ownership_evidence": "The production replay function owns decoded Vec<(WalRecord, PartitionIndex, Offset)> until its borrowed batch call finishes, then drops it. Moving decoded label strings into the head can preserve the same decode-before-lock and atomic publish boundary.",
+      "candidate_status": "Three-file implementation and complete row/ownership/transaction regressions prepared outside the live validation worktree. Not yet applied, tested, or measured.",
+      "constraints": [
+        "Preserve existing borrowed WAL APIs.",
+        "Keep decode errors outside shared mutation and atomic publication of each batch and its offsets.",
+        "Preserve canonical duplicate-name handling, tenant isolation, all payload semantics, snapshots and weak-label lifetime."
+      ]
+    }
   }
 }
