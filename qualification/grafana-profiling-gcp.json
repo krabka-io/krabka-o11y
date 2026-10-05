@@ -2309,5 +2309,320 @@
       }
     },
     "purpose": "Inspect production fingerprint_labels and flame-tree allocation callers before selecting the next Pyroscope optimization."
+  },
+  "tempo_borrowed_selection_candidate_captures": {
+    "diagnostic_only": true,
+    "comparison_qualified": false,
+    "source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+    "image_producer": {
+      "run_id": 37298567310,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37298567310",
+      "source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+      "artifact": {
+        "id": 11341335545,
+        "name": "comparison-image-traces-ca99cacd35074c404e0e57500eb10d4767d95bc5",
+        "digest": "sha256:b1dbed1ddd21977f7cefd95fae227c5121c79638463f7de8b37deed8a56dd9fd",
+        "size_in_bytes": 308303621,
+        "expires_at": "2027-01-03T10:45:10Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-ca99cacd3507",
+      "manifest_digest": "sha256:92b07517d101d4ff7b24ef7de2477ffb3fd62cb8c1b336611a9bdb7491cf7c9d",
+      "config_digest": "sha256:92b07517d101d4ff7b24ef7de2477ffb3fd62cb8c1b336611a9bdb7491cf7c9d",
+      "docker_image_id": "sha256:92b07517d101d4ff7b24ef7de2477ffb3fd62cb8c1b336611a9bdb7491cf7c9d",
+      "oci_config_digest": "sha256:159b8f5782478f3fc7b3d40bcfbf00189754eedd6291668bd9f2bb24e74a0422",
+      "identity_note": "The archived config-digest field is Docker inspect Id; this containerd store reports OCI manifest identity. The OCI config digest comes from the independently verified archive."
+    },
+    "binary_sha256": {
+      "krabka-metrics": {
+        "path": "usr/local/bin/krabka-metrics",
+        "sha256": "433897cf8d9d07b85a92ae27ccf23e450e1223a16f5acf305e9fb27922a5e0f5",
+        "size_in_bytes": 72322888
+      },
+      "krabka-metrics-service": {
+        "path": "usr/local/bin/krabka-metrics-service",
+        "sha256": "1a6309b6359fbf72740f97647a998363064d3b49cc0026ae047ea384a637f24b",
+        "size_in_bytes": 236257280
+      },
+      "krabka-o11y-bootstrap": {
+        "path": "usr/local/bin/krabka-o11y-bootstrap",
+        "sha256": "3f21b08affb06c3c7c703fa3b2bff0a1215610b516cde6b95e39b987178d8ec9",
+        "size_in_bytes": 26755024
+      },
+      "krabka-o11y-recovery": {
+        "path": "usr/local/bin/krabka-o11y-recovery",
+        "sha256": "11d55653ba224a20a00209dcd20529b914afe76ab55cdb23d23e885f14171ef5",
+        "size_in_bytes": 36712848
+      },
+      "krabka-observability": {
+        "path": "usr/local/bin/krabka-observability",
+        "sha256": "721f108379d44c80db18598833cb4665c2ff783aab19ac96c09ed42fe15d59df",
+        "size_in_bytes": 222384288
+      },
+      "krabka-profiles": {
+        "path": "usr/local/bin/krabka-profiles",
+        "sha256": "3b4bfbecf433404becd086eb9c87d2784ff15a208143604ecb199ad262d188ed",
+        "size_in_bytes": 219811904
+      },
+      "krabka-traces": {
+        "path": "usr/local/bin/krabka-traces",
+        "sha256": "208df2eb947dc03780e6e905d2589e70106ab8cef961155ba7be4432bdaa87e6",
+        "size_in_bytes": 223532928
+      }
+    },
+    "image_equivalence": {
+      "changed_paths": [
+        "usr/local/bin/krabka-traces"
+      ],
+      "unchanged_binaries": [
+        "krabka-metrics",
+        "krabka-metrics-service",
+        "krabka-o11y-bootstrap",
+        "krabka-o11y-recovery",
+        "krabka-observability",
+        "krabka-profiles"
+      ],
+      "filesystem_entries_verified": 380
+    },
+    "captures": {
+      "cpu": {
+        "source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+        "provenance": {
+          "run_id": 37299759203,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37299759203",
+          "head_sha": "14e905d4ad791cc861bbe7c5690a7406b74500d6",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111729432864,
+              "name": "compare (traces)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37299759203/job/111729432864",
+              "runner_name": "gcp-runner-e7f318397d244e44",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T10:57:46Z",
+              "completed_at": "2026-10-05T11:02:48Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11341666455,
+              "name": "grafana-comparison-traces-14e905d4ad791cc861bbe7c5690a7406b74500d6-1",
+              "digest": "sha256:228d17ab1ac5550e302270909998cd1d05a866c089a151617c693f08c3e27360",
+              "size_in_bytes": 13274274,
+              "expires_at": "2027-01-03T10:56:38Z",
+              "signal": "traces",
+              "verified_raw_files": 162,
+              "diagnostic_only": true
+            }
+          ]
+        },
+        "traces_all_windows": [
+          {
+            "samples": "1K",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 7.19,
+                "symbol": "__memmove_avx_unaligned_erms"
+              },
+              {
+                "self_percent": 5.94,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 3.59,
+                "symbol": "__memcmp_avx2_movbe"
+              },
+              {
+                "self_percent": 2.83,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 2.49,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 2.35,
+                "symbol": "<arrow_schema::schema::Schema>::column_with_name"
+              },
+              {
+                "self_percent": 2.35,
+                "symbol": "unlink_chunk.isra.0"
+              },
+              {
+                "self_percent": 2.14,
+                "symbol": "malloc"
+              },
+              {
+                "self_percent": 1.94,
+                "symbol": "_int_free_chunk"
+              },
+              {
+                "self_percent": 1.8,
+                "symbol": "<arrow_array::record_batch::RecordBatch>::column_by_name"
+              }
+            ],
+            "prune_above_report_threshold": false
+          },
+          {
+            "samples": "1K",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 8.6,
+                "symbol": "__memmove_avx_unaligned_erms"
+              },
+              {
+                "self_percent": 6.29,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 4.75,
+                "symbol": "__memcmp_avx2_movbe"
+              },
+              {
+                "self_percent": 2.63,
+                "symbol": "<indexmap::map::IndexMap<alloc::string::String, serde_json::value::Value>>::insert_full"
+              },
+              {
+                "self_percent": 2.63,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 2.25,
+                "symbol": "unlink_chunk.isra.0"
+              },
+              {
+                "self_percent": 2.05,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 1.93,
+                "symbol": "<arrow_schema::schema::Schema>::column_with_name"
+              },
+              {
+                "self_percent": 1.86,
+                "symbol": "__memmove_avx_unaligned"
+              },
+              {
+                "self_percent": 1.73,
+                "symbol": "malloc"
+              }
+            ],
+            "prune_above_report_threshold": false
+          },
+          {
+            "samples": "1K",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 7.51,
+                "symbol": "__memmove_avx_unaligned_erms"
+              },
+              {
+                "self_percent": 5.76,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 5.64,
+                "symbol": "__memcmp_avx2_movbe"
+              },
+              {
+                "self_percent": 3.01,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 2.69,
+                "symbol": "unlink_chunk.isra.0"
+              },
+              {
+                "self_percent": 2.57,
+                "symbol": "malloc"
+              },
+              {
+                "self_percent": 2.38,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 2.32,
+                "symbol": "<arrow_schema::schema::Schema>::column_with_name"
+              },
+              {
+                "self_percent": 1.94,
+                "symbol": "__memmove_avx_unaligned"
+              },
+              {
+                "self_percent": 1.75,
+                "symbol": "<indexmap::map::IndexMap<alloc::string::String, serde_json::value::Value>>::insert_full"
+              }
+            ],
+            "prune_above_report_threshold": false
+          }
+        ],
+        "cpu_models": [
+          "AMD EPYC 7B12"
+        ],
+        "ingest_accepted_rows": 36000,
+        "query_attempts": 704,
+        "errors": 0,
+        "empty_queries": 0
+      },
+      "allocations": {
+        "source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+        "provenance": {
+          "run_id": 37299762062,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37299762062",
+          "head_sha": "14e905d4ad791cc861bbe7c5690a7406b74500d6",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111729444121,
+              "name": "compare (traces)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37299762062/job/111729444121",
+              "runner_name": "gcp-runner-8a95dbd7e3af49c4",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T10:57:51Z",
+              "completed_at": "2026-10-05T11:03:59Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11341277249,
+              "name": "grafana-comparison-traces-14e905d4ad791cc861bbe7c5690a7406b74500d6-1",
+              "digest": "sha256:193c5bcb8dd6d78b1ade7769f522942431192197201af09815a74f11b5f343df",
+              "size_in_bytes": 316482991,
+              "expires_at": "2027-01-03T10:56:40Z",
+              "signal": "traces",
+              "verified_raw_files": 130,
+              "diagnostic_only": true
+            }
+          ]
+        },
+        "runtime_including_startup_and_seed_seconds": 104.9,
+        "allocation_calls": 73220999,
+        "temporary_allocations": 9078907,
+        "peak_heap_decimal_mb": 41.84,
+        "string_clone_calls": 7010365,
+        "cpu_models": [
+          "AMD EPYC 7B12"
+        ],
+        "ingest_accepted_rows": 14000,
+        "query_attempts": 147,
+        "errors": 0,
+        "empty_queries": 0,
+        "owned_span_clone_present_in_summary": false
+      }
+    },
+    "allocation_comparison_limit": "Baseline completes 138 queries; candidate completes 147, both accepting 14000 spans. Startup-inclusive allocation totals are diagnostics rather than per-operation measurements; candidate peak Rust heap is higher.",
+    "retention_decision": "Pending same-VM uninstrumented revision comparison 37298567310."
   }
 }
