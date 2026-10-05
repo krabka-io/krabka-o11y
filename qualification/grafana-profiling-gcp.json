@@ -2937,6 +2937,6 @@
       }
     },
     "allocation_comparison_limit": "Baseline and candidate both accept 1400 profiles and complete 280 queries. Baseline runs on AMD EPYC 7B12; candidate runs on Intel Xeon model 79. Startup-inclusive totals and different hosts do not establish an end-to-end gain.",
-    "retention_decision": "Pending uninstrumented same-VM comparison 37301689980 and all-signal revision controls; diagnostic captures alone do not qualify the change."
+    "retention_decision": "Rejected after four verified same-VM controls; see qualification/grafana-pyroscope-borrowed-fingerprint-experiment-gcp.json. Product code is reverted; captures remain diagnostic only."
   }
 }
