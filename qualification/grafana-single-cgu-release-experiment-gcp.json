@@ -48,7 +48,7 @@
   },
   "schema_version": 1,
   "experiment": "One Rust code generation unit for executable footprint and runtime efficiency",
-  "status": "images_cpu_profile_and_core_checks_verified_runtime_comparison_pending",
+  "status": "core_checks_passed_mimir_matched_comparison_dispatched",
   "baseline_image_reuse": "The exact restored-source cold fingerprint reuse candidate supplies the baseline image. All source, dependencies and workload harness files match; only .bazelrc differs. Both contain the same dense metadata and cold fingerprint reuse candidates.",
   "candidate_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371662781",
   "baseline_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
@@ -78,6 +78,18 @@
       "retries_disabled": true,
       "provenance_path": "qualification/evidence/correctness/single-cgu-core-df216f07/provenance.json",
       "provenance_sha256": "f9fd78261d750d4767ede6d103132999bf40bead1334524ebc1c4ec5fef9d08f"
+    },
+    "metrics_native_scope": {
+      "status": "running",
+      "source_commit": "a5a52c1c934c7865caaeaca0d3dc4b40bad0915b",
+      "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
+      "targets": [
+        "//crates/metrics-service:diff_mimir_docker_test",
+        "//crates/metrics-service:diff_prometheus_docker_test",
+        "//crates/metrics-service:metrics_deployment_docker_test"
+      ],
+      "retries_disabled": true,
+      "scope": "Current source with original metadata restored. This differs from both immutable matched images, which contain the same dense metadata implementation."
     }
   },
   "next_action": "Run a matched Mimir comparison and the native differential and deployment checks with one codegen unit. The static size reduction does not prove CPU or RSS improvement.",
@@ -157,5 +169,21 @@
     "raw_files_verified": 166,
     "diagnostic_only": true,
     "performance_qualified": false
-  }
+  },
+  "comparison_run": 37377084215,
+  "comparison_head_sha": "a5a52c1c934c7865caaeaca0d3dc4b40bad0915b",
+  "comparison_inputs": {
+    "signal": "metrics",
+    "profiling": "none",
+    "phases": "steady",
+    "phase_seconds": "60",
+    "repetitions": "3",
+    "deployment_target": "all",
+    "profiles_target": "all",
+    "image_artifact_run": "37371662781",
+    "image_artifact_name": "comparison-image-logs-8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+    "baseline_image_artifact_run": "37371016528",
+    "baseline_image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6"
+  },
+  "comparison_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37377084215"
 }
