@@ -249,6 +249,32 @@ Prometheus differential suites, pass. Paired GCP comparison and CPU/allocation
 follow-ups are required before retaining this experiment as a performance
 improvement.
 
+Those follow-ups passed on the exact `5b40aec6` image:
+[CPU capture](https://github.com/krabka-io/krabka-o11y/actions/runs/37286209489)
+and [allocation capture](https://github.com/krabka-io/krabka-o11y/actions/runs/37286212807).
+Their archive digests and all 234 and 130 raw-file checksums were verified.
+The CPU windows contain 170, 225 and 288 samples with zero lost samples.
+The separate shared-label discovery walk is below the 0.5% flat-report
+threshold; the fused latest-float scan now accounts for 16.47–31.25% self CPU,
+with hash lookup and label fingerprinting still prominent. The earlier CPU
+profile used Intel model 79 and this one used AMD EPYC 7B12, so the decrease
+in total samples cannot by itself establish a CPU reduction.
+
+The 105.68-second allocation trace records 11,672,891 allocation calls,
+4,762,565 string clones and a 16.44MB peak heap. String clones are essentially
+unchanged from the corrected production-wrapper capture's 4,778,871; fusion
+must be assessed as removal of duplicate scanning and manifest refresh work.
+
+The uninstrumented [Mimir comparison](https://github.com/krabka-io/krabka-o11y/actions/runs/37282607469)
+also passed all three pairs, with its archive digest and 239 raw checksums
+verified. Krabka/native medians are 0.67× CPU, 1.58× RSS and 35.14/28.85ms
+query p99. Ingest p99 remains 50.52/12.41ms. This comparison used an Intel
+host and the previous retained comparison used AMD. A same-VM baseline and
+candidate comparison is required before attributing these differences to
+fusion or replacing the retained performance checkpoint. The
+[experiment record](../qualification/grafana-fused-instant-scan-experiment-gcp.json)
+preserves the actual source, per-role CPU, all repetitions and this limitation.
+
 The prune follow-up in
 [run 37264751159](https://github.com/krabka-io/krabka-o11y/actions/runs/37264751159)
 passed using the `dd67ca1e` image. Its querier windows contain 303, 447 and
