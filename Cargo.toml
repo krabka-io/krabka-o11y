@@ -53,6 +53,7 @@ debug = "line-tables-only"
 
 [workspace.dependencies]
 addr2line = "0.27"
+ahash = "0.8.12"
 arc-swap = "1"
 arrow = { version = "59", default-features = false, features = ["ipc"] }
 # Expressive test assertions: `assert!(a == b)` / `check!(..)` with
