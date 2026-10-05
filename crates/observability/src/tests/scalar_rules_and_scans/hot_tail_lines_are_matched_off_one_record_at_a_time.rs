@@ -67,6 +67,69 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
         "two records cannot account for three lines"
     );
 
+    // A shared label set does not make the lines interchangeable. This also
+    // exercises repeated timestamps and rejected source labels in the cache.
+    let mut rejected = record("tenant", 10, "a");
+    rejected
+        .labels
+        .insert("app".to_string(), "other".to_string());
+    check!(
+        counted(
+            &response(&[(10, "a"), (10, "b"), (20, "c")]),
+            &[
+                rejected.clone(),
+                record("tenant", 10, "a"),
+                record("tenant", 10, "b"),
+                record("tenant", 20, "c"),
+                rejected,
+            ],
+        ) == 3
+    );
+    for timestamp in ["010", "+10", "invalid"] {
+        let mut malformed = response(&[(10, "a")]);
+        malformed["data"]["result"][0]["values"][0][0] = timestamp.into();
+        check!(counted(&malformed, &[record("tenant", 10, "a")]) == 0);
+    }
+
+    // Per-record metadata still changes the output stream, even when two
+    // records have identical source labels, timestamps and text.
+    let mut with_metadata = record("tenant", 10, "a");
+    with_metadata
+        .structured_metadata
+        .insert("request".to_string(), "first".to_string());
+    let mut other_metadata = with_metadata.clone();
+    other_metadata
+        .structured_metadata
+        .insert("request".to_string(), "second".to_string());
+    let mut metadata_response = response(&[(10, "a"), (10, "a")]);
+    metadata_response["data"]["result"][0]["stream"]["request"] = "first".into();
+    check!(counted(&metadata_response, &[with_metadata, other_metadata]) == 1);
+
+    // Parser, label-format and line-format stages are evaluated for each
+    // record. The golden response uses the rendered line and output labels.
+    let pipeline_plan = StreamPlan {
+        query: krabka_logql::parse_query(
+            r#"{app="api"} | json | label_format app="{{.message}}" | line_format "{{.message}}""#,
+        )
+        .expect("the pipeline parses"),
+        ..plan.clone()
+    };
+    let pipeline_response = serde_json::json!({"data": {"result": [{
+        "stream": {"app": "hello", "message": "hello", "detected_level": "unknown"},
+        "values": [["10", "hello"], ["10", "hello"]],
+    }]}});
+    check!(
+        super::super::prelude::count_loki_stream_result_hot_tail_lines(
+            &pipeline_response,
+            &pipeline_plan,
+            &[
+                record("tenant", 10, r#"{"message":"hello"}"#),
+                record("tenant", 10, r#"{"message":"other"}"#),
+            ],
+            &open,
+        ) == 1
+    );
+
     // Hot records are filtered before the match-off: another tenant, a
     // timestamp outside the plan's range, and one already compacted.
     check!(counted(&response(&[(10, "a")]), &[record("other", 10, "a")]) == 0);
