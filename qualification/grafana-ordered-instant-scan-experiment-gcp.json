@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "experiment": "ordered latest-series map in the fused Mimir instant scan",
+  "source_commit": "f4c5a6034678dbde565d59dca71350146f21ddb0",
+  "baseline_source_commit": "241b7dce19fda5c54f868ff6657115f9f5ba1de4",
+  "performance_qualified": false,
+  "retention_decision": "Pending exact-image GCP comparison. Keep or reject according to measured CPU, RSS and latency, with correctness gates unchanged.",
+  "scope": {
+    "production_paths": [
+      "crates/promql/src/merged_store/instant_scan.rs"
+    ],
+    "change": "Use BTreeMap for the latest-series map and consume it in fingerprint order. Remove the temporary vector and final sort. Preserve the separate cold conflict map, matcher identity checks, one hot snapshot, cold precedence, duplicate ties, stale markers, limits and all fallback paths.",
+    "no_configuration_changes": true,
+    "no_dependency_changes": true,
+    "no_wire_changes": true
+  },
+  "profile_selection": {
+    "source_proof": {
+      "profile_run_id": 37320760590,
+      "profile_source_commit": "838680039ce5d8aeeb70095ca5922b0b8ee5735a",
+      "baseline_source_commit": "241b7dce19fda5c54f868ff6657115f9f5ba1de4",
+      "path": "crates/promql/src/merged_store/instant_scan.rs",
+      "byte_equal": true,
+      "sha256": "fb5c42bb5014a507db5fb5e289c3e22b610b94d2de1abbcb1f4a0950292831ca"
+    },
+    "windows": [
+      {
+        "window": 1,
+        "file": "qualification/evidence/profiling/gcp-37320760590/metrics/profiles/metrics-querier.1.cpu.perf.data.cum.txt",
+        "sha256": "ad91a01e332cb3157b56cd2a9e3eee35c8f46dc292636c3eb9bf9fb9ea141885",
+        "total_lost_samples": 0,
+        "fingerprint_hash_one_percent": 9.39,
+        "latest_float_scan_percent": 15.51
+      },
+      {
+        "window": 2,
+        "file": "qualification/evidence/profiling/gcp-37320760590/metrics/profiles/metrics-querier.2.cpu.perf.data.cum.txt",
+        "sha256": "ba8c14b51c84f79be8983b630ad22e334c6009f7acce86b45fcc212fbe0a5e4b",
+        "total_lost_samples": 0,
+        "fingerprint_hash_one_percent": 12.5,
+        "latest_float_scan_percent": 20.83
+      },
+      {
+        "window": 3,
+        "file": "qualification/evidence/profiling/gcp-37320760590/metrics/profiles/metrics-querier.3.cpu.perf.data.cum.txt",
+        "sha256": "d3f4ec1b36b655b9773d2129df7575e41cddf93214a3f8f44966d6cca8f4fcf7",
+        "total_lost_samples": 0,
+        "fingerprint_hash_one_percent": 18.39,
+        "latest_float_scan_percent": 25.52
+      }
+    ],
+    "interpretation": "Unchanged production scan bytes connect the prior GCP profile to this baseline. Sample shares identify a hypothesis; they do not establish a gain."
+  },
+  "validation": {
+    "original_production_ledger": {
+      "command": "TMPDIR=/home/matt/.cache/o11y-performance/tmp bazel test --bes_backend= -c opt --jobs=6 --local_test_jobs=3 //crates/metrics-service:metrics-service_test",
+      "result": "passed",
+      "log_sha256": "d6269e503b2dfffb8c163a4e2e7be32a3370c6c0b319f2c2d73e6326f1958212"
+    },
+    "initial_scoped_targets": 5,
+    "initial_scoped_result": "passed",
+    "initial_scoped_log_sha256": "a928a8533c0de48127c4f0b3c59d54bf4299d49c911de1495c6caf81a969bcae",
+    "negative_control": {
+      "mutation": "Reverse the candidate latest-series traversal.",
+      "result": "Exactly the full production scan ledger fails; 65 other metrics-service tests pass. Candidate source restored afterward.",
+      "log_sha256": "84746debb5e5f96c994fbb90a70f30b3498bc4b6bc4f6fa9f3565800f2de2429"
+    },
+    "final_scope_targets": 41,
+    "final_scope_status": "passed",
+    "final_scope_log_sha256": "6f5cf6388bbc7177cf3975671d9d63ab9b99c8bca127cb6276b0aa6c864396f0",
+    "final_scope_targets_list": [
+      "//crates/integration:traces_to_metrics_exemplars_test",
+      "//crates/integration:traces_to_metrics_exemplars_test_clippy",
+      "//crates/metrics-service:diff_mimir_docker_test",
+      "//crates/metrics-service:diff_prometheus_docker_test",
+      "//crates/metrics-service:diff_prometheus_previous_docker_test",
+      "//crates/metrics-service:grafana_integration_docker_test",
+      "//crates/metrics-service:grafana_integration_previous_docker_test",
+      "//crates/metrics-service:metrics-service_clippy",
+      "//crates/metrics-service:metrics-service_test",
+      "//crates/metrics-service:metrics-service_test_clippy",
+      "//crates/metrics-service:tsdb_import_docker_test",
+      "//crates/promql:conformance_experimental_test",
+      "//crates/promql:conformance_report_experimental_test",
+      "//crates/promql:conformance_report_experimental_test_clippy",
+      "//crates/promql:conformance_report_test",
+      "//crates/promql:conformance_report_test_clippy",
+      "//crates/promql:conformance_test",
+      "//crates/promql:engine_proptest_experimental_test",
+      "//crates/promql:engine_proptest_experimental_test_clippy",
+      "//crates/promql:engine_proptest_test",
+      "//crates/promql:engine_proptest_test_clippy",
+      "//crates/promql:http_api_experimental_test",
+      "//crates/promql:http_api_experimental_test_clippy",
+      "//crates/promql:http_api_test",
+      "//crates/promql:http_api_test_clippy",
+      "//crates/promql:parser_proptest_experimental_test",
+      "//crates/promql:parser_proptest_experimental_test_clippy",
+      "//crates/promql:parser_proptest_test",
+      "//crates/promql:parser_proptest_test_clippy",
+      "//crates/promql:promql_clippy",
+      "//crates/promql:promql_doc_test",
+      "//crates/promql:promql_experimental_clippy",
+      "//crates/promql:promql_experimental_test",
+      "//crates/promql:promql_experimental_test_clippy",
+      "//crates/promql:promql_no_harness_check",
+      "//crates/promql:promql_test",
+      "//crates/promql:promql_test_clippy",
+      "//crates/promql:tenant_isolation_experimental_test",
+      "//crates/promql:tenant_isolation_experimental_test_clippy",
+      "//crates/promql:tenant_isolation_test",
+      "//crates/promql:tenant_isolation_test_clippy"
+    ],
+    "promql_unit": {
+      "passed": 569,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "93cf584cca4a56b0d19ed5545d06079efb3f042569a82972374edbec1ef6a527"
+    },
+    "metrics_service_unit": {
+      "passed": 66,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "6f224b90dedd72002823e09e68b64ad214e83d7a976231857d0857e6b6bf589a"
+    },
+    "native_docker_wrappers": [
+      {
+        "target": "//crates/metrics-service:diff_mimir_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "d924032cf121ad15b72d1d62c3dd53ff23e0cc47effb220cecf4241dfa271f68"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "55ff236ab6583ad83392b1446af7aaa350c851baf9358ebd4eaaeab3cfd1c2b6"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "73d33245765f58360190caafd4762b305cf121bf67ce97fd313a48bf8880a805"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "52d6e7684640167a5ce337029da39f715c9d777056ed0dfbb83b489a704d6af9"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "1d79505c92a3f1c9cb6052d6484543746ac0cb6a5e22c075a31539588a0feb70"
+      },
+      {
+        "target": "//crates/metrics-service:tsdb_import_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "105c4690900a2ddb45597d00a224023c9d8903af6fb0b802e37610878ab2b30f"
+      }
+    ]
+  },
+  "gcp_runs": {
+    "baseline_source_commit": "241b7dce19fda5c54f868ff6657115f9f5ba1de4",
+    "baseline_image_run": 37335061905,
+    "baseline_cpu": 37335061905,
+    "candidate_source_commit": "f4c5a6034678dbde565d59dca71350146f21ddb0",
+    "candidate_cpu": 37336179061,
+    "candidate_image_run": 37336179061
+  },
+  "comparison_plan": "Two independently checksummed release images on one private GCP VM. Three fresh alternating baseline/candidate pairs, plus three native Mimir pairs. Steady load 60 seconds, matched aggregate budgets, accepted rows, query completions, scrape coverage and OOM gates. CPU and peak RSS include broker and MinIO.",
+  "measurement_limitations": [
+    "Single-node API-accepted workload; native durability/publication contracts differ.",
+    "No timing or resource advantage claimed before the uninstrumented control completes."
+  ]
+}
