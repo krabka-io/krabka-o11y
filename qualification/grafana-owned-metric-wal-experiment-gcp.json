@@ -6,7 +6,7 @@
   "baseline_source_commit": "838680039ce5d8aeeb70095ca5922b0b8ee5735a",
   "retained_in_branch": true,
   "performance_qualified": false,
-  "retention_decision": "First exact-image same-VM control verified: aggregate RSS and query p99 are higher in every pair; CPU and ingest p99 are mixed. No efficiency advantage qualified. Exact-image unchanged-workload confirmation pending, preserving both controls before retention decision.",
+  "retention_decision": "Both same-image controls verified. First control has higher RSS and query p99 in every pair. Confirmation has lower RSS in every pair, mixed CPU/query p99 and higher ingest p99 in every pair. Both median CPU ratios exceed one; CPU, RSS and latency ranges overlap. No consistent whole-stack efficiency advantage qualified. Retention review remains open; preserve both controls and both native comparisons.",
   "validation": {
     "scoped_targets_passed": 41,
     "default_promql_unit_cases_passed": 569,
@@ -1825,8 +1825,2128 @@
     "run_id": 37327589498,
     "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37327589498",
     "head_sha": "a09991d880ef61d6f2d684b3a38a961da1279ab5",
-    "status_at_recording": "in_progress",
-    "scope": "Repeat exact preserved baseline/candidate images, pacing, budgets and three alternating fresh pairs; no rebuild or product changes."
+    "status_at_recording": "completed",
+    "scope": "Repeat exact preserved baseline/candidate images, pacing, budgets and three alternating fresh pairs; no rebuild or product changes.",
+    "conclusion": "success",
+    "revision_control": {
+      "measurement_qualified": true,
+      "provenance": {
+        "run_id": 37327589498,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37327589498",
+        "head_sha": "a09991d880ef61d6f2d684b3a38a961da1279ab5",
+        "run_conclusion": "success",
+        "jobs": [
+          {
+            "id": 111822168029,
+            "name": "compare (metrics)",
+            "conclusion": "success",
+            "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37327589498/job/111822168029",
+            "runner_name": "gcp-runner-d571b6cc89c0409c",
+            "runner_group_name": "default",
+            "labels": [
+              "gcp-ubuntu-24-04-16core"
+            ],
+            "started_at": "2026-10-05T14:48:33Z",
+            "completed_at": "2026-10-05T15:11:33Z"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": 11353479786,
+            "name": "grafana-comparison-metrics-a09991d880ef61d6f2d684b3a38a961da1279ab5-1",
+            "digest": "sha256:1b5f600fb9a7ec0e90dde08a7739e2ffeb8e3ae1bf8c2c11a90eed122ff299b6",
+            "size_in_bytes": 9219833,
+            "expires_at": "2027-01-03T14:47:41Z",
+            "signal": "metrics",
+            "verified_raw_files": 725
+          }
+        ]
+      },
+      "host": {
+        "cpu_count": 16,
+        "kernel": "7.0.0-1011-gcp",
+        "lscpu": {
+          "lscpu": [
+            {
+              "field": "Architecture:",
+              "data": "x86_64"
+            },
+            {
+              "field": "CPU op-mode(s):",
+              "data": "32-bit, 64-bit"
+            },
+            {
+              "field": "Address sizes:",
+              "data": "48 bits physical, 48 bits virtual"
+            },
+            {
+              "field": "Byte Order:",
+              "data": "Little Endian"
+            },
+            {
+              "field": "CPU(s):",
+              "data": "16"
+            },
+            {
+              "field": "On-line CPU(s) list:",
+              "data": "0-15"
+            },
+            {
+              "field": "Vendor ID:",
+              "data": "AuthenticAMD"
+            },
+            {
+              "field": "Model name:",
+              "data": "AMD EPYC 7B12"
+            },
+            {
+              "field": "CPU family:",
+              "data": "23"
+            },
+            {
+              "field": "Model:",
+              "data": "49"
+            },
+            {
+              "field": "Thread(s) per core:",
+              "data": "2"
+            },
+            {
+              "field": "Core(s) per socket:",
+              "data": "8"
+            },
+            {
+              "field": "Socket(s):",
+              "data": "1"
+            },
+            {
+              "field": "Stepping:",
+              "data": "0"
+            },
+            {
+              "field": "BogoMIPS:",
+              "data": "4499.99"
+            },
+            {
+              "field": "Flags:",
+              "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+            },
+            {
+              "field": "Hypervisor vendor:",
+              "data": "KVM"
+            },
+            {
+              "field": "Virtualization type:",
+              "data": "full"
+            },
+            {
+              "field": "L1d cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L1i cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L2 cache:",
+              "data": "4 MiB (8 instances)"
+            },
+            {
+              "field": "L3 cache:",
+              "data": "32 MiB (2 instances)"
+            },
+            {
+              "field": "NUMA node(s):",
+              "data": "1"
+            },
+            {
+              "field": "NUMA node0 CPU(s):",
+              "data": "0-15"
+            },
+            {
+              "field": "Vulnerability Gather data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Ghostwrite:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Indirect target selection:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Itlb multihit:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability L1tf:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Mds:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Meltdown:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Mmio stale data:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Old microcode:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Reg file data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Retbleed:",
+              "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+            },
+            {
+              "field": "Vulnerability Spec rstack overflow:",
+              "data": "Mitigation; Safe RET"
+            },
+            {
+              "field": "Vulnerability Spec store bypass:",
+              "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+            },
+            {
+              "field": "Vulnerability Spectre v1:",
+              "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+            },
+            {
+              "field": "Vulnerability Spectre v2:",
+              "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+            },
+            {
+              "field": "Vulnerability Srbds:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsa:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsx async abort:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Vmscape:",
+              "data": "Not affected"
+            }
+          ]
+        }
+      },
+      "pairing": "Three fresh baseline/candidate deployment pairs on one VM, alternating first revision; native comparison also retained separately.",
+      "image_producers": {
+        "baseline": {
+          "run_id": 37318871557,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37318871557",
+          "source_commit": "838680039ce5d8aeeb70095ca5922b0b8ee5735a",
+          "artifact": {
+            "id": 11350695633,
+            "name": "comparison-image-metrics-838680039ce5d8aeeb70095ca5922b0b8ee5735a",
+            "digest": "sha256:e63f34f0ca494608b10dd8f262f424cab8c2cc1a94825f0c47d4b88e41d8c897",
+            "size_in_bytes": 308258865,
+            "expires_at": "2027-01-03T13:42:24Z"
+          },
+          "archive_digest_verified": true,
+          "all_image_file_checksums_verified": true,
+          "image_tag": "localhost/krabka-o11y:sha-838680039ce5",
+          "manifest_digest": "sha256:29712d6d08b5fd12a4b3488c2094322c0b8b570b4f970981f47a075a5f51b24d",
+          "config_digest": "sha256:29712d6d08b5fd12a4b3488c2094322c0b8b570b4f970981f47a075a5f51b24d"
+        },
+        "candidate": {
+          "run_id": 37321844038,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37321844038",
+          "source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
+          "artifact": {
+            "id": 11350743469,
+            "name": "comparison-image-metrics-02c1cafee97563352e283296e85914cc5de232d3",
+            "digest": "sha256:815b739ff58d14f34f1954c7c64b291a57b033a566d8f1f9c2a2a029b25d4a50",
+            "size_in_bytes": 308276470,
+            "expires_at": "2027-01-03T14:05:06Z"
+          },
+          "archive_digest_verified": true,
+          "all_image_file_checksums_verified": true,
+          "image_tag": "localhost/krabka-o11y:sha-02c1cafee975",
+          "manifest_digest": "sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3",
+          "config_digest": "sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3"
+        }
+      },
+      "pairs": [
+        {
+          "pair": 1,
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "source_commit": "838680039ce5d8aeeb70095ca5922b0b8ee5735a",
+            "image_manifest_digest": "sha256:29712d6d08b5fd12a4b3488c2094322c0b8b570b4f970981f47a075a5f51b24d",
+            "report": "revisions/1-baseline/comparison-report.json",
+            "entry": {
+              "backend": "krabka",
+              "repetition": 1,
+              "phase": "steady",
+              "deployment_target": "split",
+              "duration_seconds": 60.16040767900006,
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "minio_cpu": 2,
+              "minio_memory_gib": 2,
+              "objectives_met": true,
+              "ingest": {
+                "accepted_rows": 120000,
+                "errors": 0,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.025121035999973174,
+                  "p95": 0.029921994000005725,
+                  "p99": 0.031314532999999756
+                }
+              },
+              "query": {
+                "attempts": 240,
+                "errors": 0,
+                "empty_queries": 0,
+                "latency_seconds": {
+                  "count": 240,
+                  "p50": 0.01059538699996665,
+                  "p95": 0.016767795999953705,
+                  "p99": 0.025864783999963947
+                }
+              },
+              "resources": {
+                "cpu_seconds_total": 11.333559,
+                "cpu_seconds_by_role": {
+                  "broker": 2.268836,
+                  "metrics-block-builder": 1.434563,
+                  "metrics-compactor": 0.423226,
+                  "metrics-distributor": 1.546241,
+                  "metrics-querier": 2.822566,
+                  "minio": 2.838127
+                },
+                "rss_kib_simultaneous_peak": 513320,
+                "coverage_fraction": 0.9998330900158007,
+                "host_activity_qualified": true,
+                "s3_requests": 1192.0,
+                "s3_read_bytes": 22584642.0,
+                "s3_write_bytes": 4050431.0
+              },
+              "rss_kib_peak_by_role": {
+                "metrics-compactor": 32212,
+                "broker": 36744,
+                "metrics-block-builder": 40176,
+                "minio": 281200,
+                "metrics-querier": 99060,
+                "metrics-distributor": 25016
+              },
+              "scrape_errors": 0,
+              "container_started_at_by_role": {
+                "broker": "2026-10-05T15:00:41.027097726Z",
+                "metrics-block-builder": "2026-10-05T15:00:47.831822012Z",
+                "metrics-compactor": "2026-10-05T15:00:47.634812576Z",
+                "metrics-distributor": "2026-10-05T15:00:47.4162093Z",
+                "metrics-querier": "2026-10-05T15:00:48.032267899Z",
+                "minio": "2026-10-05T15:00:40.154960034Z"
+              },
+              "any_oom_killed": false
+            }
+          },
+          "candidate": {
+            "source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
+            "image_manifest_digest": "sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3",
+            "report": "revisions/1-candidate/comparison-report.json",
+            "entry": {
+              "backend": "krabka",
+              "repetition": 1,
+              "phase": "steady",
+              "deployment_target": "split",
+              "duration_seconds": 60.163305274000095,
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "minio_cpu": 2,
+              "minio_memory_gib": 2,
+              "objectives_met": true,
+              "ingest": {
+                "accepted_rows": 120000,
+                "errors": 0,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.026236057999994955,
+                  "p95": 0.03388238899992757,
+                  "p99": 0.035326249000036114
+                }
+              },
+              "query": {
+                "attempts": 240,
+                "errors": 0,
+                "empty_queries": 0,
+                "latency_seconds": {
+                  "count": 240,
+                  "p50": 0.010377285000004122,
+                  "p95": 0.0163736690000178,
+                  "p99": 0.027824929999951564
+                }
+              },
+              "resources": {
+                "cpu_seconds_total": 11.409286,
+                "cpu_seconds_by_role": {
+                  "broker": 2.288787,
+                  "metrics-block-builder": 1.45788,
+                  "metrics-compactor": 0.405058,
+                  "metrics-distributor": 1.602871,
+                  "metrics-querier": 2.826195,
+                  "minio": 2.828495
+                },
+                "rss_kib_simultaneous_peak": 509496,
+                "coverage_fraction": 0.9998162464237739,
+                "host_activity_qualified": true,
+                "s3_requests": 1184.0,
+                "s3_read_bytes": 21488605.0,
+                "s3_write_bytes": 4050168.0
+              },
+              "rss_kib_peak_by_role": {
+                "metrics-block-builder": 40888,
+                "broker": 36436,
+                "metrics-distributor": 25156,
+                "minio": 276532,
+                "metrics-querier": 99256,
+                "metrics-compactor": 31708
+              },
+              "scrape_errors": 0,
+              "container_started_at_by_role": {
+                "broker": "2026-10-05T15:02:28.949794774Z",
+                "metrics-block-builder": "2026-10-05T15:02:35.603353252Z",
+                "metrics-compactor": "2026-10-05T15:02:36.022267498Z",
+                "metrics-distributor": "2026-10-05T15:02:35.373438273Z",
+                "metrics-querier": "2026-10-05T15:02:35.802219415Z",
+                "minio": "2026-10-05T15:02:28.470733669Z"
+              },
+              "any_oom_killed": false
+            }
+          }
+        },
+        {
+          "pair": 2,
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "source_commit": "838680039ce5d8aeeb70095ca5922b0b8ee5735a",
+            "image_manifest_digest": "sha256:29712d6d08b5fd12a4b3488c2094322c0b8b570b4f970981f47a075a5f51b24d",
+            "report": "revisions/2-baseline/comparison-report.json",
+            "entry": {
+              "backend": "krabka",
+              "repetition": 1,
+              "phase": "steady",
+              "deployment_target": "split",
+              "duration_seconds": 60.13151382199999,
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "minio_cpu": 2,
+              "minio_memory_gib": 2,
+              "objectives_met": true,
+              "ingest": {
+                "accepted_rows": 120000,
+                "errors": 0,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.02540289000012308,
+                  "p95": 0.029500459000018964,
+                  "p99": 0.030584120000185067
+                }
+              },
+              "query": {
+                "attempts": 240,
+                "errors": 0,
+                "empty_queries": 0,
+                "latency_seconds": {
+                  "count": 240,
+                  "p50": 0.01026080900010129,
+                  "p95": 0.015808200000037687,
+                  "p99": 0.026615579999997863
+                }
+              },
+              "resources": {
+                "cpu_seconds_total": 11.282366,
+                "cpu_seconds_by_role": {
+                  "broker": 2.196167,
+                  "metrics-block-builder": 1.429957,
+                  "metrics-compactor": 0.435364,
+                  "metrics-distributor": 1.525563,
+                  "metrics-querier": 2.756085,
+                  "minio": 2.93923
+                },
+                "rss_kib_simultaneous_peak": 517020,
+                "coverage_fraction": 0.999841842220532,
+                "host_activity_qualified": true,
+                "s3_requests": 1192.0,
+                "s3_read_bytes": 22158350.0,
+                "s3_write_bytes": 4052871.0
+              },
+              "rss_kib_peak_by_role": {
+                "broker": 36272,
+                "metrics-compactor": 31196,
+                "metrics-querier": 99144,
+                "metrics-distributor": 25168,
+                "minio": 285608,
+                "metrics-block-builder": 39900
+              },
+              "scrape_errors": 0,
+              "container_started_at_by_role": {
+                "broker": "2026-10-05T15:06:05.091295758Z",
+                "metrics-block-builder": "2026-10-05T15:06:11.6904713Z",
+                "metrics-compactor": "2026-10-05T15:06:11.482505999Z",
+                "metrics-distributor": "2026-10-05T15:06:11.883825912Z",
+                "metrics-querier": "2026-10-05T15:06:12.100284073Z",
+                "minio": "2026-10-05T15:06:04.213257141Z"
+              },
+              "any_oom_killed": false
+            }
+          },
+          "candidate": {
+            "source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
+            "image_manifest_digest": "sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3",
+            "report": "revisions/2-candidate/comparison-report.json",
+            "entry": {
+              "backend": "krabka",
+              "repetition": 1,
+              "phase": "steady",
+              "deployment_target": "split",
+              "duration_seconds": 60.10760388599999,
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "minio_cpu": 2,
+              "minio_memory_gib": 2,
+              "objectives_met": true,
+              "ingest": {
+                "accepted_rows": 120000,
+                "errors": 0,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.0246489600001496,
+                  "p95": 0.02876617000015358,
+                  "p99": 0.0321785189998991
+                }
+              },
+              "query": {
+                "attempts": 240,
+                "errors": 0,
+                "empty_queries": 0,
+                "latency_seconds": {
+                  "count": 240,
+                  "p50": 0.010176399999863861,
+                  "p95": 0.015419360000123561,
+                  "p99": 0.023686370000177703
+                }
+              },
+              "resources": {
+                "cpu_seconds_total": 10.973889,
+                "cpu_seconds_by_role": {
+                  "broker": 2.16655,
+                  "metrics-block-builder": 1.383569,
+                  "metrics-compactor": 0.40556,
+                  "metrics-distributor": 1.508732,
+                  "metrics-querier": 2.73659,
+                  "minio": 2.772888
+                },
+                "rss_kib_simultaneous_peak": 513168,
+                "coverage_fraction": 0.9998425271579213,
+                "host_activity_qualified": true,
+                "s3_requests": 1187.0,
+                "s3_read_bytes": 21332382.0,
+                "s3_write_bytes": 4051343.0
+              },
+              "rss_kib_peak_by_role": {
+                "broker": 36384,
+                "minio": 280816,
+                "metrics-block-builder": 39780,
+                "metrics-compactor": 31608,
+                "metrics-distributor": 25220,
+                "metrics-querier": 99360
+              },
+              "scrape_errors": 0,
+              "container_started_at_by_role": {
+                "broker": "2026-10-05T15:04:17.060328846Z",
+                "metrics-block-builder": "2026-10-05T15:04:23.950323838Z",
+                "metrics-compactor": "2026-10-05T15:04:24.151036474Z",
+                "metrics-distributor": "2026-10-05T15:04:23.465761826Z",
+                "metrics-querier": "2026-10-05T15:04:23.700825851Z",
+                "minio": "2026-10-05T15:04:16.17552284Z"
+              },
+              "any_oom_killed": false
+            }
+          }
+        },
+        {
+          "pair": 3,
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "source_commit": "838680039ce5d8aeeb70095ca5922b0b8ee5735a",
+            "image_manifest_digest": "sha256:29712d6d08b5fd12a4b3488c2094322c0b8b570b4f970981f47a075a5f51b24d",
+            "report": "revisions/3-baseline/comparison-report.json",
+            "entry": {
+              "backend": "krabka",
+              "repetition": 1,
+              "phase": "steady",
+              "deployment_target": "split",
+              "duration_seconds": 60.12882429000001,
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "minio_cpu": 2,
+              "minio_memory_gib": 2,
+              "objectives_met": true,
+              "ingest": {
+                "accepted_rows": 120000,
+                "errors": 0,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.023407209999959377,
+                  "p95": 0.029420029999982944,
+                  "p99": 0.030421338999985892
+                }
+              },
+              "query": {
+                "attempts": 240,
+                "errors": 0,
+                "empty_queries": 0,
+                "latency_seconds": {
+                  "count": 240,
+                  "p50": 0.010516550000147618,
+                  "p95": 0.016451469999992696,
+                  "p99": 0.027025849999972706
+                }
+              },
+              "resources": {
+                "cpu_seconds_total": 11.469069,
+                "cpu_seconds_by_role": {
+                  "broker": 2.271469,
+                  "metrics-block-builder": 1.454975,
+                  "metrics-compactor": 0.416189,
+                  "metrics-distributor": 1.580739,
+                  "metrics-querier": 2.832174,
+                  "minio": 2.913523
+                },
+                "rss_kib_simultaneous_peak": 511572,
+                "coverage_fraction": 0.9998402479636336,
+                "host_activity_qualified": true,
+                "s3_requests": 1199.0,
+                "s3_read_bytes": 22804262.0,
+                "s3_write_bytes": 4050012.0
+              },
+              "rss_kib_peak_by_role": {
+                "broker": 36524,
+                "metrics-distributor": 24864,
+                "minio": 279956,
+                "metrics-querier": 99100,
+                "metrics-block-builder": 39928,
+                "metrics-compactor": 31200
+              },
+              "scrape_errors": 0,
+              "container_started_at_by_role": {
+                "broker": "2026-10-05T15:07:52.935363751Z",
+                "metrics-block-builder": "2026-10-05T15:08:00.000207056Z",
+                "metrics-compactor": "2026-10-05T15:07:59.808515958Z",
+                "metrics-distributor": "2026-10-05T15:07:59.344651413Z",
+                "metrics-querier": "2026-10-05T15:07:59.572315341Z",
+                "minio": "2026-10-05T15:07:52.440972647Z"
+              },
+              "any_oom_killed": false
+            }
+          },
+          "candidate": {
+            "source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
+            "image_manifest_digest": "sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3",
+            "report": "revisions/3-candidate/comparison-report.json",
+            "entry": {
+              "backend": "krabka",
+              "repetition": 1,
+              "phase": "steady",
+              "deployment_target": "split",
+              "duration_seconds": 60.14389412699984,
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "minio_cpu": 2,
+              "minio_memory_gib": 2,
+              "objectives_met": true,
+              "ingest": {
+                "accepted_rows": 120000,
+                "errors": 0,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.02579087999993135,
+                  "p95": 0.02903405000006387,
+                  "p99": 0.031193920999839975
+                }
+              },
+              "query": {
+                "attempts": 240,
+                "errors": 0,
+                "empty_queries": 0,
+                "latency_seconds": {
+                  "count": 240,
+                  "p50": 0.010464148999972167,
+                  "p95": 0.017138779000106297,
+                  "p99": 0.025730009999961112
+                }
+              },
+              "resources": {
+                "cpu_seconds_total": 11.375062,
+                "cpu_seconds_by_role": {
+                  "broker": 2.261918,
+                  "metrics-block-builder": 1.449269,
+                  "metrics-compactor": 0.423041,
+                  "metrics-distributor": 1.554345,
+                  "metrics-querier": 2.832306,
+                  "minio": 2.854183
+                },
+                "rss_kib_simultaneous_peak": 501248,
+                "coverage_fraction": 0.9998318979863986,
+                "host_activity_qualified": true,
+                "s3_requests": 1199.0,
+                "s3_read_bytes": 22809156.0,
+                "s3_write_bytes": 4052244.0
+              },
+              "rss_kib_peak_by_role": {
+                "broker": 36644,
+                "metrics-distributor": 24964,
+                "metrics-block-builder": 39812,
+                "metrics-compactor": 31532,
+                "metrics-querier": 99568,
+                "minio": 269360
+              },
+              "scrape_errors": 0,
+              "container_started_at_by_role": {
+                "broker": "2026-10-05T15:09:41.188038301Z",
+                "metrics-block-builder": "2026-10-05T15:09:48.266153403Z",
+                "metrics-compactor": "2026-10-05T15:09:48.060264925Z",
+                "metrics-distributor": "2026-10-05T15:09:47.834160467Z",
+                "metrics-querier": "2026-10-05T15:09:47.609947551Z",
+                "minio": "2026-10-05T15:09:40.288904856Z"
+              },
+              "any_oom_killed": false
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline": {
+          "query_attempts": {
+            "median": 240,
+            "min": 240,
+            "max": 240,
+            "values": [
+              240,
+              240,
+              240
+            ]
+          },
+          "average_cpu_cores": {
+            "median": 0.18838899929789135,
+            "min": 0.18762817170041346,
+            "max": 0.19074161411646648,
+            "values": [
+              0.18838899929789135,
+              0.18762817170041346,
+              0.19074161411646648
+            ]
+          },
+          "rss_kib": {
+            "median": 513320,
+            "min": 511572,
+            "max": 517020,
+            "values": [
+              513320,
+              517020,
+              511572
+            ]
+          },
+          "query_p99_seconds": {
+            "median": 0.026615579999997863,
+            "min": 0.025864783999963947,
+            "max": 0.027025849999972706,
+            "values": [
+              0.025864783999963947,
+              0.026615579999997863,
+              0.027025849999972706
+            ]
+          },
+          "ingest_p99_seconds": {
+            "median": 0.030584120000185067,
+            "min": 0.030421338999985892,
+            "max": 0.031314532999999756,
+            "values": [
+              0.031314532999999756,
+              0.030584120000185067,
+              0.030421338999985892
+            ]
+          },
+          "average_cpu_cores_by_role": {
+            "broker": {
+              "median": 0.037713108795836385,
+              "min": 0.03652272927139413,
+              "max": 0.03777670737489818,
+              "values": [
+                0.037713108795836385,
+                0.03652272927139413,
+                0.03777670737489818
+              ]
+            },
+            "metrics-block-builder": {
+              "median": 0.02384563295605387,
+              "min": 0.023780492276195272,
+              "max": 0.024197629293110524,
+              "values": [
+                0.02384563295605387,
+                0.023780492276195272,
+                0.024197629293110524
+              ]
+            },
+            "metrics-compactor": {
+              "median": 0.00703495897598004,
+              "min": 0.006921622115754825,
+              "max": 0.007240196900559582,
+              "values": [
+                0.00703495897598004,
+                0.007240196900559582,
+                0.006921622115754825
+              ]
+            },
+            "metrics-distributor": {
+              "median": 0.025701970110480813,
+              "min": 0.025370440606500257,
+              "max": 0.026289205196764368,
+              "values": [
+                0.025701970110480813,
+                0.025370440606500257,
+                0.026289205196764368
+              ]
+            },
+            "metrics-querier": {
+              "median": 0.046917334986499123,
+              "min": 0.04583428596456932,
+              "max": 0.04710176913389303,
+              "values": [
+                0.046917334986499123,
+                0.04583428596456932,
+                0.04710176913389303
+              ]
+            },
+            "minio": {
+              "median": 0.04845468100204558,
+              "min": 0.047175993473041127,
+              "max": 0.048880026681194906,
+              "values": [
+                0.047175993473041127,
+                0.048880026681194906,
+                0.04845468100204558
+              ]
+            }
+          }
+        },
+        "candidate": {
+          "query_attempts": {
+            "median": 240,
+            "min": 240,
+            "max": 240,
+            "values": [
+              240,
+              240,
+              240
+            ]
+          },
+          "average_cpu_cores": {
+            "median": 0.18913078650977305,
+            "min": 0.1825707280032833,
+            "max": 0.18963861689511574,
+            "values": [
+              0.18963861689511574,
+              0.1825707280032833,
+              0.18913078650977305
+            ]
+          },
+          "rss_kib": {
+            "median": 509496,
+            "min": 501248,
+            "max": 513168,
+            "values": [
+              509496,
+              513168,
+              501248
+            ]
+          },
+          "query_p99_seconds": {
+            "median": 0.025730009999961112,
+            "min": 0.023686370000177703,
+            "max": 0.027824929999951564,
+            "values": [
+              0.027824929999951564,
+              0.023686370000177703,
+              0.025730009999961112
+            ]
+          },
+          "ingest_p99_seconds": {
+            "median": 0.0321785189998991,
+            "min": 0.031193920999839975,
+            "max": 0.035326249000036114,
+            "values": [
+              0.035326249000036114,
+              0.0321785189998991,
+              0.031193920999839975
+            ]
+          },
+          "average_cpu_cores_by_role": {
+            "broker": {
+              "median": 0.0376084394406477,
+              "min": 0.03604452448493998,
+              "max": 0.03804290654538078,
+              "values": [
+                0.03804290654538078,
+                0.03604452448493998,
+                0.0376084394406477
+              ]
+            },
+            "metrics-block-builder": {
+              "median": 0.02409669378806307,
+              "min": 0.023018202532645873,
+              "max": 0.024232046317276237,
+              "values": [
+                0.024232046317276237,
+                0.023018202532645873,
+                0.02409669378806307
+              ]
+            },
+            "metrics-compactor": {
+              "median": 0.006747232858744204,
+              "min": 0.006732642067374048,
+              "max": 0.007033814589835282,
+              "values": [
+                0.006732642067374048,
+                0.006747232858744204,
+                0.007033814589835282
+              ]
+            },
+            "metrics-distributor": {
+              "median": 0.025843770553297486,
+              "min": 0.02510051811184254,
+              "max": 0.026642003671508544,
+              "values": [
+                0.026642003671508544,
+                0.02510051811184254,
+                0.025843770553297486
+              ]
+            },
+            "metrics-querier": {
+              "median": 0.04697539450548365,
+              "min": 0.04552818317612882,
+              "max": 0.047092161907895475,
+              "values": [
+                0.04697539450548365,
+                0.04552818317612882,
+                0.047092161907895475
+              ]
+            },
+            "minio": {
+              "median": 0.04701362378809247,
+              "min": 0.046132066838981904,
+              "max": 0.047455906230034046,
+              "values": [
+                0.04701362378809247,
+                0.046132066838981904,
+                0.047455906230034046
+              ]
+            }
+          }
+        }
+      },
+      "candidate_divided_by_baseline": {
+        "query_attempts": 1.0,
+        "average_cpu_cores": 1.0039375293390074,
+        "rss_kib": 0.9925504558559962,
+        "query_p99_seconds": 0.966727382982568,
+        "ingest_p99_seconds": 1.0521315963874187
+      },
+      "scope": "Single-node API-accepted steady load with identical query pacing and accepted row counts; actual query completions are recorded and may vary with latency. Matched aggregate budgets; CPU and RSS include broker and MinIO."
+    },
+    "native_comparison": {
+      "schema_version": 1,
+      "commit": "a09991d880ef61d6f2d684b3a38a961da1279ab5",
+      "signal": "metrics",
+      "seed": 267,
+      "phase_seconds": 60,
+      "acknowledgements": "API accepted; native durability contracts differ",
+      "write_interval_seconds": 1,
+      "query_interval_seconds": 0.25,
+      "image_commit": "02c1cafee97563352e283296e85914cc5de232d3",
+      "image_digest": "sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3",
+      "image_identity": {
+        "Id": "sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3",
+        "RepoTags": [
+          "localhost/krabka-o11y:sha-02c1cafee975"
+        ],
+        "RepoDigests": [
+          "localhost/krabka-o11y@sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3"
+        ],
+        "Config": {
+          "User": "65532:65532",
+          "Env": [
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin",
+            "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+          ],
+          "WorkingDir": "/var/lib/krabka",
+          "Labels": {
+            "org.opencontainers.image.created": "2026-09-09T19:39:56Z",
+            "org.opencontainers.image.description": "The krabka observability stack: metrics, traces, profiles and logs",
+            "org.opencontainers.image.licenses": "Apache-2.0",
+            "org.opencontainers.image.source": "https://github.com/krabka-io/krabka-o11y",
+            "org.opencontainers.image.title": "krabka-o11y",
+            "org.opencontainers.image.url": "https://github.com/krabka-io/krabka-o11y"
+          }
+        },
+        "Architecture": "amd64",
+        "Os": "linux",
+        "Size": 1355890441,
+        "RootFS": {
+          "Type": "layers",
+          "Layers": [
+            "sha256:9b8a747849ff50a2b9c8dc9d8375bb847c0a3a46739467e1251b340bd4a65a29",
+            "sha256:a530b332819c990fcfe5c68e991c8d6b265f6988faa390023d24ef18c60a8cb3"
+          ]
+        },
+        "Metadata": {
+          "LastTagTime": "2026-10-05T14:48:59.131975106Z"
+        },
+        "Descriptor": {
+          "mediaType": "application/vnd.oci.image.manifest.v1+json",
+          "digest": "sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3",
+          "size": 695,
+          "annotations": {
+            "com.apple.containerization.image.name": "krabka-o11y:dev",
+            "io.containerd.image.name": "localhost/krabka-o11y:sha-02c1cafee975",
+            "org.opencontainers.image.base.digest": "sha256:632d298481b94837520040a2d3d6c0b40e32d193166ad89ed32a096226bfbb77",
+            "org.opencontainers.image.ref.name": "sha-02c1cafee975"
+          }
+        }
+      },
+      "profiles_target": null,
+      "deployment_target": "split",
+      "host_activity": {
+        "wait_seconds": 120,
+        "external_cpu_cores_mean_limit": 2,
+        "external_cpu_cores_window_limit": 4,
+        "window_sample_intervals": 10
+      },
+      "harness_sha256": {
+        "compare-grafana.py": "f407e6f1a6730d35b395a207a3e567455bc4ac8dc379d1d0eac04acaf416be67",
+        "deployment-envelope.py": "184a1a12717fe93a25080df5e7b00d95e84f4f75a29e8be13c63170bcc5b2923",
+        "fuzz-corpus.py": "5e2def627007234cdf5ae081ed2f8b894bb9dd678daf4cc5578be7a903a33eeb"
+      },
+      "dataset": {
+        "metric_samples_per_request": 1000,
+        "metric_points_per_series": 1,
+        "other_signals": "deployment-envelope dataset; profile units=nanoseconds, unquoted legacy labels, sampleRate=1e9",
+        "seed_concurrency": 64
+      },
+      "host": {
+        "cpu_count": 16,
+        "kernel": "7.0.0-1011-gcp",
+        "lscpu": {
+          "lscpu": [
+            {
+              "field": "Architecture:",
+              "data": "x86_64"
+            },
+            {
+              "field": "CPU op-mode(s):",
+              "data": "32-bit, 64-bit"
+            },
+            {
+              "field": "Address sizes:",
+              "data": "48 bits physical, 48 bits virtual"
+            },
+            {
+              "field": "Byte Order:",
+              "data": "Little Endian"
+            },
+            {
+              "field": "CPU(s):",
+              "data": "16"
+            },
+            {
+              "field": "On-line CPU(s) list:",
+              "data": "0-15"
+            },
+            {
+              "field": "Vendor ID:",
+              "data": "AuthenticAMD"
+            },
+            {
+              "field": "Model name:",
+              "data": "AMD EPYC 7B12"
+            },
+            {
+              "field": "CPU family:",
+              "data": "23"
+            },
+            {
+              "field": "Model:",
+              "data": "49"
+            },
+            {
+              "field": "Thread(s) per core:",
+              "data": "2"
+            },
+            {
+              "field": "Core(s) per socket:",
+              "data": "8"
+            },
+            {
+              "field": "Socket(s):",
+              "data": "1"
+            },
+            {
+              "field": "Stepping:",
+              "data": "0"
+            },
+            {
+              "field": "BogoMIPS:",
+              "data": "4499.99"
+            },
+            {
+              "field": "Flags:",
+              "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+            },
+            {
+              "field": "Hypervisor vendor:",
+              "data": "KVM"
+            },
+            {
+              "field": "Virtualization type:",
+              "data": "full"
+            },
+            {
+              "field": "L1d cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L1i cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L2 cache:",
+              "data": "4 MiB (8 instances)"
+            },
+            {
+              "field": "L3 cache:",
+              "data": "32 MiB (2 instances)"
+            },
+            {
+              "field": "NUMA node(s):",
+              "data": "1"
+            },
+            {
+              "field": "NUMA node0 CPU(s):",
+              "data": "0-15"
+            },
+            {
+              "field": "Vulnerability Gather data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Ghostwrite:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Indirect target selection:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Itlb multihit:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability L1tf:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Mds:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Meltdown:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Mmio stale data:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Old microcode:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Reg file data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Retbleed:",
+              "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+            },
+            {
+              "field": "Vulnerability Spec rstack overflow:",
+              "data": "Mitigation; Safe RET"
+            },
+            {
+              "field": "Vulnerability Spec store bypass:",
+              "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+            },
+            {
+              "field": "Vulnerability Spectre v1:",
+              "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+            },
+            {
+              "field": "Vulnerability Spectre v2:",
+              "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+            },
+            {
+              "field": "Vulnerability Srbds:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsa:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsx async abort:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Vmscape:",
+              "data": "Not affected"
+            }
+          ]
+        }
+      },
+      "phases": [
+        "steady"
+      ],
+      "backends": [
+        "krabka",
+        "native"
+      ],
+      "entries": [
+        {
+          "backend": "krabka",
+          "repetition": 1,
+          "phase": "steady",
+          "deployment_target": "split",
+          "duration_seconds": 60.12246872699998,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "objectives_met": true,
+          "ingest": {
+            "accepted_rows": 120000,
+            "errors": 0,
+            "latency_seconds": {
+              "count": 120,
+              "p50": 0.026495190000019875,
+              "p95": 0.03313138600000798,
+              "p99": 0.03385134500001641
+            }
+          },
+          "query": {
+            "attempts": 240,
+            "errors": 0,
+            "empty_queries": 0,
+            "latency_seconds": {
+              "count": 240,
+              "p50": 0.01039259399999537,
+              "p95": 0.016036106000001382,
+              "p99": 0.026085734999981014
+            }
+          },
+          "resources": {
+            "cpu_seconds_total": 11.492991,
+            "cpu_seconds_by_role": {
+              "broker": 2.301132,
+              "metrics-block-builder": 1.455436,
+              "metrics-compactor": 0.420469,
+              "metrics-distributor": 1.602054,
+              "metrics-querier": 2.822692,
+              "minio": 2.891208
+            },
+            "rss_kib_simultaneous_peak": 495116,
+            "coverage_fraction": 0.9998357228949295,
+            "host_activity_qualified": true,
+            "s3_requests": 1198.0,
+            "s3_read_bytes": 22705398.0,
+            "s3_write_bytes": 4050043.0
+          },
+          "rss_kib_peak_by_role": {
+            "minio": 263104,
+            "metrics-distributor": 25300,
+            "metrics-querier": 99556,
+            "broker": 36232,
+            "metrics-block-builder": 39760,
+            "metrics-compactor": 31852
+          },
+          "scrape_errors": 0,
+          "container_started_at_by_role": {
+            "broker": "2026-10-05T14:49:38.496457301Z",
+            "metrics-block-builder": "2026-10-05T14:49:45.299643749Z",
+            "metrics-compactor": "2026-10-05T14:49:45.109123933Z",
+            "metrics-distributor": "2026-10-05T14:49:45.493467392Z",
+            "metrics-querier": "2026-10-05T14:49:44.895529651Z",
+            "minio": "2026-10-05T14:49:38.006569995Z"
+          },
+          "any_oom_killed": false
+        },
+        {
+          "backend": "mimir",
+          "repetition": 1,
+          "phase": "steady",
+          "deployment_target": "native",
+          "duration_seconds": 60.18246739299997,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "objectives_met": true,
+          "ingest": {
+            "accepted_rows": 120000,
+            "errors": 0,
+            "latency_seconds": {
+              "count": 120,
+              "p50": 0.007046879999961675,
+              "p95": 0.010634629999970002,
+              "p99": 0.012000689999979386
+            }
+          },
+          "query": {
+            "attempts": 240,
+            "errors": 0,
+            "empty_queries": 0,
+            "latency_seconds": {
+              "count": 240,
+              "p50": 0.013373367999975017,
+              "p95": 0.020341889000007995,
+              "p99": 0.023469771000009132
+            }
+          },
+          "resources": {
+            "cpu_seconds_total": 19.162912,
+            "cpu_seconds_by_role": {
+              "mimir": 18.486081,
+              "minio": 0.676831
+            },
+            "rss_kib_simultaneous_peak": 299000,
+            "coverage_fraction": 0.9998352383758591,
+            "host_activity_qualified": true,
+            "s3_requests": 24.0,
+            "s3_read_bytes": 7258.0,
+            "s3_write_bytes": 0.0
+          },
+          "rss_kib_peak_by_role": {
+            "mimir": 168936,
+            "minio": 135984
+          },
+          "scrape_errors": 0,
+          "container_started_at_by_role": {
+            "mimir": "2026-10-05T14:51:33.624818823Z",
+            "minio": "2026-10-05T14:51:27.260019784Z"
+          },
+          "any_oom_killed": false
+        },
+        {
+          "backend": "mimir",
+          "repetition": 2,
+          "phase": "steady",
+          "deployment_target": "native",
+          "duration_seconds": 60.19129674800001,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "objectives_met": true,
+          "ingest": {
+            "accepted_rows": 120000,
+            "errors": 0,
+            "latency_seconds": {
+              "count": 120,
+              "p50": 0.00665799099999731,
+              "p95": 0.009305811999979596,
+              "p99": 0.011893000999975811
+            }
+          },
+          "query": {
+            "attempts": 240,
+            "errors": 0,
+            "empty_queries": 0,
+            "latency_seconds": {
+              "count": 240,
+              "p50": 0.013181812000027548,
+              "p95": 0.019612022999979217,
+              "p99": 0.022028062000003956
+            }
+          },
+          "resources": {
+            "cpu_seconds_total": 18.659329,
+            "cpu_seconds_by_role": {
+              "mimir": 17.989558,
+              "minio": 0.669771
+            },
+            "rss_kib_simultaneous_peak": 299760,
+            "coverage_fraction": 0.9998414654966193,
+            "host_activity_qualified": true,
+            "s3_requests": 29.0,
+            "s3_read_bytes": 8753.0,
+            "s3_write_bytes": 0.0
+          },
+          "rss_kib_peak_by_role": {
+            "mimir": 168096,
+            "minio": 136592
+          },
+          "scrape_errors": 0,
+          "container_started_at_by_role": {
+            "mimir": "2026-10-05T14:53:26.488116761Z",
+            "minio": "2026-10-05T14:53:20.108432752Z"
+          },
+          "any_oom_killed": false
+        },
+        {
+          "backend": "krabka",
+          "repetition": 2,
+          "phase": "steady",
+          "deployment_target": "split",
+          "duration_seconds": 60.177534294,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "objectives_met": true,
+          "ingest": {
+            "accepted_rows": 120000,
+            "errors": 0,
+            "latency_seconds": {
+              "count": 120,
+              "p50": 0.027489523999975063,
+              "p95": 0.03397039600002927,
+              "p99": 0.044907987999977195
+            }
+          },
+          "query": {
+            "attempts": 240,
+            "errors": 0,
+            "empty_queries": 0,
+            "latency_seconds": {
+              "count": 240,
+              "p50": 0.010697292000031666,
+              "p95": 0.017389032999972187,
+              "p99": 0.029278094000005694
+            }
+          },
+          "resources": {
+            "cpu_seconds_total": 11.904333,
+            "cpu_seconds_by_role": {
+              "broker": 2.413323,
+              "metrics-block-builder": 1.508955,
+              "metrics-compactor": 0.432577,
+              "metrics-distributor": 1.628183,
+              "metrics-querier": 2.938975,
+              "minio": 2.98232
+            },
+            "rss_kib_simultaneous_peak": 513892,
+            "coverage_fraction": 0.9998349313579546,
+            "host_activity_qualified": true,
+            "s3_requests": 1194.0,
+            "s3_read_bytes": 22351201.0,
+            "s3_write_bytes": 4049272.0
+          },
+          "rss_kib_peak_by_role": {
+            "minio": 281012,
+            "metrics-distributor": 25056,
+            "metrics-querier": 99444,
+            "broker": 36708,
+            "metrics-block-builder": 40000,
+            "metrics-compactor": 32164
+          },
+          "scrape_errors": 0,
+          "container_started_at_by_role": {
+            "broker": "2026-10-05T14:55:13.430036127Z",
+            "metrics-block-builder": "2026-10-05T14:55:20.05217868Z",
+            "metrics-compactor": "2026-10-05T14:55:20.26323388Z",
+            "metrics-distributor": "2026-10-05T14:55:19.822720507Z",
+            "metrics-querier": "2026-10-05T14:55:20.456487688Z",
+            "minio": "2026-10-05T14:55:12.551223782Z"
+          },
+          "any_oom_killed": false
+        },
+        {
+          "backend": "krabka",
+          "repetition": 3,
+          "phase": "steady",
+          "deployment_target": "split",
+          "duration_seconds": 60.17672384399998,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "objectives_met": true,
+          "ingest": {
+            "accepted_rows": 120000,
+            "errors": 0,
+            "latency_seconds": {
+              "count": 120,
+              "p50": 0.02555772200003048,
+              "p95": 0.03177012300000115,
+              "p99": 0.034464983000020766
+            }
+          },
+          "query": {
+            "attempts": 240,
+            "errors": 0,
+            "empty_queries": 0,
+            "latency_seconds": {
+              "count": 240,
+              "p50": 0.010609451000050285,
+              "p95": 0.016844240999944304,
+              "p99": 0.025182571999948777
+            }
+          },
+          "resources": {
+            "cpu_seconds_total": 11.739961,
+            "cpu_seconds_by_role": {
+              "broker": 2.361177,
+              "metrics-block-builder": 1.489862,
+              "metrics-compactor": 0.439242,
+              "metrics-distributor": 1.611993,
+              "metrics-querier": 2.906727,
+              "minio": 2.93096
+            },
+            "rss_kib_simultaneous_peak": 492320,
+            "coverage_fraction": 0.999834926257165,
+            "host_activity_qualified": true,
+            "s3_requests": 1194.0,
+            "s3_read_bytes": 22773399.0,
+            "s3_write_bytes": 4049639.0
+          },
+          "rss_kib_peak_by_role": {
+            "minio": 260456,
+            "metrics-distributor": 25148,
+            "metrics-querier": 99532,
+            "broker": 36024,
+            "metrics-block-builder": 40052,
+            "metrics-compactor": 32008
+          },
+          "scrape_errors": 0,
+          "container_started_at_by_role": {
+            "broker": "2026-10-05T14:57:01.146311913Z",
+            "metrics-block-builder": "2026-10-05T14:57:08.218515528Z",
+            "metrics-compactor": "2026-10-05T14:57:08.014243918Z",
+            "metrics-distributor": "2026-10-05T14:57:07.560120447Z",
+            "metrics-querier": "2026-10-05T14:57:07.782674035Z",
+            "minio": "2026-10-05T14:57:00.65316785Z"
+          },
+          "any_oom_killed": false
+        },
+        {
+          "backend": "mimir",
+          "repetition": 3,
+          "phase": "steady",
+          "deployment_target": "native",
+          "duration_seconds": 60.15976431499996,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "objectives_met": true,
+          "ingest": {
+            "accepted_rows": 120000,
+            "errors": 0,
+            "latency_seconds": {
+              "count": 120,
+              "p50": 0.00654114999997546,
+              "p95": 0.009000220000075387,
+              "p99": 0.011331460000064908
+            }
+          },
+          "query": {
+            "attempts": 240,
+            "errors": 0,
+            "empty_queries": 0,
+            "latency_seconds": {
+              "count": 240,
+              "p50": 0.01085175100001834,
+              "p95": 0.017162249999955748,
+              "p99": 0.01905482100005429
+            }
+          },
+          "resources": {
+            "cpu_seconds_total": 15.324307,
+            "cpu_seconds_by_role": {
+              "mimir": 14.667029,
+              "minio": 0.657278
+            },
+            "rss_kib_simultaneous_peak": 301144,
+            "coverage_fraction": 0.9998432553971343,
+            "host_activity_qualified": true,
+            "s3_requests": 23.0,
+            "s3_read_bytes": 6959.0,
+            "s3_write_bytes": 0.0
+          },
+          "rss_kib_peak_by_role": {
+            "mimir": 166964,
+            "minio": 135340
+          },
+          "scrape_errors": 0,
+          "container_started_at_by_role": {
+            "mimir": "2026-10-05T14:58:54.396338904Z",
+            "minio": "2026-10-05T14:58:48.019960166Z"
+          },
+          "any_oom_killed": false
+        }
+      ],
+      "workload": {
+        "writers": [
+          1,
+          2,
+          4,
+          8,
+          16,
+          32,
+          64,
+          128,
+          256
+        ],
+        "cardinalities": [
+          1000,
+          5000,
+          20000
+        ]
+      }
+    },
+    "native_summary": {
+      "steady_krabka_divided_by_native": {
+        "average_cpu_cores": 0.6293261696693522,
+        "rss_kib": 1.651708033093141,
+        "query_p99_seconds": 1.1842047203233916,
+        "ingest_p99_seconds": 2.897921474999528
+      },
+      "backends": {
+        "krabka": {
+          "steady_objectives_met": true,
+          "steady": {
+            "rows_per_second": {
+              "median": 1994.1265049769704,
+              "min": 1994.0996487781422,
+              "max": 1995.9260246761962,
+              "values": [
+                1995.9260246761962,
+                1994.0996487781422,
+                1994.1265049769704
+              ]
+            },
+            "accepted_rows": {
+              "median": 120000,
+              "min": 120000,
+              "max": 120000,
+              "values": [
+                120000,
+                120000,
+                120000
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.034464983000020766,
+              "min": 0.03385134500001641,
+              "max": 0.044907987999977195,
+              "values": [
+                0.03385134500001641,
+                0.044907987999977195,
+                0.034464983000020766
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.026085734999981014,
+              "min": 0.025182571999948777,
+              "max": 0.029278094000005694,
+              "values": [
+                0.026085734999981014,
+                0.029278094000005694,
+                0.025182571999948777
+              ]
+            },
+            "query_attempts": {
+              "median": 240,
+              "min": 240,
+              "max": 240,
+              "values": [
+                240,
+                240,
+                240
+              ]
+            },
+            "cpu_seconds": {
+              "median": 11.739961,
+              "min": 11.492991,
+              "max": 11.904333,
+              "values": [
+                11.492991,
+                11.904333,
+                11.739961
+              ]
+            },
+            "rss_kib": {
+              "median": 495116,
+              "min": 492320,
+              "max": 513892,
+              "values": [
+                495116,
+                513892,
+                492320
+              ]
+            },
+            "cpu_seconds_per_million_rows": {
+              "median": 97.83300833333334,
+              "min": 95.774925,
+              "max": 99.202775,
+              "values": [
+                95.774925,
+                99.202775,
+                97.83300833333334
+              ]
+            },
+            "generator_cpu_seconds": {
+              "median": 1.018996746,
+              "min": 0.9989013729999998,
+              "max": 1.0191506979999998,
+              "values": [
+                0.9989013729999998,
+                1.018996746,
+                1.0191506979999998
+              ]
+            },
+            "s3_requests": {
+              "median": 1194.0,
+              "min": 1194.0,
+              "max": 1198.0,
+              "values": [
+                1198.0,
+                1194.0,
+                1194.0
+              ]
+            },
+            "s3_read_bytes": {
+              "median": 22705398.0,
+              "min": 22351201.0,
+              "max": 22773399.0,
+              "values": [
+                22705398.0,
+                22351201.0,
+                22773399.0
+              ]
+            },
+            "s3_write_bytes": {
+              "median": 4049639.0,
+              "min": 4049272.0,
+              "max": 4050043.0,
+              "values": [
+                4050043.0,
+                4049272.0,
+                4049639.0
+              ]
+            },
+            "duration_seconds": {
+              "median": 60.17672384399998,
+              "min": 60.12246872699998,
+              "max": 60.177534294,
+              "values": [
+                60.12246872699998,
+                60.177534294,
+                60.17672384399998
+              ]
+            },
+            "query_attempts_per_second": {
+              "median": 3.9882530099539406,
+              "min": 3.9881992975562843,
+              "max": 3.991852049352392,
+              "values": [
+                3.991852049352392,
+                3.9881992975562843,
+                3.9882530099539406
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.1950913949791328,
+              "min": 0.19115966531891085,
+              "max": 0.19782021878531705,
+              "values": [
+                0.19115966531891085,
+                0.19782021878531705,
+                0.1950913949791328
+              ]
+            },
+            "driver_average_cpu_cores": {
+              "median": 0.01693317544420558,
+              "min": 0.016614443720462366,
+              "max": 0.016935961828729827,
+              "values": [
+                0.016614443720462366,
+                0.01693317544420558,
+                0.016935961828729827
+              ]
+            }
+          },
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "burst": {
+            "passing_levels": [],
+            "highest_consistently_passing_tested_level": null,
+            "per_repetition": [
+              {
+                "repetition": 1,
+                "passing_levels": [],
+                "highest_passing_tested_level": null,
+                "failed_levels": []
+              },
+              {
+                "repetition": 2,
+                "passing_levels": [],
+                "highest_passing_tested_level": null,
+                "failed_levels": []
+              },
+              {
+                "repetition": 3,
+                "passing_levels": [],
+                "highest_passing_tested_level": null,
+                "failed_levels": []
+              }
+            ],
+            "failed_points": []
+          },
+          "high_cardinality": {
+            "passing_levels": [],
+            "highest_consistently_passing_tested_level": null,
+            "per_repetition": [
+              {
+                "repetition": 1,
+                "passing_levels": [],
+                "highest_passing_tested_level": null,
+                "failed_levels": []
+              },
+              {
+                "repetition": 2,
+                "passing_levels": [],
+                "highest_passing_tested_level": null,
+                "failed_levels": []
+              },
+              {
+                "repetition": 3,
+                "passing_levels": [],
+                "highest_passing_tested_level": null,
+                "failed_levels": []
+              }
+            ],
+            "failed_points": []
+          }
+        },
+        "mimir": {
+          "steady_objectives_met": true,
+          "steady": {
+            "rows_per_second": {
+              "median": 1993.936194346821,
+              "min": 1993.6437073684954,
+              "max": 1994.6886655285607,
+              "values": [
+                1993.936194346821,
+                1993.6437073684954,
+                1994.6886655285607
+              ]
+            },
+            "accepted_rows": {
+              "median": 120000,
+              "min": 120000,
+              "max": 120000,
+              "values": [
+                120000,
+                120000,
+                120000
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.011893000999975811,
+              "min": 0.011331460000064908,
+              "max": 0.012000689999979386,
+              "values": [
+                0.012000689999979386,
+                0.011893000999975811,
+                0.011331460000064908
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.022028062000003956,
+              "min": 0.01905482100005429,
+              "max": 0.023469771000009132,
+              "values": [
+                0.023469771000009132,
+                0.022028062000003956,
+                0.01905482100005429
+              ]
+            },
+            "query_attempts": {
+              "median": 240,
+              "min": 240,
+              "max": 240,
+              "values": [
+                240,
+                240,
+                240
+              ]
+            },
+            "cpu_seconds": {
+              "median": 18.659329,
+              "min": 15.324307,
+              "max": 19.162912,
+              "values": [
+                19.162912,
+                18.659329,
+                15.324307
+              ]
+            },
+            "rss_kib": {
+              "median": 299760,
+              "min": 299000,
+              "max": 301144,
+              "values": [
+                299000,
+                299760,
+                301144
+              ]
+            },
+            "cpu_seconds_per_million_rows": {
+              "median": 155.49440833333333,
+              "min": 127.70255833333333,
+              "max": 159.69093333333333,
+              "values": [
+                159.69093333333333,
+                155.49440833333333,
+                127.70255833333333
+              ]
+            },
+            "generator_cpu_seconds": {
+              "median": 0.9297058800000002,
+              "min": 0.910877299,
+              "max": 0.94318341,
+              "values": [
+                0.94318341,
+                0.9297058800000002,
+                0.910877299
+              ]
+            },
+            "s3_requests": {
+              "median": 24.0,
+              "min": 23.0,
+              "max": 29.0,
+              "values": [
+                24.0,
+                29.0,
+                23.0
+              ]
+            },
+            "s3_read_bytes": {
+              "median": 7258.0,
+              "min": 6959.0,
+              "max": 8753.0,
+              "values": [
+                7258.0,
+                8753.0,
+                6959.0
+              ]
+            },
+            "s3_write_bytes": {
+              "median": 0.0,
+              "min": 0.0,
+              "max": 0.0,
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "duration_seconds": {
+              "median": 60.18246739299997,
+              "min": 60.15976431499996,
+              "max": 60.19129674800001,
+              "values": [
+                60.18246739299997,
+                60.19129674800001,
+                60.15976431499996
+              ]
+            },
+            "query_attempts_per_second": {
+              "median": 3.987872388693642,
+              "min": 3.9872874147369903,
+              "max": 3.9893773310571214,
+              "values": [
+                3.987872388693642,
+                3.9872874147369903,
+                3.9893773310571214
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.3100004487047373,
+              "min": 0.25472684566649983,
+              "max": 0.31841353188235855,
+              "values": [
+                0.31841353188235855,
+                0.3100004487047373,
+                0.25472684566649983
+              ]
+            },
+            "driver_average_cpu_cores": {
+              "median": 0.015445852311379082,
+              "min": 0.015140971866688082,
+              "max": 0.015672062825887144,
+              "values": [
+                0.015672062825887144,
+                0.015445852311379082,
+                0.015140971866688082
+              ]
+            }
+          },
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "burst": {
+            "passing_levels": [],
+            "highest_consistently_passing_tested_level": null,
+            "per_repetition": [
+              {
+                "repetition": 1,
+                "passing_levels": [],
+                "highest_passing_tested_level": null,
+                "failed_levels": []
+              },
+              {
+                "repetition": 2,
+                "passing_levels": [],
+                "highest_passing_tested_level": null,
+                "failed_levels": []
+              },
+              {
+                "repetition": 3,
+                "passing_levels": [],
+                "highest_passing_tested_level": null,
+                "failed_levels": []
+              }
+            ],
+            "failed_points": []
+          },
+          "high_cardinality": {
+            "passing_levels": [],
+            "highest_consistently_passing_tested_level": null,
+            "per_repetition": [
+              {
+                "repetition": 1,
+                "passing_levels": [],
+                "highest_passing_tested_level": null,
+                "failed_levels": []
+              },
+              {
+                "repetition": 2,
+                "passing_levels": [],
+                "highest_passing_tested_level": null,
+                "failed_levels": []
+              },
+              {
+                "repetition": 3,
+                "passing_levels": [],
+                "highest_passing_tested_level": null,
+                "failed_levels": []
+              }
+            ],
+            "failed_points": []
+          }
+        }
+      },
+      "resource_coverage": [
+        {
+          "repetition": 1,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 60,
+          "sampled_seconds": 60.11259198188782,
+          "coverage_fraction": 0.9998357228949295,
+          "valid": true
+        },
+        {
+          "repetition": 1,
+          "backend": "mimir",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 60,
+          "sampled_seconds": 60.17255163192749,
+          "coverage_fraction": 0.9998352383758591,
+          "valid": true
+        },
+        {
+          "repetition": 2,
+          "backend": "mimir",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 60,
+          "sampled_seconds": 60.18175435066223,
+          "coverage_fraction": 0.9998414654966193,
+          "valid": true
+        },
+        {
+          "repetition": 2,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 60,
+          "sampled_seconds": 60.167600870132446,
+          "coverage_fraction": 0.9998349313579546,
+          "valid": true
+        },
+        {
+          "repetition": 3,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 60,
+          "sampled_seconds": 60.1667902469635,
+          "coverage_fraction": 0.999834926257165,
+          "valid": true
+        },
+        {
+          "repetition": 3,
+          "backend": "mimir",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 60,
+          "sampled_seconds": 60.15033459663391,
+          "coverage_fraction": 0.9998432553971343,
+          "valid": true
+        }
+      ],
+      "seed_value_mismatches": [],
+      "correctness_disqualified": false,
+      "host_activity_disqualified": false
+    }
   },
   "other_signal_native_comparisons": {
     "logs": {
