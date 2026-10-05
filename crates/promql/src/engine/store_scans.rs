@@ -135,10 +135,10 @@ impl<S: MetricStore> PromqlEngine<S> {
     ) -> Result<BTreeMap<SeriesFingerprint, Arc<Labels>>> {
         Ok(self
             .store
-            .series(tenant, matchers, start_ms, end_ms)
+            .series_shared(tenant, matchers, start_ms, end_ms)
             .await?
             .into_iter()
-            .map(|labels| (labels.fingerprint(), Arc::new(labels)))
+            .map(|labels| (labels.fingerprint(), labels))
             .collect())
     }
 

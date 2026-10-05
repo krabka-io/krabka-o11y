@@ -261,6 +261,19 @@ impl MetricStore for WalHead {
         store.series(tenant, matchers, start_ms, end_ms).await
     }
 
+    async fn series_shared(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<Vec<Arc<Labels>>> {
+        let store = self.snapshot();
+        store
+            .series_shared(tenant, matchers, start_ms, end_ms)
+            .await
+    }
+
     async fn exemplars(
         &self,
         tenant: &str,

@@ -1,6 +1,9 @@
 //! Merges two metric stores, usually compacted cold blocks and a hot WAL head.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use datafusion::prelude::SessionContext;
 use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
@@ -162,6 +165,30 @@ where
             .await?
             .into_iter()
             .chain(self.hot.series(tenant, matchers, start_ms, end_ms).await?)
+        {
+            by_fp.entry(labels.fingerprint()).or_insert(labels);
+        }
+        Ok(by_fp.into_values().collect())
+    }
+
+    async fn series_shared(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<Vec<Arc<Labels>>, PromqlError> {
+        let mut by_fp = BTreeMap::<SeriesFingerprint, Arc<Labels>>::new();
+        for labels in self
+            .cold
+            .series_shared(tenant, matchers, start_ms, end_ms)
+            .await?
+            .into_iter()
+            .chain(
+                self.hot
+                    .series_shared(tenant, matchers, start_ms, end_ms)
+                    .await?,
+            )
         {
             by_fp.entry(labels.fingerprint()).or_insert(labels);
         }
