@@ -50,6 +50,7 @@ use url::Url;
 
 #[cfg(test)]
 mod tests {
+    mod instant_float_scan;
     use std::{
         sync::{
             Arc,

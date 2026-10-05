@@ -15,6 +15,7 @@ use crate::{
     MetricStore, PromqlError, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
 };
 
+mod instant_scan;
 mod scan;
 mod stats;
 
