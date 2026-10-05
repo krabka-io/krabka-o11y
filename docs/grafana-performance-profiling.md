@@ -303,6 +303,18 @@ cleanup. Removing only the fast path fails that regression while the other
 Prometheus differential suites, pass. The release-image comparison must
 establish the effect before claiming a performance gain.
 
+The cache-hit image `8541b68f` has verified
+[CPU](https://github.com/krabka-io/krabka-o11y/actions/runs/37293278069) and
+[allocation](https://github.com/krabka-io/krabka-o11y/actions/runs/37293280861)
+captures. Archive digests and all 234 and 130 raw checksums pass. The CPU
+windows contain 173, 253 and 298 samples with zero lost samples; weak-label
+cache cloning is below the flat-report threshold in every window. It is also
+absent from the allocation summary, which records 11,168,385 allocations,
+4,737,242 string clones and a 16.94MB peak heap over 106.05 seconds.
+These diagnostics confirm removal of the repeated cache copy. Retention
+still awaits the uninstrumented same-VM control using the shared-records
+image, rather than attributing cross-host profile totals to the cache change.
+
 The prune follow-up in
 [run 37264751159](https://github.com/krabka-io/krabka-o11y/actions/runs/37264751159)
 passed using the `dd67ca1e` image. Its querier windows contain 303, 447 and
