@@ -170,7 +170,9 @@ jobs:
           done
       - name: Install profiling tools
         if: inputs.profiling == 'cpu' || inputs.profiling == 'allocations'
-        run: sudo apt-get update && sudo apt-get install -y golang-go heaptrack
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y golang-go heaptrack binutils "linux-tools-$(uname -r)"
       - name: Profile the measured Krabka image
         if: inputs.profiling == 'cpu' || inputs.profiling == 'allocations'
         env:
