@@ -28,6 +28,7 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+    mod parallel_reads;
     use std::sync::Arc;
 
     use assert2::{assert, check};
