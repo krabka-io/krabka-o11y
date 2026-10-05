@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Rebuild block fingerprints by live time-order position",
-  "status": "full_validation_passed_flaky_follow_up_pending",
+  "status": "full_validation_passed_tempo_grafana_setup_failure_under_investigation",
   "performance_qualified": false,
   "retained": false,
   "production_paths": [
@@ -704,7 +704,7 @@
       }
     ],
     "correctness_scope_qualified": false,
-    "flaky_follow_up_status": "pending",
+    "flaky_follow_up_status": "current_tempo_wrapper_failed_two_of_three_previous_passed_three_of_three",
     "raw_evidence": "qualification/evidence/correctness/dense-block-metadata/full376-e2fa6537",
     "full_validation_flaky_targets": [
       {
@@ -714,10 +714,66 @@
         "failure": "HTTP 404 through Grafana Tempo datasource proxy for /api/echo; failure body was not captured and cause is unverified.",
         "failed_attempt_sha256": "8e9117d5a717ec96aa956cb33d1ffd24e8a2d709a216c8bb9d383c65dd6ae84b"
       }
-    ]
+    ],
+    "flaky_follow_up": {
+      "source_commit": "d456369f",
+      "production_source_sha256": "cac37c079bcc8c5a4bddf7d674f6ab082fa3be79fe46bcf96ac16b90d7e2be17",
+      "targets": [
+        "//crates/traces:tempo_differential_docker_test",
+        "//crates/traces:tempo_differential_previous_docker_test"
+      ],
+      "runs_per_target": 3,
+      "flaky_test_attempts": 1,
+      "current_failed": 2,
+      "previous_failed": 0,
+      "log_sha256": "0128b41bb251c3905c2058557e158b897a7719423c0e9bd065a81c751705ceb7",
+      "raw_evidence": "qualification/evidence/correctness/dense-block-metadata/tempo-fresh-unmodified",
+      "failure": "HTTP 404 through Grafana datasource proxy for /api/echo; response-body diagnostic queued. No product code change is attributed to this setup failure."
+    }
   },
-  "retention_decision": "All 376 targets pass with one flaky Tempo/Grafana wrapper. Fresh runs with retries disabled remain required before correctness qualification. Exact-image controls remain required before performance retention.",
-  "comparison_plan": "Select the retained fingerprint source after its four-signal control. Preserve exact baseline and candidate release images, verify complete runtime provenance and compare all four signals against native backends and alternating same-host revisions under the existing matched workloads and budgets.",
+  "retention_decision": "Correctness qualification remains pending. The original 376-target scope passes with one retry, but fresh current Tempo wrappers reproduce the Grafana proxy 404 twice. Preserve the failures and identify the response before any setup repair. Exact-image performance controls remain required.",
+  "comparison_plan": "Preserve and verify rebased baseline/candidate release images while the independent fingerprint confirmation finishes. Both sources have the same main revision and fingerprint implementation; their sole production difference is dense block metadata. Retention and qualified performance comparisons remain gated on correctness and the fingerprint decision. If that source decision changes, qualify the final combined source separately.",
   "source_commit": "e2fa65371cf99eaa7f439dcce86191a1177c9e1c",
-  "rebase_note": "The 376-target run qualified the original e2fa6537 source before rebase. Upstream main 664e6987 adds Loki deployment coverage and changes compactor deletion handling; these changes need separate validation. Historical source references remain immutable."
+  "rebase_note": "The 376-target run qualified the original e2fa6537 source before rebase. Upstream main 664e6987 adds Loki deployment coverage and changes compactor deletion handling; these changes need separate validation. Historical source references remain immutable.",
+  "rebased_image_builds": {
+    "base_main": "664e698749dd3faa7d2196f951de5e5517c6ad26",
+    "runs": {
+      "baseline": {
+        "run_id": 37365264758,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37365264758",
+        "source_commit": "a2e9e16ebbd2df7fda125f186ee2e4bdb4615908",
+        "ref": "codex/grafana-metadata-baseline",
+        "inputs": {
+          "signal": "metrics",
+          "profiling": "cpu",
+          "deployment_target": "split",
+          "profiles_target": "all"
+        },
+        "status_at_dispatch_observation": "queued",
+        "diagnostic_only": true
+      },
+      "candidate": {
+        "run_id": 37365268018,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37365268018",
+        "source_commit": "f7da956aee6f6f8eb1c4f261c255ad519915128b",
+        "ref": "codex/grafana-performance",
+        "inputs": {
+          "signal": "metrics",
+          "profiling": "cpu",
+          "deployment_target": "split",
+          "profiles_target": "all"
+        },
+        "status_at_dispatch_observation": "pending",
+        "diagnostic_only": true
+      }
+    },
+    "production_diff_paths": [
+      "crates/blockstore/src/index/block_list.rs"
+    ],
+    "regression_diff_paths": [
+      "crates/blockstore/tests/block_metadata.rs"
+    ],
+    "dependency_configuration_equal": true,
+    "performance_qualified": false
+  }
 }
