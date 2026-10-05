@@ -77,7 +77,6 @@ impl LiveStore {
                 let mut in_range = spans
                     .iter()
                     .filter(|span| in_time_range(span, UnixNano(start_ns), UnixNano(end_ns)))
-                    .cloned()
                     .collect::<Vec<_>>();
                 if in_range.is_empty() {
                     continue;
