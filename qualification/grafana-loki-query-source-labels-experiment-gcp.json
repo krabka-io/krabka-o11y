@@ -167,7 +167,7 @@
       }
     ]
   },
-  "scope": "Matched all-role release image and workload with unchanged API, label categorization, publication pacing, budgets and tenant filtering. Instrumented captures remain diagnostics. A same-VM revision control is needed before retention.",
+  "scope": "Matched all-role release image and workload with unchanged API, label categorization, publication pacing, budgets and tenant filtering. Instrumented captures remain diagnostics. A same-VM revision control is needed before retention. All seven rebuilt application binaries differ from the baseline; runtime configuration, base layer and nonbinary filesystem content are verified unchanged. The paired Loki sources contain the same subsequently rejected metric WAL implementation. Final retained-source qualification must reflect its removal.",
   "implementation_commit": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
   "gcp_candidate_cpu_image_build": {
     "run_id": 37330880469,
@@ -176,5 +176,35 @@
     "status_at_recording": "in_progress"
   },
   "baseline_profile_details_record": "qualification/grafana-profiling-gcp.json",
-  "baseline_profile_details_key": "loki_query_source_labels_baseline_captures"
+  "baseline_profile_details_key": "loki_query_source_labels_baseline_captures",
+  "image_producer": {
+    "run_id": 37330880469,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37330880469",
+    "source_commit": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
+    "artifact": {
+      "id": 11355350164,
+      "name": "comparison-image-logs-bc7e65436eb12247ccf413b66bb0db3549d8faed",
+      "digest": "sha256:1a020541b8f0b45a2e842cf4bd6e9384408f9d927552692d0e3c952f25dc6842",
+      "size_in_bytes": 308268970,
+      "expires_at": "2027-01-03T15:12:07Z"
+    },
+    "archive_digest_verified": true,
+    "all_image_file_checksums_verified": true,
+    "image_tag": "localhost/krabka-o11y:sha-bc7e65436eb1",
+    "manifest_digest": "sha256:befe2e14913bacaf24a473d0f5342043fbb7fe20639ec0d159969b5ec9fb77c7",
+    "config_digest": "sha256:befe2e14913bacaf24a473d0f5342043fbb7fe20639ec0d159969b5ec9fb77c7"
+  },
+  "runtime_equivalence": {
+    "changed_paths": [
+      "usr/local/bin/krabka-metrics",
+      "usr/local/bin/krabka-metrics-service",
+      "usr/local/bin/krabka-o11y-bootstrap",
+      "usr/local/bin/krabka-o11y-recovery",
+      "usr/local/bin/krabka-observability",
+      "usr/local/bin/krabka-profiles",
+      "usr/local/bin/krabka-traces"
+    ],
+    "unchanged_binaries": [],
+    "filesystem_entries_verified": 380
+  }
 }
