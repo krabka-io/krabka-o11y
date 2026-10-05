@@ -2624,5 +2624,319 @@
     },
     "allocation_comparison_limit": "Baseline completes 138 queries; candidate completes 147, both accepting 14000 spans. Startup-inclusive allocation totals are diagnostics rather than per-operation measurements; candidate peak Rust heap is higher.",
     "retention_decision": "Retained after verified same-VM comparison 37298567310; see qualification/grafana-tempo-borrowed-selection-experiment-gcp.json. Captures remain diagnostic only."
+  },
+  "pyroscope_label_fingerprint_candidate_captures": {
+    "diagnostic_only": true,
+    "comparison_qualified": false,
+    "source_commit": "913fa01bf06a5aa220ed0102d57d8bc73cd0c06a",
+    "image_producer": {
+      "run_id": 37301689980,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37301689980",
+      "source_commit": "913fa01bf06a5aa220ed0102d57d8bc73cd0c06a",
+      "artifact": {
+        "id": 11342286161,
+        "name": "comparison-image-profiles-913fa01bf06a5aa220ed0102d57d8bc73cd0c06a",
+        "digest": "sha256:d075f31b682c1edab211c93d39c9dfc74dbd3512ebfd6df0f4e3fca5761d2a68",
+        "size_in_bytes": 308302770,
+        "expires_at": "2027-01-03T11:14:45Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-913fa01bf06a",
+      "manifest_digest": "sha256:340cd4b4796f7ec862f5eefde98bf76f88d0a77acb4a56d958277202e5674cbd",
+      "config_digest": "sha256:340cd4b4796f7ec862f5eefde98bf76f88d0a77acb4a56d958277202e5674cbd",
+      "docker_image_id": "sha256:340cd4b4796f7ec862f5eefde98bf76f88d0a77acb4a56d958277202e5674cbd",
+      "oci_config_digest": "sha256:ad4e75ce4f61c8bf92bc2934f4d73e71db4cb02168f7f056aa82dc439f8becdc",
+      "identity_note": "The archived config-digest field is Docker inspect Id; this containerd store reports OCI manifest identity. The OCI config digest comes from the independently verified archive."
+    },
+    "binary_sha256": {
+      "krabka-metrics": {
+        "path": "usr/local/bin/krabka-metrics",
+        "sha256": "ade3d0ad8b5efc42ef13b4eaa6941978d824c590e8dcd6e1b4daa1f7e382bf4c",
+        "size_in_bytes": 72323200
+      },
+      "krabka-metrics-service": {
+        "path": "usr/local/bin/krabka-metrics-service",
+        "sha256": "852979071a87f895b299314ac4e702b66df851181dc5fb578153ec43e3e9373c",
+        "size_in_bytes": 236256824
+      },
+      "krabka-o11y-bootstrap": {
+        "path": "usr/local/bin/krabka-o11y-bootstrap",
+        "sha256": "5d784b477bbba34ab9a41aec82f42a4b99f1d294def3e5fea0a5517583cc6c6a",
+        "size_in_bytes": 26755032
+      },
+      "krabka-o11y-recovery": {
+        "path": "usr/local/bin/krabka-o11y-recovery",
+        "sha256": "c556ac5c7589fe700979ed32ded8b23b31d1ef4846b471e490b7bebb95c077c0",
+        "size_in_bytes": 36712880
+      },
+      "krabka-observability": {
+        "path": "usr/local/bin/krabka-observability",
+        "sha256": "617a9ed1b11cb35c2bd9a26bd4cfb9b1e9c754fd7c2a59f79b6ed45fd351d551",
+        "size_in_bytes": 222384176
+      },
+      "krabka-profiles": {
+        "path": "usr/local/bin/krabka-profiles",
+        "sha256": "03cb32ba19d5b07eb4f5cffb2d7965bc52b0b48d6c4521a51a0efb1674b38984",
+        "size_in_bytes": 219815368
+      },
+      "krabka-traces": {
+        "path": "usr/local/bin/krabka-traces",
+        "sha256": "add556d201358b522aaa9e2c16c45d77663b0f5dcf1c5c99b2a4a58d34708d5f",
+        "size_in_bytes": 223533264
+      }
+    },
+    "image_equivalence": {
+      "changed_paths": [
+        "usr/local/bin/krabka-metrics",
+        "usr/local/bin/krabka-metrics-service",
+        "usr/local/bin/krabka-o11y-bootstrap",
+        "usr/local/bin/krabka-o11y-recovery",
+        "usr/local/bin/krabka-observability",
+        "usr/local/bin/krabka-profiles",
+        "usr/local/bin/krabka-traces"
+      ],
+      "unchanged_binaries": [],
+      "filesystem_entries_verified": 380
+    },
+    "captures": {
+      "cpu": {
+        "source_commit": "913fa01bf06a5aa220ed0102d57d8bc73cd0c06a",
+        "provenance": {
+          "run_id": 37302942439,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37302942439",
+          "head_sha": "0909e45a7e9e4c527b19be89b9367e8f2909a31b",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111739767966,
+              "name": "compare (profiles)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37302942439/job/111739767966",
+              "runner_name": "gcp-runner-4d4f9feab24f4eac",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T11:27:38Z",
+              "completed_at": "2026-10-05T11:33:15Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11343236078,
+              "name": "grafana-comparison-profiles-0909e45a7e9e4c527b19be89b9367e8f2909a31b-1",
+              "digest": "sha256:36dddd8b1973a7eecf3a33a903adb15e146df008feb679f079bd6ab5b4cc92cc",
+              "size_in_bytes": 4446904,
+              "expires_at": "2027-01-03T11:26:30Z",
+              "signal": "profiles",
+              "verified_raw_files": 164,
+              "diagnostic_only": true
+            }
+          ]
+        },
+        "profiles_all_windows": [
+          {
+            "samples": "281",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 4.98,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 4.27,
+                "symbol": "__memmove_avx_unaligned_erms_rtm"
+              },
+              {
+                "self_percent": 4.27,
+                "symbol": "malloc"
+              },
+              {
+                "self_percent": 3.91,
+                "symbol": "__libc_malloc2"
+              },
+              {
+                "self_percent": 3.56,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 2.14,
+                "symbol": "_int_free_chunk"
+              },
+              {
+                "self_percent": 2.14,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 1.78,
+                "symbol": "<krabka_blockstore::labels::labels_type::Labels>::fingerprint_pairs::<core::iter::adapters::map::Map<core::slice::iter::Iter<(alloc::string::String, alloc::string::String)>, krabka_pprof::in_memory::fingerprint_labels::fingerprint_labels::{closure#0}>>"
+              },
+              {
+                "self_percent": 1.78,
+                "symbol": "__memcmp_avx2_movbe_rtm"
+              },
+              {
+                "self_percent": 1.78,
+                "symbol": "alloc::fmt::format::format_inner"
+              }
+            ],
+            "prune_above_report_threshold": false
+          },
+          {
+            "samples": "289",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 4.84,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 4.5,
+                "symbol": "__memmove_avx_unaligned_erms_rtm"
+              },
+              {
+                "self_percent": 4.15,
+                "symbol": "malloc"
+              },
+              {
+                "self_percent": 3.46,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 2.77,
+                "symbol": "__libc_malloc2"
+              },
+              {
+                "self_percent": 2.77,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 2.42,
+                "symbol": "_int_free_chunk"
+              },
+              {
+                "self_percent": 2.08,
+                "symbol": "__memcmp_avx2_movbe_rtm"
+              },
+              {
+                "self_percent": 2.08,
+                "symbol": "unlink_chunk.isra.0"
+              },
+              {
+                "self_percent": 1.38,
+                "symbol": "ZSTD_createDCtx"
+              }
+            ],
+            "prune_above_report_threshold": false
+          },
+          {
+            "samples": "274",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 6.93,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 5.11,
+                "symbol": "__libc_malloc2"
+              },
+              {
+                "self_percent": 4.38,
+                "symbol": "malloc"
+              },
+              {
+                "self_percent": 2.55,
+                "symbol": "__memmove_avx_unaligned_erms_rtm"
+              },
+              {
+                "self_percent": 2.19,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 1.82,
+                "symbol": "_int_free_chunk"
+              },
+              {
+                "self_percent": 1.82,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 1.46,
+                "symbol": "<alloc::collections::btree::map::BTreeMap<u64, alloc::collections::btree::set_val::SetValZST>>::insert"
+              },
+              {
+                "self_percent": 1.46,
+                "symbol": "<krabka_blockstore::labels::labels_type::Labels>::fingerprint_pairs::<core::iter::adapters::map::Map<core::slice::iter::Iter<(alloc::string::String, alloc::string::String)>, krabka_pprof::in_memory::fingerprint_labels::fingerprint_labels::{closure#0}>>"
+              },
+              {
+                "self_percent": 1.46,
+                "symbol": "ZSTD_createCCtx"
+              }
+            ],
+            "prune_above_report_threshold": false
+          }
+        ],
+        "cpu_models": [
+          "Intel(R) Xeon(R) CPU @ 2.20GHz"
+        ],
+        "ingest_accepted_rows": 3600,
+        "query_attempts": 720,
+        "errors": 0,
+        "empty_queries": 0
+      },
+      "allocations": {
+        "source_commit": "913fa01bf06a5aa220ed0102d57d8bc73cd0c06a",
+        "provenance": {
+          "run_id": 37302945210,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37302945210",
+          "head_sha": "0909e45a7e9e4c527b19be89b9367e8f2909a31b",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111739773026,
+              "name": "compare (profiles)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37302945210/job/111739773026",
+              "runner_name": "gcp-runner-09ce13c208154d02",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T11:27:50Z",
+              "completed_at": "2026-10-05T11:32:27Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11343225943,
+              "name": "grafana-comparison-profiles-0909e45a7e9e4c527b19be89b9367e8f2909a31b-1",
+              "digest": "sha256:866b4c3240e25e766ee90e3fb2d3a9b9e551321c795a5a192335236c7e3d2f3a",
+              "size_in_bytes": 98048046,
+              "expires_at": "2027-01-03T11:26:31Z",
+              "signal": "profiles",
+              "verified_raw_files": 132,
+              "diagnostic_only": true
+            }
+          ]
+        },
+        "runtime_including_startup_and_seed_seconds": 125.66,
+        "allocation_calls": 10721706,
+        "temporary_allocations": 2377414,
+        "peak_heap_decimal_mb": 5.28,
+        "string_clone_calls": 4971328,
+        "cpu_models": [
+          "Intel(R) Xeon(R) CPU @ 2.20GHz"
+        ],
+        "ingest_accepted_rows": 1400,
+        "query_attempts": 280,
+        "errors": 0,
+        "empty_queries": 0,
+        "label_fingerprint_string_clone_parent_present_in_summary": false
+      }
+    },
+    "allocation_comparison_limit": "Baseline and candidate both accept 1400 profiles and complete 280 queries. Baseline runs on AMD EPYC 7B12; candidate runs on Intel Xeon model 79. Startup-inclusive totals and different hosts do not establish an end-to-end gain.",
+    "retention_decision": "Pending uninstrumented same-VM comparison 37301689980 and all-signal revision controls; diagnostic captures alone do not qualify the change."
   }
 }
