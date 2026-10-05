@@ -1,8 +1,9 @@
 use super::{
     Arc, BTreeMap, BTreeSet, BlockDeletion, BlockWriter, ByteSize, CompactionIndexManifest,
-    CompactionIndexSink, CompactionPolicy, DeferredBlockDeletions, MetricCompactionError,
-    MetricCompactionPass, ObjectStore, delete_blocks, list_compaction_manifests,
-    materialize_metric_erasure_requests, merge_metric_blocks, plan_metric_compactions,
+    CompactionIndexSink, CompactionManifestCache, CompactionPolicy, DeferredBlockDeletions,
+    MetricCompactionError, MetricCompactionPass, ObjectStore, delete_blocks,
+    list_compaction_manifests, materialize_metric_erasure_requests, merge_metric_blocks,
+    plan_metric_compactions,
 };
 
 /// Runs one level-compaction pass over every metric block in object storage.
@@ -10,9 +11,10 @@ use super::{
 /// A pass plans and applies; it does not loop. Running it again picks up where
 /// this one left off, one rung further up the ladder, and eventually plans
 /// nothing. Which blocks meet, and when the climbing stops, is the policy's
-/// business. The manifests are read afresh every pass, because a block builder
+/// business. The manifest set is listed afresh every pass, because a block builder
 /// publishes new blocks into the same prefix and a stale set would plan against
-/// blocks a previous pass replaced.
+/// blocks a previous pass replaced. An optional content cache checks each listed
+/// object identity and remains bound to its original object store.
 ///
 /// # The apply order
 ///
@@ -53,6 +55,7 @@ pub async fn compact_metric_blocks_once<S>(
     policy: CompactionPolicy,
     block_read_max: ByteSize,
     deferred: &mut DeferredBlockDeletions,
+    manifest_cache: Option<&mut CompactionManifestCache>,
 ) -> Result<MetricCompactionPass, MetricCompactionError>
 where
     S: CompactionIndexSink + ?Sized,
@@ -65,7 +68,12 @@ where
         return Ok(erasure);
     }
 
-    let manifests = list_compaction_manifests(store).await?;
+    let manifests =
+        if let Some(cache) = manifest_cache.filter(|cache| Arc::ptr_eq(&cache.store, store)) {
+            cache.list().await?
+        } else {
+            list_compaction_manifests(store).await?
+        };
     let by_key: BTreeMap<&str, &CompactionIndexManifest> = manifests
         .iter()
         .map(|manifest| (manifest.block_key.as_str(), manifest))

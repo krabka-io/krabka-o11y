@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
   "experiment": "Bounded compactor manifest contents with fresh object identity",
-  "status": "baseline_diagnostic_dispatched_candidate_drafted",
+  "status": "correctness_verified_candidate_awaiting_gcp_capture",
   "baseline_source_commit": "670cd7d1e4c9c21f3229ededf76f15b4dee53109",
   "base_main": "92989bb29d44c629fa4ac88147a3fce8b1604776",
   "performance_qualified": false,
-  "correctness_qualified": false,
+  "correctness_qualified": true,
   "retained": false,
   "source_comparison": "docs/grafana-upstream-source-comparison.md",
   "selection": "Repeated manifest GETs in the existing two-second compactor passes contribute to object traffic. Cache verified raw contents, preserving fresh listings, key validation and decode on every use. This does not change publication timing or reduce durability. Actual gain requires matched measurements.",
   "candidate_draft_sha256": "c430713efdea69a844f39e3588167ed3243d7c64b835e8595dc0d9f17c308414",
-  "candidate_applied": false,
+  "candidate_applied": true,
   "baseline_capture": {
     "run_id": 37385206080,
     "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37385206080",
@@ -21,11 +21,67 @@
       "deployment_target": "split",
       "profiles_target": "all"
     },
-    "status": "dispatched",
+    "status": "success_verified",
     "diagnostic_only": true,
-    "live_instances_at_dispatch": []
+    "live_instances_at_dispatch": [],
+    "verified_raw_files": 238,
+    "proof_path": "qualification/evidence/profiling/gcp-37385206080/provenance.json",
+    "proof_sha256": "4f917d8425a1953c29d0df605763b4d73c8f06d78492787686ef93b35dd3993f",
+    "image_provenance": {
+      "run_id": 37385206080,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37385206080",
+      "source_commit": "670cd7d1e4c9c21f3229ededf76f15b4dee53109",
+      "artifact": {
+        "id": 11380040596,
+        "name": "comparison-image-metrics-670cd7d1e4c9c21f3229ededf76f15b4dee53109",
+        "digest": "sha256:d674a273fa1995abe28ce26a74cc578bfe0dfe95fb4ffc2c6b578ebab21d4bba",
+        "size_in_bytes": 308353127,
+        "expires_at": "2027-01-03T22:52:43Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-670cd7d1e4c9",
+      "manifest_digest": "sha256:7b80cdcf6a26140660e325bc03af7dbabc6d955f8d4c6c55d376e7c19eceb72f",
+      "config_digest": "sha256:7b80cdcf6a26140660e325bc03af7dbabc6d955f8d4c6c55d376e7c19eceb72f"
+    },
+    "workload": {
+      "ingest": {
+        "attempts": 360,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 360000,
+        "accepted_rows_per_sec": 1992.647147921066,
+        "latency_seconds": {
+          "count": 360,
+          "p50": 0.029955157000017607,
+          "p95": 0.036804508000045644,
+          "p99": 0.09244929400006185
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 360
+        }
+      },
+      "query": {
+        "attempts": 719,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 719,
+          "p50": 0.012843624999959502,
+          "p95": 0.020539372000030198,
+          "p99": 0.027317731000039203
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 719
+        }
+      }
+    }
   },
-  "next_action": "Finish the pinned correctness suite, apply and validate the identity/invalidation ledger and compactor caller, then build candidate and measure exact release image pairs on GCP.",
+  "next_action": "Build and profile this exact candidate on GCP, verify release-image runtime equality, then compare preserved baseline and candidate in three uninstrumented alternating pairs.",
   "candidate_design": {
     "contents_byte_budget": 1048576,
     "entry_limit": 128,
@@ -35,13 +91,117 @@
     "decode_and_key_validation_each_use": true,
     "cache_bound_to_store_handle": true,
     "publication_timing_unchanged": true,
-    "erasure_and_retention_paths_unchanged": true
+    "erasure_and_retention_paths_unchanged": true,
+    "fetched_contents_match_listed_strong_validators": true,
+    "transport_timestamp_precision_handled": "Fetched and listed timestamps must identify the same second and supplied ETag/version must match. Cache stores the full listing metadata; future hits require exact listing equality."
   },
   "draft_checks": {
     "rustfmt_syntax_and_formatting": "passed",
     "patch_applies_to_current_source": true,
     "type_checks_or_tests": "not_run_yet",
     "cache_invalidated_on_overwrite_removal_or_publication_marker_change": "independent_ledger_prepared_not_run",
-    "compaction_samples_tenant_and_deferred_deletion": "caller_ledger_prepared_not_run"
-  }
+    "compaction_samples_tenant_and_deferred_deletion": "caller_ledger_prepared_not_run",
+    "superseded_by_applied_source_validation": true
+  },
+  "candidate_parent_commit": "ff518b06d82f6a99aaf857f0a0e6f2a73e3d46ba",
+  "previous_validation_attempts": [
+    {
+      "status": "superseded_before_qualification",
+      "compiler_setting": "repository default (single-CGU experiment is not enabled)",
+      "scope": "Metrics unit suites, content identity/invalidation ledger, cached compactor caller, release binary Clippy, TSDB publication and three real metrics compatibility/deployment wrappers.",
+      "targets": [
+        "//crates/metrics:metrics_test",
+        "//crates/metrics:metrics_clippy",
+        "//crates/metrics:level_compaction_test",
+        "//crates/metrics:level_compaction_test_clippy",
+        "//crates/metrics:tsdb_publish_test",
+        "//crates/metrics:tsdb_publish_test_clippy",
+        "//crates/metrics:krabka-metrics_test",
+        "//crates/metrics:krabka-metrics_clippy",
+        "//crates/metrics-service:diff_mimir_docker_test",
+        "//crates/metrics-service:diff_prometheus_docker_test",
+        "//crates/metrics-service:metrics_deployment_docker_test"
+      ],
+      "retries_disabled": true,
+      "source_files_sha256": {
+        "crates/integration/tests/support/metrics.rs": "a69ccb2e696037ec6073ef2d2ed9f1b4e8c38560fdee90c9a7a14ba5184c2199",
+        "crates/metrics/src/bin/krabka-metrics/compactor_loop.rs": "b9b1b0afd227e06d8392c237603ef2e0a886008219c3bb71e40f0829ab7e967f",
+        "crates/metrics/src/bin/krabka-metrics/run_compactor_once.rs": "2dd5e4f1541da0a3746bdac842c61eb72887eb39a6622b347e7d8e340ad81745",
+        "crates/metrics/src/compactor.rs": "efb7721f064c37ff9d2644b84168f1e4082e8dc320241f5580805feb083969ea",
+        "crates/metrics/src/compactor/compact_metric_blocks_once.rs": "c7a3a2179a4a5c4179d0d53f7aa347c21c8ea3e246454a0d51e68bd8637e85be",
+        "crates/metrics/src/compactor/list_compaction_index.rs": "f55e54dbb1e522e6778811ec838a675cc69f595bce525c5eb97152d9b7764f74",
+        "crates/metrics/src/compactor/list_compaction_manifests.rs": "4c344c92ec76fa5fd4c32ccc1b1240cfd585241203290af30a15cb73701ac47f",
+        "crates/metrics/src/compactor/read_compaction_manifests.rs": "2a5698fd6fb047a888030f02de4dea9bafb29bcb5e752191cc756f00d08fbde5",
+        "crates/metrics/src/lib.rs": "f9b2fce6fb3183cb3e833644c9c63a1f90623f72982133b311c1e171f95ab076",
+        "crates/metrics/tests/level_compaction.rs": "491e24dad08548b056a670171296a2dd596506460760ba35a2c1d1732ee584ad",
+        "crates/metrics/src/compactor/compaction_manifest_cache.rs": "ac0baf1f847d4a0c76075874acff5ba1b06ca1a253b9a2f985d4414a41c6977b"
+      },
+      "formatter_passed": true,
+      "reason": "Source inspection found S3 LIST/GET modification-time precision differences. Validation is cancelled before applying the corrected fetched-content admission guard."
+    }
+  ],
+  "validation": {
+    "status": "passed",
+    "compiler_setting": "repository default (single-CGU experiment is not enabled)",
+    "scope": "Metrics unit suites, content identity/invalidation ledger, cached compactor caller, release binary Clippy, TSDB publication and three real metrics compatibility/deployment wrappers.",
+    "targets": [
+      "//crates/metrics:metrics_test",
+      "//crates/metrics:metrics_clippy",
+      "//crates/metrics:level_compaction_test",
+      "//crates/metrics:level_compaction_test_clippy",
+      "//crates/metrics:tsdb_publish_test",
+      "//crates/metrics:tsdb_publish_test_clippy",
+      "//crates/metrics:krabka-metrics_test",
+      "//crates/metrics:krabka-metrics_clippy",
+      "//crates/metrics-service:diff_mimir_docker_test",
+      "//crates/metrics-service:diff_prometheus_docker_test",
+      "//crates/metrics-service:metrics_deployment_docker_test"
+    ],
+    "retries_disabled": true,
+    "formatter_passed": true,
+    "source_files_sha256": {
+      "crates/integration/tests/support/metrics.rs": "a69ccb2e696037ec6073ef2d2ed9f1b4e8c38560fdee90c9a7a14ba5184c2199",
+      "crates/metrics/src/bin/krabka-metrics/compactor_loop.rs": "b9b1b0afd227e06d8392c237603ef2e0a886008219c3bb71e40f0829ab7e967f",
+      "crates/metrics/src/bin/krabka-metrics/run_compactor_once.rs": "2dd5e4f1541da0a3746bdac842c61eb72887eb39a6622b347e7d8e340ad81745",
+      "crates/metrics/src/compactor.rs": "efb7721f064c37ff9d2644b84168f1e4082e8dc320241f5580805feb083969ea",
+      "crates/metrics/src/compactor/compact_metric_blocks_once.rs": "c7a3a2179a4a5c4179d0d53f7aa347c21c8ea3e246454a0d51e68bd8637e85be",
+      "crates/metrics/src/compactor/list_compaction_index.rs": "f55e54dbb1e522e6778811ec838a675cc69f595bce525c5eb97152d9b7764f74",
+      "crates/metrics/src/compactor/list_compaction_manifests.rs": "4c344c92ec76fa5fd4c32ccc1b1240cfd585241203290af30a15cb73701ac47f",
+      "crates/metrics/src/compactor/read_compaction_manifests.rs": "c520ef5209eb662007032f0843990130ad760df327d55a963be6869500986c81",
+      "crates/metrics/src/lib.rs": "f9b2fce6fb3183cb3e833644c9c63a1f90623f72982133b311c1e171f95ab076",
+      "crates/metrics/tests/level_compaction.rs": "491e24dad08548b056a670171296a2dd596506460760ba35a2c1d1732ee584ad",
+      "crates/metrics/src/compactor/compaction_manifest_cache.rs": "55aa98007c89cae5e03cc40f55c4acb2826b99bb1b493613fa0a12d716d0088d"
+    },
+    "native": {
+      "status": "passed",
+      "targets_passed": 3,
+      "rust_cases_passed": 14,
+      "ignored_cases": 0,
+      "proof_path": "qualification/evidence/correctness/manifest-content-cache-native-55aa9800/provenance.json",
+      "proof_sha256": "8052a7fc381f1e8d8da12a37ab8261f6c697996d7f65711d9db67d895d588ba7"
+    },
+    "native_scope_note": "The Docker configuration executes only the three native wrappers. Other selected targets were built; ordinary execution is separately checked by the full default-config suite.",
+    "ordinary": {
+      "status": "passed",
+      "targets_passed": 385,
+      "rust_cases_passed": 5571,
+      "ignored_cases": 63,
+      "proof_path": "qualification/evidence/correctness/manifest-content-cache-ordinary-55aa9800/provenance.json",
+      "proof_sha256": "cf54d4c7dbad47038310d7aea705aa4f83a363cc9383aeb53eeca31c6be835fb"
+    },
+    "key_only_negative_control": {
+      "status": "failed_as_expected",
+      "proof_path": "qualification/evidence/correctness/manifest-content-cache-key-only-negative-55aa9800/provenance.json",
+      "proof_sha256": "4ca9860d2b4c88ff8120ac9ffbbdf56c7303c55be28e76c160d41c48b75319e0",
+      "original_source_restored": true
+    },
+    "restored_identity_guard": {
+      "status": "passed",
+      "proof_path": "qualification/evidence/correctness/manifest-content-cache-restored-55aa9800/provenance.json",
+      "proof_sha256": "326e429dfa407f2c62c88a064a168a53d42a075887b6d9168c0ec5b23e6142b7",
+      "candidate_source_hashes_unchanged": true
+    }
+  },
+  "correctness_qualification_scope": "Applied candidate source hashes: all 385 ordinary default-compiler targets (5571 Rust cases, 63 explicitly ignored container cases), three native Mimir/Prometheus/deployment wrappers (14 cases, none ignored), and key-only cache negative control followed by restored-guard success. Performance retention remains unqualified.",
+  "candidate_draft_is_historical": true
 }

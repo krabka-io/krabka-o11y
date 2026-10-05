@@ -128,6 +128,7 @@ async fn run_pass(
         policy,
         DEFAULT_BLOCK_READ_MAX,
         deferred,
+        None,
     )
     .await
     .expect("one compaction pass")
@@ -946,4 +947,209 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
             LifecycleStep::OrphanReconciliation,
         ])
         .await;
+}
+
+#[tokio::test]
+async fn a_manifest_content_cache_follows_identity_publication_and_removal() {
+    use krabka_blockstore::{MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation};
+    use krabka_metrics::{CompactionIndexSink as _, CompactionManifestCache};
+
+    let metrics = ObjectStoreMetrics::unregistered();
+    let store = MeteredObjectStore::wrap(Arc::new(InMemory::new()), metrics.clone());
+    let sink = ObjectStoreCompactionIndexSink::new(store.clone());
+    let mut first = manifest(
+        "tenant-a",
+        MetricBlockKind::Float,
+        "metrics/a.parquet",
+        BlockLevel(0),
+        (10, 20),
+        2,
+    );
+    first.series = vec![CompactionSeriesLabels {
+        fingerprint: 7,
+        labels: Labels::from_pairs([("__name__", "温度"), ("region", "north")]),
+    }];
+    let second = manifest(
+        "tenant-b",
+        MetricBlockKind::Float,
+        "metrics/b.parquet",
+        BlockLevel(1),
+        (30, 40),
+        3,
+    );
+    sink.write_manifest(&first).await.unwrap();
+    sink.write_manifest(&second).await.unwrap();
+    let mut cache = CompactionManifestCache::new(store.clone());
+    assert!(cache.list().await.unwrap() == vec![first.clone(), second.clone()]);
+    let reads = metrics.operations(ObjectStoreOperation::Get);
+    let lists = metrics.operations(ObjectStoreOperation::List);
+    assert!(cache.list().await.unwrap() == vec![first.clone(), second.clone()]);
+    assert!(metrics.operations(ObjectStoreOperation::Get) == reads);
+    assert!(metrics.operations(ObjectStoreOperation::List) > lists);
+
+    // A key is not an identity. The next listing must expose every changed field.
+    first.row_count = 19;
+    first.min_ts = -5;
+    first.fingerprints = vec![7, 99];
+    first.series.push(CompactionSeriesLabels {
+        fingerprint: 99,
+        labels: Labels::from_pairs([("__name__", "温度"), ("region", "south")]),
+    });
+    sink.write_manifest(&first).await.unwrap();
+    assert!(cache.list().await.unwrap() == vec![first.clone(), second.clone()]);
+    assert!(metrics.operations(ObjectStoreOperation::Get) == reads + 1);
+
+    store
+        .delete(&Path::from(first.index_key.clone()))
+        .await
+        .unwrap();
+    let third = manifest(
+        "tenant-c",
+        MetricBlockKind::Float,
+        "metrics/c.parquet",
+        BlockLevel(0),
+        (50, 60),
+        4,
+    );
+    sink.write_manifest(&third).await.unwrap();
+    assert!(cache.list().await.unwrap() == vec![second.clone(), third.clone()]);
+
+    // A cached import disappears again when its publication marker is removed.
+    const IMPORT: &str = "metrics/tenant-a/uploaded/01M3MJXM7R4M5X4Q4CKHW5Q8N1-0123456789abcdef";
+    let imported = manifest(
+        "tenant-a",
+        MetricBlockKind::Float,
+        &format!("{IMPORT}/float.parquet"),
+        BlockLevel(0),
+        (70, 80),
+        5,
+    );
+    sink.write_manifest(&imported).await.unwrap();
+    let reads = metrics.operations(ObjectStoreOperation::Get);
+    assert!(cache.list().await.unwrap() == vec![second.clone(), third.clone()]);
+    assert!(metrics.operations(ObjectStoreOperation::Get) == reads);
+    let marker = Path::from(format!("{IMPORT}/_published"));
+    store
+        .put(&marker, bytes::Bytes::new().into())
+        .await
+        .unwrap();
+    assert!(cache.list().await.unwrap() == vec![second.clone(), third.clone(), imported]);
+    store.delete(&marker).await.unwrap();
+    assert!(cache.list().await.unwrap() == vec![second.clone(), third.clone()]);
+
+    // Neither valid-but-misplaced contents nor malformed bytes can bypass checks.
+    let mut misplaced = second.clone();
+    misplaced.index_key = third.index_key.clone();
+    store
+        .put(
+            &Path::from(second.index_key.clone()),
+            misplaced.encode().unwrap().into(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(cache.list().await, Err(CompactionManifestError::KeyMismatch { listed, manifest })
+        if listed == second.index_key && manifest == third.index_key)
+    );
+    store
+        .put(
+            &Path::from(second.index_key.clone()),
+            bytes::Bytes::from_static(b"broken").into(),
+        )
+        .await
+        .unwrap();
+    let reads = metrics.operations(ObjectStoreOperation::Get);
+    assert!(matches!(
+        cache.list().await,
+        Err(CompactionManifestError::Index(_))
+    ));
+    assert!(matches!(
+        cache.list().await,
+        Err(CompactionManifestError::Index(_))
+    ));
+    assert!(metrics.operations(ObjectStoreOperation::Get) == reads + 2);
+    store.delete(&Path::from(second.index_key)).await.unwrap();
+    assert!(cache.list().await.unwrap() == vec![third]);
+}
+
+#[tokio::test]
+async fn cached_compaction_keeps_samples_tenants_and_deferred_deletion() {
+    use krabka_metrics::CompactionManifestCache;
+
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let first = write_float_block(
+        &store,
+        "tenant-a",
+        1,
+        &[(7, NOW_MS, 1.0), (7, NOW_MS + 1_000, 2.0)],
+    )
+    .await;
+    let second = write_float_block(&store, "tenant-a", 3, &[(7, NOW_MS + 2_000, 3.0)]).await;
+    let untouched = write_float_block(&store, "tenant-b", 5, &[(9, NOW_MS, 90.0)]).await;
+    let mut cache = CompactionManifestCache::new(store.clone());
+    let mut deferred = DeferredBlockDeletions::new();
+    cache.list().await.unwrap();
+    let writer = BlockWriter::new(store.clone());
+    let sink = ObjectStoreCompactionIndexSink::new(store.clone());
+    let pass = compact_metric_blocks_once(
+        &store,
+        &writer,
+        &sink,
+        policy(2, 100, 1),
+        DEFAULT_BLOCK_READ_MAX,
+        &mut deferred,
+        Some(&mut cache),
+    )
+    .await
+    .unwrap();
+    assert!(pass.outputs.len() == 1);
+    let merged = &pass.outputs[0];
+    assert!(merged.tenant == "tenant-a" && merged.level == BlockLevel(1) && merged.row_count == 3);
+    assert!(
+        samples_in(&store, &merged.block_key).await
+            == vec![
+                (7, NOW_MS, 1.0),
+                (7, NOW_MS + 1_000, 2.0),
+                (7, NOW_MS + 2_000, 3.0)
+            ]
+    );
+    assert!(exists(&store, &first.block_key).await && exists(&store, &second.block_key).await);
+    let next = compact_metric_blocks_once(
+        &store,
+        &writer,
+        &sink,
+        policy(2, 100, 1),
+        DEFAULT_BLOCK_READ_MAX,
+        &mut deferred,
+        Some(&mut cache),
+    )
+    .await
+    .unwrap();
+    assert!(next.outputs.is_empty());
+    assert!(!exists(&store, &first.block_key).await && !exists(&store, &second.block_key).await);
+    assert!(samples_in(&store, &untouched.block_key).await == vec![(9, NOW_MS, 90.0)]);
+    let mut live = cache.list().await.unwrap();
+    live.sort_by(|left, right| left.tenant.cmp(&right.tenant));
+    assert!(live == vec![merged.clone(), untouched]);
+
+    // A cache belongs to its original store, even when object keys coincide.
+    let other: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    write_float_block(&other, "tenant-a", 1, &[(7, NOW_MS, 100.0)]).await;
+    write_float_block(&other, "tenant-a", 3, &[(7, NOW_MS + 1_000, 200.0)]).await;
+    let pass = compact_metric_blocks_once(
+        &other,
+        &BlockWriter::new(other.clone()),
+        &ObjectStoreCompactionIndexSink::new(other.clone()),
+        policy(2, 100, 1),
+        DEFAULT_BLOCK_READ_MAX,
+        &mut DeferredBlockDeletions::new(),
+        Some(&mut cache),
+    )
+    .await
+    .unwrap();
+    assert!(pass.outputs.len() == 1);
+    assert!(
+        samples_in(&other, &pass.outputs[0].block_key).await
+            == vec![(7, NOW_MS, 100.0), (7, NOW_MS + 1_000, 200.0)]
+    );
 }
