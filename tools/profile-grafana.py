@@ -39,6 +39,9 @@ def perf_profile(deployment, role, seconds, output):
                              '--', 'sleep', str(seconds)], capture_output=True, text=True, check=True)
     output.with_name(output.name + '.record.txt').write_text(result.stdout + result.stderr)
     env.command('sudo', '-n', 'chown', f'{os.getuid()}:{os.getgid()}', str(output))
+
+
+def report_perf(pid, output):
     for kind in ('top', 'cum'):
         report = env.command('sudo', '-n', 'perf', 'report', '--stdio', '-i', str(output),
                              '--symfs', f'/proc/{pid}/root', '--sort', 'symbol', '--percent-limit', '0.5',
@@ -214,6 +217,14 @@ def run(args):
             (output / (name + '.jsonl')).write_text(''.join(json.dumps(record) + '\n' for record in records))
         if result['ingest']['error_rate'] or result['query']['error_rate'] or result['query']['empty_queries']:
             raise RuntimeError('profiling workload failed or returned empty queries')
+        if args.mode == 'cpu' and args.cpu_profiler == 'perf':
+            # Unwinding and symbol analysis can consume substantial CPU. Keep
+            # it after traffic stops, while container files are still present.
+            for role, pid in deployment.pids.items():
+                if role not in deployment.admin_ports:
+                    continue
+                for window in range(args.windows):
+                    report_perf(pid, output / f'{role}.{window + 1}.cpu.perf.data')
         if allocation_role:
             analyze_allocations(deployment, output, allocation_role)
     finally:
