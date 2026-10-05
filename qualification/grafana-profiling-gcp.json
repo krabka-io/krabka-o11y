@@ -1122,5 +1122,299 @@
       "Allocation totals include startup and seeding. String clones are essentially unchanged from the corrected-wrapper capture.",
       "Retention awaits an uninstrumented same-VM baseline/candidate comparison."
     ]
+  },
+  "loki_shared_record_captures": {
+    "source_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+    "diagnostic_only": true,
+    "comparison_qualified": false,
+    "image_producer": {
+      "run_id": 37286691135,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37286691135",
+      "source_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+      "artifact": {
+        "id": 11335716451,
+        "name": "comparison-image-logs-84351e6940b96e6b920ca53639447266a5a6dc4d",
+        "digest": "sha256:ba55ade869727f94e6dbc5602aecab5e7c7b1eefe0656e8b3f40f51913b72434",
+        "size_in_bytes": 308310498,
+        "expires_at": "2027-01-03T08:55:36Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-84351e6940b9",
+      "manifest_digest": "sha256:8a6116ca8531f9ad4d49de010d1e4f83227c7084b012bef49918bf4e9a78680b",
+      "config_digest": "sha256:8a6116ca8531f9ad4d49de010d1e4f83227c7084b012bef49918bf4e9a78680b",
+      "docker_image_id": "sha256:8a6116ca8531f9ad4d49de010d1e4f83227c7084b012bef49918bf4e9a78680b",
+      "oci_config_digest": "sha256:c7edb866683b68ab93d2e1278b33b4c1b3cdb34db8e2a03acebeab3f1d8dfb57",
+      "identity_note": "The archived config-digest field is Docker inspect Id; this containerd store reports OCI manifest identity. The OCI config digest is taken from the independently verified archive."
+    },
+    "cpu": {
+      "source_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+      "provenance": {
+        "run_id": 37289279428,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37289279428",
+        "head_sha": "114a027b253ce80476da684f03f4df01d41659ba",
+        "run_conclusion": "success",
+        "jobs": [
+          {
+            "id": 111695604765,
+            "name": "compare (logs)",
+            "conclusion": "success",
+            "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37289279428/job/111695604765",
+            "runner_name": "gcp-runner-2e33d7a4fc484642",
+            "runner_group_name": "default",
+            "labels": [
+              "gcp-ubuntu-24-04-16core"
+            ],
+            "started_at": "2026-10-05T09:20:56Z",
+            "completed_at": "2026-10-05T09:26:00Z"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": 11336047190,
+            "name": "grafana-comparison-logs-114a027b253ce80476da684f03f4df01d41659ba-1",
+            "digest": "sha256:d1f8993de38e3c738cb1e052bdf97037b3c32c4cf943b50d8763df4b430c702a",
+            "size_in_bytes": 11901432,
+            "expires_at": "2027-01-03T09:19:32Z",
+            "signal": "logs",
+            "verified_raw_files": 162,
+            "diagnostic_only": true
+          }
+        ]
+      },
+      "logs_all_windows": [
+        {
+          "samples": "1K",
+          "lost_samples": 0,
+          "top_self_symbols": [
+            {
+              "self_percent": 8.24,
+              "symbol": "_int_malloc"
+            },
+            {
+              "self_percent": 7.59,
+              "symbol": "__memcmp_avx2_movbe"
+            },
+            {
+              "self_percent": 7.22,
+              "symbol": "_int_free_create_chunk"
+            },
+            {
+              "self_percent": 6.86,
+              "symbol": "__memmove_avx_unaligned_erms"
+            },
+            {
+              "self_percent": 5.54,
+              "symbol": "unlink_chunk.isra.0"
+            },
+            {
+              "self_percent": 4.89,
+              "symbol": "cfree@GLIBC_2.2.5"
+            },
+            {
+              "self_percent": 2.63,
+              "symbol": "<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write"
+            },
+            {
+              "self_percent": 2.48,
+              "symbol": "_int_free_chunk"
+            },
+            {
+              "self_percent": 1.97,
+              "symbol": "<krabka_observability::http::response::loki_responses::loki_stream_entry::LokiStreamEntry>::parsed_timestamp_ns"
+            },
+            {
+              "self_percent": 1.9,
+              "symbol": "_int_free_merge_chunk"
+            }
+          ],
+          "prune_above_report_threshold": true
+        },
+        {
+          "samples": "1K",
+          "lost_samples": 0,
+          "top_self_symbols": [
+            {
+              "self_percent": 9.7,
+              "symbol": "__memcmp_avx2_movbe"
+            },
+            {
+              "self_percent": 7.61,
+              "symbol": "_int_malloc"
+            },
+            {
+              "self_percent": 6.42,
+              "symbol": "_int_free_create_chunk"
+            },
+            {
+              "self_percent": 5.3,
+              "symbol": "__memmove_avx_unaligned_erms"
+            },
+            {
+              "self_percent": 4.7,
+              "symbol": "unlink_chunk.isra.0"
+            },
+            {
+              "self_percent": 4.03,
+              "symbol": "cfree@GLIBC_2.2.5"
+            },
+            {
+              "self_percent": 3.06,
+              "symbol": "<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write"
+            },
+            {
+              "self_percent": 2.46,
+              "symbol": "malloc"
+            },
+            {
+              "self_percent": 2.01,
+              "symbol": "<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String> as core::hash::Hash>::hash::<std::hash::random::DefaultHasher>"
+            },
+            {
+              "self_percent": 2.01,
+              "symbol": "<alloc::string::String as core::clone::Clone>::clone"
+            }
+          ],
+          "prune_above_report_threshold": true
+        },
+        {
+          "samples": "1K",
+          "lost_samples": 0,
+          "top_self_symbols": [
+            {
+              "self_percent": 9.23,
+              "symbol": "__memcmp_avx2_movbe"
+            },
+            {
+              "self_percent": 6.94,
+              "symbol": "_int_malloc"
+            },
+            {
+              "self_percent": 6.5,
+              "symbol": "__memmove_avx_unaligned_erms"
+            },
+            {
+              "self_percent": 5.69,
+              "symbol": "_int_free_create_chunk"
+            },
+            {
+              "self_percent": 5.69,
+              "symbol": "unlink_chunk.isra.0"
+            },
+            {
+              "self_percent": 3.91,
+              "symbol": "cfree@GLIBC_2.2.5"
+            },
+            {
+              "self_percent": 3.47,
+              "symbol": "<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write"
+            },
+            {
+              "self_percent": 2.29,
+              "symbol": "<krabka_observability::http::response::loki_responses::loki_stream_entry::LokiStreamEntry>::parsed_timestamp_ns"
+            },
+            {
+              "self_percent": 2.22,
+              "symbol": "alloc::vec::in_place_collect::from_iter_in_place::<core::iter::adapters::filter::Filter<alloc::vec::into_iter::IntoIter<alloc::sync::Arc<krabka_observability::compactor::frontier::wal_log_record::WalLogRecord>>, <krabka_observability::wal::hot_tail::hot_tail_buffer::HotTailBuffer>::prune_compacted::{closure#0}>, alloc::sync::Arc<krabka_observability::compactor::frontier::wal_log_record::WalLogRecord>>"
+            },
+            {
+              "self_percent": 2.22,
+              "symbol": "malloc"
+            }
+          ],
+          "prune_above_report_threshold": true
+        }
+      ],
+      "workload_outcomes": {
+        "ingest": {
+          "attempts": 360,
+          "accepted_rows": 360000,
+          "errors": 0,
+          "empty_queries": 0
+        },
+        "query": {
+          "attempts": 717,
+          "accepted_rows": 0,
+          "errors": 0,
+          "empty_queries": 0
+        }
+      },
+      "host": {
+        "cpu_count": 16,
+        "kernel": "7.0.0-1011-gcp",
+        "cpu_models": [
+          "AMD EPYC 7B12"
+        ]
+      }
+    },
+    "allocations": {
+      "source_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+      "provenance": {
+        "run_id": 37289282882,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37289282882",
+        "head_sha": "114a027b253ce80476da684f03f4df01d41659ba",
+        "run_conclusion": "success",
+        "jobs": [
+          {
+            "id": 111695618091,
+            "name": "compare (logs)",
+            "conclusion": "success",
+            "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37289282882/job/111695618091",
+            "runner_name": "gcp-runner-22114596abc442bc",
+            "runner_group_name": "default",
+            "labels": [
+              "gcp-ubuntu-24-04-16core"
+            ],
+            "started_at": "2026-10-05T09:20:49Z",
+            "completed_at": "2026-10-05T09:27:34Z"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": 11335174712,
+            "name": "grafana-comparison-logs-114a027b253ce80476da684f03f4df01d41659ba-1",
+            "digest": "sha256:636581df5932aebd9a63ef6996b3d4ef3559549196204078b8cdfdf4c509f69a",
+            "size_in_bytes": 407019380,
+            "expires_at": "2027-01-03T09:19:35Z",
+            "signal": "logs",
+            "verified_raw_files": 130,
+            "diagnostic_only": true
+          }
+        ]
+      },
+      "runtime_including_startup_and_seed_seconds": 105.34,
+      "allocation_calls": 73432273,
+      "temporary_allocations": 7316691,
+      "peak_heap_decimal_mb": 44.58,
+      "string_clone_calls": 35403446,
+      "workload_outcomes": {
+        "ingest": {
+          "attempts": 140,
+          "accepted_rows": 140000,
+          "errors": 0,
+          "empty_queries": 0
+        },
+        "query": {
+          "attempts": 151,
+          "accepted_rows": 0,
+          "errors": 0,
+          "empty_queries": 0
+        }
+      },
+      "host": {
+        "cpu_count": 16,
+        "kernel": "7.0.0-1011-gcp",
+        "cpu_models": [
+          "AMD EPYC 7B12"
+        ]
+      },
+      "owned_hot_tail_range_snapshot_reported_in_summary": false,
+      "length_prefix_allocation_calls": 4513200
+    },
+    "limitations": [
+      "Totals include startup, seeding and the 70-second measured workload.",
+      "The earlier allocation trace completed 121 queries; this trace completed 151. Raw allocation counts are not a matched-operation comparison.",
+      "Uninstrumented performance comes from the separate three-pair comparison."
+    ]
   }
 }
