@@ -1965,40 +1965,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cold_span_tag_discovery_excludes_intrinsic_index_names() {
+    async fn cold_span_tag_discovery_keeps_other_scopes_out() {
+        let object_store = Arc::new(InMemory::new());
         let blocks = Arc::new(BlockStore::new(
-            Arc::new(InMemory::new()),
+            object_store.clone(),
             Url::parse("memory:///").unwrap(),
         ));
+        let writer = BlockWriter::new(object_store);
+        let span = span_with_nested_refs();
+        let meta = writer
+            .write_block_with_decl(
+                "tenant",
+                "blocks/scoped-tags.parquet",
+                span_block_schema(),
+                &[span_batch(std::slice::from_ref(&span)).unwrap()],
+                &span_block_decl(),
+                SummaryColumns::new(SCOL_TRACE_ID, SCOL_START_NANO),
+            )
+            .await
+            .unwrap();
         let mut index = TraceIndex::new();
         index.add_trace_block(
             "tenant",
             TraceBlockStats {
-                object_key: "blocks/none.parquet".into(),
-                min_ts: 0,
-                max_ts: 10,
+                object_key: meta.object_key,
+                min_ts: meta.min_ts,
+                max_ts: meta.max_ts,
                 bloom: ShardedTraceBloom::new(1, 8, 0.01),
+                // The index flattens all namespaces; only the block retains scope.
                 tag_names: BTreeSet::from([
-                    "http.method".to_string(),
-                    "event:name".to_string(),
-                    "instrumentation:name".to_string(),
+                    "service.name".into(),
+                    "http.status_code".into(),
+                    "retryable".into(),
+                    "exception.type".into(),
+                    "link.kind".into(),
+                    "event:name".into(),
+                    "instrumentation:name".into(),
                 ]),
                 tag_values: BTreeMap::new(),
-                row_count: 0,
+                row_count: 1,
                 level: BlockLevel::INGESTED,
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
-
         let tags = store
-            .tag_names("tenant", Some(TagScope::Span), 0, 10)
+            .tag_names("tenant", Some(TagScope::Span), 0, 10_000)
             .await
             .unwrap();
-
         assert2::assert!(
             tags == vec![ScopedTag {
                 scope: TagScope::Span,
-                tags: vec!["http.method".to_string()],
+                tags: vec!["http.status_code".into(), "retryable".into()],
             }]
         );
     }

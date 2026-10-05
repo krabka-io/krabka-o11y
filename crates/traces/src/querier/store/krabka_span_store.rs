@@ -323,10 +323,15 @@ impl SpanStore for KrabkaSpanStore {
             .candidate_blocks(tenant, start_ns, end_ns)
             .is_empty();
         let cold_index_tags = trace_index.tag_names(tenant, start_ns, end_ns);
+        // The index flattens attribute scopes. Blocks retain their namespaces.
         let needs_scoped_cold_scan = matches!(
             scope,
             None | Some(
-                TagScope::Resource | TagScope::Event | TagScope::Link | TagScope::Instrumentation,
+                TagScope::Resource
+                    | TagScope::Span
+                    | TagScope::Event
+                    | TagScope::Link
+                    | TagScope::Instrumentation,
             )
         );
         if has_cold_blocks && !cold_index_tags.is_empty() && needs_scoped_cold_scan {

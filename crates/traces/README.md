@@ -39,6 +39,14 @@ Use the Tempo API or Grafana Tempo datasource for reads.
 
 Krabka does not sample spans; apply sampling in an OpenTelemetry Collector before ingest.
 
+## Deployment tests
+
+Run the [Tempo deployment scenarios](tests/tempo_deployment.md) against real Krabka roles, the broker WAL, and `MinIO`:
+
+```bash
+bazel test --config=docker //crates/traces:tempo_deployment_docker_test
+```
+
 ## Documentation
 
 - [Getting started](../../docs/getting_started.md#traces)
