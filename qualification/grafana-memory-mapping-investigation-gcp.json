@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "investigation": "Identify file-backed Mimir querier RSS by process mapping",
+  "status": "capture_pending",
+  "diagnostic_only": true,
+  "performance_qualified": false,
+  "baseline_image_run": 37351427961,
+  "baseline_image_source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
+  "selection": {
+    "capture_run": 37351427961,
+    "role": "metrics-querier",
+    "start_rss_kib": 89932,
+    "start_pss_kib": 87981,
+    "start_anonymous_kib": 9580,
+    "start_private_clean_kib": 77680,
+    "end_rss_kib": 111568,
+    "end_anonymous_kib": 30644,
+    "end_private_clean_kib": 78252,
+    "limitation": "Rollups do not identify the mapped file or region. File-backed RSS is not heap allocation."
+  },
+  "ruled_out_hypothesis": {
+    "hypothesis": "An always-running CPU profiler causes the startup file-backed RSS.",
+    "pinned_telemetry_revision": "ffdd381433675bdb34d36d4aab1170e53bb4f5a9",
+    "routes_source_sha256": "32fd2513b09c3957f7daf505b923c6b8917a729ca221cd9937ef52fe996c22cf",
+    "finding": "The router stores profiling configuration only. ProfilerGuardBuilder runs inside the CPU-profile request handler. The preserved diagnostic capture uses perf, not this endpoint. No startup guard is created."
+  },
+  "harness_change": "Preserve full /proc/PID/smaps for every workload role at both existing memory snapshots, alongside smaps_rollup. Run on an exact preserved release image; identify file-backed and anonymous regions offline.",
+  "validation": {
+    "python_compile": "passed",
+    "diff_check": "passed",
+    "live_capture": "pending"
+  },
+  "next_action": "Run one metrics diagnostic capture on a private GCP runner after the first comparison matrix batch has released its runners. Reuse the verified original image and unchanged workload. Verify source, image, archive digest, all raw checksums, role sets and every positive CPU window."
+}
