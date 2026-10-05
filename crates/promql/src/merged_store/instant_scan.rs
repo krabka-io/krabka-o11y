@@ -73,7 +73,7 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
             return Ok(None);
         }
         let prepared = prepare_matchers(matchers)?;
-        let mut latest = HashMap::<u64, LatestSeries>::new();
+        let mut latest = HashMap::<u64, LatestSeries, ahash::RandomState>::default();
         let mut upper_count = 0_usize;
         if let Some(rows) = hot.floats.get(tenant) {
             for row in rows.iter() {
