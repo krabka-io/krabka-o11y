@@ -32,7 +32,6 @@ mod label_values_returns_distinct_for_name;
 mod lbls;
 mod native_histogram;
 mod offsets_track_low_and_high_water;
-mod owned_wal_batch;
 mod prune_counts_partial_histogram_and_exemplar_retention;
 mod prune_drops_old_samples;
 mod prune_removes_emptied_series_from_index;
@@ -51,6 +50,7 @@ mod scan_with_no_match_returns_none_tables;
 mod series_filters_histograms_by_matcher_and_time;
 mod store_cardinality_and_tsdb_stats_include_float_and_hist_series;
 mod store_with_float_and_hist_series;
+mod wal_batch_ledger;
 mod wal_head_delegates_metadata_cardinality_stats_and_blocks;
 mod wal_head_delete_tenant;
 

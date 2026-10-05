@@ -52,7 +52,11 @@ pub fn replay_wal_head_records(
             .or_insert(record.offset + 1);
     }
     let replayed_records = decoded.len();
-    head.apply_owned_wal_records_at(decoded);
+    head.apply_wal_records_at(
+        decoded
+            .iter()
+            .map(|(record, partition, offset)| (record, *partition, *offset)),
+    );
     if let Some(timestamp_ms) = newest_timestamp_ms {
         let _ = head.prune(timestamp_ms);
     }

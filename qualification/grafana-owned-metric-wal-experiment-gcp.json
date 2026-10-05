@@ -4,9 +4,9 @@
   "source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
   "implementation_commit": "02c1cafee97563352e283296e85914cc5de232d3",
   "baseline_source_commit": "838680039ce5d8aeeb70095ca5922b0b8ee5735a",
-  "retained_in_branch": true,
+  "retained_in_branch": false,
   "performance_qualified": false,
-  "retention_decision": "Both same-image controls verified. First control has higher RSS and query p99 in every pair. Confirmation has lower RSS in every pair, mixed CPU/query p99 and higher ingest p99 in every pair. Both median CPU ratios exceed one; CPU, RSS and latency ranges overlap. No consistent whole-stack efficiency advantage qualified. Retention review remains open; preserve both controls and both native comparisons.",
+  "retention_decision": "Rejected after two verified exact-image controls. Neither establishes a consistent whole-stack CPU, RSS and latency advantage: first RSS/query p99 are higher in all pairs; confirmation RSS is lower in all pairs but CPU/query p99 are mixed and ingest p99 is higher in all pairs. Both median CPU ratios exceed one. Preserve all measurements; restore original production ingestion and retain complete semantic/query regressions.",
   "validation": {
     "scoped_targets_passed": 41,
     "default_promql_unit_cases_passed": 569,
@@ -7996,5 +7996,66 @@
       "correctness_disqualified": false,
       "host_activity_disqualified": false
     }
+  },
+  "reversion": {
+    "source_commit": null,
+    "baseline_source_commit": "838680039ce5d8aeeb70095ca5922b0b8ee5735a",
+    "production_file_proof": {
+      "crates/promql/src/in_memory/ingest.rs": {
+        "sha256": "9cc3c337c8d6597e6dd4823361fdc5316aa4e2b2be14aaa78fafc5ffe56bc4b8",
+        "byte_identical_to_baseline": true
+      },
+      "crates/promql/src/in_memory/head.rs": {
+        "sha256": "05cefa2fd72b5454ca7c03f3c6ca6f09f742a46c0d16553e34655fb03dd627ea",
+        "byte_identical_to_baseline": true
+      },
+      "crates/metrics-service/src/replay_wal_head_records.rs": {
+        "sha256": "e13e60a01c25bef589b25610f52ead7f4416b1ad540731fb89c37da9f886c0d8",
+        "byte_identical_to_baseline": true
+      }
+    },
+    "removed": "Unqualified consuming head API and label helper; pointer-move-only assertions removed with the optimization.",
+    "retained": "Complete canonical float/histogram/metadata/exemplar ledger, original-query golden, snapshot/weak-label/watermark checks and atomic batch panic rollback. Ledger now runs through the original borrowed API.",
+    "validation_status_at_recording": "completed",
+    "scoped_targets": 41,
+    "validation_conclusion": "success",
+    "unit_cases_passed": {
+      "promql/promql_test": 569,
+      "metrics-service/metrics-service_test": 66
+    },
+    "native_docker_wrappers": [
+      {
+        "target": "//crates/metrics-service:diff_mimir_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "4b3a0f1f19a9e9eeb053843ff118ecf86fb19fe9072aed6a2719b155d3458bc1"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "40fe3df8f926b208afd6e73f659da4a8ea876c5524631e96a2644132981a1add"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "80560df132c5ddce2cd6d09bde685181bf03bfe0e08c4d6ca75bc31d16ddcd7f"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "344a6100bb7ef3cae872ae208b743039c6b96198f388d496344b886a2f69e7a4"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "d806701cf950e26f2a48f8726b91802258f044754eda8857bbf73865c313d6df"
+      },
+      {
+        "target": "//crates/metrics-service:tsdb_import_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "35909e98dc196377d0c07059bd2c571f390435a9bf38db1441e623b746ff8877"
+      }
+    ],
+    "bazel_log_sha256": "7a9e41541d12b6de56be16f7189a58ecd5e424195c35afc9db51074f3a2d4534",
+    "target_list_sha256": "fe3f2389a4dba06a26d07bf70853564e118d5f88cc637618f72471df5e2112bd"
   }
 }

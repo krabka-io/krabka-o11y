@@ -4583,7 +4583,7 @@
       ],
       "observation_scope": "Two String-clone sub-stacks reached through label BTreeMap collection and InMemoryMetricStore::apply_wal_record in the verified 37315307601 summarized allocation capture. Counts include startup and seed.",
       "ownership_evidence": "The production replay function owns decoded Vec<(WalRecord, PartitionIndex, Offset)> until its borrowed batch call finishes, then drops it. Moving decoded label strings into the head can preserve the same decode-before-lock and atomic publish boundary.",
-      "candidate_status": "Implemented and correctness-validated on 02c1cafe. Exact-image CPU/allocation captures and first uninstrumented Mimir control verified; confirmation pending.",
+      "candidate_status": "Implemented and correctness-validated, then rejected after two exact-image same-VM controls. Original ingestion restored; all measurements and semantic regressions retained.",
       "constraints": [
         "Preserve existing borrowed WAL APIs.",
         "Keep decode errors outside shared mutation and atomic publication of each batch and its offsets.",
@@ -5368,7 +5368,7 @@
         "query_attempts": 280
       }
     },
-    "retention_decision": "Both same-image controls verified. First control has higher RSS and query p99 in every pair. Confirmation has lower RSS in every pair, mixed CPU/query p99 and higher ingest p99 in every pair. Both median CPU ratios exceed one; CPU, RSS and latency ranges overlap. No consistent whole-stack efficiency advantage qualified. Retention review remains open; preserve both controls and both native comparisons.",
+    "retention_decision": "Rejected after two verified exact-image controls. Neither establishes a consistent whole-stack CPU, RSS and latency advantage: first RSS/query p99 are higher in all pairs; confirmation RSS is lower in all pairs but CPU/query p99 are mixed and ingest p99 is higher in all pairs. Both median CPU ratios exceed one. Preserve all measurements; restore original production ingestion and retain complete semantic/query regressions.",
     "limitations": [
       "Instrumented totals include startup and seed and are diagnostics, not uninstrumented gain evidence.",
       "A caller absent from a summarized allocation report does not establish zero allocations.",
