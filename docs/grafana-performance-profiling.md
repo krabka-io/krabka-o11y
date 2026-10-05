@@ -360,3 +360,29 @@ pointer-sharing check, with the other 379 library cases passing. Restoring it
 passes all 118 scoped checks, including real Loki and Grafana integration and
 end-to-end suites. A fresh uninstrumented GCP comparison and allocation capture
 must establish the performance effect before this experiment is qualified.
+
+The exact `84351e69` release image passed the three-pair
+[Loki comparison](https://github.com/krabka-io/krabka-o11y/actions/runs/37286691135),
+[CPU capture](https://github.com/krabka-io/krabka-o11y/actions/runs/37289279428)
+and [allocation capture](https://github.com/krabka-io/krabka-o11y/actions/runs/37289282882).
+Archive digests and all 239, 162 and 130 evidence-file checksums were verified.
+The uninstrumented medians are 0.87× native CPU, 1.00× RSS and
+54.44/78.17ms query p99. Krabka's application role peaks at 157–159MiB,
+compared with 186–193MiB in the preceding comparison. Both comparisons used
+AMD EPYC 7B12 VMs; they were separate hosts, so this is not a same-VM source
+comparison. Broker and MinIO remain included in the aggregate metrics.
+
+The allocation capture records 73,432,273 calls, 35,403,446 string clones and
+a 44.58MB peak Rust heap. The earlier trace recorded 75,988,258 calls,
+39,998,496 clones and 50.59MB. Both run for 105.34 seconds and ingest 140,000
+rows, but the new instrumented process completes 151 queries versus 121
+earlier. Raw allocation totals therefore do not measure matched query work.
+The owned hot-tail range snapshot is absent from the new allocation summary.
+Decimal length-prefix construction still accounts for 4,513,200 allocation
+calls, and pipeline evaluation still clones label maps repeatedly. These are
+the next concrete targets.
+
+The [experiment record](../qualification/grafana-loki-shared-records-experiment-gcp.json)
+retains the source actually built, its equivalent rebased commit and all
+checks. All seven application binaries differ in this image; earlier metrics,
+Tempo and Pyroscope runs cannot qualify those binaries by equivalence.
