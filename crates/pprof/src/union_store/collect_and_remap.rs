@@ -7,9 +7,10 @@ pub(crate) async fn collect_and_remap(
 ) -> Result<Vec<RecordBatch>, ProfileError> {
     let partition_base = source_id << 56;
     symbols.insert(partition_base, scan.symbols);
+    let sql = format!("SELECT * FROM {}", scan.samples_table);
     let batches = scan
         .ctx
-        .table(&scan.samples_table)
+        .sql(&sql)
         .await
         .map_err(|err| ProfileError::Plan(err.to_string()))?
         .collect()
