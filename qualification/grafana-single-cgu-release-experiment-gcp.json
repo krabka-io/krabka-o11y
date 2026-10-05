@@ -48,7 +48,7 @@
   },
   "schema_version": 1,
   "experiment": "One Rust code generation unit for executable footprint and runtime efficiency",
-  "status": "image_verified_text_size_reduced_core_correctness_running_profile_upload_pending",
+  "status": "images_and_cpu_profile_verified_text_reduced_core_correctness_running",
   "baseline_image_reuse": "The exact restored-source cold fingerprint reuse candidate supplies the baseline image. All source, dependencies and workload harness files match; only .bazelrc differs. Both contain the same dense metadata and cold fingerprint reuse candidates.",
   "candidate_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371662781",
   "baseline_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
@@ -145,5 +145,12 @@
     "metrics_service_text_ratio": 0.6873041103194344,
     "diagnostic_only": true,
     "runtime_rss_cpu_qualified": false
+  },
+  "candidate_profile_verified": {
+    "provenance_path": "qualification/evidence/profiling/gcp-37371662781/provenance.json",
+    "provenance_sha256": "50101091304bef5c8ba125bfa6877203cb0875de2f24fec6d720b3701d87ec3f",
+    "raw_files_verified": 166,
+    "diagnostic_only": true,
+    "performance_qualified": false
   }
 }
