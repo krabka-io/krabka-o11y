@@ -1,54 +1,69 @@
-# TraceQL-metrics families. Each case asserts the emitted series count for a
-# single-bucket query_range over the shared testkit fixture
-# (start=0, end=10000, step=10000). The fixture has 5 distinct span.svc values
-# (a, b, c, x, d) across 3 traces / 7 spans.
+# Exact metrics over the shared seven-span fixture, not engine snapshots.
+# Inclusive range start=0/end=10000/step=10000 emits points at 0 and 10000ns.
+# Nonfinite values use explicit JSON strings "NaN", "+Inf", "-Inf"; null is distinct.
+# Every span starts at 1001..1004ns: all values are in the first bucket.
+# Counts by span.svc: a=2, b=2, c=1, d=1, x=1. No exemplars by default.
+# Rate divides each count by 0.00001 seconds (IEEE-754 values below).
+# Sorted durations: [50,80,100,100,100,200,220]ns, sum=850ns.
+# Quantiles use linear interpolation at rank=q*(7-1): p50=100, p90=208,
+# p99=218.8ns (stored as 218.79999999999998 after binary interpolation).
+# All seven durations fit every default histogram bound, from 2ms to 16384ms.
+# Ranking ties use ascending labels: top2=a,b; bottom1=c.
 
 name: metrics_rate_single_series
 kind: metrics
 query: { .svc != nil } | rate()
 expect_series_count: 1
+expect_metrics: [{"labels":[],"points":[[0,700000.0],[10000,0.0]],"exemplars":[]}]
 
 ---
 name: metrics_rate_by_svc
 kind: metrics
 query: { .svc != nil } | rate() | by(span.svc)
 expect_series_count: 5
+expect_metrics: [{"labels":[["span.svc","a"]],"points":[[0,199999.99999999997],[10000,0.0]],"exemplars":[]},{"labels":[["span.svc","b"]],"points":[[0,199999.99999999997],[10000,0.0]],"exemplars":[]},{"labels":[["span.svc","c"]],"points":[[0,99999.99999999999],[10000,0.0]],"exemplars":[]},{"labels":[["span.svc","d"]],"points":[[0,99999.99999999999],[10000,0.0]],"exemplars":[]},{"labels":[["span.svc","x"]],"points":[[0,99999.99999999999],[10000,0.0]],"exemplars":[]}]
 
 ---
 name: metrics_count_over_time_single_series
 kind: metrics
 query: { .svc != nil } | count_over_time()
 expect_series_count: 1
+expect_metrics: [{"labels":[],"points":[[0,7.0],[10000,0.0]],"exemplars":[]}]
 
 ---
 name: metrics_count_over_time_by_svc
 kind: metrics
 query: { .svc != nil } | count_over_time() | by(span.svc)
 expect_series_count: 5
+expect_metrics: [{"labels":[["span.svc","a"]],"points":[[0,2.0],[10000,0.0]],"exemplars":[]},{"labels":[["span.svc","b"]],"points":[[0,2.0],[10000,0.0]],"exemplars":[]},{"labels":[["span.svc","c"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]},{"labels":[["span.svc","d"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]},{"labels":[["span.svc","x"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]}]
 
 ---
 name: metrics_quantile_over_time_one_quantile
 kind: metrics
 query: { .svc != nil } | quantile_over_time(span:duration, .99)
 expect_series_count: 1
+expect_metrics: [{"labels":[["p","0.99"]],"points":[[0,218.79999999999998],[10000,0.0]],"exemplars":[]}]
 
 ---
 name: metrics_quantile_over_time_three_quantiles
 kind: metrics
 query: { .svc != nil } | quantile_over_time(span:duration, .5, .9, .99)
 expect_series_count: 3
+expect_metrics: [{"labels":[["p","0.5"]],"points":[[0,100.0],[10000,0.0]],"exemplars":[]},{"labels":[["p","0.9"]],"points":[[0,208.0],[10000,0.0]],"exemplars":[]},{"labels":[["p","0.99"]],"points":[[0,218.79999999999998],[10000,0.0]],"exemplars":[]}]
 
 ---
 name: metrics_histogram_over_time_default_field
 kind: metrics
 query: { .svc != nil } | histogram_over_time()
 expect_series_count: 17
+expect_metrics: [{"labels":[["le","2000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","4000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","8000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","16000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","32000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","64000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","128000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","256000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","512000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","1024000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","2048000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","4096000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","8192000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","16384000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","+Inf"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["__metric__","sum"]],"points":[[0,850.0],[10000,0.0]],"exemplars":[]},{"labels":[["__metric__","count"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]}]
 
 ---
 name: metrics_histogram_over_time_explicit_field
 kind: metrics
 query: { .svc != nil } | histogram_over_time(span:duration)
 expect_series_count: 17
+expect_metrics: [{"labels":[["le","2000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","4000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","8000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","16000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","32000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","64000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","128000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","256000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","512000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","1024000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","2048000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","4096000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","8192000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","16384000000"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["le","+Inf"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]},{"labels":[["__metric__","sum"]],"points":[[0,850.0],[10000,0.0]],"exemplars":[]},{"labels":[["__metric__","count"]],"points":[[0,7.0],[10000,0.0]],"exemplars":[]}]
 
 ---
 # Tempo attribute-comparison compare(): outer `{ .svc = "x" }` matches the one
@@ -62,21 +77,25 @@ name: metrics_compare_attribute_distribution
 kind: metrics
 query: { .svc = "x" } | compare({ status = error }, 10)
 expect_series_count: 18
+expect_metrics: [{"labels":[["__meta_type","baseline"],["kind","unspecified"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","selection"],["kind","unspecified"]],"points":[[0,0.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","baseline"],["name","both"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","selection"],["name","both"]],"points":[[0,0.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","baseline"],["resource.service.name","svc-x"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","selection"],["resource.service.name","svc-x"]],"points":[[0,0.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","baseline"],["span.a","1"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","selection"],["span.a","1"]],"points":[[0,0.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","baseline"],["span.b","2"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","selection"],["span.b","2"]],"points":[[0,0.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","baseline"],["span.name","xpost"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","selection"],["span.name","xpost"]],"points":[[0,0.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","baseline"],["span.svc","x"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","selection"],["span.svc","x"]],"points":[[0,0.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","baseline"],["status","unset"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","selection"],["status","unset"]],"points":[[0,0.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","baseline_total"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]},{"labels":[["__meta_type","selection_total"]],"points":[[0,0.0],[10000,0.0]],"exemplars":[]}]
 
 ---
 name: metrics_topk_truncates_groups
 kind: metrics
 query: { .svc != nil } | count_over_time() | by(span.svc) | topk(2)
 expect_series_count: 2
+expect_metrics: [{"labels":[["span.svc","a"]],"points":[[0,2.0],[10000,0.0]],"exemplars":[]},{"labels":[["span.svc","b"]],"points":[[0,2.0],[10000,0.0]],"exemplars":[]}]
 
 ---
 name: metrics_topk_above_group_count
 kind: metrics
 query: { .svc != nil } | count_over_time() | by(span.svc) | topk(10)
 expect_series_count: 5
+expect_metrics: [{"labels":[["span.svc","a"]],"points":[[0,2.0],[10000,0.0]],"exemplars":[]},{"labels":[["span.svc","b"]],"points":[[0,2.0],[10000,0.0]],"exemplars":[]},{"labels":[["span.svc","c"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]},{"labels":[["span.svc","d"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]},{"labels":[["span.svc","x"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]}]
 
 ---
 name: metrics_bottomk_truncates_groups
 kind: metrics
 query: { .svc != nil } | count_over_time() | by(span.svc) | bottomk(1)
 expect_series_count: 1
+expect_metrics: [{"labels":[["span.svc","c"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]}]

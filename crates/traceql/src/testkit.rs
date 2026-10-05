@@ -158,6 +158,7 @@ query: { .svc = "x" }
             trace_id: None,
             expect_trace_ids: Some(traces.into()),
             expect_span_ids: Some(spans.into()),
+            expect_metrics: None,
             expect_series_count: None,
             expect_span_count: None,
         };
@@ -308,6 +309,7 @@ query: { .svc = "x" }
             trace_id: None,
             expect_trace_ids: None,
             expect_span_ids: None,
+            expect_metrics: None,
             expect_series_count: Some(count),
             expect_span_count: None,
         };
@@ -341,6 +343,7 @@ query: { .svc = "x" }
             trace_id,
             expect_trace_ids: None,
             expect_span_ids: None,
+            expect_metrics: None,
             expect_series_count: None,
             expect_span_count: Some(count),
         };
@@ -468,6 +471,7 @@ expect_span_ids: 1
                     trace_id: None,
                     expect_trace_ids: Some("1".into()),
                     expect_span_ids: Some("1".into()),
+                    expect_metrics: None,
                     expect_series_count: None,
                     expect_span_count: None,
                 }]
@@ -502,6 +506,7 @@ expect_series_count: 1
                         trace_id: None,
                         expect_trace_ids: None,
                         expect_span_ids: None,
+                        expect_metrics: None,
                         expect_series_count: None,
                         expect_span_count: None,
                     },
@@ -512,6 +517,7 @@ expect_series_count: 1
                         trace_id: None,
                         expect_trace_ids: None,
                         expect_span_ids: None,
+                        expect_metrics: None,
                         expect_series_count: Some(1),
                         expect_span_count: None,
                     },

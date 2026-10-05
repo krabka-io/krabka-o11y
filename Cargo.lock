@@ -4936,6 +4936,8 @@ dependencies = [
  "num-traits",
  "proptest",
  "regex",
+ "serde",
+ "serde_json",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
