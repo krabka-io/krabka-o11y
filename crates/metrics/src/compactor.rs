@@ -2679,6 +2679,42 @@ overrides:
     }
 
     #[test]
+    fn classic_histogram_metadata_is_indexed_by_its_metric_family() {
+        let bucket_labels = Labels::from_iter([
+            ("__name__".into(), "duration_seconds_bucket".into()),
+            ("le".into(), "1".into()),
+            ("job".into(), "api".into()),
+        ]);
+        let family_labels = Labels::from_iter([
+            ("__name__".into(), "duration_seconds".into()),
+            ("le".into(), "1".into()),
+            ("job".into(), "api".into()),
+        ]);
+        let records = wal_records_from_series(
+            "tenant-a",
+            &[DecodedSeries {
+                labels: bucket_labels.clone(),
+                samples: vec![DecodedSample::new(20, 2.0)],
+                histograms: Vec::new(),
+                exemplars: Vec::new(),
+                metadata: Some(crate::wire::DecodedMetadata {
+                    metric_family_name: "duration_seconds".into(),
+                    metric_type: "histogram".into(),
+                    help: "Duration".into(),
+                    unit: "s".into(),
+                }),
+            }],
+        );
+        let compacted = compact_wal_records(&records);
+        assert!(compacted.len() == 1);
+        assert!(compacted[0].metadata_rows.len() == 1);
+        assert!(compacted[0].metadata_rows[0].fingerprint == family_labels.fingerprint());
+        assert!(compacted[0].series_labels[&family_labels.fingerprint()] == family_labels);
+        assert!(compacted[0].float_rows[0].fingerprint == bucket_labels.fingerprint());
+        assert!(compacted[0].series_labels[&bucket_labels.fingerprint()] == bucket_labels);
+    }
+
+    #[test]
     fn compact_wal_records_extracts_metric_metadata() {
         let record = WalRecord {
             tenant: "tenant-a".into(),

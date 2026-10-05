@@ -46,9 +46,16 @@ pub fn wal_records_from_series(tenant: &str, series: &[DecodedSeries]) -> Vec<Wa
                 }),
         );
         if let Some(metadata) = &series.metadata {
+            // Classic histogram and summary samples carry suffixed names;
+            // metadata is indexed by the unsuffixed metric family.
+            let mut metadata_labels = series.labels.clone();
+            metadata_labels.insert("__name__", metadata.metric_family_name.as_str());
             out.push(WalRecord {
                 tenant: tenant.to_string(),
-                labels: labels.clone(),
+                labels: metadata_labels
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .collect(),
                 payload: SamplePayload::Metadata {
                     metric_family_name: metadata.metric_family_name.clone(),
                     metric_type: metadata.metric_type.clone(),

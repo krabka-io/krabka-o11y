@@ -3463,6 +3463,57 @@ async fn remote_read_endpoint_rejects_end_before_start() {
 }
 
 #[tokio::test]
+async fn remote_read_endpoint_rejects_invalid_or_oversized_hint_ranges() {
+    let limits = Limits {
+        max_query_length: krabka_units::secs(10),
+        ..Limits::default()
+    };
+    let state = Arc::new(
+        PrometheusApiState::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default())
+            .with_query_limits(OverridesProvider::new(limits)),
+    );
+    let app = prometheus_router(state);
+    for (start_ms, end_ms, expected_status) in [
+        (20_000, 10_000, StatusCode::BAD_REQUEST),
+        (1, 30_000, StatusCode::UNPROCESSABLE_ENTITY),
+    ] {
+        let request = pb::v1::ReadRequest {
+            queries: vec![pb::v1::Query {
+                start_timestamp_ms: 10_000,
+                end_timestamp_ms: 20_000,
+                matchers: Vec::new(),
+                hints: Some(pb::v1::ReadHints {
+                    start_ms,
+                    end_ms,
+                    ..Default::default()
+                }),
+            }],
+            accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
+        };
+        let compressed = SnappyEncoder::new()
+            .compress_vec(&request.encode_to_vec())
+            .expect("snappy request");
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/read")
+                    .header("X-Scope-OrgID", "tenant-a")
+                    .header("Content-Type", "application/x-protobuf")
+                    .header("Content-Encoding", "snappy")
+                    .body(Body::from(compressed))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert2::assert!(response.status() == expected_status);
+        let body = response_json(response).await;
+        assert2::assert!(body["status"] == "error");
+    }
+}
+
+#[tokio::test]
 async fn remote_read_endpoint_returns_matching_float_samples() {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
@@ -3495,7 +3546,16 @@ async fn remote_read_endpoint_returns_matching_float_samples() {
     ));
     let app = prometheus_router(state);
     let request = pb::v1::ReadRequest {
-        queries: vec![pb::v1::Query {
+        queries: [
+            None,
+            Some((0, 0)),
+            Some((20_000, 20_000)),
+            Some((0, 10_000)),
+            Some((20_000, 0)),
+            Some((1, 30_000)),
+        ]
+        .into_iter()
+        .map(|bounds| pb::v1::Query {
             start_timestamp_ms: 10_000,
             end_timestamp_ms: 20_000,
             matchers: vec![
@@ -3510,8 +3570,13 @@ async fn remote_read_endpoint_returns_matching_float_samples() {
                     value: "api".into(),
                 },
             ],
-            hints: None,
-        }],
+            hints: bounds.map(|(start_ms, end_ms)| pb::v1::ReadHints {
+                start_ms,
+                end_ms,
+                ..Default::default()
+            }),
+        })
+        .collect(),
         accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
     };
     let compressed = SnappyEncoder::new()
@@ -3542,7 +3607,7 @@ async fn remote_read_endpoint_returns_matching_float_samples() {
     let read_response =
         pb::v1::ReadResponse::decode(decoded.as_slice()).expect("remote read response");
     let series = &read_response.results[0].timeseries[0];
-    assert2::assert!(read_response.results.len() == 1);
+    assert2::assert!(read_response.results.len() == 6);
     assert2::assert!(read_response.results[0].timeseries.len() == 1);
     assert2::assert!(
         series
@@ -3553,12 +3618,26 @@ async fn remote_read_endpoint_returns_matching_float_samples() {
             == vec![("__name__", "up"), ("instance", "a"), ("job", "api")]
     );
     assert2::assert!(
-        series
-            .samples
+        read_response
+            .results
             .iter()
-            .map(|sample| (sample.timestamp, sample.value))
+            .map(|result| {
+                assert2::assert!(result.timeseries.len() == 1);
+                result.timeseries[0]
+                    .samples
+                    .iter()
+                    .map(|sample| (sample.timestamp, sample.value))
+                    .collect::<Vec<_>>()
+            })
             .collect::<Vec<_>>()
-            == vec![(10_000, 1.0), (20_000, 2.0)]
+            == vec![
+                vec![(10_000, 1.0), (20_000, 2.0)],
+                vec![(10_000, 1.0), (20_000, 2.0)],
+                vec![(20_000, 2.0)],
+                vec![(10_000, 1.0)],
+                vec![(20_000, 2.0)],
+                vec![(10_000, 1.0), (20_000, 2.0), (30_000, 3.0)],
+            ]
     );
 }
 

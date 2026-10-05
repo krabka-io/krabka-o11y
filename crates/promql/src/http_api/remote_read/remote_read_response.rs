@@ -11,7 +11,7 @@ pub(crate) async fn remote_read_response<S: MetricStore>(
     request: pb::v1::ReadRequest,
 ) -> Result<pb::v1::ReadResponse, ApiError> {
     let mut results = Vec::with_capacity(request.queries.len());
-    for query in request.queries {
+    for mut query in request.queries {
         validate_timestamp_range(query.start_timestamp_ms, query.end_timestamp_ms)?;
         enforce_query_range_limit(
             state,
@@ -19,6 +19,22 @@ pub(crate) async fn remote_read_response<S: MetricStore>(
             query.start_timestamp_ms,
             query.end_timestamp_ms,
         )?;
+        // Mimir lets each positive hint endpoint override the outer range.
+        if let Some(hints) = &query.hints {
+            if hints.start_ms > 0 {
+                query.start_timestamp_ms = hints.start_ms;
+            }
+            if hints.end_ms > 0 {
+                query.end_timestamp_ms = hints.end_ms;
+            }
+            validate_timestamp_range(query.start_timestamp_ms, query.end_timestamp_ms)?;
+            enforce_query_range_limit(
+                state,
+                tenant,
+                query.start_timestamp_ms,
+                query.end_timestamp_ms,
+            )?;
+        }
         let matchers = remote_read_matchers(&query.matchers)?;
         let labels = state
             .store

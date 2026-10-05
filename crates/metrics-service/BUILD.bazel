@@ -60,6 +60,11 @@ crate_tests(
         "diff_mimir": ["mimir"],
         "diff_prometheus": ["prometheus"],
         "grafana_integration": ["grafana"],
+        "metrics_deployment": [
+            "krabka",
+            "broker",
+            "minio",
+        ],
         "tsdb_import": ["prometheus"],
     },
     docker_variants = {
