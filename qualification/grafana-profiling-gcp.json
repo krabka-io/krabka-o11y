@@ -3782,10 +3782,793 @@
         "accepted_rows": 140000
       }
     },
-    "retention_decision": "Pending the fresh same-VM uninstrumented controls for all four signals. No efficiency gain claimed.",
+    "retention_decision": "Rejected after both uninstrumented Loki controls: aggregate RSS is higher in every pair in both controls. Product consuming APIs and merger change reverted; semantic ledger and all experiment evidence retained.",
     "limitations": [
       "Heaptrack includes startup and seed; current and preceding Loki captures complete 123 and 151 queries respectively, so allocation totals are not normalized performance comparisons.",
       "All seven application binaries differ from the ca99 baseline; runtime configuration, base layer and other filesystem entries match across all 380 entries."
+    ]
+  },
+  "shared_cold_labels_candidate_captures": {
+    "diagnostic_only": true,
+    "comparison_qualified": false,
+    "source_commit": "8d3b9510458fa2249b817157b7f9446733525711",
+    "image_producer": {
+      "run_id": 37313303710,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37313303710",
+      "source_commit": "8d3b9510458fa2249b817157b7f9446733525711",
+      "artifact": {
+        "id": 11346923216,
+        "name": "comparison-image-metrics-8d3b9510458fa2249b817157b7f9446733525711",
+        "digest": "sha256:312648b3123dfde2c8926b9a2cef28279b5770684ba187624e8143857e488f41",
+        "size_in_bytes": 308247478,
+        "expires_at": "2027-01-03T12:58:41Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-8d3b9510458f",
+      "manifest_digest": "sha256:8bb1c65fa4f1828bbc4199af3d0dec29b90a1b916ca53c08ad79bbe5cb4adfaf",
+      "config_digest": "sha256:8bb1c65fa4f1828bbc4199af3d0dec29b90a1b916ca53c08ad79bbe5cb4adfaf",
+      "docker_image_id": "sha256:8bb1c65fa4f1828bbc4199af3d0dec29b90a1b916ca53c08ad79bbe5cb4adfaf",
+      "oci_config_digest": "sha256:c9b838243806ca9bf4432a9947cd94447d77aac2561623af6fc94369234d843e",
+      "identity_note": "The archived config-digest field is Docker inspect Id; this containerd store reports OCI manifest identity. The OCI config digest comes from the independently verified archive."
+    },
+    "binary_sha256": {
+      "krabka-metrics": {
+        "path": "usr/local/bin/krabka-metrics",
+        "sha256": "d03812dff64aa98da33263b6b708e85c1d59a65067f61ccbb096d8c06d9a30c8",
+        "size_in_bytes": 72294024
+      },
+      "krabka-metrics-service": {
+        "path": "usr/local/bin/krabka-metrics-service",
+        "sha256": "9f3a852749e4f600d4d43a0d367bf1417c3ad2ef295cfd887a863b806805cde4",
+        "size_in_bytes": 236232528
+      },
+      "krabka-o11y-bootstrap": {
+        "path": "usr/local/bin/krabka-o11y-bootstrap",
+        "sha256": "0046359468fb4fb169d46d8675fbc2d387987cca7a8f2e1a12d841037b6d2387",
+        "size_in_bytes": 26754088
+      },
+      "krabka-o11y-recovery": {
+        "path": "usr/local/bin/krabka-o11y-recovery",
+        "sha256": "04712e5b948ae26d35fa7f918f6c1aab69b4f32b6c0b6939a102b3abbe421b89",
+        "size_in_bytes": 36706816
+      },
+      "krabka-observability": {
+        "path": "usr/local/bin/krabka-observability",
+        "sha256": "69a55a302f107244a5d6121f6b00eaa1447c91f67336b22ce3387a18d23b8072",
+        "size_in_bytes": 222382640
+      },
+      "krabka-profiles": {
+        "path": "usr/local/bin/krabka-profiles",
+        "sha256": "28e07c80615f2046bb558409f9f389f0fada5d512851461964e3d0baae99b0c9",
+        "size_in_bytes": 219782192
+      },
+      "krabka-traces": {
+        "path": "usr/local/bin/krabka-traces",
+        "sha256": "6e5b5fc76f06a7704c7bc06a1e3a0a66c4d52a99af9aba99bc7c7c279fc09cc3",
+        "size_in_bytes": 223523856
+      }
+    },
+    "runtime_equivalence": {
+      "changed_paths": [
+        "usr/local/bin/krabka-metrics",
+        "usr/local/bin/krabka-metrics-service",
+        "usr/local/bin/krabka-o11y-bootstrap",
+        "usr/local/bin/krabka-o11y-recovery",
+        "usr/local/bin/krabka-observability",
+        "usr/local/bin/krabka-profiles",
+        "usr/local/bin/krabka-traces"
+      ],
+      "unchanged_binaries": [],
+      "filesystem_entries_verified": 380
+    },
+    "captures": {
+      "cpu": {
+        "source_commit": "8d3b9510458fa2249b817157b7f9446733525711",
+        "provenance": {
+          "run_id": 37315302847,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37315302847",
+          "head_sha": "7b35bade6ec3f8056f3d245c6188d376fda2f6d8",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111780434199,
+              "name": "compare (metrics)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37315302847/job/111780434199",
+              "runner_name": "gcp-runner-ae3a0b17237643ae",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T13:15:53Z",
+              "completed_at": "2026-10-05T13:21:13Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11347378384,
+              "name": "grafana-comparison-metrics-7b35bade6ec3f8056f3d245c6188d376fda2f6d8-1",
+              "digest": "sha256:5ecc27f57d8a6f7582e32a70a1f5e885ab1efd00cd6124b6a0a4ee889fd9be03",
+              "size_in_bytes": 5689157,
+              "expires_at": "2027-01-03T13:14:44Z",
+              "signal": "metrics",
+              "verified_raw_files": 234,
+              "diagnostic_only": true
+            }
+          ]
+        },
+        "host": {
+          "cpu_count": 16,
+          "kernel": "7.0.0-1011-gcp",
+          "lscpu": {
+            "lscpu": [
+              {
+                "field": "Architecture:",
+                "data": "x86_64"
+              },
+              {
+                "field": "CPU op-mode(s):",
+                "data": "32-bit, 64-bit"
+              },
+              {
+                "field": "Address sizes:",
+                "data": "46 bits physical, 48 bits virtual"
+              },
+              {
+                "field": "Byte Order:",
+                "data": "Little Endian"
+              },
+              {
+                "field": "CPU(s):",
+                "data": "16"
+              },
+              {
+                "field": "On-line CPU(s) list:",
+                "data": "0-15"
+              },
+              {
+                "field": "Vendor ID:",
+                "data": "GenuineIntel"
+              },
+              {
+                "field": "Model name:",
+                "data": "Intel(R) Xeon(R) CPU @ 2.20GHz"
+              },
+              {
+                "field": "CPU family:",
+                "data": "6"
+              },
+              {
+                "field": "Model:",
+                "data": "79"
+              },
+              {
+                "field": "Thread(s) per core:",
+                "data": "2"
+              },
+              {
+                "field": "Core(s) per socket:",
+                "data": "8"
+              },
+              {
+                "field": "Socket(s):",
+                "data": "1"
+              },
+              {
+                "field": "Stepping:",
+                "data": "0"
+              },
+              {
+                "field": "BogoMIPS:",
+                "data": "4399.99"
+              },
+              {
+                "field": "Flags:",
+                "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch pti ssbd ibrs ibpb stibp fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm rdseed adx smap xsaveopt arat md_clear arch_capabilities"
+              },
+              {
+                "field": "Hypervisor vendor:",
+                "data": "KVM"
+              },
+              {
+                "field": "Virtualization type:",
+                "data": "full"
+              },
+              {
+                "field": "L1d cache:",
+                "data": "256 KiB (8 instances)"
+              },
+              {
+                "field": "L1i cache:",
+                "data": "256 KiB (8 instances)"
+              },
+              {
+                "field": "L2 cache:",
+                "data": "2 MiB (8 instances)"
+              },
+              {
+                "field": "L3 cache:",
+                "data": "55 MiB (1 instance)"
+              },
+              {
+                "field": "NUMA node(s):",
+                "data": "1"
+              },
+              {
+                "field": "NUMA node0 CPU(s):",
+                "data": "0-15"
+              },
+              {
+                "field": "Vulnerability Gather data sampling:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Ghostwrite:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Indirect target selection:",
+                "data": "Mitigation; Aligned branch/return thunks"
+              },
+              {
+                "field": "Vulnerability Itlb multihit:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability L1tf:",
+                "data": "Mitigation; PTE Inversion"
+              },
+              {
+                "field": "Vulnerability Mds:",
+                "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+              },
+              {
+                "field": "Vulnerability Meltdown:",
+                "data": "Mitigation; PTI"
+              },
+              {
+                "field": "Vulnerability Mmio stale data:",
+                "data": "Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown"
+              },
+              {
+                "field": "Vulnerability Old microcode:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Reg file data sampling:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Retbleed:",
+                "data": "Mitigation; IBRS"
+              },
+              {
+                "field": "Vulnerability Spec rstack overflow:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Spec store bypass:",
+                "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+              },
+              {
+                "field": "Vulnerability Spectre v1:",
+                "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+              },
+              {
+                "field": "Vulnerability Spectre v2:",
+                "data": "Mitigation; IBRS; IBPB conditional; STIBP conditional; RSB filling; PBRSB-eIBRS Not affected; BHI SW loop, KVM SW loop"
+              },
+              {
+                "field": "Vulnerability Srbds:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Tsa:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Tsx async abort:",
+                "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+              },
+              {
+                "field": "Vulnerability Vmscape:",
+                "data": "Not affected"
+              }
+            ]
+          }
+        },
+        "workload": {
+          "signal": "metrics",
+          "writers": 2,
+          "cardinality": 1000,
+          "warmup_seconds": 15,
+          "duration_seconds": 180.936745613,
+          "write_interval_seconds": 1,
+          "ingest": {
+            "attempts": 360,
+            "errors": 0,
+            "error_rate": 0.0,
+            "accepted_rows": 360000,
+            "accepted_rows_per_sec": 1989.6456011759649,
+            "latency_seconds": {
+              "count": 360,
+              "p50": 0.024886889000015344,
+              "p95": 0.027878296999972463,
+              "p99": 0.03261799200004134
+            },
+            "empty_queries": 0,
+            "status_counts": {
+              "200": 360
+            }
+          },
+          "query": {
+            "attempts": 720,
+            "errors": 0,
+            "error_rate": 0.0,
+            "accepted_rows": 0,
+            "accepted_rows_per_sec": 0.0,
+            "latency_seconds": {
+              "count": 720,
+              "p50": 0.01532586100000799,
+              "p95": 0.02347028600001977,
+              "p99": 0.026159442999983185
+            },
+            "empty_queries": 0,
+            "status_counts": {
+              "200": 720
+            }
+          },
+          "telemetry": {
+            "wal_lag_records_max": 5905.0,
+            "wal_lag_records_last": [
+              0.0,
+              3905.0
+            ],
+            "rss_kib_peak_by_role": {
+              "broker": 37068,
+              "minio": 319292,
+              "metrics-distributor": 25152,
+              "metrics-querier": 113284,
+              "metrics-block-builder": 42040,
+              "metrics-compactor": 33512
+            },
+            "object_requests": 4533.0,
+            "object_bytes": 119923231.0,
+            "maintenance": {
+              "krabka_metrics_compaction_runs_total{status=\"ok\"}": 162.0,
+              "krabka_metrics_compaction_blocks_total": 67.0,
+              "krabka_metrics_compaction_deletion_sweeps_total": 180.0,
+              "krabka_metrics_compaction_deleted_blocks_total": 134.0,
+              "krabka_metrics_compaction_deleted_sidecars_total": 134.0,
+              "krabka_metrics_compaction_deletion_failures_total": 0.0,
+              "krabka_metrics_compaction_orphan_sweeps_total": 90.0,
+              "krabka_metrics_compaction_orphans_deleted_total": 0.0,
+              "krabka_metrics_compaction_orphan_failures_total": 0.0
+            },
+            "cpu_seconds_by_role": {},
+            "expected_restart_gaps": 0,
+            "scrape_errors": 0
+          },
+          "tenant": "soak",
+          "tenants": {
+            "soak": {
+              "attempts": 360,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 360000,
+              "accepted_rows_per_sec": 1989.6456011759649,
+              "latency_seconds": {
+                "count": 360,
+                "p50": 0.024886889000015344,
+                "p95": 0.027878296999972463,
+                "p99": 0.03261799200004134
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 360
+              }
+            }
+          },
+          "objectives_met": true
+        },
+        "windows_by_role": {
+          "broker": [
+            {
+              "samples": "55",
+              "lost_samples": 0
+            },
+            {
+              "samples": "51",
+              "lost_samples": 0
+            },
+            {
+              "samples": "57",
+              "lost_samples": 0
+            }
+          ],
+          "metrics-block-builder": [
+            {
+              "samples": "65",
+              "lost_samples": 0
+            },
+            {
+              "samples": "75",
+              "lost_samples": 0
+            },
+            {
+              "samples": "72",
+              "lost_samples": 0
+            }
+          ],
+          "metrics-compactor": [
+            {
+              "samples": "34",
+              "lost_samples": 0
+            },
+            {
+              "samples": "34",
+              "lost_samples": 0
+            },
+            {
+              "samples": "35",
+              "lost_samples": 0
+            }
+          ],
+          "metrics-distributor": [
+            {
+              "samples": "90",
+              "lost_samples": 0
+            },
+            {
+              "samples": "98",
+              "lost_samples": 0
+            },
+            {
+              "samples": "103",
+              "lost_samples": 0
+            }
+          ],
+          "metrics-querier": [
+            {
+              "samples": "216",
+              "lost_samples": 0
+            },
+            {
+              "samples": "302",
+              "lost_samples": 0
+            },
+            {
+              "samples": "363",
+              "lost_samples": 0
+            }
+          ]
+        }
+      },
+      "allocations": {
+        "source_commit": "8d3b9510458fa2249b817157b7f9446733525711",
+        "provenance": {
+          "run_id": 37315307601,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37315307601",
+          "head_sha": "7b35bade6ec3f8056f3d245c6188d376fda2f6d8",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111780450901,
+              "name": "compare (metrics)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37315307601/job/111780450901",
+              "runner_name": "gcp-runner-29b34bef95b04dc9",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T13:15:56Z",
+              "completed_at": "2026-10-05T13:19:40Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11347902772,
+              "name": "grafana-comparison-metrics-7b35bade6ec3f8056f3d245c6188d376fda2f6d8-1",
+              "digest": "sha256:59505af0bd878ffeb89c56ad9f351f4c186ce539bacf53379b653e907e9905dd",
+              "size_in_bytes": 49818567,
+              "expires_at": "2027-01-03T13:14:47Z",
+              "signal": "metrics",
+              "verified_raw_files": 130,
+              "diagnostic_only": true
+            }
+          ]
+        },
+        "host": {
+          "cpu_count": 16,
+          "kernel": "7.0.0-1011-gcp",
+          "lscpu": {
+            "lscpu": [
+              {
+                "field": "Architecture:",
+                "data": "x86_64"
+              },
+              {
+                "field": "CPU op-mode(s):",
+                "data": "32-bit, 64-bit"
+              },
+              {
+                "field": "Address sizes:",
+                "data": "46 bits physical, 48 bits virtual"
+              },
+              {
+                "field": "Byte Order:",
+                "data": "Little Endian"
+              },
+              {
+                "field": "CPU(s):",
+                "data": "16"
+              },
+              {
+                "field": "On-line CPU(s) list:",
+                "data": "0-15"
+              },
+              {
+                "field": "Vendor ID:",
+                "data": "GenuineIntel"
+              },
+              {
+                "field": "Model name:",
+                "data": "Intel(R) Xeon(R) CPU @ 2.20GHz"
+              },
+              {
+                "field": "CPU family:",
+                "data": "6"
+              },
+              {
+                "field": "Model:",
+                "data": "79"
+              },
+              {
+                "field": "Thread(s) per core:",
+                "data": "2"
+              },
+              {
+                "field": "Core(s) per socket:",
+                "data": "8"
+              },
+              {
+                "field": "Socket(s):",
+                "data": "1"
+              },
+              {
+                "field": "Stepping:",
+                "data": "0"
+              },
+              {
+                "field": "BogoMIPS:",
+                "data": "4399.99"
+              },
+              {
+                "field": "Flags:",
+                "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch pti ssbd ibrs ibpb stibp fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm rdseed adx smap xsaveopt arat md_clear arch_capabilities"
+              },
+              {
+                "field": "Hypervisor vendor:",
+                "data": "KVM"
+              },
+              {
+                "field": "Virtualization type:",
+                "data": "full"
+              },
+              {
+                "field": "L1d cache:",
+                "data": "256 KiB (8 instances)"
+              },
+              {
+                "field": "L1i cache:",
+                "data": "256 KiB (8 instances)"
+              },
+              {
+                "field": "L2 cache:",
+                "data": "2 MiB (8 instances)"
+              },
+              {
+                "field": "L3 cache:",
+                "data": "55 MiB (1 instance)"
+              },
+              {
+                "field": "NUMA node(s):",
+                "data": "1"
+              },
+              {
+                "field": "NUMA node0 CPU(s):",
+                "data": "0-15"
+              },
+              {
+                "field": "Vulnerability Gather data sampling:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Ghostwrite:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Indirect target selection:",
+                "data": "Mitigation; Aligned branch/return thunks"
+              },
+              {
+                "field": "Vulnerability Itlb multihit:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability L1tf:",
+                "data": "Mitigation; PTE Inversion"
+              },
+              {
+                "field": "Vulnerability Mds:",
+                "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+              },
+              {
+                "field": "Vulnerability Meltdown:",
+                "data": "Mitigation; PTI"
+              },
+              {
+                "field": "Vulnerability Mmio stale data:",
+                "data": "Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown"
+              },
+              {
+                "field": "Vulnerability Old microcode:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Reg file data sampling:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Retbleed:",
+                "data": "Mitigation; IBRS"
+              },
+              {
+                "field": "Vulnerability Spec rstack overflow:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Spec store bypass:",
+                "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+              },
+              {
+                "field": "Vulnerability Spectre v1:",
+                "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+              },
+              {
+                "field": "Vulnerability Spectre v2:",
+                "data": "Mitigation; IBRS; IBPB conditional; STIBP conditional; RSB filling; PBRSB-eIBRS Not affected; BHI SW loop, KVM SW loop"
+              },
+              {
+                "field": "Vulnerability Srbds:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Tsa:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Tsx async abort:",
+                "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+              },
+              {
+                "field": "Vulnerability Vmscape:",
+                "data": "Not affected"
+              }
+            ]
+          }
+        },
+        "workload": {
+          "signal": "metrics",
+          "writers": 2,
+          "cardinality": 1000,
+          "warmup_seconds": 15,
+          "duration_seconds": 70.291994531,
+          "write_interval_seconds": 1,
+          "ingest": {
+            "attempts": 140,
+            "errors": 0,
+            "error_rate": 0.0,
+            "accepted_rows": 140000,
+            "accepted_rows_per_sec": 1991.691954881968,
+            "latency_seconds": {
+              "count": 140,
+              "p50": 0.02357717600000342,
+              "p95": 0.026053994999983843,
+              "p99": 0.027928905999999643
+            },
+            "empty_queries": 0,
+            "status_counts": {
+              "200": 140
+            }
+          },
+          "query": {
+            "attempts": 280,
+            "errors": 0,
+            "error_rate": 0.0,
+            "accepted_rows": 0,
+            "accepted_rows_per_sec": 0.0,
+            "latency_seconds": {
+              "count": 280,
+              "p50": 0.024246400999999196,
+              "p95": 0.07313216099998954,
+              "p99": 0.11608701699998392
+            },
+            "empty_queries": 0,
+            "status_counts": {
+              "200": 280
+            }
+          },
+          "telemetry": {
+            "wal_lag_records_max": 1905.0,
+            "wal_lag_records_last": [
+              0.0,
+              1905.0
+            ],
+            "rss_kib_peak_by_role": {
+              "metrics-querier": 124320,
+              "minio": 249088,
+              "metrics-compactor": 31868,
+              "metrics-distributor": 24992,
+              "broker": 36404,
+              "metrics-block-builder": 40248
+            },
+            "object_requests": 1709.0,
+            "object_bytes": 36895814.0,
+            "maintenance": {
+              "krabka_metrics_compaction_runs_total{status=\"ok\"}": 64.0,
+              "krabka_metrics_compaction_blocks_total": 27.0,
+              "krabka_metrics_compaction_deletion_sweeps_total": 70.0,
+              "krabka_metrics_compaction_deleted_blocks_total": 56.0,
+              "krabka_metrics_compaction_deleted_sidecars_total": 54.0,
+              "krabka_metrics_compaction_deletion_failures_total": 0.0,
+              "krabka_metrics_compaction_orphan_sweeps_total": 34.0,
+              "krabka_metrics_compaction_orphans_deleted_total": 0.0,
+              "krabka_metrics_compaction_orphan_failures_total": 0.0
+            },
+            "cpu_seconds_by_role": {},
+            "expected_restart_gaps": 0,
+            "scrape_errors": 0
+          },
+          "tenant": "soak",
+          "tenants": {
+            "soak": {
+              "attempts": 140,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 140000,
+              "accepted_rows_per_sec": 1991.691954881968,
+              "latency_seconds": {
+                "count": 140,
+                "p50": 0.02357717600000342,
+                "p95": 0.026053994999983843,
+                "p99": 0.027928905999999643
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 140
+              }
+            }
+          },
+          "objectives_met": true
+        },
+        "runtime_including_startup_and_seed_seconds": 106.14,
+        "allocation_calls": 9151226,
+        "temporary_allocations": 1530036,
+        "peak_heap_decimal_mb": 16.17,
+        "string_clone_calls": 3392825,
+        "matching_series_present_in_summary": false,
+        "query_attempts": 280,
+        "accepted_rows": 140000
+      }
+    },
+    "retention_decision": "Pending uninstrumented same-VM revision controls. Candidate image includes the subsequently rejected Loki owned-index experiment; final retained-branch qualification must use the final source.",
+    "limitations": [
+      "Instrumented timings and heaptrack totals include startup and seed and do not establish uninstrumented CPU, memory or latency gains.",
+      "A clone stack absent from this summarized allocation report is not proof that no such allocations occur.",
+      "Both captures use Intel Xeon model 79; previous captures may use different processors. No unmatched-host performance ratio claimed."
     ]
   }
 }

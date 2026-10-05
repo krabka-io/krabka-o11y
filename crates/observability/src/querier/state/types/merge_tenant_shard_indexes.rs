@@ -8,11 +8,13 @@ pub(crate) fn merge_tenant_shard_indexes(
     let mut merged_blocks = BTreeMap::new();
 
     for (label_index, block_index) in indexes {
-        for (_, labels) in label_index.into_tenant_series(tenant) {
+        for (_, labels) in label_index.tenant_series(tenant) {
             merged_labels.insert_series(tenant.to_string(), labels);
         }
-        for block in block_index.into_blocks() {
-            merged_blocks.entry(block.key.object_key()).or_insert(block);
+        for block in block_index.blocks() {
+            merged_blocks
+                .entry(block.key.object_key())
+                .or_insert_with(|| block.clone());
         }
     }
 
@@ -32,12 +34,11 @@ mod tests {
     use super::{BlockIndex, LabelIndex, merge_tenant_shard_indexes};
 
     #[test]
-    fn owned_shards_keep_complete_indexes_and_move_their_payloads() {
+    fn merged_shards_preserve_complete_indexes_and_first_block() {
         let mut first_labels = LabelIndex::default();
         let api = first_labels.insert_series("tenant", labels([("app", "api"), ("é", "🦀")]));
-        let alpha = first_labels.insert_series("tenant", labels([("app", "alpha")]));
+        first_labels.insert_series("tenant", labels([("app", "alpha")]));
         first_labels.insert_series("other", labels([("app", "hidden")]));
-        let label_buffer = first_labels.labels_for("tenant", alpha).unwrap()["app"].as_ptr();
 
         let first = BlockDescriptor::new_with_size(
             BlockKey::new("tenant", 0, 1, 2, TimeRange::new(10, 20).unwrap()),
@@ -46,7 +47,6 @@ mod tests {
         );
         let mut first_blocks = BlockIndex::default();
         first_blocks.insert(first.clone());
-        let tenant_buffer = first_blocks.blocks()[0].key.tenant.as_ptr();
 
         let mut second_labels = LabelIndex::default();
         second_labels.insert_series("tenant", labels([("app", "api"), ("é", "🦀")]));
@@ -77,9 +77,5 @@ mod tests {
 
         assert2::assert!(actual_labels == expected_labels);
         assert2::assert!(actual_blocks == expected_blocks);
-        assert2::assert!(actual_blocks.blocks()[0].key.tenant.as_ptr() == tenant_buffer);
-        assert2::assert!(
-            actual_labels.labels_for("tenant", alpha).unwrap()["app"].as_ptr() == label_buffer
-        );
     }
 }
