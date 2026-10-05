@@ -98,6 +98,17 @@ async fn dominated_cold_blocks_are_not_read_and_limits_still_count_the_full_wind
     }))
     .unwrap();
     assert!(engine.query_instant(&tenant, "up", 12_000).await.unwrap() == expected);
+    let aggregate: QueryResult = serde_json::from_value(serde_json::json!({
+        "InstantVector": [{"labels": {}, "ts_ms": 12_000, "value": {"Float": 7.0}}]
+    }))
+    .unwrap();
+    assert!(
+        engine
+            .query_instant(&tenant, "sum(up)", 12_000)
+            .await
+            .unwrap()
+            == aggregate
+    );
     assert!(fixture.reads.load(Ordering::SeqCst) == 0);
 
     // The generic merged store is a control that always takes the full scan.
@@ -107,6 +118,8 @@ async fn dominated_cold_blocks_are_not_read_and_limits_still_count_the_full_wind
     );
     for query in [
         "up",
+        "sum(up)",
+        "avg(up)",
         "timestamp(up)",
         "up offset 2s",
         "max_over_time(up[20s])",
@@ -241,4 +254,43 @@ async fn cold_newer_or_missing_series_fall_back_and_stale_hot_markers_stay_selec
         engine.query_instant(&tenant, "up", 14_000).await.unwrap()
             == QueryResult::InstantVector(Vec::new())
     );
+}
+
+#[tokio::test]
+async fn latest_aggregate_preserves_compensated_sums_across_series() {
+    let fixture = fixture(&[("api", 10_000)]).await;
+    let tenant = TenantId::new("tenant-a").unwrap();
+    fixture.head.update(|hot| {
+        for (job, value) in [("api", 1e16), ("db", 1.0), ("worker", -1e16)] {
+            hot.push_float(
+                "tenant-a",
+                Labels::from_pairs([("__name__", "up"), ("job", job)]),
+                13_000,
+                value,
+            );
+        }
+    });
+    let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
+    let expected: QueryResult = serde_json::from_value(serde_json::json!({
+        "InstantVector": [{"labels": {}, "ts_ms": 14_000, "value": {"Float": 1.0}}]
+    }))
+    .unwrap();
+    assert!(
+        engine
+            .query_instant(&tenant, "sum(up)", 14_000)
+            .await
+            .unwrap()
+            == expected
+    );
+    assert!(fixture.reads.load(Ordering::SeqCst) == 0);
+    let control = PromqlEngine::new(
+        Arc::new(fixture.store.current_store(5_000, 14_000).await.unwrap()),
+        EngineOpts::default(),
+    );
+    for query in ["sum(up)", "avg(up)", "sum by (job) (up)", "topk(1, up)"] {
+        assert!(
+            engine.query_instant(&tenant, query, 14_000).await.unwrap()
+                == control.query_instant(&tenant, query, 14_000).await.unwrap()
+        );
+    }
 }
