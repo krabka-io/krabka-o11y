@@ -97,11 +97,18 @@ jobs:
           bazelisk-cache: true
           repository-cache: true
           disk-cache: false
+      - uses: ./.github/actions/remote-cache
+        if: inputs.image_artifact_run == ''
+        with:
+          api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+          client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
+          client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
+          upload: 'true'
       - name: Build and preserve this commit's image
         if: inputs.image_artifact_run == ''
         run: |
           set -euo pipefail
-          bazel run -c opt --remote_cache= --bes_backend= //bazel/images/krabka:load
+          bazel run -c opt --bes_backend= //bazel/images/krabka:load
           manifest=$(bazel cquery -c opt //bazel/images/krabka:image_manifest_blob --output=files)
           image="localhost/krabka-o11y:sha-${GITHUB_SHA::12}"
           identity=$(docker image ls --filter reference=krabka-o11y:dev --format '{{.ID}}' | head -1)
