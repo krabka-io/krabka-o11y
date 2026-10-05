@@ -35,7 +35,7 @@ use crate::{
 /// The copy is cheap by construction: the store keeps its rows in chunks that
 /// a clone shares by pointer, so it is bounded by each tenant's open chunk
 /// rather than by the size of the head. A WAL-tail poll also applies its whole
-/// batch through [`WalHead::apply_wal_records_at`], under one lock and one
+/// batch through [`WalHead::apply_owned_wal_records_at`], under one lock and one
 /// copy, rather than one per record.
 ///
 /// A reader never sees a half-applied batch. The writer mutates a store that
@@ -132,6 +132,21 @@ impl WalHead {
         self.update(|store| {
             for (record, partition, offset) in records {
                 store.apply_wal_record(record);
+                store.record_offset(partition, offset);
+            }
+        });
+    }
+
+    /// Consumes a decoded WAL batch, moving its label strings into the head.
+    /// The batch and its watermarks publish atomically, as with the borrowed API.
+    pub fn apply_owned_wal_records_at(
+        &self,
+        records: impl IntoIterator<Item = (WalRecord, PartitionIndex, Offset)>,
+    ) {
+        self.update(|store| {
+            for (mut record, partition, offset) in records {
+                let labels = Arc::new(std::mem::take(&mut record.labels).into_iter().collect());
+                store.apply_wal_record_with_labels(&record, labels);
                 store.record_offset(partition, offset);
             }
         });
