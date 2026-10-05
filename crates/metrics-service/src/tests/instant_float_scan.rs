@@ -78,6 +78,100 @@ async fn fixture(cold: &[(&str, i64)]) -> Fixture {
 }
 
 #[tokio::test]
+async fn refreshing_store_preserves_shared_labels_and_tenant_deletion() {
+    let fixture = fixture(&[]).await;
+    let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
+    let hot = fixture
+        .head
+        .series_shared("tenant-a", &matchers, 5_000, 12_000)
+        .await
+        .unwrap();
+    let shared = fixture
+        .store
+        .series_shared("tenant-a", &matchers, 5_000, 12_000)
+        .await
+        .unwrap();
+    assert!(shared.len() == 1);
+    assert!(shared[0].as_ref() == &labels());
+    assert!(Arc::ptr_eq(&shared[0], &hot[0]));
+    let tenant = TenantId::new("tenant-a").unwrap();
+    let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
+    let expected: QueryResult = serde_json::from_value(serde_json::json!({
+        "InstantVector": [{"labels": {"__name__": "up", "job": "api"},
+            "ts_ms": 12_000, "value": {"Float": 7.0}}]
+    }))
+    .unwrap();
+    assert!(engine.query_instant(&tenant, "up", 12_000).await.unwrap() == expected);
+    assert!(
+        fixture
+            .store
+            .series_shared("other", &matchers, 5_000, 12_000)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        fixture
+            .store
+            .series_shared("tenant-a", &matchers, 12_001, 13_000)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let base = url::Url::parse("memory:///").unwrap();
+    let writer = BlockStore::new(Arc::clone(&fixture.objects), base);
+    let sink = ObjectStoreCompactionIndexSink::new(Arc::clone(&fixture.objects));
+    write_float_manifest(
+        &writer,
+        &sink,
+        "tenant-a",
+        "api",
+        10_000,
+        "metrics/tenant-a/float/published.parquet",
+        1,
+    )
+    .await;
+    fixture.store.invalidate().await;
+    let published = fixture
+        .store
+        .series_shared("tenant-a", &matchers, 5_000, 12_000)
+        .await
+        .unwrap();
+    assert!(published.len() == 1);
+    assert!(published[0].as_ref() == &labels());
+    assert!(!Arc::ptr_eq(&published[0], &hot[0]));
+    assert!(Arc::ptr_eq(&shared[0], &hot[0]));
+
+    fixture
+        .objects
+        .put(
+            &Path::from("mimir-tenant-deletions/tenant-a.json"),
+            PutPayload::from_static(b"{}"),
+        )
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .store
+            .series_shared("tenant-a", &matchers, 5_000, 12_000)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        !fixture
+            .head
+            .series_shared("tenant-a", &matchers, 5_000, 12_000)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(shared[0].as_ref() == &labels());
+    assert!(fixture.reads.load(Ordering::Relaxed) == 0);
+}
+
+#[tokio::test]
 async fn dominated_cold_blocks_are_not_read_and_limits_still_count_the_full_window() {
     let fixture = fixture(&[("api", 10_000)]).await;
     let tenant = TenantId::new("tenant-a").unwrap();

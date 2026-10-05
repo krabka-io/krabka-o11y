@@ -286,6 +286,19 @@ impl MetricStore for RefreshingMetricBlockStore {
             .await
     }
 
+    async fn series_shared(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<Vec<Arc<Labels>>, krabka_promql::PromqlError> {
+        self.current_store_for_tenant(tenant, start_ms, end_ms)
+            .await?
+            .series_shared(tenant, matchers, start_ms, end_ms)
+            .await
+    }
+
     #[tracing::instrument(
         level = "debug",
         name = "metrics.store.exemplars",
