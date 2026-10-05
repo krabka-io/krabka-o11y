@@ -31,3 +31,5 @@ mod querier_state_with_request_tenant_index_tolerates_absent_shards;
 mod shared_snapshots_survive_pruning_and_reach_http_queries;
 mod the_frontier_refresher_hands_back_a_handle_that_carries_its_panic;
 mod the_shard_catalog_lists_each_compacted_range_exactly_once;
+
+mod query_source_labels;

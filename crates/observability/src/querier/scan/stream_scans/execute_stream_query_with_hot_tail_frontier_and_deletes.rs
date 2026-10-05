@@ -31,7 +31,7 @@ pub(crate) async fn execute_stream_query_with_hot_tail_frontier_and_deletes<
 
     for record in hot_tail {
         let record: &WalLogRecord = record.borrow();
-        append_matching_hot_log_record(&mut streams, plan, record, frontier, delete_filters);
+        append_matching_hot_log_record(&mut streams, plan, record, frontier, delete_filters, false);
     }
     sort_loki_stream_values(&mut streams);
     apply_distinct_to_streams(&mut streams, &plan.query);

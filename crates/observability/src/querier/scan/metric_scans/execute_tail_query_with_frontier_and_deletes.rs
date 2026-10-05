@@ -22,7 +22,7 @@ pub(crate) fn execute_tail_query_with_frontier_and_deletes(
 ) -> Value {
     let mut streams: BTreeMap<Labels, Vec<LokiStreamEntry>> = BTreeMap::new();
     for record in hot_tail {
-        append_matching_hot_log_record(&mut streams, plan, record, frontier, delete_filters);
+        append_matching_hot_log_record(&mut streams, plan, record, frontier, delete_filters, true);
     }
     if live && matches!(encoding, LokiStreamEncoding::Folded) && plan.query.pipeline.is_empty() {
         let mut live_streams: BTreeMap<Labels, Vec<LokiStreamEntry>> = BTreeMap::new();
