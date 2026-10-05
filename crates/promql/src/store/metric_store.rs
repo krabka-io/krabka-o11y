@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{
     ExemplarScan, LabelMatcher, LabelNameCardinality, LabelValueCardinality, Labels, MetadataScan,
     PromqlError, ScanResult, TsdbBlock, TsdbStats,
@@ -75,6 +77,25 @@ pub trait MetricStore: Send + Sync {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<Vec<Labels>, PromqlError>;
+
+    /// Immutable labels of the same matched series as [`Self::series`].
+    ///
+    /// Stores with shared labels can retain them through query evaluation.
+    /// The default preserves the owned-series behavior for other stores.
+    async fn series_shared(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<Vec<Arc<Labels>>, PromqlError> {
+        Ok(self
+            .series(tenant, matchers, start_ms, end_ms)
+            .await?
+            .into_iter()
+            .map(Arc::new)
+            .collect())
+    }
 
     /// Returns the exemplars attached to matched series in `[start_ms, end_ms]`.
     ///

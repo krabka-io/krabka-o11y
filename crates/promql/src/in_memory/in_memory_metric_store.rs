@@ -88,8 +88,22 @@ impl InMemoryMetricStore {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<Vec<Labels>> {
+        Ok(self
+            .matched_series_shared(tenant, matchers, start_ms, end_ms)?
+            .into_iter()
+            .map(|labels| labels.as_ref().clone())
+            .collect())
+    }
+
+    pub(crate) fn matched_series_shared(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<Vec<Arc<Labels>>> {
         let matchers = prepare_matchers(matchers)?;
-        let mut by_fp: BTreeMap<SeriesFingerprint, Labels> = BTreeMap::new();
+        let mut by_fp: BTreeMap<SeriesFingerprint, Arc<Labels>> = BTreeMap::new();
         if let Some(rows) = self.floats.get(tenant) {
             for row in rows.iter() {
                 if !by_fp.contains_key(&row.fp)
@@ -97,7 +111,7 @@ impl InMemoryMetricStore {
                 {
                     by_fp
                         .entry(row.fp)
-                        .or_insert_with(|| row.labels.as_ref().clone());
+                        .or_insert_with(|| Arc::clone(&row.labels));
                 }
             }
         }
@@ -108,7 +122,7 @@ impl InMemoryMetricStore {
                 {
                     by_fp
                         .entry(row.fp)
-                        .or_insert_with(|| row.labels.as_ref().clone());
+                        .or_insert_with(|| Arc::clone(&row.labels));
                 }
             }
         }
