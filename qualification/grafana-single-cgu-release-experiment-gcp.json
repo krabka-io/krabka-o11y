@@ -118,7 +118,7 @@
       "native_wrappers_passed": 7
     },
     "full_ordinary_scope": {
-      "status": "running",
+      "status": "passed",
       "source_commit": "502ab8f4dc0ff42e63dc0f6bd55b635591f10713",
       "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
       "target_pattern": "//...",
@@ -150,7 +150,162 @@
           "log_path": "qualification/evidence/correctness/single-cgu-full-ordinary-45d9c94b-failed/default-configuration-diagnosis.log",
           "log_sha256": "8ef80e1622d2dc5d61f55a5ba7d99b193f0a438a9de0aef13cadcf166cad7a34"
         }
-      }
+      },
+      "targets_passed": 385,
+      "rust_cases_passed": 5564,
+      "ignored_cases": 63,
+      "ignored_cases_by_target": {
+        "//crates/integration:alloy_client_test": {
+          "cases": 1,
+          "names": [
+            "alloy_sends_every_public_protocol_without_a_krabka_adapter"
+          ]
+        },
+        "//crates/integration:prometheus_client_test": {
+          "cases": 1,
+          "names": [
+            "official_prometheus_sends_remote_write_v1_and_v2"
+          ]
+        },
+        "//crates/logql:parser_proptest_test": {
+          "cases": 2,
+          "names": [
+            "a_bare_group_modifier_round_trips_before_a_parenthesised_operand",
+            "a_signed_operand_round_trips_after_a_vector_matching_modifier"
+          ]
+        },
+        "//crates/metrics-service:diff_mimir_test": {
+          "cases": 1,
+          "names": [
+            "mimir_compliance_corpus_matches_krabka"
+          ]
+        },
+        "//crates/metrics-service:diff_prometheus_test": {
+          "cases": 1,
+          "names": [
+            "prometheus_compliance_corpus_matches_krabka"
+          ]
+        },
+        "//crates/metrics-service:grafana_integration_test": {
+          "cases": 1,
+          "names": [
+            "grafana_e2e_covers_all_api_surfaces_and_query_shapes"
+          ]
+        },
+        "//crates/metrics-service:metrics_deployment_test": {
+          "cases": 12,
+          "names": [
+            "mimir_deployment::frontend_preserves_unaligned_float_and_histogram_queries_across_cache_hits",
+            "mimir_deployment::ha_replicas_v1_are_deduplicated_and_tenant_isolated",
+            "mimir_deployment::ha_replicas_v2_are_deduplicated_and_tenant_isolated",
+            "mimir_deployment::metadata_and_exemplars_v1_survive_storage_and_restart",
+            "mimir_deployment::metadata_and_exemplars_v2_survive_storage_and_restart",
+            "mimir_deployment::native_histograms_v1_survive_compaction_and_restart",
+            "mimir_deployment::native_histograms_v2_survive_compaction_and_restart",
+            "mimir_deployment::otlp_gauges_counters_and_histograms_preserve_translation_and_metadata",
+            "mimir_deployment::out_of_order_floats_and_histograms_obey_the_tenant_window",
+            "mimir_deployment::remote_read_preserves_samples_histograms_hints_and_streamed_frames",
+            "remote_write_v1_survives_the_hot_to_block_transition_and_restart",
+            "remote_write_v2_survives_the_hot_to_block_transition_and_restart"
+          ]
+        },
+        "//crates/metrics-service:tsdb_import_test": {
+          "cases": 1,
+          "names": [
+            "an_imported_block_answers_queries_as_prometheus_serving_the_block"
+          ]
+        },
+        "//crates/observability:grafana_e2e_test": {
+          "cases": 1,
+          "names": [
+            "grafana_reads_the_same_answer_from_krabka_and_from_loki"
+          ]
+        },
+        "//crates/observability:grafana_integration_test": {
+          "cases": 1,
+          "names": [
+            "a_grafana_loki_datasource_reads_the_querier_over_the_proxy_and_the_backend_path"
+          ]
+        },
+        "//crates/observability:loki_deployment_test": {
+          "cases": 12,
+          "names": [
+            "categorized_metadata_and_parser_labels_survive_storage",
+            "deletes_cancel_and_remove_matching_metadata_from_stored_blocks",
+            "duplicate_identity_includes_timestamp_stream_and_metadata",
+            "explore_detected_fields_and_label_index_survive_storage",
+            "gzip_push_survives_storage_and_restart",
+            "json_push_survives_storage_and_restart",
+            "multi_tenant_queries_preserve_isolation_across_restart",
+            "otlp_normalization_and_metadata_survive_storage",
+            "single_binary_shutdown_drains_logs_to_storage",
+            "snappy_protobuf_push_survives_storage_and_restart",
+            "tail_reads_backlog_then_live_wal_without_cross_tenant_entries",
+            "tenant_query_limits_apply_before_and_after_storage"
+          ]
+        },
+        "//crates/observability:loki_differential_test": {
+          "cases": 1,
+          "names": [
+            "loki_corpus_matches_krabka"
+          ]
+        },
+        "//crates/profiles:pyroscope_differential_test": {
+          "cases": 8,
+          "names": [
+            "grafana_accepts_pyroscope_datasource_pointing_at_krabka",
+            "grafana_renders_krabka_profiles_end_to_end",
+            "official_profilecli_uploads_elf_through_public_debuginfo_api",
+            "real_pyroscope_legacy_ingest_formats_match_krabka",
+            "real_pyroscope_otlp_export_matches_krabka",
+            "real_pyroscope_profile_types_match_krabka",
+            "real_pyroscope_render_matches_krabka_after_identical_ingest",
+            "real_pyroscope_series_and_stats_match_krabka_after_identical_ingest"
+          ]
+        },
+        "//crates/traces:compaction_memory_test": {
+          "cases": 1,
+          "names": [
+            "compaction_memory_worker"
+          ]
+        },
+        "//crates/traces:grafana_e2e_test": {
+          "cases": 1,
+          "names": [
+            "grafana_e2e_full_surface"
+          ]
+        },
+        "//crates/traces:tempo_deployment_test": {
+          "cases": 12,
+          "names": [
+            "gzip_otlp_http_survives_storage_and_restart",
+            "jaeger_grpc_receiver_survives_storage_and_restart",
+            "otlp_grpc_survives_storage_and_restart",
+            "otlp_http_survives_storage_and_restart",
+            "otlp_ingest_limit_rejects_a_batch_without_leaking_spans",
+            "single_binary_shutdown_drains_an_in_flight_trace_to_storage",
+            "tag_names_with_special_characters_survive_storage_and_restart",
+            "tag_scopes_and_typed_values_survive_storage_and_restart",
+            "tenants_keep_the_same_trace_id_isolated_across_restart",
+            "trace_by_id_assembles_separate_persisted_batches_without_duplicates",
+            "traceql_search_uses_structural_relationships_after_restart",
+            "zipkin_receiver_survives_storage_and_restart"
+          ]
+        },
+        "//crates/traces:tempo_differential_test": {
+          "cases": 6,
+          "names": [
+            "grafana_accepts_tempo_datasource_pointing_at_krabka",
+            "grafana_service_graph_prometheus_datasource_and_series",
+            "real_tempo_and_krabka_accept_query_param_alias",
+            "real_tempo_and_krabka_match_basic_by_id_and_search",
+            "real_tempo_and_krabka_match_traceql_metrics_by_labels",
+            "real_tempo_and_krabka_match_traceql_metrics_query_range"
+          ]
+        }
+      },
+      "provenance_path": "qualification/evidence/correctness/single-cgu-full_ordinary_scope-502ab8f4/provenance.json",
+      "provenance_sha256": "5809f9b5cf65733f0b869e460546dd06e5e8b734f7483386a4f384d2825fd7db"
     },
     "native_wrappers_passed": 10,
     "native_cases_passed": 67,
@@ -163,7 +318,7 @@
       "provenance_sha256": "9fe05af472c79c7536c00f97d38b66ac428d894a6b2a15ec4690da419b9136e7"
     }
   },
-  "next_action": "Rerun full ordinary correctness scope after the test-only recursion fix. Measure a metrics-specific compiler setting and a guarded compactor metadata candidate on final source.",
+  "next_action": "Full ordinary scope passed after the test-only repair. Global compiler setting stays rejected due to Loki query regression. Test a metrics-specific setting separately; proceed with guarded compactor content-cache experiment.",
   "baseline_image_verified": {
     "image_provenance": {
       "run_id": 37371016528,

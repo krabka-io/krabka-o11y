@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "experiment": "Bounded compactor manifest contents with fresh object identity",
+  "status": "baseline_diagnostic_dispatched_candidate_drafted",
+  "baseline_source_commit": "670cd7d1e4c9c21f3229ededf76f15b4dee53109",
+  "base_main": "92989bb29d44c629fa4ac88147a3fce8b1604776",
+  "performance_qualified": false,
+  "correctness_qualified": false,
+  "retained": false,
+  "source_comparison": "docs/grafana-upstream-source-comparison.md",
+  "selection": "Repeated manifest GETs in the existing two-second compactor passes contribute to object traffic. Cache verified raw contents, preserving fresh listings, key validation and decode on every use. This does not change publication timing or reduce durability. Actual gain requires matched measurements.",
+  "candidate_draft_sha256": "c430713efdea69a844f39e3588167ed3243d7c64b835e8595dc0d9f17c308414",
+  "candidate_applied": false,
+  "baseline_capture": {
+    "run_id": 37385206080,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37385206080",
+    "harness_head_sha": "670cd7d1e4c9c21f3229ededf76f15b4dee53109",
+    "inputs": {
+      "signal": "metrics",
+      "profiling": "cpu",
+      "deployment_target": "split",
+      "profiles_target": "all"
+    },
+    "status": "dispatched",
+    "diagnostic_only": true,
+    "live_instances_at_dispatch": []
+  },
+  "next_action": "Finish the pinned correctness suite, apply and validate the identity/invalidation ledger and compactor caller, then build candidate and measure exact release image pairs on GCP.",
+  "candidate_design": {
+    "contents_byte_budget": 1048576,
+    "entry_limit": 128,
+    "fresh_listing_each_pass": true,
+    "full_object_meta_identity_checked": true,
+    "etag_or_version_required": true,
+    "decode_and_key_validation_each_use": true,
+    "cache_bound_to_store_handle": true,
+    "publication_timing_unchanged": true,
+    "erasure_and_retention_paths_unchanged": true
+  },
+  "draft_checks": {
+    "rustfmt_syntax_and_formatting": "passed",
+    "patch_applies_to_current_source": true,
+    "type_checks_or_tests": "not_run_yet",
+    "cache_invalidated_on_overwrite_removal_or_publication_marker_change": "independent_ledger_prepared_not_run",
+    "compaction_samples_tenant_and_deferred_deletion": "caller_ledger_prepared_not_run"
+  }
+}
