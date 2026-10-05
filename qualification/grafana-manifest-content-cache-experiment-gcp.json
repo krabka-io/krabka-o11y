@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Bounded compactor manifest contents with fresh object identity",
-  "status": "correctness_verified_candidate_awaiting_gcp_capture",
+  "status": "correctness_verified_candidate_diagnostic_capture_running",
   "baseline_source_commit": "670cd7d1e4c9c21f3229ededf76f15b4dee53109",
   "base_main": "92989bb29d44c629fa4ac88147a3fce8b1604776",
   "performance_qualified": false,
@@ -81,7 +81,7 @@
       }
     }
   },
-  "next_action": "Build and profile this exact candidate on GCP, verify release-image runtime equality, then compare preserved baseline and candidate in three uninstrumented alternating pairs.",
+  "next_action": "Verify the registered candidate image and diagnostic capture, check runtime and compiler equality, then dispatch three uninstrumented exact-image GCP pairs.",
   "candidate_design": {
     "contents_byte_budget": 1048576,
     "entry_limit": 128,
@@ -203,5 +203,25 @@
     }
   },
   "correctness_qualification_scope": "Applied candidate source hashes: all 385 ordinary default-compiler targets (5571 Rust cases, 63 explicitly ignored container cases), three native Mimir/Prometheus/deployment wrappers (14 cases, none ignored), and key-only cache negative control followed by restored-guard success. Performance retention remains unqualified.",
-  "candidate_draft_is_historical": true
+  "candidate_draft_is_historical": true,
+  "candidate_capture": {
+    "run_id": 37390739256,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37390739256",
+    "harness_head_sha": "d26b82c17940fb8e51514101cadf3c1e815484c0",
+    "candidate_source_commit": "d26b82c17940fb8e51514101cadf3c1e815484c0",
+    "inputs": {
+      "signal": "metrics",
+      "profiling": "cpu",
+      "deployment_target": "split",
+      "profiles_target": "all"
+    },
+    "status": "in_progress",
+    "diagnostic_only": true,
+    "live_instances_at_dispatch": [
+      {
+        "name": "gcp-runner-accdc255b322409f",
+        "status": "RUNNING"
+      }
+    ]
+  }
 }
