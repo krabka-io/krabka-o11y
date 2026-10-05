@@ -481,3 +481,7 @@ results on AMD EPYC 7B12. `fingerprint_labels` still clones names and
 values into a temporary canonical label map before hashing, reached through
 the production hot-store caller. Flame-tree construction also copies strings.
 These stacks select the next investigation; no new Pyroscope gain is claimed.
+
+The borrowed-selection image `ca99cacd` has verified [CPU](https://github.com/krabka-io/krabka-o11y/actions/runs/37299759203) and [allocation](https://github.com/krabka-io/krabka-o11y/actions/runs/37299762062) captures. Archive digests and all 162 and 130 raw checksums pass. The whole-span clone is absent from the allocation summary. It records 73,220,999 allocations and 7,010,365 string clones over 104.90 seconds including startup and seed. Both this pass and the preceding pass accept 14,000 spans on AMD EPYC 7B12, but this pass completes 147 queries versus 138. These totals are not a per-operation comparison; peak Rust heap rises from 35.16 to 41.84MB. The same-VM uninstrumented comparison remains the retention gate.
+
+Independent image checks show that only `krabka-traces` differs from `8541b68f`; the other six application binaries, runtime configuration, base layer and all remaining filesystem entries match. All 380 entries were compared. This equivalence does not establish a performance result for the new traces binary.
