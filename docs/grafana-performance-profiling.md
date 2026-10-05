@@ -440,3 +440,21 @@ model 79, versus 151 on AMD EPYC 7B12 in the preceding shared-record pass;
 its lower startup-inclusive totals do not establish a per-operation gain.
 The [experiment record](../qualification/grafana-loki-decimal-prefix-experiment-gcp.json)
 preserves both comparisons and exact image provenance.
+
+Fresh Tempo [CPU](https://github.com/krabka-io/krabka-o11y/actions/runs/37297342809)
+and [allocation](https://github.com/krabka-io/krabka-o11y/actions/runs/37297346540)
+captures on `ade83dfa` passed, with 162 and 130 raw checksums independently
+verified. The allocation pass recorded 75,809,673 allocations and 11,347,656
+string-clone calls over 105.50 seconds including startup and seed, accepting
+14,000 spans and completing 138 queries without errors or empty results.
+The stacks still reach `Span::clone` from `LiveStore::batches_in_window`.
+
+The next experiment selects and sorts references to stored spans, avoiding
+that temporary whole-span copy before output-row encoding. Existing sorting
+and nested-set routines accept standard `Borrow<Span>`; complete trace
+metadata still uses the full stored trace, and returned Arrow batches own
+their payload. All 37 scoped traces/TraceQL checks pass, including the real
+Tempo differential suite, Grafana, both corpus wrappers and Clippy. An
+independent full-row ledger checks clipped roots, equal-time ordering,
+duplicate attributes, reserved resource keys, bytes, events, links, tenant
+filtering and output lifetime. Performance qualification is pending.

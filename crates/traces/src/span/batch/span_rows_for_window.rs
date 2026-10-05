@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+
 use super::{
     BlockNestedSet, Span, SpanRow, Time, TimeExt, assign_nested_set, block_kind, block_status,
     child_counts, root_info, span_attrs, span_events, span_links,
@@ -5,7 +7,10 @@ use super::{
 
 /// Build rows for one trace, keeping whole-trace metadata when its window is clipped.
 /// Callers can then pack several traces without mixing their root columns.
-pub(crate) fn span_rows_for_window(row_spans: &[Span], trace_spans: &[Span]) -> Vec<SpanRow> {
+pub(crate) fn span_rows_for_window(
+    row_spans: &[impl Borrow<Span>],
+    trace_spans: &[Span],
+) -> Vec<SpanRow> {
     // Nested-set intervals and child counts describe the rows themselves, so
     // they are computed over `row_spans`. Trace-level columns describe the
     // whole trace, so they come from `trace_spans`.
@@ -14,6 +19,7 @@ pub(crate) fn span_rows_for_window(row_spans: &[Span], trace_spans: &[Span]) -> 
     let (root_service_name, root_span_name, trace_start, trace_duration) = root_info(trace_spans);
     row_spans
         .iter()
+        .map(Borrow::borrow)
         .zip(nested)
         .zip(child_counts)
         .map(|((span, nested_set), child_count)| SpanRow {
