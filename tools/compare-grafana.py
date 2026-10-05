@@ -24,7 +24,7 @@ env = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(env)
 PRODUCTS = {
     'metrics': ('mimir', 'mirror.gcr.io/grafana/mimir@sha256:d42bfba7a8ef82a14b883a4cf235406324aeecae94c85eba000bdaa21aa2f289', 9009),
-    'logs': ('loki', 'mirror.gcr.io/grafana/loki@sha256:81a6802ec4bd1b88c564494f06376889ed022998a188826190d26d2754ac2aae', 3100),
+    'logs': ('loki', 'docker.io/grafana/loki@sha256:81a6802ec4bd1b88c564494f06376889ed022998a188826190d26d2754ac2aae', 3100),
     'traces': ('tempo', 'mirror.gcr.io/grafana/tempo@sha256:19dca9c0b1801209424a757cd5970d6ffd7cfc9a7f4966c2a6795fbe29b495a8', 3200),
     'profiles': ('pyroscope', 'mirror.gcr.io/grafana/pyroscope@sha256:718b585ea168a616ca737018dbd1676992db9e5f1084ec4e9cd18f669326f334', 4040),
 }
