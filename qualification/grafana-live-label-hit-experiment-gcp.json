@@ -1,0 +1,2309 @@
+{
+  "schema_version": 1,
+  "source_commit": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+  "implementation_commit": "1b4752a8",
+  "measurement_qualified": true,
+  "retained_in_branch": true,
+  "decision": "Retain: query p99 and querier CPU improve in every isolated pair, with disjoint three-pair ranges. Whole-deployment CPU is unchanged; RSS is not consistently lower.",
+  "same_vm_revision_comparison": {
+    "measurement_qualified": true,
+    "provenance": {
+      "run_id": 37293323368,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37293323368",
+      "head_sha": "ade83dfae7fe10bf6dd71c9231454f4d6534ad5b",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111708642033,
+          "name": "compare (metrics)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37293323368/job/111708642033",
+          "runner_name": "gcp-runner-fd288df6970a4842",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T10:19:55Z",
+          "completed_at": "2026-10-05T10:43:44Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11340302999,
+          "name": "grafana-comparison-metrics-ade83dfae7fe10bf6dd71c9231454f4d6534ad5b-1",
+          "digest": "sha256:fe483470fc2d113e5b2eae891d886b39ea2353f2d6b2a372a7ab5402c3c87f03",
+          "size_in_bytes": 9236725,
+          "expires_at": "2027-01-03T09:56:29Z",
+          "signal": "metrics",
+          "verified_raw_files": 725
+        }
+      ]
+    },
+    "host": {
+      "cpu_count": 16,
+      "kernel": "7.0.0-1011-gcp",
+      "lscpu": {
+        "lscpu": [
+          {
+            "field": "Architecture:",
+            "data": "x86_64"
+          },
+          {
+            "field": "CPU op-mode(s):",
+            "data": "32-bit, 64-bit"
+          },
+          {
+            "field": "Address sizes:",
+            "data": "46 bits physical, 48 bits virtual"
+          },
+          {
+            "field": "Byte Order:",
+            "data": "Little Endian"
+          },
+          {
+            "field": "CPU(s):",
+            "data": "16"
+          },
+          {
+            "field": "On-line CPU(s) list:",
+            "data": "0-15"
+          },
+          {
+            "field": "Vendor ID:",
+            "data": "GenuineIntel"
+          },
+          {
+            "field": "Model name:",
+            "data": "Intel(R) Xeon(R) CPU @ 2.20GHz"
+          },
+          {
+            "field": "CPU family:",
+            "data": "6"
+          },
+          {
+            "field": "Model:",
+            "data": "79"
+          },
+          {
+            "field": "Thread(s) per core:",
+            "data": "2"
+          },
+          {
+            "field": "Core(s) per socket:",
+            "data": "8"
+          },
+          {
+            "field": "Socket(s):",
+            "data": "1"
+          },
+          {
+            "field": "Stepping:",
+            "data": "0"
+          },
+          {
+            "field": "BogoMIPS:",
+            "data": "4399.99"
+          },
+          {
+            "field": "Flags:",
+            "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch pti ssbd ibrs ibpb stibp fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm rdseed adx smap xsaveopt arat md_clear arch_capabilities"
+          },
+          {
+            "field": "Hypervisor vendor:",
+            "data": "KVM"
+          },
+          {
+            "field": "Virtualization type:",
+            "data": "full"
+          },
+          {
+            "field": "L1d cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L1i cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L2 cache:",
+            "data": "2 MiB (8 instances)"
+          },
+          {
+            "field": "L3 cache:",
+            "data": "55 MiB (1 instance)"
+          },
+          {
+            "field": "NUMA node(s):",
+            "data": "1"
+          },
+          {
+            "field": "NUMA node0 CPU(s):",
+            "data": "0-15"
+          },
+          {
+            "field": "Vulnerability Gather data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Ghostwrite:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Indirect target selection:",
+            "data": "Mitigation; Aligned branch/return thunks"
+          },
+          {
+            "field": "Vulnerability Itlb multihit:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability L1tf:",
+            "data": "Mitigation; PTE Inversion"
+          },
+          {
+            "field": "Vulnerability Mds:",
+            "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+          },
+          {
+            "field": "Vulnerability Meltdown:",
+            "data": "Mitigation; PTI"
+          },
+          {
+            "field": "Vulnerability Mmio stale data:",
+            "data": "Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown"
+          },
+          {
+            "field": "Vulnerability Old microcode:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Reg file data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Retbleed:",
+            "data": "Mitigation; IBRS"
+          },
+          {
+            "field": "Vulnerability Spec rstack overflow:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Spec store bypass:",
+            "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+          },
+          {
+            "field": "Vulnerability Spectre v1:",
+            "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+          },
+          {
+            "field": "Vulnerability Spectre v2:",
+            "data": "Mitigation; IBRS; IBPB conditional; STIBP conditional; RSB filling; PBRSB-eIBRS Not affected; BHI SW loop, KVM SW loop"
+          },
+          {
+            "field": "Vulnerability Srbds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsa:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsx async abort:",
+            "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+          },
+          {
+            "field": "Vulnerability Vmscape:",
+            "data": "Not affected"
+          }
+        ]
+      }
+    },
+    "pairing": "Three fresh baseline/candidate deployment pairs on one VM, alternating first revision; native comparison also retained separately.",
+    "image_producers": {
+      "baseline": {
+        "run_id": 37286691135,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37286691135",
+        "source_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+        "artifact": {
+          "id": 11335716451,
+          "name": "comparison-image-logs-84351e6940b96e6b920ca53639447266a5a6dc4d",
+          "digest": "sha256:ba55ade869727f94e6dbc5602aecab5e7c7b1eefe0656e8b3f40f51913b72434",
+          "size_in_bytes": 308310498,
+          "expires_at": "2027-01-03T08:55:36Z"
+        },
+        "archive_digest_verified": true,
+        "all_image_file_checksums_verified": true,
+        "image_tag": "localhost/krabka-o11y:sha-84351e6940b9",
+        "manifest_digest": "sha256:8a6116ca8531f9ad4d49de010d1e4f83227c7084b012bef49918bf4e9a78680b",
+        "config_digest": "sha256:8a6116ca8531f9ad4d49de010d1e4f83227c7084b012bef49918bf4e9a78680b"
+      },
+      "candidate": {
+        "run_id": 37291441308,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37291441308",
+        "source_commit": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+        "artifact": {
+          "id": 11336964006,
+          "name": "comparison-image-metrics-8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+          "digest": "sha256:3f05e54dd82a88417a91a94409ba404a3025427b1ef0cb700101e5df2b9bb9bd",
+          "size_in_bytes": 308299590,
+          "expires_at": "2027-01-03T09:39:03Z"
+        },
+        "archive_digest_verified": true,
+        "all_image_file_checksums_verified": true,
+        "image_tag": "localhost/krabka-o11y:sha-8541b68fba52",
+        "manifest_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700",
+        "config_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700"
+      }
+    },
+    "pairs": [
+      {
+        "pair": 1,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "source_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+          "image_manifest_digest": "sha256:8a6116ca8531f9ad4d49de010d1e4f83227c7084b012bef49918bf4e9a78680b",
+          "report": "revisions/1-baseline/comparison-report.json",
+          "accepted_rows": 120000,
+          "query_attempts": 240,
+          "errors": 0,
+          "empty_queries": 0,
+          "objectives_met": true,
+          "coverage_fraction": 0.9997990079888175,
+          "broker_started_at": "2026-10-05T10:32:37.584781932Z"
+        },
+        "candidate": {
+          "source_commit": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+          "image_manifest_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700",
+          "report": "revisions/1-candidate/comparison-report.json",
+          "accepted_rows": 120000,
+          "query_attempts": 240,
+          "errors": 0,
+          "empty_queries": 0,
+          "objectives_met": true,
+          "coverage_fraction": 0.9997982836720314,
+          "broker_started_at": "2026-10-05T10:34:29.29217427Z"
+        }
+      },
+      {
+        "pair": 2,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "source_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+          "image_manifest_digest": "sha256:8a6116ca8531f9ad4d49de010d1e4f83227c7084b012bef49918bf4e9a78680b",
+          "report": "revisions/2-baseline/comparison-report.json",
+          "accepted_rows": 120000,
+          "query_attempts": 240,
+          "errors": 0,
+          "empty_queries": 0,
+          "objectives_met": true,
+          "coverage_fraction": 0.9998224418972397,
+          "broker_started_at": "2026-10-05T10:38:12.920178757Z"
+        },
+        "candidate": {
+          "source_commit": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+          "image_manifest_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700",
+          "report": "revisions/2-candidate/comparison-report.json",
+          "accepted_rows": 120000,
+          "query_attempts": 240,
+          "errors": 0,
+          "empty_queries": 0,
+          "objectives_met": true,
+          "coverage_fraction": 0.9998171006153519,
+          "broker_started_at": "2026-10-05T10:36:20.9332031Z"
+        }
+      },
+      {
+        "pair": 3,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "source_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+          "image_manifest_digest": "sha256:8a6116ca8531f9ad4d49de010d1e4f83227c7084b012bef49918bf4e9a78680b",
+          "report": "revisions/3-baseline/comparison-report.json",
+          "accepted_rows": 120000,
+          "query_attempts": 240,
+          "errors": 0,
+          "empty_queries": 0,
+          "objectives_met": true,
+          "coverage_fraction": 0.9998109994083704,
+          "broker_started_at": "2026-10-05T10:40:02.127391023Z"
+        },
+        "candidate": {
+          "source_commit": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+          "image_manifest_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700",
+          "report": "revisions/3-candidate/comparison-report.json",
+          "accepted_rows": 120000,
+          "query_attempts": 240,
+          "errors": 0,
+          "empty_queries": 0,
+          "objectives_met": true,
+          "coverage_fraction": 0.999833617449832,
+          "broker_started_at": "2026-10-05T10:41:51.009761886Z"
+        }
+      }
+    ],
+    "summary": {
+      "baseline": {
+        "average_cpu_cores": {
+          "median": 0.22391297921351855,
+          "min": 0.2213523600920102,
+          "max": 0.23287136173012324,
+          "values": [
+            0.23287136173012324,
+            0.22391297921351855,
+            0.2213523600920102
+          ]
+        },
+        "rss_kib": {
+          "median": 506052,
+          "min": 496616,
+          "max": 515024,
+          "values": [
+            506052,
+            496616,
+            515024
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.0314481010000236,
+          "min": 0.03127540200000567,
+          "max": 0.03197726100006548,
+          "values": [
+            0.03127540200000567,
+            0.0314481010000236,
+            0.03197726100006548
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.03998146200001429,
+          "min": 0.0367211860000225,
+          "max": 0.040922681999973065,
+          "values": [
+            0.040922681999973065,
+            0.0367211860000225,
+            0.03998146200001429
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.03955062402872786,
+            "min": 0.03928090405598589,
+            "max": 0.04222898470912489,
+            "values": [
+              0.04222898470912489,
+              0.03928090405598589,
+              0.03955062402872786
+            ]
+          },
+          "metrics-block-builder": {
+            "median": 0.0284783481614516,
+            "min": 0.02808193678006779,
+            "max": 0.029780988137417672,
+            "values": [
+              0.029780988137417672,
+              0.0284783481614516,
+              0.02808193678006779
+            ]
+          },
+          "metrics-compactor": {
+            "median": 0.009039122444755458,
+            "min": 0.008754828034860449,
+            "max": 0.009190239623873017,
+            "values": [
+              0.009190239623873017,
+              0.009039122444755458,
+              0.008754828034860449
+            ]
+          },
+          "metrics-distributor": {
+            "median": 0.03199310782203315,
+            "min": 0.03133468215246185,
+            "max": 0.03241022927806237,
+            "values": [
+              0.03241022927806237,
+              0.03133468215246185,
+              0.03199310782203315
+            ]
+          },
+          "metrics-querier": {
+            "median": 0.06073104750131539,
+            "min": 0.060633752487304196,
+            "max": 0.06277835798946842,
+            "values": [
+              0.06277835798946842,
+              0.06073104750131539,
+              0.060633752487304196
+            ]
+          },
+          "minio": {
+            "median": 0.05504887489754837,
+            "min": 0.05233811093901674,
+            "max": 0.056482561992176876,
+            "values": [
+              0.056482561992176876,
+              0.05504887489754837,
+              0.05233811093901674
+            ]
+          }
+        }
+      },
+      "candidate": {
+        "average_cpu_cores": {
+          "median": 0.2241130943484485,
+          "min": 0.22286233305151998,
+          "max": 0.2298966887457749,
+          "values": [
+            0.2241130943484485,
+            0.2298966887457749,
+            0.22286233305151998
+          ]
+        },
+        "rss_kib": {
+          "median": 494288,
+          "min": 484500,
+          "max": 513208,
+          "values": [
+            513208,
+            494288,
+            484500
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.02914871099994798,
+          "min": 0.028901473000132683,
+          "max": 0.0303482609999719,
+          "values": [
+            0.02914871099994798,
+            0.0303482609999719,
+            0.028901473000132683
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.03405527399991115,
+          "min": 0.03346520899992811,
+          "max": 0.04079354100008459,
+          "values": [
+            0.03346520899992811,
+            0.04079354100008459,
+            0.03405527399991115
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.03989780565760034,
+            "min": 0.039539429238580344,
+            "max": 0.04081644738373942,
+            "values": [
+              0.03989780565760034,
+              0.04081644738373942,
+              0.039539429238580344
+            ]
+          },
+          "metrics-block-builder": {
+            "median": 0.02914929457246628,
+            "min": 0.028782583119700743,
+            "max": 0.029376130278792177,
+            "values": [
+              0.02914929457246628,
+              0.029376130278792177,
+              0.028782583119700743
+            ]
+          },
+          "metrics-compactor": {
+            "median": 0.009216197600508754,
+            "min": 0.008885742112035706,
+            "max": 0.009684487428362873,
+            "values": [
+              0.008885742112035706,
+              0.009684487428362873,
+              0.009216197600508754
+            ]
+          },
+          "metrics-distributor": {
+            "median": 0.03219996885584579,
+            "min": 0.031631935353160605,
+            "max": 0.03357161078510369,
+            "values": [
+              0.031631935353160605,
+              0.03357161078510369,
+              0.03219996885584579
+            ]
+          },
+          "metrics-querier": {
+            "median": 0.058724617194237015,
+            "min": 0.05864828280036192,
+            "max": 0.05981305046436475,
+            "values": [
+              0.058724617194237015,
+              0.05981305046436475,
+              0.05864828280036192
+            ]
+          },
+          "minio": {
+            "median": 0.05582369945894858,
+            "min": 0.05447587143652242,
+            "max": 0.05663496240541201,
+            "values": [
+              0.05582369945894858,
+              0.05663496240541201,
+              0.05447587143652242
+            ]
+          }
+        }
+      }
+    },
+    "candidate_divided_by_baseline": {
+      "average_cpu_cores": 1.0008937183348319,
+      "rss_kib": 0.9767533771232996,
+      "query_p99_seconds": 0.9268830254623676,
+      "ingest_p99_seconds": 0.8517766058654629
+    },
+    "scope": "Single-node API-accepted steady load; matched aggregate budgets; CPU and RSS include broker and MinIO."
+  },
+  "native_comparison": {
+    "schema_version": 1,
+    "scope": "Fixed deployment-shape, single-node API-accepted performance; different durability contracts",
+    "aggregation": "median/min/max and raw values of three repetitions, no confidence intervals",
+    "signals": {
+      "metrics": {
+        "host": {
+          "cpu_count": 16,
+          "kernel": "7.0.0-1011-gcp",
+          "lscpu": {
+            "lscpu": [
+              {
+                "field": "Architecture:",
+                "data": "x86_64"
+              },
+              {
+                "field": "CPU op-mode(s):",
+                "data": "32-bit, 64-bit"
+              },
+              {
+                "field": "Address sizes:",
+                "data": "46 bits physical, 48 bits virtual"
+              },
+              {
+                "field": "Byte Order:",
+                "data": "Little Endian"
+              },
+              {
+                "field": "CPU(s):",
+                "data": "16"
+              },
+              {
+                "field": "On-line CPU(s) list:",
+                "data": "0-15"
+              },
+              {
+                "field": "Vendor ID:",
+                "data": "GenuineIntel"
+              },
+              {
+                "field": "Model name:",
+                "data": "Intel(R) Xeon(R) CPU @ 2.20GHz"
+              },
+              {
+                "field": "CPU family:",
+                "data": "6"
+              },
+              {
+                "field": "Model:",
+                "data": "79"
+              },
+              {
+                "field": "Thread(s) per core:",
+                "data": "2"
+              },
+              {
+                "field": "Core(s) per socket:",
+                "data": "8"
+              },
+              {
+                "field": "Socket(s):",
+                "data": "1"
+              },
+              {
+                "field": "Stepping:",
+                "data": "0"
+              },
+              {
+                "field": "BogoMIPS:",
+                "data": "4399.99"
+              },
+              {
+                "field": "Flags:",
+                "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch pti ssbd ibrs ibpb stibp fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm rdseed adx smap xsaveopt arat md_clear arch_capabilities"
+              },
+              {
+                "field": "Hypervisor vendor:",
+                "data": "KVM"
+              },
+              {
+                "field": "Virtualization type:",
+                "data": "full"
+              },
+              {
+                "field": "L1d cache:",
+                "data": "256 KiB (8 instances)"
+              },
+              {
+                "field": "L1i cache:",
+                "data": "256 KiB (8 instances)"
+              },
+              {
+                "field": "L2 cache:",
+                "data": "2 MiB (8 instances)"
+              },
+              {
+                "field": "L3 cache:",
+                "data": "55 MiB (1 instance)"
+              },
+              {
+                "field": "NUMA node(s):",
+                "data": "1"
+              },
+              {
+                "field": "NUMA node0 CPU(s):",
+                "data": "0-15"
+              },
+              {
+                "field": "Vulnerability Gather data sampling:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Ghostwrite:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Indirect target selection:",
+                "data": "Mitigation; Aligned branch/return thunks"
+              },
+              {
+                "field": "Vulnerability Itlb multihit:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability L1tf:",
+                "data": "Mitigation; PTE Inversion"
+              },
+              {
+                "field": "Vulnerability Mds:",
+                "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+              },
+              {
+                "field": "Vulnerability Meltdown:",
+                "data": "Mitigation; PTI"
+              },
+              {
+                "field": "Vulnerability Mmio stale data:",
+                "data": "Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown"
+              },
+              {
+                "field": "Vulnerability Old microcode:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Reg file data sampling:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Retbleed:",
+                "data": "Mitigation; IBRS"
+              },
+              {
+                "field": "Vulnerability Spec rstack overflow:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Spec store bypass:",
+                "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+              },
+              {
+                "field": "Vulnerability Spectre v1:",
+                "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+              },
+              {
+                "field": "Vulnerability Spectre v2:",
+                "data": "Mitigation; IBRS; IBPB conditional; STIBP conditional; RSB filling; PBRSB-eIBRS Not affected; BHI SW loop, KVM SW loop"
+              },
+              {
+                "field": "Vulnerability Srbds:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Tsa:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Tsx async abort:",
+                "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+              },
+              {
+                "field": "Vulnerability Vmscape:",
+                "data": "Not affected"
+              }
+            ]
+          }
+        },
+        "harness_commit": "ade83dfae7fe10bf6dd71c9231454f4d6534ad5b",
+        "resource_coverage": [
+          {
+            "repetition": 1,
+            "backend": "krabka",
+            "phase": "steady",
+            "level": 2,
+            "sample_count": 60,
+            "sampled_seconds": 60.21638631820679,
+            "coverage_fraction": 0.9998080376932501,
+            "valid": true
+          },
+          {
+            "repetition": 1,
+            "backend": "mimir",
+            "phase": "steady",
+            "level": 2,
+            "sample_count": 60,
+            "sampled_seconds": 60.3608934879303,
+            "coverage_fraction": 0.9998087280575311,
+            "valid": true
+          },
+          {
+            "repetition": 2,
+            "backend": "mimir",
+            "phase": "steady",
+            "level": 2,
+            "sample_count": 60,
+            "sampled_seconds": 60.40715146064758,
+            "coverage_fraction": 0.9998170944362081,
+            "valid": true
+          },
+          {
+            "repetition": 2,
+            "backend": "krabka",
+            "phase": "steady",
+            "level": 2,
+            "sample_count": 60,
+            "sampled_seconds": 60.16723442077637,
+            "coverage_fraction": 0.9998184269174413,
+            "valid": true
+          },
+          {
+            "repetition": 3,
+            "backend": "krabka",
+            "phase": "steady",
+            "level": 2,
+            "sample_count": 60,
+            "sampled_seconds": 60.187175989151,
+            "coverage_fraction": 0.9998143142608928,
+            "valid": true
+          },
+          {
+            "repetition": 3,
+            "backend": "mimir",
+            "phase": "steady",
+            "level": 2,
+            "sample_count": 60,
+            "sampled_seconds": 60.4966561794281,
+            "coverage_fraction": 0.9998277197393953,
+            "valid": true
+          }
+        ],
+        "seed_value_mismatches": [],
+        "correctness_disqualified": false,
+        "host_activity_disqualified": false,
+        "host_activity_failures": [],
+        "backends": {
+          "krabka": {
+            "steady_objectives_met": true,
+            "steady": {
+              "rows_per_second": {
+                "median": 1993.4099870865125,
+                "min": 1992.4304970608018,
+                "max": 1994.0788767359936,
+                "values": [
+                  1992.4304970608018,
+                  1994.0788767359936,
+                  1993.4099870865125
+                ]
+              },
+              "accepted_rows": {
+                "median": 120000,
+                "min": 120000,
+                "max": 120000,
+                "values": [
+                  120000,
+                  120000,
+                  120000
+                ]
+              },
+              "ingest_p99_seconds": {
+                "median": 0.034897600000022067,
+                "min": 0.03351026000007096,
+                "max": 0.03817910499998334,
+                "values": [
+                  0.03817910499998334,
+                  0.03351026000007096,
+                  0.034897600000022067
+                ]
+              },
+              "query_p99_seconds": {
+                "median": 0.028519933999973546,
+                "min": 0.02772944700006974,
+                "max": 0.030580391999990297,
+                "values": [
+                  0.030580391999990297,
+                  0.02772944700006974,
+                  0.028519933999973546
+                ]
+              },
+              "query_attempts": {
+                "median": 240,
+                "min": 240,
+                "max": 240,
+                "values": [
+                  240,
+                  240,
+                  240
+                ]
+              },
+              "cpu_seconds": {
+                "median": 13.3061,
+                "min": 13.212681,
+                "max": 13.332384,
+                "values": [
+                  13.3061,
+                  13.212681,
+                  13.332384
+                ]
+              },
+              "rss_kib": {
+                "median": 509576,
+                "min": 484572,
+                "max": 512188,
+                "values": [
+                  484572,
+                  512188,
+                  509576
+                ]
+              },
+              "cpu_seconds_per_million_rows": {
+                "median": 110.88416666666667,
+                "min": 110.105675,
+                "max": 111.1032,
+                "values": [
+                  110.88416666666667,
+                  110.105675,
+                  111.1032
+                ]
+              },
+              "generator_cpu_seconds": {
+                "median": 1.0556300150000002,
+                "min": 1.0442023910000007,
+                "max": 1.1031213329999998,
+                "values": [
+                  1.1031213329999998,
+                  1.0442023910000007,
+                  1.0556300150000002
+                ]
+              },
+              "s3_requests": {
+                "median": 1173.0,
+                "min": 1169.0,
+                "max": 1178.0,
+                "values": [
+                  1169.0,
+                  1178.0,
+                  1173.0
+                ]
+              },
+              "s3_read_bytes": {
+                "median": 20900679.0,
+                "min": 20533514.0,
+                "max": 21983243.0,
+                "values": [
+                  20533514.0,
+                  21983243.0,
+                  20900679.0
+                ]
+              },
+              "s3_write_bytes": {
+                "median": 4051178.0,
+                "min": 4050012.0,
+                "max": 4051693.0,
+                "values": [
+                  4051693.0,
+                  4050012.0,
+                  4051178.0
+                ]
+              },
+              "duration_seconds": {
+                "median": 60.198353965000024,
+                "min": 60.178161155,
+                "max": 60.227947813999975,
+                "values": [
+                  60.227947813999975,
+                  60.178161155,
+                  60.198353965000024
+                ]
+              },
+              "query_attempts_per_second": {
+                "median": 3.9868199741730246,
+                "min": 3.9848609941216036,
+                "max": 3.988157753471987,
+                "values": [
+                  3.9848609941216036,
+                  3.988157753471987,
+                  3.9868199741730246
+                ]
+              },
+              "average_cpu_cores": {
+                "median": 0.22092899530783947,
+                "min": 0.21955940072625837,
+                "max": 0.2214742284772702,
+                "values": [
+                  0.22092899530783947,
+                  0.21955940072625837,
+                  0.2214742284772702
+                ]
+              },
+              "driver_average_cpu_cores": {
+                "median": 0.017535861788077377,
+                "min": 0.017351849424419336,
+                "max": 0.018315771548563033,
+                "values": [
+                  0.018315771548563033,
+                  0.017351849424419336,
+                  0.017535861788077377
+                ]
+              }
+            },
+            "service_cpu": 6.0,
+            "service_memory_gib": 6.0,
+            "burst": {
+              "passing_levels": [],
+              "highest_consistently_passing_tested_level": null,
+              "per_repetition": [
+                {
+                  "repetition": 1,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 2,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 3,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                }
+              ],
+              "failed_points": []
+            },
+            "high_cardinality": {
+              "passing_levels": [],
+              "highest_consistently_passing_tested_level": null,
+              "per_repetition": [
+                {
+                  "repetition": 1,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 2,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 3,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                }
+              ],
+              "failed_points": []
+            }
+          },
+          "mimir": {
+            "steady_objectives_met": true,
+            "steady": {
+              "rows_per_second": {
+                "median": 1986.1564141210172,
+                "min": 1983.2389746117312,
+                "max": 1987.6618856030389,
+                "values": [
+                  1987.6618856030389,
+                  1986.1564141210172,
+                  1983.2389746117312
+                ]
+              },
+              "accepted_rows": {
+                "median": 120000,
+                "min": 120000,
+                "max": 120000,
+                "values": [
+                  120000,
+                  120000,
+                  120000
+                ]
+              },
+              "ingest_p99_seconds": {
+                "median": 0.011999269999989792,
+                "min": 0.010427440999990267,
+                "max": 0.01423140000008516,
+                "values": [
+                  0.011999269999989792,
+                  0.010427440999990267,
+                  0.01423140000008516
+                ]
+              },
+              "query_p99_seconds": {
+                "median": 0.02622242099999994,
+                "min": 0.02385892000000922,
+                "max": 0.03398069599995779,
+                "values": [
+                  0.02622242099999994,
+                  0.02385892000000922,
+                  0.03398069599995779
+                ]
+              },
+              "query_attempts": {
+                "median": 240,
+                "min": 240,
+                "max": 240,
+                "values": [
+                  240,
+                  240,
+                  240
+                ]
+              },
+              "cpu_seconds": {
+                "median": 20.569125,
+                "min": 20.305704,
+                "max": 21.662053,
+                "values": [
+                  20.569125,
+                  20.305704,
+                  21.662053
+                ]
+              },
+              "rss_kib": {
+                "median": 306484,
+                "min": 301800,
+                "max": 308004,
+                "values": [
+                  301800,
+                  308004,
+                  306484
+                ]
+              },
+              "cpu_seconds_per_million_rows": {
+                "median": 171.409375,
+                "min": 169.2142,
+                "max": 180.51710833333334,
+                "values": [
+                  171.409375,
+                  169.2142,
+                  180.51710833333334
+                ]
+              },
+              "generator_cpu_seconds": {
+                "median": 1.057127647,
+                "min": 1.0392052879999998,
+                "max": 1.1233225249999998,
+                "values": [
+                  1.057127647,
+                  1.0392052879999998,
+                  1.1233225249999998
+                ]
+              },
+              "s3_requests": {
+                "median": 26.0,
+                "min": 24.0,
+                "max": 26.0,
+                "values": [
+                  26.0,
+                  24.0,
+                  26.0
+                ]
+              },
+              "s3_read_bytes": {
+                "median": 7856.0,
+                "min": 7258.0,
+                "max": 7856.0,
+                "values": [
+                  7856.0,
+                  7258.0,
+                  7856.0
+                ]
+              },
+              "s3_write_bytes": {
+                "median": 0.0,
+                "min": 0.0,
+                "max": 0.0,
+                "values": [
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              "duration_seconds": {
+                "median": 60.418202285999996,
+                "min": 60.37244104199999,
+                "max": 60.507080355000085,
+                "values": [
+                  60.37244104199999,
+                  60.418202285999996,
+                  60.507080355000085
+                ]
+              },
+              "query_attempts_per_second": {
+                "median": 3.9723128282420346,
+                "min": 3.9664779492234628,
+                "max": 3.975323771206078,
+                "values": [
+                  3.975323771206078,
+                  3.9723128282420346,
+                  3.9664779492234628
+                ]
+              },
+              "average_cpu_cores": {
+                "median": 0.3407038815225384,
+                "min": 0.3360858686903566,
+                "max": 0.35800856483087484,
+                "values": [
+                  0.3407038815225384,
+                  0.3360858686903566,
+                  0.35800856483087484
+                ]
+              },
+              "driver_average_cpu_cores": {
+                "median": 0.017510102767992697,
+                "min": 0.017200202069580655,
+                "max": 0.018565141771993837,
+                "values": [
+                  0.017510102767992697,
+                  0.017200202069580655,
+                  0.018565141771993837
+                ]
+              }
+            },
+            "service_cpu": 6.0,
+            "service_memory_gib": 6.0,
+            "burst": {
+              "passing_levels": [],
+              "highest_consistently_passing_tested_level": null,
+              "per_repetition": [
+                {
+                  "repetition": 1,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 2,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 3,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                }
+              ],
+              "failed_points": []
+            },
+            "high_cardinality": {
+              "passing_levels": [],
+              "highest_consistently_passing_tested_level": null,
+              "per_repetition": [
+                {
+                  "repetition": 1,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 2,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 3,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                }
+              ],
+              "failed_points": []
+            }
+          }
+        },
+        "deployment_target": "split",
+        "highest_common_burst_writers": null,
+        "steady_krabka_divided_by_native": {
+          "average_cpu_cores": 0.6484487183431882,
+          "rss_kib": 1.6626512313856514,
+          "query_p99_seconds": 1.0876163570088975,
+          "ingest_p99_seconds": 2.9083102555448583
+        }
+      }
+    },
+    "harness_commits": {
+      "metrics": "ade83dfae7fe10bf6dd71c9231454f4d6534ad5b"
+    },
+    "dataset": {
+      "metric_samples_per_request": 1000,
+      "metric_points_per_series": 1,
+      "other_signals": "deployment-envelope dataset; profile units=nanoseconds, unquoted legacy labels, sampleRate=1e9",
+      "seed_concurrency": 64
+    },
+    "image_commit": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+    "image_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700"
+  },
+  "image_equivalence": {
+    "changed_paths": [
+      "usr/local/bin/krabka-metrics",
+      "usr/local/bin/krabka-metrics-service",
+      "usr/local/bin/krabka-o11y-bootstrap",
+      "usr/local/bin/krabka-o11y-recovery",
+      "usr/local/bin/krabka-observability",
+      "usr/local/bin/krabka-profiles",
+      "usr/local/bin/krabka-traces"
+    ],
+    "unchanged_binaries": [],
+    "filesystem_entries_verified": 380
+  },
+  "binary_sha256": {
+    "krabka-metrics": {
+      "path": "usr/local/bin/krabka-metrics",
+      "sha256": "433897cf8d9d07b85a92ae27ccf23e450e1223a16f5acf305e9fb27922a5e0f5",
+      "size_in_bytes": 72322888
+    },
+    "krabka-metrics-service": {
+      "path": "usr/local/bin/krabka-metrics-service",
+      "sha256": "1a6309b6359fbf72740f97647a998363064d3b49cc0026ae047ea384a637f24b",
+      "size_in_bytes": 236257280
+    },
+    "krabka-o11y-bootstrap": {
+      "path": "usr/local/bin/krabka-o11y-bootstrap",
+      "sha256": "3f21b08affb06c3c7c703fa3b2bff0a1215610b516cde6b95e39b987178d8ec9",
+      "size_in_bytes": 26755024
+    },
+    "krabka-o11y-recovery": {
+      "path": "usr/local/bin/krabka-o11y-recovery",
+      "sha256": "11d55653ba224a20a00209dcd20529b914afe76ab55cdb23d23e885f14171ef5",
+      "size_in_bytes": 36712848
+    },
+    "krabka-observability": {
+      "path": "usr/local/bin/krabka-observability",
+      "sha256": "721f108379d44c80db18598833cb4665c2ff783aab19ac96c09ed42fe15d59df",
+      "size_in_bytes": 222384288
+    },
+    "krabka-profiles": {
+      "path": "usr/local/bin/krabka-profiles",
+      "sha256": "3b4bfbecf433404becd086eb9c87d2784ff15a208143604ecb199ad262d188ed",
+      "size_in_bytes": 219811904
+    },
+    "krabka-traces": {
+      "path": "usr/local/bin/krabka-traces",
+      "sha256": "f6ca74aac777796c4c7e3c14546188c2349cb7e839e71caf06db7f6d3afec6dd",
+      "size_in_bytes": 223526648
+    }
+  },
+  "diagnostic_record": "qualification/grafana-profiling-gcp.json#metrics_live_label_hit_captures",
+  "earlier_combined_comparison": {
+    "scope": "This first control also spans the shared Loki record change, so it does not isolate the metrics cache hit.",
+    "provenance": {
+      "run_id": 37291441308,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37291441308",
+      "head_sha": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111702533772,
+          "name": "compare (metrics)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37291441308/job/111702533772",
+          "runner_name": "gcp-runner-f60414d4e018435a",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T09:44:30Z",
+          "completed_at": "2026-10-05T10:17:52Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11339095025,
+          "name": "grafana-comparison-metrics-8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2-1",
+          "digest": "sha256:73c519a998638739bd48042fdb44c4d41e2c1cda872176632390be73944e2803",
+          "size_in_bytes": 9277347,
+          "expires_at": "2027-01-03T09:39:03Z",
+          "signal": "metrics",
+          "verified_raw_files": 725
+        }
+      ]
+    },
+    "source_commits": {
+      "baseline": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+      "candidate": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2"
+    },
+    "summary": {
+      "baseline": {
+        "average_cpu_cores": {
+          "median": 0.17211588173830017,
+          "min": 0.16989372091898647,
+          "max": 0.17285090529581104,
+          "values": [
+            0.17285090529581104,
+            0.16989372091898647,
+            0.17211588173830017
+          ]
+        },
+        "rss_kib": {
+          "median": 516276,
+          "min": 495832,
+          "max": 518404,
+          "values": [
+            518404,
+            495832,
+            516276
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.02295828100000108,
+          "min": 0.021943874999806212,
+          "max": 0.02564307700004065,
+          "values": [
+            0.021943874999806212,
+            0.02295828100000108,
+            0.02564307700004065
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.03251381899985972,
+          "min": 0.028281674000027124,
+          "max": 0.039423897000006036,
+          "values": [
+            0.028281674000027124,
+            0.039423897000006036,
+            0.03251381899985972
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.03331135881448958,
+            "min": 0.033231474750825704,
+            "max": 0.033357686673972285,
+            "values": [
+              0.033231474750825704,
+              0.03331135881448958,
+              0.033357686673972285
+            ]
+          },
+          "metrics-block-builder": {
+            "median": 0.021178590331180833,
+            "min": 0.021157008774454866,
+            "max": 0.021256166584976696,
+            "values": [
+              0.021256166584976696,
+              0.021178590331180833,
+              0.021157008774454866
+            ]
+          },
+          "metrics-compactor": {
+            "median": 0.006148207117350588,
+            "min": 0.005817371103692199,
+            "max": 0.006432848139164954,
+            "values": [
+              0.006432848139164954,
+              0.005817371103692199,
+              0.006148207117350588
+            ]
+          },
+          "metrics-distributor": {
+            "median": 0.023435108328711606,
+            "min": 0.023303830518118306,
+            "max": 0.023634775804488712,
+            "values": [
+              0.023435108328711606,
+              0.023634775804488712,
+              0.023303830518118306
+            ]
+          },
+          "metrics-querier": {
+            "median": 0.04341188046326437,
+            "min": 0.043181267435934784,
+            "max": 0.043840084184231846,
+            "values": [
+              0.043840084184231846,
+              0.04341188046326437,
+              0.043181267435934784
+            ]
+          },
+          "minio": {
+            "median": 0.04465522330790022,
+            "min": 0.04253974440187079,
+            "max": 0.044967881218469334,
+            "values": [
+              0.04465522330790022,
+              0.04253974440187079,
+              0.044967881218469334
+            ]
+          }
+        }
+      },
+      "candidate": {
+        "average_cpu_cores": {
+          "median": 0.16832514051756794,
+          "min": 0.1660357309230522,
+          "max": 0.1693988214454773,
+          "values": [
+            0.16832514051756794,
+            0.1660357309230522,
+            0.1693988214454773
+          ]
+        },
+        "rss_kib": {
+          "median": 499584,
+          "min": 498352,
+          "max": 515284,
+          "values": [
+            499584,
+            498352,
+            515284
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.02269187100000636,
+          "min": 0.02267345700010992,
+          "max": 0.023135447999948155,
+          "values": [
+            0.023135447999948155,
+            0.02267345700010992,
+            0.02269187100000636
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.03156482000008509,
+          "min": 0.028656339000008302,
+          "max": 0.034176612999999634,
+          "values": [
+            0.03156482000008509,
+            0.028656339000008302,
+            0.034176612999999634
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.03196674863817906,
+            "min": 0.0318450906838298,
+            "max": 0.03374185088923502,
+            "values": [
+              0.03196674863817906,
+              0.0318450906838298,
+              0.03374185088923502
+            ]
+          },
+          "metrics-block-builder": {
+            "median": 0.020886625394909944,
+            "min": 0.020690721949498135,
+            "max": 0.021150886492734788,
+            "values": [
+              0.020886625394909944,
+              0.020690721949498135,
+              0.021150886492734788
+            ]
+          },
+          "metrics-compactor": {
+            "median": 0.00600034093475905,
+            "min": 0.005885925217653396,
+            "max": 0.006020802041942013,
+            "values": [
+              0.00600034093475905,
+              0.006020802041942013,
+              0.005885925217653396
+            ]
+          },
+          "metrics-distributor": {
+            "median": 0.02330502379002547,
+            "min": 0.02318055689901829,
+            "max": 0.023622544135521558,
+            "values": [
+              0.02330502379002547,
+              0.02318055689901829,
+              0.023622544135521558
+            ]
+          },
+          "metrics-querier": {
+            "median": 0.04197329764450211,
+            "min": 0.04136465038701953,
+            "max": 0.04227554651954527,
+            "values": [
+              0.04227554651954527,
+              0.04136465038701953,
+              0.04197329764450211
+            ]
+          },
+          "minio": {
+            "median": 0.04302431706583044,
+            "min": 0.042933908961744434,
+            "max": 0.04389085524014913,
+            "values": [
+              0.04389085524014913,
+              0.042933908961744434,
+              0.04302431706583044
+            ]
+          }
+        }
+      }
+    },
+    "candidate_divided_by_baseline": {
+      "average_cpu_cores": 0.9779756453474991,
+      "rss_kib": 0.9676684564070381,
+      "query_p99_seconds": 0.9883959082130448,
+      "ingest_p99_seconds": 0.9708124413259874
+    },
+    "native_comparison": {
+      "schema_version": 1,
+      "scope": "Fixed deployment-shape, single-node API-accepted performance; different durability contracts",
+      "aggregation": "median/min/max and raw values of three repetitions, no confidence intervals",
+      "signals": {
+        "metrics": {
+          "host": {
+            "cpu_count": 16,
+            "kernel": "7.0.0-1011-gcp",
+            "lscpu": {
+              "lscpu": [
+                {
+                  "field": "Architecture:",
+                  "data": "x86_64"
+                },
+                {
+                  "field": "CPU op-mode(s):",
+                  "data": "32-bit, 64-bit"
+                },
+                {
+                  "field": "Address sizes:",
+                  "data": "48 bits physical, 48 bits virtual"
+                },
+                {
+                  "field": "Byte Order:",
+                  "data": "Little Endian"
+                },
+                {
+                  "field": "CPU(s):",
+                  "data": "16"
+                },
+                {
+                  "field": "On-line CPU(s) list:",
+                  "data": "0-15"
+                },
+                {
+                  "field": "Vendor ID:",
+                  "data": "AuthenticAMD"
+                },
+                {
+                  "field": "Model name:",
+                  "data": "AMD EPYC 7B12"
+                },
+                {
+                  "field": "CPU family:",
+                  "data": "23"
+                },
+                {
+                  "field": "Model:",
+                  "data": "49"
+                },
+                {
+                  "field": "Thread(s) per core:",
+                  "data": "2"
+                },
+                {
+                  "field": "Core(s) per socket:",
+                  "data": "8"
+                },
+                {
+                  "field": "Socket(s):",
+                  "data": "1"
+                },
+                {
+                  "field": "Stepping:",
+                  "data": "0"
+                },
+                {
+                  "field": "BogoMIPS:",
+                  "data": "4499.99"
+                },
+                {
+                  "field": "Flags:",
+                  "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+                },
+                {
+                  "field": "Hypervisor vendor:",
+                  "data": "KVM"
+                },
+                {
+                  "field": "Virtualization type:",
+                  "data": "full"
+                },
+                {
+                  "field": "L1d cache:",
+                  "data": "256 KiB (8 instances)"
+                },
+                {
+                  "field": "L1i cache:",
+                  "data": "256 KiB (8 instances)"
+                },
+                {
+                  "field": "L2 cache:",
+                  "data": "4 MiB (8 instances)"
+                },
+                {
+                  "field": "L3 cache:",
+                  "data": "32 MiB (2 instances)"
+                },
+                {
+                  "field": "NUMA node(s):",
+                  "data": "1"
+                },
+                {
+                  "field": "NUMA node0 CPU(s):",
+                  "data": "0-15"
+                },
+                {
+                  "field": "Vulnerability Gather data sampling:",
+                  "data": "Not affected"
+                },
+                {
+                  "field": "Vulnerability Ghostwrite:",
+                  "data": "Not affected"
+                },
+                {
+                  "field": "Vulnerability Indirect target selection:",
+                  "data": "Not affected"
+                },
+                {
+                  "field": "Vulnerability Itlb multihit:",
+                  "data": "Not affected"
+                },
+                {
+                  "field": "Vulnerability L1tf:",
+                  "data": "Not affected"
+                },
+                {
+                  "field": "Vulnerability Mds:",
+                  "data": "Not affected"
+                },
+                {
+                  "field": "Vulnerability Meltdown:",
+                  "data": "Not affected"
+                },
+                {
+                  "field": "Vulnerability Mmio stale data:",
+                  "data": "Not affected"
+                },
+                {
+                  "field": "Vulnerability Old microcode:",
+                  "data": "Not affected"
+                },
+                {
+                  "field": "Vulnerability Reg file data sampling:",
+                  "data": "Not affected"
+                },
+                {
+                  "field": "Vulnerability Retbleed:",
+                  "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+                },
+                {
+                  "field": "Vulnerability Spec rstack overflow:",
+                  "data": "Mitigation; Safe RET"
+                },
+                {
+                  "field": "Vulnerability Spec store bypass:",
+                  "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+                },
+                {
+                  "field": "Vulnerability Spectre v1:",
+                  "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+                },
+                {
+                  "field": "Vulnerability Spectre v2:",
+                  "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+                },
+                {
+                  "field": "Vulnerability Srbds:",
+                  "data": "Not affected"
+                },
+                {
+                  "field": "Vulnerability Tsa:",
+                  "data": "Not affected"
+                },
+                {
+                  "field": "Vulnerability Tsx async abort:",
+                  "data": "Not affected"
+                },
+                {
+                  "field": "Vulnerability Vmscape:",
+                  "data": "Not affected"
+                }
+              ]
+            }
+          },
+          "harness_commit": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+          "resource_coverage": [
+            {
+              "repetition": 1,
+              "backend": "krabka",
+              "phase": "steady",
+              "level": 2,
+              "sample_count": 60,
+              "sampled_seconds": 60.09854030609131,
+              "coverage_fraction": 0.9997949567889377,
+              "valid": true
+            },
+            {
+              "repetition": 1,
+              "backend": "mimir",
+              "phase": "steady",
+              "level": 2,
+              "sample_count": 60,
+              "sampled_seconds": 60.12418222427368,
+              "coverage_fraction": 0.9998448983457539,
+              "valid": true
+            },
+            {
+              "repetition": 2,
+              "backend": "mimir",
+              "phase": "steady",
+              "level": 2,
+              "sample_count": 60,
+              "sampled_seconds": 60.18559193611145,
+              "coverage_fraction": 0.9998239554357434,
+              "valid": true
+            },
+            {
+              "repetition": 2,
+              "backend": "krabka",
+              "phase": "steady",
+              "level": 2,
+              "sample_count": 61,
+              "sampled_seconds": 60.96772623062134,
+              "coverage_fraction": 0.9998707333048015,
+              "valid": true
+            },
+            {
+              "repetition": 3,
+              "backend": "krabka",
+              "phase": "steady",
+              "level": 2,
+              "sample_count": 61,
+              "sampled_seconds": 60.99075675010681,
+              "coverage_fraction": 0.9998663123048362,
+              "valid": true
+            },
+            {
+              "repetition": 3,
+              "backend": "mimir",
+              "phase": "steady",
+              "level": 2,
+              "sample_count": 60,
+              "sampled_seconds": 60.07230496406555,
+              "coverage_fraction": 0.9998521530072603,
+              "valid": true
+            }
+          ],
+          "seed_value_mismatches": [],
+          "correctness_disqualified": false,
+          "host_activity_disqualified": false,
+          "host_activity_failures": [],
+          "backends": {
+            "krabka": {
+              "steady_objectives_met": true,
+              "steady": {
+                "rows_per_second": {
+                  "median": 1968.0000455111835,
+                  "min": 1967.2482171057868,
+                  "max": 1996.3112948104726,
+                  "values": [
+                    1996.3112948104726,
+                    1968.0000455111835,
+                    1967.2482171057868
+                  ]
+                },
+                "accepted_rows": {
+                  "median": 120000,
+                  "min": 120000,
+                  "max": 120000,
+                  "values": [
+                    120000,
+                    120000,
+                    120000
+                  ]
+                },
+                "ingest_p99_seconds": {
+                  "median": 0.029741172000058214,
+                  "min": 0.028515213999980915,
+                  "max": 0.0325711149999961,
+                  "values": [
+                    0.0325711149999961,
+                    0.028515213999980915,
+                    0.029741172000058214
+                  ]
+                },
+                "query_p99_seconds": {
+                  "median": 0.023309607000101096,
+                  "min": 0.02142668099986622,
+                  "max": 0.025572127000032197,
+                  "values": [
+                    0.025572127000032197,
+                    0.02142668099986622,
+                    0.023309607000101096
+                  ]
+                },
+                "query_attempts": {
+                  "median": 240,
+                  "min": 240,
+                  "max": 240,
+                  "values": [
+                    240,
+                    240,
+                    240
+                  ]
+                },
+                "cpu_seconds": {
+                  "median": 10.326908,
+                  "min": 10.142485,
+                  "max": 11.154088,
+                  "values": [
+                    11.154088,
+                    10.142485,
+                    10.326908
+                  ]
+                },
+                "rss_kib": {
+                  "median": 491964,
+                  "min": 490560,
+                  "max": 517528,
+                  "values": [
+                    490560,
+                    491964,
+                    517528
+                  ]
+                },
+                "cpu_seconds_per_million_rows": {
+                  "median": 86.05756666666667,
+                  "min": 84.52070833333333,
+                  "max": 92.95073333333333,
+                  "values": [
+                    92.95073333333333,
+                    84.52070833333333,
+                    86.05756666666667
+                  ]
+                },
+                "generator_cpu_seconds": {
+                  "median": 0.902440028,
+                  "min": 0.8831381599999997,
+                  "max": 0.9858994889999999,
+                  "values": [
+                    0.9858994889999999,
+                    0.8831381599999997,
+                    0.902440028
+                  ]
+                },
+                "s3_requests": {
+                  "median": 1406.0,
+                  "min": 1186.0,
+                  "max": 1409.0,
+                  "values": [
+                    1186.0,
+                    1409.0,
+                    1406.0
+                  ]
+                },
+                "s3_read_bytes": {
+                  "median": 27672890.0,
+                  "min": 21237837.0,
+                  "max": 27936489.0,
+                  "values": [
+                    21237837.0,
+                    27936489.0,
+                    27672890.0
+                  ]
+                },
+                "s3_write_bytes": {
+                  "median": 4776962.0,
+                  "min": 4051101.0,
+                  "max": 4776967.0,
+                  "values": [
+                    4051101.0,
+                    4776962.0,
+                    4776967.0
+                  ]
+                },
+                "duration_seconds": {
+                  "median": 60.975608345999945,
+                  "min": 60.110865631000024,
+                  "max": 60.99891155399996,
+                  "values": [
+                    60.110865631000024,
+                    60.975608345999945,
+                    60.99891155399996
+                  ]
+                },
+                "query_attempts_per_second": {
+                  "median": 3.9360000910223674,
+                  "min": 3.9344964342115736,
+                  "max": 3.9926225896209453,
+                  "values": [
+                    3.9926225896209453,
+                    3.9360000910223674,
+                    3.9344964342115736
+                  ]
+                },
+                "average_cpu_cores": {
+                  "median": 0.16929659459346239,
+                  "min": 0.16633675784663748,
+                  "max": 0.18555859881424963,
+                  "values": [
+                    0.18555859881424963,
+                    0.16633675784663748,
+                    0.16929659459346239
+                  ]
+                },
+                "driver_average_cpu_cores": {
+                  "median": 0.014794362801065802,
+                  "min": 0.014483466158938852,
+                  "max": 0.016401352378654775,
+                  "values": [
+                    0.016401352378654775,
+                    0.014483466158938852,
+                    0.014794362801065802
+                  ]
+                }
+              },
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "burst": {
+                "passing_levels": [],
+                "highest_consistently_passing_tested_level": null,
+                "per_repetition": [
+                  {
+                    "repetition": 1,
+                    "passing_levels": [],
+                    "highest_passing_tested_level": null,
+                    "failed_levels": []
+                  },
+                  {
+                    "repetition": 2,
+                    "passing_levels": [],
+                    "highest_passing_tested_level": null,
+                    "failed_levels": []
+                  },
+                  {
+                    "repetition": 3,
+                    "passing_levels": [],
+                    "highest_passing_tested_level": null,
+                    "failed_levels": []
+                  }
+                ],
+                "failed_points": []
+              },
+              "high_cardinality": {
+                "passing_levels": [],
+                "highest_consistently_passing_tested_level": null,
+                "per_repetition": [
+                  {
+                    "repetition": 1,
+                    "passing_levels": [],
+                    "highest_passing_tested_level": null,
+                    "failed_levels": []
+                  },
+                  {
+                    "repetition": 2,
+                    "passing_levels": [],
+                    "highest_passing_tested_level": null,
+                    "failed_levels": []
+                  },
+                  {
+                    "repetition": 3,
+                    "passing_levels": [],
+                    "highest_passing_tested_level": null,
+                    "failed_levels": []
+                  }
+                ],
+                "failed_points": []
+              }
+            },
+            "mimir": {
+              "steady_objectives_met": true,
+              "steady": {
+                "rows_per_second": {
+                  "median": 1995.5595795704792,
+                  "min": 1993.4816754755834,
+                  "max": 1997.2973974053937,
+                  "values": [
+                    1995.5595795704792,
+                    1993.4816754755834,
+                    1997.2973974053937
+                  ]
+                },
+                "accepted_rows": {
+                  "median": 120000,
+                  "min": 120000,
+                  "max": 120000,
+                  "values": [
+                    120000,
+                    120000,
+                    120000
+                  ]
+                },
+                "ingest_p99_seconds": {
+                  "median": 0.010398599999916769,
+                  "min": 0.009678922999910355,
+                  "max": 0.01475111900003867,
+                  "values": [
+                    0.010398599999916769,
+                    0.01475111900003867,
+                    0.009678922999910355
+                  ]
+                },
+                "query_p99_seconds": {
+                  "median": 0.02414780900005553,
+                  "min": 0.019343975999845497,
+                  "max": 0.025311841999950957,
+                  "values": [
+                    0.02414780900005553,
+                    0.025311841999950957,
+                    0.019343975999845497
+                  ]
+                },
+                "query_attempts": {
+                  "median": 240,
+                  "min": 240,
+                  "max": 240,
+                  "values": [
+                    240,
+                    240,
+                    240
+                  ]
+                },
+                "cpu_seconds": {
+                  "median": 18.221808,
+                  "min": 16.970224,
+                  "max": 19.289884,
+                  "values": [
+                    18.221808,
+                    19.289884,
+                    16.970224
+                  ]
+                },
+                "rss_kib": {
+                  "median": 299312,
+                  "min": 297004,
+                  "max": 299464,
+                  "values": [
+                    299464,
+                    297004,
+                    299312
+                  ]
+                },
+                "cpu_seconds_per_million_rows": {
+                  "median": 151.8484,
+                  "min": 141.41853333333333,
+                  "max": 160.74903333333333,
+                  "values": [
+                    151.8484,
+                    160.74903333333333,
+                    141.41853333333333
+                  ]
+                },
+                "generator_cpu_seconds": {
+                  "median": 0.8938623219999999,
+                  "min": 0.8136670769999998,
+                  "max": 0.94609874,
+                  "values": [
+                    0.8938623219999999,
+                    0.94609874,
+                    0.8136670769999998
+                  ]
+                },
+                "s3_requests": {
+                  "median": 25.0,
+                  "min": 24.0,
+                  "max": 28.0,
+                  "values": [
+                    28.0,
+                    24.0,
+                    25.0
+                  ]
+                },
+                "s3_read_bytes": {
+                  "median": 7557.0,
+                  "min": 7258.0,
+                  "max": 8454.0,
+                  "values": [
+                    8454.0,
+                    7258.0,
+                    7557.0
+                  ]
+                },
+                "s3_write_bytes": {
+                  "median": 0.0,
+                  "min": 0.0,
+                  "max": 0.0,
+                  "values": [
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "duration_seconds": {
+                  "median": 60.13350903100002,
+                  "min": 60.08118778700009,
+                  "max": 60.19618914799992,
+                  "values": [
+                    60.13350903100002,
+                    60.19618914799992,
+                    60.08118778700009
+                  ]
+                },
+                "query_attempts_per_second": {
+                  "median": 3.991119159140958,
+                  "min": 3.9869633509511666,
+                  "max": 3.994594794810787,
+                  "values": [
+                    3.991119159140958,
+                    3.9869633509511666,
+                    3.994594794810787
+                  ]
+                },
+                "average_cpu_cores": {
+                  "median": 0.30302252926244994,
+                  "min": 0.2824548685715546,
+                  "max": 0.32045025230041374,
+                  "values": [
+                    0.30302252926244994,
+                    0.32045025230041374,
+                    0.2824548685715546
+                  ]
+                },
+                "driver_average_cpu_cores": {
+                  "median": 0.0148646293290351,
+                  "min": 0.013542792793721281,
+                  "max": 0.01571692084483782,
+                  "values": [
+                    0.0148646293290351,
+                    0.01571692084483782,
+                    0.013542792793721281
+                  ]
+                }
+              },
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "burst": {
+                "passing_levels": [],
+                "highest_consistently_passing_tested_level": null,
+                "per_repetition": [
+                  {
+                    "repetition": 1,
+                    "passing_levels": [],
+                    "highest_passing_tested_level": null,
+                    "failed_levels": []
+                  },
+                  {
+                    "repetition": 2,
+                    "passing_levels": [],
+                    "highest_passing_tested_level": null,
+                    "failed_levels": []
+                  },
+                  {
+                    "repetition": 3,
+                    "passing_levels": [],
+                    "highest_passing_tested_level": null,
+                    "failed_levels": []
+                  }
+                ],
+                "failed_points": []
+              },
+              "high_cardinality": {
+                "passing_levels": [],
+                "highest_consistently_passing_tested_level": null,
+                "per_repetition": [
+                  {
+                    "repetition": 1,
+                    "passing_levels": [],
+                    "highest_passing_tested_level": null,
+                    "failed_levels": []
+                  },
+                  {
+                    "repetition": 2,
+                    "passing_levels": [],
+                    "highest_passing_tested_level": null,
+                    "failed_levels": []
+                  },
+                  {
+                    "repetition": 3,
+                    "passing_levels": [],
+                    "highest_passing_tested_level": null,
+                    "failed_levels": []
+                  }
+                ],
+                "failed_points": []
+              }
+            }
+          },
+          "deployment_target": "split",
+          "highest_common_burst_writers": null,
+          "steady_krabka_divided_by_native": {
+            "average_cpu_cores": 0.5586930945548059,
+            "rss_kib": 1.643649436039985,
+            "query_p99_seconds": 0.9652886934813627,
+            "ingest_p99_seconds": 2.8601130921755105
+          }
+        }
+      },
+      "harness_commits": {
+        "metrics": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2"
+      },
+      "dataset": {
+        "metric_samples_per_request": 1000,
+        "metric_points_per_series": 1,
+        "other_signals": "deployment-envelope dataset; profile units=nanoseconds, unquoted legacy labels, sampleRate=1e9",
+        "seed_concurrency": 64
+      },
+      "image_commit": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+      "image_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700"
+    }
+  },
+  "validation": {
+    "scoped_targets_passed": 35,
+    "native_oracles": [
+      "Mimir",
+      "Prometheus"
+    ],
+    "unit_cases": 566,
+    "negative_control": "Removing only the read-only live-hit return fails the shared-cache regression; the other 565 PromQL cases pass."
+  }
+}

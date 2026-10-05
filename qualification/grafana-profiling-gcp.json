@@ -1709,7 +1709,7 @@
       },
       "weak_label_cache_clone_reported_in_summary": false
     },
-    "retention_decision": "pending_isolated_same_vm_control",
+    "retention_decision": "Retained after isolated same-VM comparison 37293323368; see qualification/grafana-live-label-hit-experiment-gcp.json. Captures remain diagnostic only.",
     "limitations": [
       "Allocation totals include process startup and seeding.",
       "The first before/after control is the older fused image; a second comparison uses the shared-records image to isolate the cache change.",
