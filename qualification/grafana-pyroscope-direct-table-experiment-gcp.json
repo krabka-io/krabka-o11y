@@ -4,7 +4,7 @@
   "source_commit": "b1c3e788723e0ee5dcaa5b7323aaaefa8db446e1",
   "baseline_source_commit": "f4c5a6034678dbde565d59dca71350146f21ddb0",
   "performance_qualified": false,
-  "retention_decision": "Reject after both exact-image controls. First median CPU/RSS/query p99 ratios are 1.0134/1.0052/0.9639; confirmation ratios are 0.9764/0.9969/0.9885. Confirmation CPU and query p99 are lower in all three pairs with overlapping ranges, but RSS is higher in two pairs. Across both controls, RSS is higher in five of six pairs and CPU/query results do not repeat consistently. Preserve all observations and the complete batch ledger. The original product collector is restored; scoped reversion validation is running.",
+  "retention_decision": "Reject after both exact-image controls. First median CPU/RSS/query p99 ratios are 1.0134/1.0052/0.9639; confirmation ratios are 0.9764/0.9969/0.9885. Confirmation CPU and query p99 are lower in all three pairs with overlapping ranges, but RSS is higher in two pairs. Across both controls, RSS is higher in five of six pairs and CPU/query results do not repeat consistently. Preserve all observations and the complete batch ledger. The original product collector is restored; all 39 scoped reversion targets pass, including 16 native cases with zero ignored cases.",
   "scope": {
     "production_path": "crates/pprof/src/union_store/collect_and_remap.rs",
     "change": "Read the registered table through DataFusion table() instead of parsing SELECT *. Keep all columns, row order, partition remapping, source-symbol identity and Plan/Exec error categories.",
@@ -6509,12 +6509,50 @@
   },
   "retained": false,
   "reversion": {
-    "status": "source_restored_validation_running",
+    "status": "passed",
     "production_path": "crates/pprof/src/union_store/collect_and_remap.rs",
     "regression_ledger_retained": true,
     "production_source_matches": "f4c5a6034678dbde565d59dca71350146f21ddb0",
     "production_source_sha256": "de5a6f54d9c0bec547d702b4df2862062e4a140a9172923f36c20f808ebda6dc",
     "comparison_ignores_only_the_test_module_separator": true,
-    "scoped_validation_targets": 39
+    "scoped_validation_targets": 39,
+    "source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
+    "source_file_sha256": "09d392b0d36e6c6b18a56ddc3df03143492fabd98de1ae06369568bd1bf5a7ad",
+    "scoped_validation_targets_passed": 39,
+    "scoped_validation_log_sha256": "16dc9e1fe9801138578bc3ef093ef3aa97327ac38e805a3f91e55fd5cf3d7022",
+    "scoped_target_list_sha256": "3b8b9fe709f1a6c73188f09f7d5c479701f130f486b33156ac87d968a919098c",
+    "native_docker_wrappers": [
+      {
+        "target": "//crates/profiles:pyroscope_differential_docker_test",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "e448c3ec32f81abe94aaeae2a8840c73553013257d6adb4c5c851f8270d1f45b"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_previous_docker_test",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "2555d68f18135ee0f73183aa291a9daec1bb8a5ac21a2e7416a45a2c242b6e92"
+      }
+    ],
+    "unit_checks": [
+      {
+        "target": "//crates/pprof:pprof_test",
+        "passed": 123,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "a60528cdc31287ec7b12e2657367a841b9058c668d38c416852d8608cd8d783d"
+      },
+      {
+        "target": "//crates/profiles:profiles_test",
+        "passed": 284,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "48d39e4fc3293ebb2fb1719e16d3cb77c9c13a78a23c81285d7ba75abd721b3e"
+      }
+    ],
+    "correctness_qualified": true
   }
 }
