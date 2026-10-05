@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Rebuild block fingerprints by live time-order position",
-  "status": "correctness_scope_qualified_with_grafana_flake_limitation_images_and_profiles_verified",
+  "status": "scoped_correctness_qualified_mimir_matched_comparison_queued",
   "performance_qualified": false,
   "retained": false,
   "production_paths": [
@@ -960,5 +960,29 @@
       "usr/local/bin/krabka-traces"
     ]
   },
-  "next_action": "Dispatch the matched Mimir measurement using the exact verified images. Both contain the same subsequently rejected fingerprint fold; this isolates dense metadata and does not qualify the restored current branch or its new cold fingerprint reuse candidate."
+  "next_action": "Collect and strictly verify this registered comparison before deciding on dense metadata retention. Reuse the same run if observation expires.",
+  "gcp_comparison": {
+    "run_id": 37370310006,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37370310006",
+    "harness_head_sha": "8e85542b74b89e805f3235615fef9b405a037d4a",
+    "inputs": {
+      "signal": "metrics",
+      "profiling": "none",
+      "phases": "steady",
+      "phase_seconds": "60",
+      "repetitions": "3",
+      "deployment_target": "all",
+      "profiles_target": "all",
+      "image_artifact_run": "37365268018",
+      "image_artifact_name": "comparison-image-metrics-f7da956aee6f6f8eb1c4f261c255ad519915128b",
+      "baseline_image_artifact_run": "37365264758",
+      "baseline_image_artifact_name": "comparison-image-metrics-a2e9e16ebbd2df7fda125f186ee2e4bdb4615908"
+    },
+    "status_at_dispatch_observation": "queued",
+    "live_instances_at_dispatch": [],
+    "image_runtime_control_verified": true,
+    "same_shared_fingerprint_implementation": true,
+    "performance_qualified": false,
+    "limitations": "Both exact images contain the same subsequently rejected fingerprint fold and predate main 92989bb2 and cold fingerprint reuse. This run isolates dense metadata; it does not qualify current HEAD."
+  }
 }
