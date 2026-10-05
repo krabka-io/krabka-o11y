@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Rebuild block fingerprints by live time-order position",
-  "status": "candidate_restored_full_validation_running",
+  "status": "full_validation_passed_flaky_follow_up_pending",
   "performance_qualified": false,
   "retained": false,
   "production_paths": [
@@ -88,7 +88,7 @@
     "initial_scoped_targets": 8,
     "initial_scope_status": "passed",
     "negative_control_status": "passed",
-    "final_scope_status": "running",
+    "final_scope_status": "passed_with_one_flaky_target",
     "initial_scope_log_sha256": "8c1217d2f56f8380edd6388d5687928e9939b98082e17062964bd2d333b31c82",
     "negative_control": {
       "mutation": "Use persistent ordinals as vector positions instead of live time-order positions.",
@@ -478,9 +478,246 @@
       "//crates/traces:wal_group_scale_out_test_clippy"
     ],
     "final_scope_target_list_sha256": "515f423297bb26f6f2f44b7ade20c354e4146f194ab153da3156732c5ca18fa7",
-    "final_validation_source_commit": "e2fa65371cf99eaa7f439dcce86191a1177c9e1c"
+    "final_validation_source_commit": "e2fa65371cf99eaa7f439dcce86191a1177c9e1c",
+    "final_validation_log_sha256": "ec48a17b843d1456c0e460b532ca9a76226487670b14999297241c47ad880d24",
+    "native_docker_wrappers": [
+      {
+        "target": "//crates/metrics-service:diff_mimir_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "3685ebe1d695f3b3e360c6052ad945a83ad10cb2b2ea14070c0e8ebd234bd4f9"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "f58ea80f73f8cac11ec165468d622ab3651e241d60b0338986dc6f57125f05e1"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "04093e1157c2a4e51e54436a21f48f73c54e003164a032adf356deda6c478b22"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "f953a5998c72d6cbc6f7c313b72589e63e92a06ed57ce1865635dfc801b903f6"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "73221fcc2a8f7c055435ea22bcbf657254f4465a859753460ec6a4a6beec315c"
+      },
+      {
+        "target": "//crates/metrics-service:metrics_deployment_docker_test",
+        "passed": 12,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "4d7c987bc6f1c69fcdd2232d54a40b812ee344491eb8787dac384038d9b3c0a3"
+      },
+      {
+        "target": "//crates/metrics-service:tsdb_import_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "5f16bed08827dd1794fbcb511f4bcb5af46321220822c11ec4121991193a1f07"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "04b926a815f1230b858ecf6109722489d4fbebe209fad4c65d13d5ebb15ee591"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "47938fce2bf9dba67859844bce799a8aa6d5e76e834f7a869060b3f50b099f22"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "56390b25620c2933422669ea03a1fb3c485a2ade04a2879a0cefaf1021156329"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "71becbf164097a68cc26ab29108e1fc4e11118532290b5bdabb04fbbd6a73ccd"
+      },
+      {
+        "target": "//crates/observability:loki_differential_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "1f76a684acc75e80b914c8e5cd4e5280c56b28966defc87a7edc9896f881938e"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_docker_test",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "e685ab0bbec9e54d9a98ff50c32977193c110cdde245077b3396f532e7570108"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_previous_docker_test",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "48d3bd3196f7927877947198aab308b045abfd2a3d5790527c7ed7a731512f01"
+      },
+      {
+        "target": "//crates/traces:grafana_e2e_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "d3310a4817f754ba090ea2c2dae2269cf6f3c9cebb2cb660c139a30258a88fb3"
+      },
+      {
+        "target": "//crates/traces:grafana_e2e_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "5d5e8fccef470e98680e75beeffda59aeb9269ad3481e3f75d9c6ff430f8385d"
+      },
+      {
+        "target": "//crates/traces:tempo_differential_docker_test",
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "36bdb10a48959de62e77419f5afa7831f8f4d9bda17176ea6bfca3f64bd2dc5c"
+      },
+      {
+        "target": "//crates/traces:tempo_differential_previous_docker_test",
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "b76f9e50d135477de5a355827547dbc3f93e53d46a46faad2796e682f6cefd28"
+      }
+    ],
+    "full_unit_checks": [
+      {
+        "target": "//crates/blockstore:blockstore_test",
+        "passed": 337,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "72eaa9929692f9c480517977cb29a7efd5d1a63612524743934a7c603c2b6e70"
+      },
+      {
+        "target": "//crates/promql:promql_test",
+        "passed": 569,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "b6f7fe2f05669c25d10c7f19dfd4643f4d3b6f553a553d7a0d34c1b64cbc78aa"
+      },
+      {
+        "target": "//crates/metrics:metrics_test",
+        "passed": 327,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "4d3864d0847551924dcca1c5c91dcf881960dbda09bd64f77ee6a1334ce3752f"
+      },
+      {
+        "target": "//crates/metrics-service:metrics-service_test",
+        "passed": 66,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "0d5636624228f2b14ed6e6e0fe8cd65482f0ff66f4080198cfde56b4a273123d"
+      },
+      {
+        "target": "//crates/logql:logql_test",
+        "passed": 60,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "cc0bd0a70fc7e3ef7ccbbdc3b7eb381aa21d1cf1d7afa2a6cec6e84e66fd4672"
+      },
+      {
+        "target": "//crates/traceql:traceql_test",
+        "passed": 405,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "797fbde679010b316aac7c11c5e0dab4b243051c61d69b00b5676f2734ccddad"
+      },
+      {
+        "target": "//crates/pprof:pprof_test",
+        "passed": 123,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "ed9e66f54afbfd920efa096516b8270b101536334adaa275c7f9a938a2a1ccf3"
+      },
+      {
+        "target": "//crates/profiles:profiles_test",
+        "passed": 284,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "803b4568b0b9a44cf0717fa97132300590091588689324d44e5fd7d1455b076e"
+      },
+      {
+        "target": "//crates/observability:observability_test",
+        "passed": 383,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "2840bf75df8d4b45258e1452314d2ccd1d04e9903c160ebdea64d023d4fa62f0"
+      },
+      {
+        "target": "//crates/traces:traces_test",
+        "passed": 465,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "22e6b6bc1616c7cfa2489f73c8d48a677e2ff7f3cb21b5cfe39b2bce14bbf8ef"
+      }
+    ],
+    "cross_signal_caller_checks": [
+      {
+        "target": "//crates/integration:logs_to_traces_trace_id_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "36b24636d06b7172fcf395e34b3d5f62f64ee29c2a51fbc0832a2f046bfba496"
+      },
+      {
+        "target": "//crates/integration:traces_to_metrics_exemplars_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "5d44f4288fe132d09973ff833ef76f10478e12a469b0a1eacfb4e8a277869425"
+      },
+      {
+        "target": "//crates/integration:traces_to_profiles_span_profiles_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "adbc64aa23e4793bec59051e018714206f0f11da2c3ad61fac3e840d3f0e4868"
+      }
+    ],
+    "correctness_scope_qualified": false,
+    "flaky_follow_up_status": "pending",
+    "raw_evidence": "qualification/evidence/correctness/dense-block-metadata/full376-e2fa6537",
+    "full_validation_flaky_targets": [
+      {
+        "target": "//crates/traces:tempo_differential_docker_test",
+        "failed_attempts": 1,
+        "successful_attempts": 1,
+        "failure": "HTTP 404 through Grafana Tempo datasource proxy for /api/echo; failure body was not captured and cause is unverified.",
+        "failed_attempt_sha256": "8e9117d5a717ec96aa956cb33d1ffd24e8a2d709a216c8bb9d383c65dd6ae84b"
+      }
+    ]
   },
-  "retention_decision": "Pending meaningful correctness checks and exact-image controls. Do not infer a gain from sparse profiles or static allocation differences. The preceding fingerprint fold comparison remains live.",
+  "retention_decision": "All 376 targets pass with one flaky Tempo/Grafana wrapper. Fresh runs with retries disabled remain required before correctness qualification. Exact-image controls remain required before performance retention.",
   "comparison_plan": "Select the retained fingerprint source after its four-signal control. Preserve exact baseline and candidate release images, verify complete runtime provenance and compare all four signals against native backends and alternating same-host revisions under the existing matched workloads and budgets.",
-  "source_commit": "e2fa65371cf99eaa7f439dcce86191a1177c9e1c"
+  "source_commit": "e2fa65371cf99eaa7f439dcce86191a1177c9e1c",
+  "rebase_note": "The 376-target run qualified the original e2fa6537 source before rebase. Upstream main 664e6987 adds Loki deployment coverage and changes compactor deletion handling; these changes need separate validation. Historical source references remain immutable."
 }
