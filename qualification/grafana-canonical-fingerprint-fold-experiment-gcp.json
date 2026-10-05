@@ -5,7 +5,7 @@
   "baseline_source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
   "source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649",
   "performance_qualified": false,
-  "retention_decision": "All 374 correctness targets pass; the one flaky Grafana wrapper and the previous-image wrapper each pass three fresh runs with retries disabled. All-four-signal native and alternating controls remain required for performance retention.",
+  "retention_decision": "Pending confirmation and remaining signals. Mimir CPU median improves but only one pair has lower total CPU; query and ingest improve in two pairs. Peak RSS is higher in all three pairs with overlapping ranges. Loki CPU improves in two pairs and RSS/query in all three, with overlapping ranges. No global retention is qualified.",
   "scope": {
     "production_paths": [
       "crates/blockstore/src/labels/labels_type.rs"
@@ -1629,7 +1629,7 @@
     "run_id": 37357671713,
     "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37357671713",
     "head_sha": "9019af3f5ae539a6cd11c231ca4619f7ba707f78",
-    "status": "queued",
+    "status": "metrics_and_logs_verified_other_signals_running",
     "performance_qualified": false,
     "inputs": {
       "signal": "all",
@@ -1650,7 +1650,737 @@
       "candidate_run": 37354008253,
       "candidate_source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649"
     },
-    "collector_sha256": "a0f0dadb907899ef76ccf4fafd681a094099e6d5916ed1d9f72368c017a3684d",
-    "scope": "All four signals. Three native Krabka/upstream repetitions plus three alternating baseline/candidate pairs per signal. Exact preserved images, matched workload and aggregate resource budgets. CPU and RSS include broker and MinIO."
+    "collector_sha256": "8ac8a185d41ad224c9445d84e10d588fffc84d08b5b2958968b6761244706c37",
+    "scope": "All four signals. Three native Krabka/upstream repetitions plus three alternating baseline/candidate pairs per signal. Exact preserved images, matched workload and aggregate resource budgets. CPU and RSS include broker and MinIO.",
+    "completed_signal_results": {
+      "metrics": {
+        "qualification_scope": "Completed signal job only; parent workflow remains in progress.",
+        "provenance": {
+          "run_id": 37357671713,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37357671713",
+          "head_sha": "9019af3f5ae539a6cd11c231ca4619f7ba707f78",
+          "run_conclusion": null,
+          "jobs": [
+            {
+              "id": 111924109299,
+              "name": "compare (metrics)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37357671713/job/111924109299",
+              "runner_name": "gcp-runner-ccb09512f4844cdc",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T18:41:28Z",
+              "completed_at": "2026-10-05T19:05:09Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11366228413,
+              "name": "grafana-comparison-metrics-9019af3f5ae539a6cd11c231ca4619f7ba707f78-1",
+              "digest": "sha256:17e8418e04551f8d0f48fc6eafd840e2e41f04c0aaf1278897c81506d94950bd",
+              "size_in_bytes": 9246589,
+              "expires_at": "2027-01-03T18:40:06Z",
+              "signal": "metrics",
+              "verified_raw_files": 725
+            }
+          ]
+        },
+        "summary": {
+          "baseline": {
+            "query_attempts": {
+              "median": 240,
+              "min": 240,
+              "max": 240,
+              "values": [
+                240,
+                240,
+                240
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.21618241720941203,
+              "min": 0.21135742588756576,
+              "max": 0.2269858661886184,
+              "values": [
+                0.21135742588756576,
+                0.21618241720941203,
+                0.2269858661886184
+              ]
+            },
+            "rss_kib": {
+              "median": 486324,
+              "min": 481964,
+              "max": 506872,
+              "values": [
+                486324,
+                506872,
+                481964
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.02948391800009631,
+              "min": 0.028726926999979696,
+              "max": 0.029666332000033435,
+              "values": [
+                0.028726926999979696,
+                0.029666332000033435,
+                0.02948391800009631
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.03975751899997704,
+              "min": 0.03677544000004218,
+              "max": 0.04881405800006178,
+              "values": [
+                0.03677544000004218,
+                0.04881405800006178,
+                0.03975751899997704
+              ]
+            },
+            "average_cpu_cores_by_role": {
+              "broker": {
+                "median": 0.039267854462134745,
+                "min": 0.03836647389634585,
+                "max": 0.04243806566995622,
+                "values": [
+                  0.03836647389634585,
+                  0.039267854462134745,
+                  0.04243806566995622
+                ]
+              },
+              "metrics-block-builder": {
+                "median": 0.028855563783429565,
+                "min": 0.02786116441039827,
+                "max": 0.03038207987110998,
+                "values": [
+                  0.02786116441039827,
+                  0.028855563783429565,
+                  0.03038207987110998
+                ]
+              },
+              "metrics-compactor": {
+                "median": 0.008777161107248254,
+                "min": 0.008746241507683295,
+                "max": 0.00941520356484908,
+                "values": [
+                  0.008746241507683295,
+                  0.008777161107248254,
+                  0.00941520356484908
+                ]
+              },
+              "metrics-distributor": {
+                "median": 0.033184283638282464,
+                "min": 0.03135801609300452,
+                "max": 0.034426915692092136,
+                "values": [
+                  0.03135801609300452,
+                  0.033184283638282464,
+                  0.034426915692092136
+                ]
+              },
+              "metrics-querier": {
+                "median": 0.05278111035580983,
+                "min": 0.05221780084267731,
+                "max": 0.05414411183715664,
+                "values": [
+                  0.05221780084267731,
+                  0.05278111035580983,
+                  0.05414411183715664
+                ]
+              },
+              "minio": {
+                "median": 0.05331644386250718,
+                "min": 0.05280772913745651,
+                "max": 0.05617948955345433,
+                "values": [
+                  0.05280772913745651,
+                  0.05331644386250718,
+                  0.05617948955345433
+                ]
+              }
+            }
+          },
+          "candidate": {
+            "query_attempts": {
+              "median": 240,
+              "min": 240,
+              "max": 240,
+              "values": [
+                240,
+                240,
+                240
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.21172299112187426,
+              "min": 0.2096083313303143,
+              "max": 0.22861938062511677,
+              "values": [
+                0.21172299112187426,
+                0.2096083313303143,
+                0.22861938062511677
+              ]
+            },
+            "rss_kib": {
+              "median": 495844,
+              "min": 487064,
+              "max": 508168,
+              "values": [
+                495844,
+                508168,
+                487064
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.027670976000081282,
+              "min": 0.02544359200010149,
+              "max": 0.03516115499996886,
+              "values": [
+                0.027670976000081282,
+                0.02544359200010149,
+                0.03516115499996886
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.03425842500018916,
+              "min": 0.03212732699989829,
+              "max": 0.041045616000019436,
+              "values": [
+                0.03425842500018916,
+                0.03212732699989829,
+                0.041045616000019436
+              ]
+            },
+            "average_cpu_cores_by_role": {
+              "broker": {
+                "median": 0.03897438027348073,
+                "min": 0.038534974932551966,
+                "max": 0.042617088634127616,
+                "values": [
+                  0.03897438027348073,
+                  0.038534974932551966,
+                  0.042617088634127616
+                ]
+              },
+              "metrics-block-builder": {
+                "median": 0.02807146470793597,
+                "min": 0.027957160337710823,
+                "max": 0.0306923001594938,
+                "values": [
+                  0.02807146470793597,
+                  0.027957160337710823,
+                  0.0306923001594938
+                ]
+              },
+              "metrics-compactor": {
+                "median": 0.008805242248741183,
+                "min": 0.008709324669023029,
+                "max": 0.00932994004334019,
+                "values": [
+                  0.008805242248741183,
+                  0.008709324669023029,
+                  0.00932994004334019
+                ]
+              },
+              "metrics-distributor": {
+                "median": 0.03174947626784566,
+                "min": 0.030693434457661723,
+                "max": 0.033643206718612186,
+                "values": [
+                  0.03174947626784566,
+                  0.030693434457661723,
+                  0.033643206718612186
+                ]
+              },
+              "metrics-querier": {
+                "median": 0.05132169474882201,
+                "min": 0.05059444016702966,
+                "max": 0.05518098428618191,
+                "values": [
+                  0.05059444016702966,
+                  0.05132169474882201,
+                  0.05518098428618191
+                ]
+              },
+              "minio": {
+                "median": 0.05352798745684104,
+                "min": 0.05239174218454474,
+                "max": 0.05715586078336108,
+                "values": [
+                  0.05352798745684104,
+                  0.05239174218454474,
+                  0.05715586078336108
+                ]
+              }
+            }
+          }
+        },
+        "candidate_divided_by_baseline": {
+          "query_attempts": 1.0,
+          "average_cpu_cores": 0.9793719297568128,
+          "rss_kib": 1.019575427081534,
+          "query_p99_seconds": 0.9385108179988458,
+          "ingest_p99_seconds": 0.8616841760223758
+        },
+        "full_revision_pairs_path": "qualification/evidence/performance/gcp-37357671713/metrics/verified-revision-pairs.json",
+        "full_revision_pairs_sha256": "bafaf9dc60ca970fd9de610ffb8c8db69a2f14bbd3b9462243d96a5032252c8d",
+        "native_summary_path": "qualification/evidence/performance/gcp-37357671713/metrics/verified-summary.json",
+        "native_summary_sha256": "ee69df7186f0d2e2a6f03cbc47e2c875b5c3516dac8b01e0ca71278bae0ca9ec",
+        "native_ratios": {
+          "average_cpu_cores": 0.605993802585007,
+          "rss_kib": 1.5982442075935392,
+          "query_p99_seconds": 1.0665903605282152,
+          "ingest_p99_seconds": 3.0529045126007786
+        },
+        "native_backends": {
+          "krabka": {
+            "query_p99_seconds": {
+              "median": 0.028837090000024546,
+              "min": 0.028030604000008452,
+              "max": 0.03123208399995292,
+              "values": [
+                0.028030604000008452,
+                0.03123208399995292,
+                0.028837090000024546
+              ]
+            },
+            "query_attempts": {
+              "median": 240,
+              "min": 240,
+              "max": 240,
+              "values": [
+                240,
+                240,
+                240
+              ]
+            },
+            "accepted_rows": {
+              "median": 120000,
+              "min": 120000,
+              "max": 120000,
+              "values": [
+                120000,
+                120000,
+                120000
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.21817175301421043,
+              "min": 0.2142109920203464,
+              "max": 0.218821054849359,
+              "values": [
+                0.2142109920203464,
+                0.218821054849359,
+                0.21817175301421043
+              ]
+            },
+            "rss_kib": {
+              "median": 486448,
+              "min": 484404,
+              "max": 495664,
+              "values": [
+                484404,
+                495664,
+                486448
+              ]
+            }
+          },
+          "mimir": {
+            "query_p99_seconds": {
+              "median": 0.027036705999989863,
+              "min": 0.02510164199998144,
+              "max": 0.027394419999950514,
+              "values": [
+                0.02510164199998144,
+                0.027036705999989863,
+                0.027394419999950514
+              ]
+            },
+            "query_attempts": {
+              "median": 240,
+              "min": 240,
+              "max": 240,
+              "values": [
+                240,
+                240,
+                240
+              ]
+            },
+            "accepted_rows": {
+              "median": 120000,
+              "min": 120000,
+              "max": 120000,
+              "values": [
+                120000,
+                120000,
+                120000
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.3600230762815531,
+              "min": 0.34619689756054794,
+              "max": 0.3618330618065325,
+              "values": [
+                0.3600230762815531,
+                0.3618330618065325,
+                0.34619689756054794
+              ]
+            },
+            "rss_kib": {
+              "median": 304364,
+              "min": 302852,
+              "max": 308824,
+              "values": [
+                302852,
+                304364,
+                308824
+              ]
+            }
+          }
+        },
+        "lower_pairs": {
+          "average_cpu_cores": 1,
+          "rss_kib": 0,
+          "query_p99_seconds": 2,
+          "ingest_p99_seconds": 2
+        }
+      },
+      "logs": {
+        "qualification_scope": "Completed signal job only; parent workflow remains in progress.",
+        "provenance": {
+          "run_id": 37357671713,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37357671713",
+          "head_sha": "9019af3f5ae539a6cd11c231ca4619f7ba707f78",
+          "run_conclusion": null,
+          "jobs": [
+            {
+              "id": 111924108861,
+              "name": "compare (logs)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37357671713/job/111924108861",
+              "runner_name": "gcp-runner-535a18f148be4b1a",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T18:41:25Z",
+              "completed_at": "2026-10-05T19:04:45Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11366163976,
+              "name": "grafana-comparison-logs-9019af3f5ae539a6cd11c231ca4619f7ba707f78-1",
+              "digest": "sha256:713a3bc1d3a1ec415f0388ed1b7fc4d7fd7734bdf31389080d3b0b30a738974a",
+              "size_in_bytes": 7661556,
+              "expires_at": "2027-01-03T18:40:06Z",
+              "signal": "logs",
+              "verified_raw_files": 725
+            }
+          ]
+        },
+        "summary": {
+          "baseline": {
+            "query_attempts": {
+              "median": 239,
+              "min": 239,
+              "max": 239,
+              "values": [
+                239,
+                239,
+                239
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.40809258756235184,
+              "min": 0.39337016833693056,
+              "max": 0.7340530311716734,
+              "values": [
+                0.39337016833693056,
+                0.7340530311716734,
+                0.40809258756235184
+              ]
+            },
+            "rss_kib": {
+              "median": 360456,
+              "min": 353020,
+              "max": 460740,
+              "values": [
+                360456,
+                460740,
+                353020
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.08270815199989556,
+              "min": 0.07779406999998173,
+              "max": 0.203400825000017,
+              "values": [
+                0.07779406999998173,
+                0.203400825000017,
+                0.08270815199989556
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.08991948299990327,
+              "min": 0.08881453999993028,
+              "max": 0.090770091999957,
+              "values": [
+                0.08881453999993028,
+                0.090770091999957,
+                0.08991948299990327
+              ]
+            },
+            "average_cpu_cores_by_role": {
+              "broker": {
+                "median": 0.046837371858865474,
+                "min": 0.04544994207299504,
+                "max": 0.047333290561763795,
+                "values": [
+                  0.04544994207299504,
+                  0.047333290561763795,
+                  0.046837371858865474
+                ]
+              },
+              "logs-all": {
+                "median": 0.33288596501746576,
+                "min": 0.3203689643595676,
+                "max": 0.5638244182190434,
+                "values": [
+                  0.3203689643595676,
+                  0.5638244182190434,
+                  0.33288596501746576
+                ]
+              },
+              "minio": {
+                "median": 0.028369250686020604,
+                "min": 0.027551261904367907,
+                "max": 0.12289532239086624,
+                "values": [
+                  0.027551261904367907,
+                  0.12289532239086624,
+                  0.028369250686020604
+                ]
+              }
+            }
+          },
+          "candidate": {
+            "query_attempts": {
+              "median": 239,
+              "min": 239,
+              "max": 239,
+              "values": [
+                239,
+                239,
+                239
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.4009898682466743,
+              "min": 0.3895554181421547,
+              "max": 0.4188374933477283,
+              "values": [
+                0.3895554181421547,
+                0.4009898682466743,
+                0.4188374933477283
+              ]
+            },
+            "rss_kib": {
+              "median": 359852,
+              "min": 346156,
+              "max": 361944,
+              "values": [
+                359852,
+                361944,
+                346156
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.07884449800008042,
+              "min": 0.07672945399997388,
+              "max": 0.0792436589999852,
+              "values": [
+                0.07672945399997388,
+                0.07884449800008042,
+                0.0792436589999852
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.09115713000005599,
+              "min": 0.08368341899995357,
+              "max": 0.10318195800005014,
+              "values": [
+                0.08368341899995357,
+                0.09115713000005599,
+                0.10318195800005014
+              ]
+            },
+            "average_cpu_cores_by_role": {
+              "broker": {
+                "median": 0.046920692956036805,
+                "min": 0.04484886843429889,
+                "max": 0.048029508570242546,
+                "values": [
+                  0.04484886843429889,
+                  0.046920692956036805,
+                  0.048029508570242546
+                ]
+              },
+              "logs-all": {
+                "median": 0.3269165072066117,
+                "min": 0.3181209496544331,
+                "max": 0.3412559104680495,
+                "values": [
+                  0.3181209496544331,
+                  0.3269165072066117,
+                  0.3412559104680495
+                ]
+              },
+              "minio": {
+                "median": 0.02715266808402583,
+                "min": 0.02658560005342278,
+                "max": 0.02955207430943623,
+                "values": [
+                  0.02658560005342278,
+                  0.02715266808402583,
+                  0.02955207430943623
+                ]
+              }
+            }
+          }
+        },
+        "candidate_divided_by_baseline": {
+          "query_attempts": 1.0,
+          "average_cpu_cores": 0.9825953238746531,
+          "rss_kib": 0.9983243447189116,
+          "query_p99_seconds": 0.9532856930497006,
+          "ingest_p99_seconds": 1.0137639470208482
+        },
+        "full_revision_pairs_path": "qualification/evidence/performance/gcp-37357671713/logs/verified-revision-pairs.json",
+        "full_revision_pairs_sha256": "0445cd740bcc2474dc51aea7babf70e4b5e28e1163df6f02733814ed45cfb843",
+        "native_summary_path": "qualification/evidence/performance/gcp-37357671713/logs/verified-summary.json",
+        "native_summary_sha256": "5de54d6e5d15d226eb144923248b5ea12a316e6c252f7f943b55c24d40c02f99",
+        "native_ratios": {
+          "average_cpu_cores": 0.7872124418415778,
+          "rss_kib": 0.90337687690806,
+          "query_p99_seconds": 0.638400824243503,
+          "ingest_p99_seconds": 3.7516142920491586
+        },
+        "native_backends": {
+          "krabka": {
+            "query_p99_seconds": {
+              "median": 0.07652844499997968,
+              "min": 0.0738144290000946,
+              "max": 0.07900151800004096,
+              "values": [
+                0.07652844499997968,
+                0.0738144290000946,
+                0.07900151800004096
+              ]
+            },
+            "query_attempts": {
+              "median": 239,
+              "min": 239,
+              "max": 239,
+              "values": [
+                239,
+                239,
+                239
+              ]
+            },
+            "accepted_rows": {
+              "median": 120000,
+              "min": 120000,
+              "max": 120000,
+              "values": [
+                120000,
+                120000,
+                120000
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.3875692347460862,
+              "min": 0.3864727147482467,
+              "max": 0.39758277788532315,
+              "values": [
+                0.3875692347460862,
+                0.3864727147482467,
+                0.39758277788532315
+              ]
+            },
+            "rss_kib": {
+              "median": 347988,
+              "min": 343712,
+              "max": 363232,
+              "values": [
+                343712,
+                363232,
+                347988
+              ]
+            }
+          },
+          "loki": {
+            "query_p99_seconds": {
+              "median": 0.11987522900000158,
+              "min": 0.11788081399993189,
+              "max": 0.1340575460000082,
+              "values": [
+                0.11987522900000158,
+                0.1340575460000082,
+                0.11788081399993189
+              ]
+            },
+            "query_attempts": {
+              "median": 239,
+              "min": 239,
+              "max": 239,
+              "values": [
+                239,
+                239,
+                239
+              ]
+            },
+            "accepted_rows": {
+              "median": 120000,
+              "min": 120000,
+              "max": 120000,
+              "values": [
+                120000,
+                120000,
+                120000
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.49233118551762217,
+              "min": 0.46446161424652144,
+              "max": 0.5259138087162404,
+              "values": [
+                0.46446161424652144,
+                0.5259138087162404,
+                0.49233118551762217
+              ]
+            },
+            "rss_kib": {
+              "median": 385208,
+              "min": 383656,
+              "max": 395408,
+              "values": [
+                395408,
+                385208,
+                383656
+              ]
+            }
+          }
+        },
+        "lower_pairs": {
+          "average_cpu_cores": 2,
+          "rss_kib": 3,
+          "query_p99_seconds": 3,
+          "ingest_p99_seconds": 1
+        }
+      }
+    }
   }
 }
