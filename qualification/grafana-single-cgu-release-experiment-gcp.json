@@ -48,7 +48,7 @@
   },
   "schema_version": 1,
   "experiment": "One Rust code generation unit for executable footprint and runtime efficiency",
-  "status": "core_checks_passed_mimir_matched_comparison_dispatched",
+  "status": "mimir_matched_cpu_and_rss_gain_verified_other_signals_pending",
   "baseline_image_reuse": "The exact restored-source cold fingerprint reuse candidate supplies the baseline image. All source, dependencies and workload harness files match; only .bazelrc differs. Both contain the same dense metadata and cold fingerprint reuse candidates.",
   "candidate_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371662781",
   "baseline_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
@@ -121,7 +121,7 @@
       "scope": "Full ordinary Bazel suite on current source, including integration tests and Clippy, with one codegen unit. Native compatibility checks remain a separate scope."
     }
   },
-  "next_action": "Run a matched Mimir comparison and the native differential and deployment checks with one codegen unit. The static size reduction does not prove CPU or RSS improvement.",
+  "next_action": "Measure Loki, Tempo and Pyroscope with the same exact images. Finish native and ordinary correctness checks. Validate final combined source before retention.",
   "baseline_image_verified": {
     "image_provenance": {
       "run_id": 37371016528,
@@ -214,5 +214,77 @@
     "baseline_image_artifact_run": "37371016528",
     "baseline_image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6"
   },
-  "comparison_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37377084215"
+  "comparison_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37377084215",
+  "gcp_comparison": {
+    "status": "success_verified",
+    "measurement_qualified": true,
+    "run_id": 37377084215,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37377084215",
+    "proof_path": "qualification/evidence/performance/gcp-37377084215/metrics/verified-revision-pairs.json",
+    "proof_sha256": "e58b6bd12d4bb58c89586da13d8fbf5cf295c5a6c72372670625ef6dfb6ea8e1",
+    "verified_raw_files": 725,
+    "candidate_divided_by_baseline": {
+      "query_attempts": 1.0,
+      "average_cpu_cores": 0.9771611831199547,
+      "rss_kib": 0.918144314974307,
+      "query_p99_seconds": 0.9683512025291627,
+      "ingest_p99_seconds": 0.9552933314121346
+    },
+    "pair_directions": {
+      "query_attempts": {
+        "candidate_lower_pairs": 0,
+        "ranges_overlap": true
+      },
+      "average_cpu_cores": {
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": false
+      },
+      "rss_kib": {
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": false
+      },
+      "query_p99_seconds": {
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      },
+      "ingest_p99_seconds": {
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": true
+      }
+    },
+    "role_cpu": {
+      "broker": {
+        "candidate_divided_by_baseline": 1.0046451078748029,
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      },
+      "metrics-block-builder": {
+        "candidate_divided_by_baseline": 0.9671009994739233,
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": false
+      },
+      "metrics-compactor": {
+        "candidate_divided_by_baseline": 0.9441024079354545,
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": false
+      },
+      "metrics-distributor": {
+        "candidate_divided_by_baseline": 0.9607176839782425,
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": false
+      },
+      "metrics-querier": {
+        "candidate_divided_by_baseline": 0.9863817344363248,
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": false
+      },
+      "minio": {
+        "candidate_divided_by_baseline": 0.9597041485002291,
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": true
+      }
+    },
+    "scope": "Both exact images contain equal dense metadata and cold fingerprint reuse. Only the compiler setting differs. This isolates one codegen unit and does not qualify final HEAD."
+  },
+  "decision": "CPU and RSS are lower in all three Mimir pairs with disjoint ranges. Query p99 is lower in two pairs with overlapping ranges. Measure other signals and finish full correctness checks before retaining the setting."
 }
