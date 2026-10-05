@@ -48,6 +48,59 @@ fn pruning_frees_labels_after_the_last_snapshot_releases_them() {
 }
 
 #[test]
+fn live_label_hits_share_the_cache_with_snapshots_but_dead_entries_are_cleaned() {
+    let labels = lbls(&[("__name__", "up"), ("job", "api")]);
+    let fp = labels.fingerprint();
+    let mut store = InMemoryMetricStore::new();
+    store.push_float("t", labels.clone(), 100, 1.0);
+    let snapshot = store.clone();
+    store.push_float("t", labels.clone(), 200, 2.0);
+    store.push_histogram("t", labels.clone(), 300, native_histogram());
+    store.push_exemplar("t", labels.clone(), Labels::new(), 400, 3.0);
+    assert!(Arc::ptr_eq(
+        &store.series_labels["t"],
+        &snapshot.series_labels["t"]
+    ));
+    assert!(store.series_labels["t"][&fp].len() == 1);
+    assert!(
+        store.floats["t"]
+            .iter()
+            .map(|row| (row.ts_ms, row.value))
+            .collect::<Vec<_>>()
+            == vec![(100, 1.0), (200, 2.0)]
+    );
+    assert!(
+        snapshot.floats["t"]
+            .iter()
+            .map(|row| (row.ts_ms, row.value))
+            .collect::<Vec<_>>()
+            == vec![(100, 1.0)]
+    );
+    assert!(!snapshot.hists.contains_key("t"));
+    assert!(!snapshot.exemplars.contains_key("t"));
+
+    let dead = Arc::new(labels.clone());
+    Arc::make_mut(store.series_labels.get_mut("t").unwrap())
+        .get_mut(&fp)
+        .unwrap()
+        .push(Arc::downgrade(&dead));
+    drop(dead);
+    let dirty_snapshot = store.clone();
+    store.push_float("t", labels.clone(), 500, 4.0);
+    assert!(!Arc::ptr_eq(
+        &store.series_labels["t"],
+        &dirty_snapshot.series_labels["t"]
+    ));
+    assert!(store.series_labels["t"][&fp].len() == 1);
+    assert!(dirty_snapshot.series_labels["t"][&fp].len() == 2);
+    assert!(store.floats["t"].iter().last().unwrap().labels.as_ref() == &labels);
+    assert!(Arc::ptr_eq(
+        &store.floats["t"].iter().next().unwrap().labels,
+        &store.floats["t"].iter().last().unwrap().labels
+    ));
+}
+
+#[test]
 fn a_fingerprint_collision_does_not_intern_different_labels_together() {
     let wanted = lbls(&[("__name__", "up")]);
     let other = Arc::new(lbls(&[("__name__", "down")]));

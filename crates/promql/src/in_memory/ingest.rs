@@ -44,6 +44,19 @@ impl InMemoryMetricStore {
     ) -> (SeriesFingerprint, Arc<Labels>) {
         let fp = labels.fingerprint();
         let cache = self.series_labels.entry(tenant.to_string()).or_default();
+        // A live cache hit does not change the cache. Preserve its sharing
+        // with query snapshots instead of copying every series' weak entries.
+        if let Some(candidates) = cache.get(&fp)
+            && candidates
+                .iter()
+                .all(|candidate| candidate.strong_count() > 0)
+            && let Some(candidate) = candidates
+                .iter()
+                .filter_map(std::sync::Weak::upgrade)
+                .find(|candidate| candidate.as_ref() == labels.as_ref())
+        {
+            return (fp, candidate);
+        }
         let candidates = Arc::make_mut(cache).entry(fp).or_default();
         candidates.retain(|candidate| candidate.strong_count() > 0);
         for candidate in candidates.iter().filter_map(std::sync::Weak::upgrade) {
