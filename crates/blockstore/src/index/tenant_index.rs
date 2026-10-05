@@ -1,12 +1,12 @@
 use super::{
-    Arc, BTreeMap, BTreeSet, BlockList, BlockStoreError, Deserialize, LabelMatcher, Labels,
-    MatchOp, QUERY_SHARD_LABEL, Result, Serialize, SeriesFingerprint, anchored_regex,
+    BTreeMap, BTreeSet, BlockList, BlockStoreError, Deserialize, LabelMatcher, Labels, MatchOp,
+    QUERY_SHARD_LABEL, Result, Serialize, SeriesFingerprint, anchored_regex,
     parse_query_shard_selector,
 };
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct TenantIndex {
-    pub(crate) series: BTreeMap<SeriesFingerprint, Arc<Labels>>,
+    pub(crate) series: BTreeMap<SeriesFingerprint, Labels>,
     /// `name -> value -> fingerprints`. The map is structured, and not an
     /// in-band `name\0value` key, so arbitrary label bytes, NUL included, can
     /// never collide distinct `(name, value)` pairs into one bucket.
@@ -29,7 +29,7 @@ impl TenantIndex {
         if self.series.contains_key(&fingerprint) {
             return;
         }
-        self.series.insert(fingerprint, Arc::new(labels.clone()));
+        self.series.insert(fingerprint, labels.clone());
 
         for (name, value) in labels.iter() {
             self.postings
