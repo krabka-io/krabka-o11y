@@ -2012,5 +2012,302 @@
       }
     },
     "purpose": "Verify the production whole-span clone caller before the borrowed live-window selection experiment. These captures are diagnostics, not measurements of the new code."
+  },
+  "pyroscope_label_fingerprint_baseline_captures": {
+    "diagnostic_only": true,
+    "comparison_qualified": false,
+    "source_commit": "ade83dfae7fe10bf6dd71c9231454f4d6534ad5b",
+    "image_producer": {
+      "run_id": 37293349017,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37293349017",
+      "source_commit": "ade83dfae7fe10bf6dd71c9231454f4d6534ad5b",
+      "artifact": {
+        "id": 11338540225,
+        "name": "comparison-image-logs-ade83dfae7fe10bf6dd71c9231454f4d6534ad5b",
+        "digest": "sha256:5f27d7720baf207f273b5c4891d92ae4b6d16771d33f4a344a3c98bf896481a5",
+        "size_in_bytes": 308302820,
+        "expires_at": "2027-01-03T09:56:44Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-ade83dfae7fe",
+      "manifest_digest": "sha256:a3c29505c3a3bb79bbf630585da07b069e423db31297ee7ca375f704f82d1ca5",
+      "config_digest": "sha256:a3c29505c3a3bb79bbf630585da07b069e423db31297ee7ca375f704f82d1ca5"
+    },
+    "binary_sha256": {
+      "krabka-metrics": {
+        "path": "usr/local/bin/krabka-metrics",
+        "sha256": "c03fef9335c4e9310773b8b6d4fe34904576f2695cb9faa553757020f7c18a73",
+        "size_in_bytes": 72318632
+      },
+      "krabka-metrics-service": {
+        "path": "usr/local/bin/krabka-metrics-service",
+        "sha256": "54a10878a189de1fe599aa0e9f0169ad2fe2df59fdb48c5b5867ad59d6168c61",
+        "size_in_bytes": 236254392
+      },
+      "krabka-o11y-bootstrap": {
+        "path": "usr/local/bin/krabka-o11y-bootstrap",
+        "sha256": "29f869779f919c5faa83d9335f2a6f10a5382f399c89a29b15564dd186cf6075",
+        "size_in_bytes": 26755432
+      },
+      "krabka-o11y-recovery": {
+        "path": "usr/local/bin/krabka-o11y-recovery",
+        "sha256": "c7768eea122ab6d4e768f2de895ef92ef2215bd7046a68459d5ce3c255014e5d",
+        "size_in_bytes": 36713504
+      },
+      "krabka-observability": {
+        "path": "usr/local/bin/krabka-observability",
+        "sha256": "08c9e1743b3da81b21a44ef264911dc0bf4e106b76af0db349db1dff90df8b78",
+        "size_in_bytes": 222382776
+      },
+      "krabka-profiles": {
+        "path": "usr/local/bin/krabka-profiles",
+        "sha256": "616bee380dd6affee2803d1223ed9a0c6c02cc4448632cd12aa10523b8dbf6b4",
+        "size_in_bytes": 219803192
+      },
+      "krabka-traces": {
+        "path": "usr/local/bin/krabka-traces",
+        "sha256": "fa8f8e927c22410a43c342a0eb08432e7fced9d4b826c501e1811ae1fe5dbefd",
+        "size_in_bytes": 223526800
+      }
+    },
+    "captures": {
+      "cpu": {
+        "source_commit": "ade83dfae7fe10bf6dd71c9231454f4d6534ad5b",
+        "provenance": {
+          "run_id": 37298005269,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37298005269",
+          "head_sha": "a268f726411f466d504dcd166a2089fbe1a96af5",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111723761805,
+              "name": "compare (profiles)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37298005269/job/111723761805",
+              "runner_name": "gcp-runner-863ef4a92eb74925",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T10:40:42Z",
+              "completed_at": "2026-10-05T10:46:25Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11340738280,
+              "name": "grafana-comparison-profiles-a268f726411f466d504dcd166a2089fbe1a96af5-1",
+              "digest": "sha256:2ec41195008dc188941bcc43b0c20f5e4dac93569f153622687e07d7f7d00b7e",
+              "size_in_bytes": 3604338,
+              "expires_at": "2027-01-03T10:39:51Z",
+              "signal": "profiles",
+              "verified_raw_files": 164,
+              "diagnostic_only": true
+            }
+          ]
+        },
+        "profiles_all_windows": [
+          {
+            "samples": "200",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 6.0,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 4.5,
+                "symbol": "unlink_chunk.isra.0"
+              },
+              {
+                "self_percent": 3.5,
+                "symbol": "__memcmp_avx2_movbe"
+              },
+              {
+                "self_percent": 3.5,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 3.5,
+                "symbol": "malloc"
+              },
+              {
+                "self_percent": 3.0,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 2.5,
+                "symbol": "<hashbrown::raw::RawTable<(alloc::string::String, alloc::sync::Arc<datafusion_expr::udf::ScalarUDF>)> as core::clone::Clone>::clone"
+              },
+              {
+                "self_percent": 2.0,
+                "symbol": "ZSTD_createCCtx"
+              },
+              {
+                "self_percent": 2.0,
+                "symbol": "__memmove_avx_unaligned"
+              },
+              {
+                "self_percent": 2.0,
+                "symbol": "__memmove_avx_unaligned_erms"
+              }
+            ],
+            "prune_above_report_threshold": false
+          },
+          {
+            "samples": "196",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 5.1,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 4.08,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 3.06,
+                "symbol": "__memcmp_avx2_movbe"
+              },
+              {
+                "self_percent": 2.55,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 2.55,
+                "symbol": "malloc"
+              },
+              {
+                "self_percent": 1.53,
+                "symbol": "<alloc::string::String as core::clone::Clone>::clone"
+              },
+              {
+                "self_percent": 1.53,
+                "symbol": "<hashbrown::raw::RawTable<(alloc::string::String, alloc::sync::Arc<datafusion_expr::udf::ScalarUDF>)> as core::clone::Clone>::clone"
+              },
+              {
+                "self_percent": 1.53,
+                "symbol": "ZSTD_createCCtx"
+              },
+              {
+                "self_percent": 1.53,
+                "symbol": "unlink_chunk.isra.0"
+              },
+              {
+                "self_percent": 1.02,
+                "symbol": "<alloc::collections::btree::map::BTreeMap<u64, alloc::collections::btree::set_val::SetValZST>>::insert"
+              }
+            ],
+            "prune_above_report_threshold": false
+          },
+          {
+            "samples": "207",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 5.31,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 4.83,
+                "symbol": "__memmove_avx_unaligned_erms"
+              },
+              {
+                "self_percent": 3.86,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 2.9,
+                "symbol": "_int_free_chunk"
+              },
+              {
+                "self_percent": 2.9,
+                "symbol": "malloc"
+              },
+              {
+                "self_percent": 1.93,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 1.45,
+                "symbol": "<std::time::Instant>::elapsed"
+              },
+              {
+                "self_percent": 1.45,
+                "symbol": "__rustc::__rdl_alloc"
+              },
+              {
+                "self_percent": 1.45,
+                "symbol": "core::fmt::write"
+              },
+              {
+                "self_percent": 1.45,
+                "symbol": "unlink_chunk.isra.0"
+              }
+            ],
+            "prune_above_report_threshold": false
+          }
+        ],
+        "cpu_models": [
+          "AMD EPYC 7B12"
+        ],
+        "ingest_accepted_rows": 3600,
+        "query_attempts": 720,
+        "errors": 0,
+        "empty_queries": 0
+      },
+      "allocations": {
+        "source_commit": "ade83dfae7fe10bf6dd71c9231454f4d6534ad5b",
+        "provenance": {
+          "run_id": 37298189841,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37298189841",
+          "head_sha": "a268f726411f466d504dcd166a2089fbe1a96af5",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111724364538,
+              "name": "compare (profiles)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37298189841/job/111724364538",
+              "runner_name": "gcp-runner-b216ee8c6e9c41ad",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T10:42:31Z",
+              "completed_at": "2026-10-05T10:46:36Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11339339173,
+              "name": "grafana-comparison-profiles-a268f726411f466d504dcd166a2089fbe1a96af5-1",
+              "digest": "sha256:decce3d6fb72feeab33157da4d361ef594d3a7fd40e05e9223bad0f6114f3592",
+              "size_in_bytes": 101449290,
+              "expires_at": "2027-01-03T10:41:37Z",
+              "signal": "profiles",
+              "verified_raw_files": 132,
+              "diagnostic_only": true
+            }
+          ]
+        },
+        "runtime_including_startup_and_seed_seconds": 124.98,
+        "allocation_calls": 11347172,
+        "temporary_allocations": 2342564,
+        "peak_heap_decimal_mb": 5.92,
+        "string_clone_calls": 5641591,
+        "cpu_models": [
+          "AMD EPYC 7B12"
+        ],
+        "ingest_accepted_rows": 1400,
+        "query_attempts": 280,
+        "errors": 0,
+        "empty_queries": 0,
+        "owned_label_clone_for_fingerprint_present": true
+      }
+    },
+    "purpose": "Inspect production fingerprint_labels and flame-tree allocation callers before selecting the next Pyroscope optimization."
   }
 }
