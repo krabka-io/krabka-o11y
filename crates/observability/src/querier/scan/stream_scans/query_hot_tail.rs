@@ -1,8 +1,7 @@
-use super::{ActiveLogDeleteFilter, CompactionFrontier, WalLogRecord};
+use super::{ActiveLogDeleteFilter, CompactionFrontier};
 
-#[derive(Clone, Copy)]
-pub(crate) struct QueryHotTail<'a> {
-    pub(crate) records: &'a [WalLogRecord],
+pub(crate) struct QueryHotTail<'a, R> {
+    pub(crate) records: &'a [R],
     pub(crate) frontier: &'a CompactionFrontier,
     pub(crate) delete_filters: &'a [ActiveLogDeleteFilter],
 }

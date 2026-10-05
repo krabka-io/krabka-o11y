@@ -24,7 +24,7 @@ pub(crate) fn count_loki_metric_result_hot_tail_samples_returns_zero_when_nothin
 
     // `absent_over_time` short-circuits to 0 regardless of the response body.
     let absent_query = parse_metric_query("absent_over_time({app=\"x\"}[5m])").unwrap();
-    let absent = count_loki_metric_result_hot_tail_samples(
+    let absent = count_loki_metric_result_hot_tail_samples::<crate::WalLogRecord>(
         &json!({ "data": { "result": [] } }),
         &plan,
         &absent_query,
@@ -38,7 +38,7 @@ pub(crate) fn count_loki_metric_result_hot_tail_samples_returns_zero_when_nothin
     // A non-absent query with an empty hot tail and a response lacking any
     // `data.result` array matches nothing and returns 0.
     let count_query = parse_metric_query("count_over_time({app=\"x\"}[5m])").unwrap();
-    let none = count_loki_metric_result_hot_tail_samples(
+    let none = count_loki_metric_result_hot_tail_samples::<crate::WalLogRecord>(
         &json!({}),
         &plan,
         &count_query,

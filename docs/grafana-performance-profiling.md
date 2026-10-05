@@ -301,3 +301,25 @@ allocation count alone does not establish its contribution to CPU or RSS.
 
 The machine-readable [profiling record](../qualification/grafana-profiling-gcp.json)
 keeps every successful capture's source, run, artifact digest and limitations.
+
+
+## Shared Loki records experiment
+
+The hot-tail allocation capture identifies repeated owned snapshots in the
+HTTP query path. The buffered source now keeps each immutable WAL record in
+an `Arc`. Range snapshots copy those pointers, and both filesystem and object
+store query kernels borrow the records. The existing owned-record methods
+keep their behavior, and other hot-tail sources can use the default adapter.
+Wire fields, query predicates, time-bucket selection and arrival order remain
+the same.
+
+The regression compares complete independent records and HTTP responses,
+including metadata, duplicate lines, tenant filtering and inclusive time
+bounds. It holds an old snapshot across offset/time-based compaction and late
+arrival, checks fresh results, and proves removed records are released after
+the last snapshot drops. Both production query paths use a source whose owned
+snapshot method fails. Removing only buffered-source forwarding fails the
+pointer-sharing check, with the other 379 library cases passing. Restoring it
+passes all 118 scoped checks, including real Loki and Grafana integration and
+end-to-end suites. A fresh uninstrumented GCP comparison and allocation capture
+must establish the performance effect before this experiment is qualified.

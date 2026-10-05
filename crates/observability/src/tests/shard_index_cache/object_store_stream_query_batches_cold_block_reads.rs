@@ -48,7 +48,7 @@ pub(crate) async fn object_store_stream_query_batches_cold_block_reads() {
         &prefix,
         &plan,
         &label_index,
-        QueryHotTail {
+        QueryHotTail::<crate::WalLogRecord> {
             records: &[],
             frontier: &CompactionFrontier::new(i64::MAX),
             delete_filters: &[],
