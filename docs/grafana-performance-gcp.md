@@ -24,14 +24,15 @@ contracts. Writer and cardinality ramps are outside this qualification.
 ## Verified measurement checkpoint
 
 All four comparisons below passed three paired 60-second repetitions on
-2026-10-05. Metrics uses the corrected production-wrapper release image
-`7184a4c9a4a11c95a3605be42d5074560dc5d77e`; the pooled services retain their
+2026-10-05. Metrics uses the fused instant-scan release image
+`5b40aec6a591aac531f0c18698264f0304f37cdb`; the pooled services retain their
 measured `50f03683` image. Independent archive and filesystem verification
 checks all 380 filesystem entries and finds only the metrics query binary
 changed: the other six application binaries, base layer and runtime
 configuration are identical. This permits reuse of the pooled measurements.
-Artifact verification checked every archive digest and all 962 evidence-file
-checksums. This table records the retained implementation. The subsequent
+Artifact verification checked every archive digest and all 1,448 evidence-file
+checksums. These qualify the recorded images, rather than the current branch
+head, which contains further experiments. The subsequent
 hash-based series-discovery experiment `fd1ded9b` passed correctness checks
 but did not establish an end-to-end gain and was reverted. Its actual
 measurements are preserved in the
@@ -43,7 +44,7 @@ steady workload and deployment contract above.
 
 | Upstream | Layout | CPU | Peak RSS | Query p99 |
 | --- | --- | ---: | ---: | ---: |
-| Mimir | split | 0.73× | 1.68× | 33.33 / 22.39ms |
+| Mimir | split | 0.60× | 1.65× | 25.79 / 22.68ms |
 | Loki | all | 0.91× | 1.07× | 58.37 / 83.36ms |
 | Tempo | all | 0.82× | 0.88× | 145.37 / 138.52ms |
 | Pyroscope | all | 0.42× | 0.89× | 21.51 / 23.67ms |
@@ -55,6 +56,17 @@ overlap the native values (134.21–140.98ms). The earlier comparison of the
 byte-identical Tempo binary measured 88.91/101.32ms, so this workload does not
 establish a consistent tail-latency advantage. This is a narrow steady-load
 qualification, not a long-running production or durability qualification.
+
+Metrics also passed a before/after comparison on the same AMD VM: fusion
+lowers median CPU by 17.0% and p99 from 34.37 to 24.10ms, with both improving
+in each of three pairs. The earlier Intel comparison of this same fused image
+measured 0.67× native CPU, 1.58× RSS and 35.14/28.85ms p99; host differences
+are preserved in the [experiment record](../qualification/grafana-fused-instant-scan-experiment-gcp.json).
+The later shared-records Loki image measures 0.87× CPU, 1.00× RSS and
+54.44/78.17ms p99 in its [own record](../qualification/grafana-loki-shared-records-experiment-gcp.json).
+All seven binaries differ in that image, so it cannot replace rows for the
+other three signals by binary equivalence. The new metrics cache-hit and
+fingerprint allocation experiments still require measurement.
 
 Exact sources, image identities, native image pins, each repetition, gates,
 run URLs and artifact hashes are in the
