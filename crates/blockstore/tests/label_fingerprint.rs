@@ -1,4 +1,4 @@
-//! Fixed canonical label fingerprints for owned and borrowed inputs.
+//! Fixed canonical label fingerprints.
 
 use krabka_blockstore::Labels;
 
@@ -20,7 +20,6 @@ fn fingerprints_preserve_order_duplicates_byte_lengths_and_delimiters() {
         (&[("a=b", "c")], 0x55db_7a79_d51d_8b94),
     ];
     for &(pairs, expected) in cases {
-        assert2::assert!(Labels::fingerprint_pairs(pairs.iter().copied()) == expected);
         assert2::assert!(Labels::from_pairs(pairs.iter().copied()).fingerprint() == expected);
     }
 }

@@ -1,11 +1,11 @@
 use super::Labels;
 
 pub(crate) fn fingerprint_labels(labels: &[(String, String)]) -> u64 {
-    Labels::fingerprint_pairs(
-        labels
-            .iter()
-            .map(|(name, value)| (name.as_str(), value.as_str())),
-    )
+    let mut canonical = Labels::new();
+    for (name, value) in labels {
+        canonical.insert(name.clone(), value.clone());
+    }
+    canonical.fingerprint()
 }
 
 #[cfg(test)]

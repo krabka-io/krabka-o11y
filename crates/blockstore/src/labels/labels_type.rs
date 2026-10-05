@@ -62,50 +62,25 @@ impl Labels {
     /// depends on the old encoding.
     #[must_use]
     pub fn fingerprint(&self) -> SeriesFingerprint {
-        fingerprint_sorted_pairs(
-            self.0
+        const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+        let mut hash = OFFSET;
+        for (name, value) in &self.0 {
+            for byte in (name.len() as u64)
+                .to_le_bytes()
                 .iter()
-                .map(|(name, value)| (name.as_str(), value.as_str())),
-        )
-    }
-
-    /// Hash borrowed label pairs using the same canonical encoding as [`Self::fingerprint`].
-    ///
-    /// Names are sorted before hashing. For duplicate names, the last value wins,
-    /// as in [`Self::from_pairs`]. The temporary map borrows the input strings.
-    #[must_use]
-    pub fn fingerprint_pairs<'a>(
-        pairs: impl IntoIterator<Item = (&'a str, &'a str)>,
-    ) -> SeriesFingerprint {
-        let mut canonical = BTreeMap::new();
-        for (name, value) in pairs {
-            canonical.insert(name, value);
+                .copied()
+                .chain(name.as_bytes().iter().copied())
+                .chain((value.len() as u64).to_le_bytes().iter().copied())
+                .chain(value.as_bytes().iter().copied())
+            {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(PRIME);
+            }
         }
-        fingerprint_sorted_pairs(canonical)
+        hash
     }
-}
-
-fn fingerprint_sorted_pairs<'a>(
-    pairs: impl IntoIterator<Item = (&'a str, &'a str)>,
-) -> SeriesFingerprint {
-    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const PRIME: u64 = 0x0000_0100_0000_01b3;
-
-    let mut hash = OFFSET;
-    for (name, value) in pairs {
-        for byte in (name.len() as u64)
-            .to_le_bytes()
-            .iter()
-            .copied()
-            .chain(name.as_bytes().iter().copied())
-            .chain((value.len() as u64).to_le_bytes().iter().copied())
-            .chain(value.as_bytes().iter().copied())
-        {
-            hash ^= u64::from(byte);
-            hash = hash.wrapping_mul(PRIME);
-        }
-    }
-    hash
 }
 
 impl FromIterator<(String, String)> for Labels {
