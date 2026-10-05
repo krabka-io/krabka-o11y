@@ -3,7 +3,11 @@ on:
   workflow_dispatch:
     inputs:
       image_artifact_run:
-        description: Operating-envelope image run (empty builds this commit)
+        description: Preserved image run (empty builds this commit)
+        type: string
+        default: ''
+      image_artifact_name:
+        description: Exact image artifact name (empty selects deployment-image-*)
         type: string
         default: ''
       phases:
@@ -83,13 +87,21 @@ jobs:
           path: qualification/image
           if-no-files-found: error
       - name: Download the requested Krabka image
-        if: inputs.image_artifact_run != ''
+        if: inputs.image_artifact_run != '' && inputs.image_artifact_name == ''
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.image_artifact_run }}
           pattern: deployment-image-*
           merge-multiple: true
+          path: qualification/image
+      - name: Download the named Krabka image
+        if: inputs.image_artifact_run != '' && inputs.image_artifact_name != ''
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.image_artifact_run }}
+          name: ${{ inputs.image_artifact_name }}
           path: qualification/image
       - name: Load the exact image
         run: |
