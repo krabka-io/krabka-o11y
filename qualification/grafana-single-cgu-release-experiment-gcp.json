@@ -48,7 +48,7 @@
   },
   "schema_version": 1,
   "experiment": "One Rust code generation unit for executable footprint and runtime efficiency",
-  "status": "mimir_matched_cpu_and_rss_gain_verified_other_signals_pending",
+  "status": "mimir_cpu_and_rss_gain_verified_other_signal_comparisons_dispatched",
   "baseline_image_reuse": "The exact restored-source cold fingerprint reuse candidate supplies the baseline image. All source, dependencies and workload harness files match; only .bazelrc differs. Both contain the same dense metadata and cold fingerprint reuse candidates.",
   "candidate_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371662781",
   "baseline_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
@@ -286,5 +286,100 @@
     },
     "scope": "Both exact images contain equal dense metadata and cold fingerprint reuse. Only the compiler setting differs. This isolates one codegen unit and does not qualify final HEAD."
   },
-  "decision": "CPU and RSS are lower in all three Mimir pairs with disjoint ranges. Query p99 is lower in two pairs with overlapping ranges. Measure other signals and finish full correctness checks before retaining the setting."
+  "decision": "CPU and RSS are lower in all three Mimir pairs with disjoint ranges. Query p99 is lower in two pairs with overlapping ranges. Measure other signals and finish full correctness checks before retaining the setting.",
+  "gcp_signal_comparisons": {
+    "logs": {
+      "run_id": 37380543910,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37380543910",
+      "harness_head_sha": "f3e6a78274f141f39ddab5b29189eda991d94b9f",
+      "inputs": {
+        "signal": "logs",
+        "profiling": "none",
+        "phases": "steady",
+        "phase_seconds": "60",
+        "repetitions": "3",
+        "deployment_target": "all",
+        "profiles_target": "all",
+        "image_artifact_run": "37371662781",
+        "image_artifact_name": "comparison-image-logs-8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+        "baseline_image_artifact_run": "37371016528",
+        "baseline_image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6"
+      },
+      "status": "dispatched",
+      "live_instances_at_dispatch": [
+        {
+          "name": "gcp-runner-4aa75c0c7e6e4406",
+          "status": "RUNNING"
+        }
+      ],
+      "image_runtime_control_verified": true,
+      "performance_qualified": false
+    },
+    "traces": {
+      "run_id": 37380619358,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37380619358",
+      "harness_head_sha": "f3e6a78274f141f39ddab5b29189eda991d94b9f",
+      "inputs": {
+        "signal": "traces",
+        "profiling": "none",
+        "phases": "steady",
+        "phase_seconds": "60",
+        "repetitions": "3",
+        "deployment_target": "all",
+        "profiles_target": "all",
+        "image_artifact_run": "37371662781",
+        "image_artifact_name": "comparison-image-logs-8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+        "baseline_image_artifact_run": "37371016528",
+        "baseline_image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6"
+      },
+      "status": "dispatched",
+      "live_instances_at_dispatch": [
+        {
+          "name": "gcp-runner-10bca65550514f20",
+          "status": "RUNNING"
+        },
+        {
+          "name": "gcp-runner-4aa75c0c7e6e4406",
+          "status": "RUNNING"
+        }
+      ],
+      "image_runtime_control_verified": true,
+      "performance_qualified": false
+    },
+    "profiles": {
+      "run_id": 37380853989,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37380853989",
+      "harness_head_sha": "f3e6a78274f141f39ddab5b29189eda991d94b9f",
+      "inputs": {
+        "signal": "profiles",
+        "profiling": "none",
+        "phases": "steady",
+        "phase_seconds": "60",
+        "repetitions": "3",
+        "deployment_target": "all",
+        "profiles_target": "all",
+        "image_artifact_run": "37371662781",
+        "image_artifact_name": "comparison-image-logs-8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+        "baseline_image_artifact_run": "37371016528",
+        "baseline_image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6"
+      },
+      "status": "dispatched",
+      "live_instances_at_dispatch": [
+        {
+          "name": "gcp-runner-10bca65550514f20",
+          "status": "RUNNING"
+        },
+        {
+          "name": "gcp-runner-4aa75c0c7e6e4406",
+          "status": "RUNNING"
+        },
+        {
+          "name": "gcp-runner-ea92cef24f98422a",
+          "status": "RUNNING"
+        }
+      ],
+      "image_runtime_control_verified": true,
+      "performance_qualified": false
+    }
+  }
 }
