@@ -32,7 +32,7 @@ changed: the other six application binaries, base layer and runtime
 configuration are identical. This permits reuse of the pooled measurements.
 Artifact verification checked every archive digest and all 1,448 evidence-file
 checksums. These qualify the recorded images, rather than the current branch
-head, which contains further experiments. The subsequent
+head, which contains further experiments. The earlier
 hash-based series-discovery experiment `fd1ded9b` passed correctness checks
 but did not establish an end-to-end gain and was reverted. Its actual
 measurements are preserved in the
@@ -49,7 +49,8 @@ steady workload and deployment contract above.
 | Tempo | all | 0.82× | 0.88× | 145.37 / 138.52ms |
 | Pyroscope | all | 0.42× | 0.89× | 21.51 / 23.67ms |
 
-The Mimir latency and RSS gap remains material. Loki's RSS is slightly higher
+Mimir's RSS gap remains material, and its median query p99 is still lower.
+Loki's RSS is slightly higher
 in this deployment. CPU is lower in all four comparisons. Tempo's latest
 median p99 is about 5% higher; its three Krabka values (136.41–152.81ms)
 overlap the native values (134.21–140.98ms). The earlier comparison of the
