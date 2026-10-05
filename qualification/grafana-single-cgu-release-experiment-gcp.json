@@ -80,7 +80,7 @@
       "provenance_sha256": "f9fd78261d750d4767ede6d103132999bf40bead1334524ebc1c4ec5fef9d08f"
     },
     "metrics_native_scope": {
-      "status": "running",
+      "status": "passed",
       "source_commit": "a5a52c1c934c7865caaeaca0d3dc4b40bad0915b",
       "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
       "targets": [
@@ -89,10 +89,14 @@
         "//crates/metrics-service:metrics_deployment_docker_test"
       ],
       "retries_disabled": true,
-      "scope": "Current source with original metadata restored. This differs from both immutable matched images, which contain the same dense metadata implementation."
+      "scope": "Current source with original metadata restored. This differs from both immutable matched images, which contain the same dense metadata implementation.",
+      "native_wrappers_passed": 3,
+      "rust_cases_passed": 14,
+      "provenance_path": "qualification/evidence/correctness/single-cgu-metrics-native-a5a52c1c/provenance.json",
+      "provenance_sha256": "684a830d6b4d78c47e0ebbdd1e702a2b3d16cefe7a320d175a0d9086ceb49bd3"
     },
     "other_native_scope": {
-      "status": "queued_behind_metrics_native_checks",
+      "status": "running",
       "source_commit": "116f67626ea8c242549b283c0ca85dcedc03f3e9",
       "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
       "targets": [
