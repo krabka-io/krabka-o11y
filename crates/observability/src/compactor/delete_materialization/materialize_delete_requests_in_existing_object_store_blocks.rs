@@ -3,11 +3,12 @@ use super::{
     ObjectStore, SharedLogDeleteRequests, active_log_delete_tenants, delete_blocks,
     log_block_deletion, materialize_delete_requests_in_object_store_block_index,
     read_tenant_log_index_manifest_from_object_store,
-    read_tenant_log_index_shard_from_object_store,
-    read_tenant_log_index_shard_ranges_from_object_store,
-    write_tenant_log_index_manifest_to_object_store, write_tenant_log_index_shard_to_object_store,
+    read_tenant_log_index_shard_from_object_store, write_tenant_log_index_manifest_to_object_store,
+    write_tenant_log_index_shard_to_object_store,
 };
-use crate::compaction_metrics::CompactionMetrics;
+use crate::{
+    compaction_metrics::CompactionMetrics, compactor::retention::tenant_log_index_shard_ranges,
+};
 
 pub(crate) async fn materialize_delete_requests_in_existing_object_store_blocks(
     store: &dyn ObjectStore,
@@ -46,18 +47,7 @@ pub(crate) async fn materialize_delete_requests_in_existing_object_store_blocks(
             Err(error) => return Err(error.into()),
         }
 
-        let shard_ranges = match read_tenant_log_index_shard_ranges_from_object_store(
-            store, prefix, &tenant,
-        )
-        .await
-        {
-            Ok(shard_ranges) => shard_ranges,
-            Err(BlockStoreError::ObjectStore(object_store::Error::NotFound { .. })) => {
-                delete_emptied_block_objects(store, prefix, &materialized_blocks, metrics).await;
-                continue;
-            }
-            Err(error) => return Err(error.into()),
-        };
+        let shard_ranges = tenant_log_index_shard_ranges(store, prefix, &tenant).await?;
 
         for shard_range in shard_ranges {
             let (label_index, block_index) =

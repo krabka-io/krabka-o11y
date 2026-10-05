@@ -55,6 +55,11 @@ crate_tests(
         ],
         "grafana_integration": ["grafana"],
         "loki_differential": ["loki"],
+        "loki_deployment": [
+            "krabka",
+            "broker",
+            "minio",
+        ],
         "scale_object_store": ["minio"],
     },
     docker_variants = {
@@ -68,6 +73,7 @@ crate_tests(
     },
     # The shared lifecycle store, reached with `#[path]` from //crates/blockstore.
     extra_srcs = {
+        "loki_deployment": ["//crates/metrics-service:tests/support/container_deployment.rs"],
         "compactor": ["//crates/blockstore:tests/support/lifecycle_store.rs"],
     },
     lib = "observability",
