@@ -7563,10 +7563,335 @@
         "interpretation": "Diagnostic only: startup, seed, heaptrack overhead and unequal completed query counts (169 candidate versus 133 baseline) prevent a normalized performance claim."
       }
     },
-    "retention_decision": "Pending candidate allocation capture and uninstrumented matched control; no measured gain qualified.",
+    "retention_decision": "Retained after both uninstrumented exact-image controls. Diagnostics remain unqualified for performance comparisons.",
     "limitations": [
       "Both paired images contain the same metric WAL implementation, subsequently rejected in the branch. Final retained-source qualification must reflect that removal.",
       "All seven application binaries differ after rebuilding the shared crate. Instrumented samples and timings remain diagnostic."
-    ]
+    ],
+    "performance_evidence_record": "qualification/grafana-loki-query-source-labels-experiment-gcp.json"
+  },
+  "pyroscope_direct_table_baseline_capture": {
+    "diagnostic_only": true,
+    "comparison_qualified": false,
+    "source_commit": "241b7dce19fda5c54f868ff6657115f9f5ba1de4",
+    "harness_commit": "f420970f9eb7fa9840ffbee7b702e34b37475be3",
+    "provenance": {
+      "run_id": 37337410586,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37337410586",
+      "head_sha": "f420970f9eb7fa9840ffbee7b702e34b37475be3",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111855593864,
+          "name": "compare (profiles)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37337410586/job/111855593864",
+          "runner_name": "gcp-runner-1cca63ed773c4873",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T16:01:32Z",
+          "completed_at": "2026-10-05T16:07:13Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11357182514,
+          "name": "grafana-comparison-profiles-f420970f9eb7fa9840ffbee7b702e34b37475be3-1",
+          "digest": "sha256:4dbc8e2e056a553dc72cdd07b68c9578dc0a1c21aebe509593c27e8299384070",
+          "size_in_bytes": 4217128,
+          "expires_at": "2027-01-03T16:00:32Z",
+          "signal": "profiles",
+          "verified_raw_files": 164,
+          "diagnostic_only": true
+        }
+      ]
+    },
+    "host": {
+      "cpu_count": 16,
+      "kernel": "7.0.0-1011-gcp",
+      "lscpu": {
+        "lscpu": [
+          {
+            "field": "Architecture:",
+            "data": "x86_64"
+          },
+          {
+            "field": "CPU op-mode(s):",
+            "data": "32-bit, 64-bit"
+          },
+          {
+            "field": "Address sizes:",
+            "data": "48 bits physical, 48 bits virtual"
+          },
+          {
+            "field": "Byte Order:",
+            "data": "Little Endian"
+          },
+          {
+            "field": "CPU(s):",
+            "data": "16"
+          },
+          {
+            "field": "On-line CPU(s) list:",
+            "data": "0-15"
+          },
+          {
+            "field": "Vendor ID:",
+            "data": "AuthenticAMD"
+          },
+          {
+            "field": "Model name:",
+            "data": "AMD EPYC 7B12"
+          },
+          {
+            "field": "CPU family:",
+            "data": "23"
+          },
+          {
+            "field": "Model:",
+            "data": "49"
+          },
+          {
+            "field": "Thread(s) per core:",
+            "data": "2"
+          },
+          {
+            "field": "Core(s) per socket:",
+            "data": "8"
+          },
+          {
+            "field": "Socket(s):",
+            "data": "1"
+          },
+          {
+            "field": "Stepping:",
+            "data": "0"
+          },
+          {
+            "field": "BogoMIPS:",
+            "data": "4499.99"
+          },
+          {
+            "field": "Flags:",
+            "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+          },
+          {
+            "field": "Hypervisor vendor:",
+            "data": "KVM"
+          },
+          {
+            "field": "Virtualization type:",
+            "data": "full"
+          },
+          {
+            "field": "L1d cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L1i cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L2 cache:",
+            "data": "4 MiB (8 instances)"
+          },
+          {
+            "field": "L3 cache:",
+            "data": "32 MiB (2 instances)"
+          },
+          {
+            "field": "NUMA node(s):",
+            "data": "1"
+          },
+          {
+            "field": "NUMA node0 CPU(s):",
+            "data": "0-15"
+          },
+          {
+            "field": "Vulnerability Gather data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Ghostwrite:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Indirect target selection:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Itlb multihit:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability L1tf:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Meltdown:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mmio stale data:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Old microcode:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Reg file data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Retbleed:",
+            "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+          },
+          {
+            "field": "Vulnerability Spec rstack overflow:",
+            "data": "Mitigation; Safe RET"
+          },
+          {
+            "field": "Vulnerability Spec store bypass:",
+            "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+          },
+          {
+            "field": "Vulnerability Spectre v1:",
+            "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+          },
+          {
+            "field": "Vulnerability Spectre v2:",
+            "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+          },
+          {
+            "field": "Vulnerability Srbds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsa:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsx async abort:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Vmscape:",
+            "data": "Not affected"
+          }
+        ]
+      }
+    },
+    "workload": {
+      "signal": "profiles",
+      "writers": 2,
+      "cardinality": 100,
+      "warmup_seconds": 15,
+      "duration_seconds": 180.278193745,
+      "write_interval_seconds": 1,
+      "ingest": {
+        "attempts": 360,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 3600,
+        "accepted_rows_per_sec": 19.969137282860345,
+        "latency_seconds": {
+          "count": 360,
+          "p50": 0.013759695999965516,
+          "p95": 0.018121604000015168,
+          "p99": 0.02053394200004277
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 360
+        }
+      },
+      "query": {
+        "attempts": 720,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 720,
+          "p50": 0.010752152999998543,
+          "p95": 0.02233562899999697,
+          "p99": 0.02874894699999686
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 720
+        }
+      },
+      "telemetry": {
+        "wal_lag_records_max": 3.0,
+        "wal_lag_records_last": [
+          0.0,
+          3.0
+        ],
+        "rss_kib_peak_by_role": {
+          "profiles-all": 91792,
+          "broker": 35224,
+          "minio": 294320
+        },
+        "object_requests": 7067.0,
+        "object_bytes": 16391793.0,
+        "maintenance": {
+          "krabka_profiles_compaction_runs_total{status=\"ok\"}": 90.0,
+          "krabka_profiles_compaction_blocks_total": 66.0,
+          "krabka_profiles_compaction_deletion_sweeps_total": 90.0,
+          "krabka_profiles_compaction_deleted_blocks_total": 132.0,
+          "krabka_profiles_compaction_deleted_sidecars_total": 132.0,
+          "krabka_profiles_compaction_deletion_failures_total": 0.0,
+          "krabka_profiles_compaction_orphan_sweeps_total": 90.0,
+          "krabka_profiles_compaction_orphans_deleted_total": 0.0,
+          "krabka_profiles_compaction_orphan_failures_total": 0.0
+        },
+        "cpu_seconds_by_role": {},
+        "expected_restart_gaps": 0,
+        "scrape_errors": 0
+      },
+      "tenant": "soak",
+      "tenants": {
+        "soak": {
+          "attempts": 360,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 3600,
+          "accepted_rows_per_sec": 19.969137282860345,
+          "latency_seconds": {
+            "count": 360,
+            "p50": 0.013759695999965516,
+            "p95": 0.018121604000015168,
+            "p99": 0.02053394200004277
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "200": 360
+          }
+        }
+      },
+      "objectives_met": true
+    },
+    "profile_binary": {
+      "path": "usr/local/bin/krabka-profiles",
+      "sha256": "b4ab9a9c9fb9e2fe49cb137027ef0af4b7266ce1052ca65e1c9e120252c05386",
+      "size_in_bytes": 219785176
+    },
+    "baseline_control_binary": {
+      "path": "usr/local/bin/krabka-profiles",
+      "sha256": "b4ab9a9c9fb9e2fe49cb137027ef0af4b7266ce1052ca65e1c9e120252c05386",
+      "size_in_bytes": 219785176
+    },
+    "baseline_control_source_commit": "f4c5a6034678dbde565d59dca71350146f21ddb0",
+    "binary_byte_equal": true,
+    "runtime_equivalence_record": "qualification/grafana-ordered-instant-scan-experiment-gcp.json",
+    "interpretation": "Diagnostic image is 241b; the paired-control baseline is f4c5. Their profile binary, base layer, service config and all nonbinary files are identical. Only their inactive metrics-service binary differs."
   }
 }
