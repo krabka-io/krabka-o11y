@@ -51,6 +51,7 @@ use url::Url;
 #[cfg(test)]
 mod tests {
     mod instant_float_scan;
+    mod parallel_manifest_reads;
     use std::{
         sync::{
             Arc,
@@ -439,6 +440,9 @@ mod tests {
         get_calls: Arc<AtomicUsize>,
         parquet_reads: Arc<AtomicUsize>,
         list_delay: Time,
+        manifest_get_delay: Time,
+        manifest_active: Arc<AtomicUsize>,
+        manifest_peak: Arc<AtomicUsize>,
         retire_on_get: std::sync::Mutex<Option<ManifestRetirement>>,
     }
 
@@ -450,6 +454,9 @@ mod tests {
                 get_calls: Arc::new(AtomicUsize::new(0)),
                 parquet_reads: Arc::new(AtomicUsize::new(0)),
                 list_delay,
+                manifest_get_delay: Time::ZERO,
+                manifest_active: Arc::new(AtomicUsize::new(0)),
+                manifest_peak: Arc::new(AtomicUsize::new(0)),
                 retire_on_get: std::sync::Mutex::new(None),
             }
         }
@@ -518,6 +525,10 @@ mod tests {
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("index"))
             {
                 self.get_calls.fetch_add(1, Ordering::SeqCst);
+                let active = self.manifest_active.fetch_add(1, Ordering::SeqCst) + 1;
+                self.manifest_peak.fetch_max(active, Ordering::SeqCst);
+                tokio::time::sleep(self.manifest_get_delay.to_std()).await;
+                self.manifest_active.fetch_sub(1, Ordering::SeqCst);
             }
             if !options.head && location.as_ref().ends_with(".parquet") {
                 self.parquet_reads.fetch_add(1, Ordering::SeqCst);
@@ -762,6 +773,7 @@ mod tests {
             start_ms: 0,
             end_ms: 100,
             cold,
+            manifests: Vec::new(),
         };
         check!(cached.covers(0, 100, secs(3)));
         check!(!cached.covers(0, 100, secs(1)));

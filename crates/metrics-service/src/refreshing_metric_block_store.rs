@@ -18,7 +18,8 @@ pub struct RefreshingMetricBlockStore {
     pub(crate) blocks: BlockStore,
     pub(crate) manifest_prefix: String,
     pub(crate) hot_store: WalHead,
-    pub(crate) manifest_cache: Arc<tokio::sync::RwLock<BTreeMap<String, CompactionIndexManifest>>>,
+    pub(crate) manifest_cache:
+        Arc<tokio::sync::RwLock<BTreeMap<String, Arc<CompactionIndexManifest>>>>,
     pub(crate) cold_cache: Arc<tokio::sync::RwLock<Option<CachedMetricBlockStore>>>,
     pub(crate) cold_refresh: tokio::sync::Mutex<()>,
     pub(crate) cold_cache_ttl: Time,
@@ -140,17 +141,31 @@ impl RefreshingMetricBlockStore {
             &self.manifest_cache,
         )
         .await?;
-        let cold = MetricBlockStore::from_compaction_manifests(
-            self.blocks.empty_like(),
-            Some(self.blocks.empty_like()),
-            &manifests,
-        );
+        let previous = self.cold_cache.read().await;
+        let cold = if let Some(previous) = previous.as_ref()
+            && previous.manifests.len() == manifests.len()
+            && previous
+                .manifests
+                .iter()
+                .zip(&manifests)
+                .all(|(old, new)| Arc::ptr_eq(old, new))
+        {
+            previous.cold.clone()
+        } else {
+            MetricBlockStore::from_compaction_manifest_refs(
+                self.blocks.empty_like(),
+                Some(self.blocks.empty_like()),
+                manifests.iter().map(AsRef::as_ref),
+            )
+        };
+        drop(previous);
         let merged = MergedMetricStore::new(cold.clone(), self.hot_store.clone());
         *self.cold_cache.write().await = Some(CachedMetricBlockStore {
             cached_at: Instant::now(),
             start_ms,
             end_ms,
             cold,
+            manifests,
         });
         tracing::Span::current().record("cold_refreshed", true);
         Ok(merged)
