@@ -256,5 +256,46 @@
       "head_sha": "176085eab891bc0861bd7a99139f94ec80354f24",
       "status_at_recording": "in_progress"
     }
+  },
+  "verified_candidate_allocation_capture": {
+    "provenance": {
+      "run_id": 37333046600,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37333046600",
+      "head_sha": "176085eab891bc0861bd7a99139f94ec80354f24",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111840740448,
+          "name": "compare (logs)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37333046600/job/111840740448",
+          "runner_name": "gcp-runner-d20472dd03784ba1",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T15:29:27Z",
+          "completed_at": "2026-10-05T15:35:03Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11354814132,
+          "name": "grafana-comparison-logs-176085eab891bc0861bd7a99139f94ec80354f24-1",
+          "digest": "sha256:6b09e50dadb932e4443b5ea9669bc285d0ac631bad56e4cc3786cc6033709afe",
+          "size_in_bytes": 383693232,
+          "expires_at": "2027-01-03T15:28:01Z",
+          "signal": "logs",
+          "verified_raw_files": 130,
+          "diagnostic_only": true
+        }
+      ]
+    },
+    "accepted_rows": 140000,
+    "query_attempts": 169,
+    "allocation_calls": 70001365,
+    "string_clone_calls": 31011449,
+    "peak_heap_decimal_mb": 32.27,
+    "interpretation": "Diagnostic only: startup, seed, heaptrack overhead and unequal completed query counts (169 candidate versus 133 baseline) prevent a normalized performance claim."
   }
 }
