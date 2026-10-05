@@ -24,7 +24,7 @@ for path in args.reports or []:
         if not raw.resolve().is_relative_to(path.parent.resolve()): raise ValueError(f'invalid evidence path: {name}')
         with raw.open('rb') as source: actual=hashlib.file_digest(source,'sha256').hexdigest()
         if actual != expected: raise ValueError(f'evidence checksum mismatch: {raw}')
-        covered.add(name)
+        covered.add(str(pathlib.PurePosixPath(name)))
     if path.name not in covered: raise ValueError(f'unhashed report: {path}')
     local[signal]=(path,covered)
 args.signals=args.signals or list(local) or ['metrics','logs','traces','profiles']
