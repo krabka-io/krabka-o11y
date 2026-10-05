@@ -143,6 +143,8 @@ and 103/212MiB private dirty pages. This points to object-store worker queues
 as a separate memory cost from the Rust querier's live heap; allocation counts
 and RSS alone cannot identify that distinction.
 
+The verified [Mimir control for the rejected fingerprint experiment](https://github.com/krabka-io/krabka-o11y/actions/runs/37303786006), source `913fa01b`, further separates this cost. All six native deployments complete 240 queries. Krabka's simultaneous aggregate RSS peaks span 479,020–498,604KiB, and its MinIO role peaks span 248,524–266,964KiB. Mimir's aggregate peaks span 310,556–313,848KiB, with MinIO peaks of 143,388–145,696KiB. Role peaks can occur at different times and must not be summed. Krabka records 1,178–1,188 S3 requests and 4,050,154–4,054,504 bytes written; Mimir records 26–28 requests and zero bytes written. Mimir's captured effective configuration uses a two-hour TSDB block range; Krabka's measured deployment publishes blocks with a two-second maximum flush age. These are API-acknowledgement comparisons with different publication and durability contracts. The memory and object-traffic ledgers guide further work while preserving the measured contracts.
+
 ## Completed capture across all four signals
 
 All four jobs in
