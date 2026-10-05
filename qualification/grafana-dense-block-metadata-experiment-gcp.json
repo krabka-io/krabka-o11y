@@ -729,6 +729,40 @@
       "log_sha256": "0128b41bb251c3905c2058557e158b897a7719423c0e9bd065a81c751705ceb7",
       "raw_evidence": "qualification/evidence/correctness/dense-block-metadata/tempo-fresh-unmodified",
       "failure": "HTTP 404 through Grafana datasource proxy for /api/echo; response-body diagnostic queued. No product code change is attributed to this setup failure."
+    },
+    "rebased_main_bridge": {
+      "source_commit": "d456369fbea27aef0c537a0abb0a03042758af06",
+      "base_main": "664e698749dd3faa7d2196f951de5e5517c6ad26",
+      "production_source_sha256": "cac37c079bcc8c5a4bddf7d674f6ab082fa3be79fe46bcf96ac16b90d7e2be17",
+      "targets_passed": 7,
+      "retries": 1,
+      "status": "passed",
+      "native_and_compactor_cases": [
+        {
+          "target": "//crates/metrics-service:metrics_deployment_docker_test",
+          "passed": 12,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "d78918813ece4d100d805c34993d5a3e5a8c25e747c68df980d7d837a67e56c8"
+        },
+        {
+          "target": "//crates/observability:loki_deployment_docker_test",
+          "passed": 12,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "e133ac7429f3efb7300717dc79a333f7e1cd41c715c9e78a1b5207b22efd9811"
+        },
+        {
+          "target": "//crates/observability:compactor_test",
+          "passed": 50,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "2f1339a9a33603095ad113a02c9c14077296a7ee3c0047ae4de29fd4e59445b6"
+        }
+      ],
+      "bazel_log_sha256": "332a86dfdceffec2f5becf5ca5df358d6510639e6ae214cee44ec1e1e2d746e2",
+      "raw_evidence": "qualification/evidence/correctness/dense-block-metadata/rebased-main-deployments",
+      "scope": "Changed upstream deployment tests, new Loki deployment suite, compactor deletion behavior, and their Clippy gates. This supplements the 376-target pre-rebase run; Tempo/Grafana readiness qualification remains pending."
     }
   },
   "retention_decision": "Correctness qualification remains pending. The original 376-target scope passes with one retry, but fresh current Tempo wrappers reproduce the Grafana proxy 404 twice. Preserve the failures and identify the response before any setup repair. Exact-image performance controls remain required.",

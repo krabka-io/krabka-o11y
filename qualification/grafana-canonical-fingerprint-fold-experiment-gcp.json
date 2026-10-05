@@ -2712,5 +2712,26 @@
     "status": "dispatched",
     "same_verified_images": true,
     "performance_qualified": false
+  },
+  "profiles_confirmation": {
+    "run_id": 37365605239,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37365605239",
+    "harness_head_sha": "dcd3c0cb4b51d18b37980d3492f02b8349701167",
+    "inputs": {
+      "signal": "profiles",
+      "profiling": "none",
+      "phases": "steady",
+      "phase_seconds": "60",
+      "repetitions": "3",
+      "deployment_target": "all",
+      "profiles_target": "all",
+      "image_artifact_run": "37354008253",
+      "image_artifact_name": "comparison-image-metrics-7ea9840085ab587b5491c3d47a17388b749a9649",
+      "baseline_image_artifact_run": "37351427961",
+      "baseline_image_artifact_name": "comparison-image-metrics-63bf9c519032bb6d4736b1ad9c064f879b90082c"
+    },
+    "status": "dispatched",
+    "same_verified_images": true,
+    "performance_qualified": false
   }
 }
