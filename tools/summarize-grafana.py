@@ -76,6 +76,7 @@ for signal in args.signals:
     findings=[{k:e[k] for k in ('backend','repetition','phase','cardinality','seed_error')} for e in report['entries'] if e.get('seed_error','').startswith('seed value mismatch')]
     host_findings=[{k:e[k] for k in ('backend','repetition','phase','resources')} for e in report['entries'] if e.get('resources',{}).get('host_activity_qualified') is False]
     result={'host':report['host'],'harness_commit':report['commit'],'resource_coverage':coverage,'seed_value_mismatches':findings,'correctness_disqualified':bool(findings),'host_activity_disqualified':bool(host_findings),'host_activity_failures':host_findings,'backends':{}}
+    result['deployment_target']=report.get('deployment_target',report.get('profiles_target') or 'split')
     if signal=='profiles':result['profiles_target']=report.get('profiles_target','split')
     for backend in ('krabka',product):
         entries=[e for e in report['entries'] if e['backend']==backend]

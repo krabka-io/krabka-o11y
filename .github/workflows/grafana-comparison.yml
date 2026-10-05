@@ -41,6 +41,11 @@ on:
         type: choice
         options: [split, all, both]
         default: split
+      deployment_target:
+        description: Layout for logs, traces and profiles (metrics always uses split)
+        type: choice
+        options: [split, all, both]
+        default: split
 permissions:
   contents: read
   actions: read
@@ -119,6 +124,7 @@ jobs:
           SIGNAL: ${{ matrix.signal }}
           PHASES: ${{ inputs.phases }}
           PROFILES_TARGET: ${{ inputs.profiles_target }}
+          DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
           KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
         run: |
           set -euo pipefail
@@ -135,20 +141,24 @@ jobs:
           phases=(steady burst high_cardinality)
           if [[ "${PHASES}" == steady ]]; then phases=(steady); fi
           targets=(split)
-          if [[ "${SIGNAL}" == profiles ]]; then
-            targets=("${PROFILES_TARGET}")
-            if [[ "${PROFILES_TARGET}" == both ]]; then targets=(split all); fi
+          if [[ "${SIGNAL}" != metrics ]]; then
+            targets=("${DEPLOYMENT_TARGET}")
+            if [[ "${SIGNAL}" == profiles && "${DEPLOYMENT_TARGET}" == split ]]; then
+              targets=("${PROFILES_TARGET}")
+            fi
+            if [[ "${targets[0]}" == both ]]; then targets=(split all); fi
           fi
           for target in "${targets[@]}"; do
             output=qualification/evidence/comparison
-            if [[ "${SIGNAL}" == profiles && "${PROFILES_TARGET}" == both ]]; then
+            if [[ "${#targets[@]}" -gt 1 ]]; then
               output="${output}/${target}"
             fi
             python3 -u tools/compare-grafana.py --phases "${phases[@]}" --signal "${SIGNAL}" \
               --image "$(cat qualification/image/tag)" \
               --image-digest "$(cat qualification/image/manifest-digest)" \
               --image-commit "$(cat qualification/image/commit)" \
-              --profiles-target "${target}" --host-wait-seconds 120 --output "${output}" \
+              --deployment-target "${target}" --profiles-target "${target}" \
+              --host-wait-seconds 120 --output "${output}" \
               --seconds "${PHASE_SECONDS}" --repetitions "${REPETITIONS}" \
               --max-writers "${MAX_WRITERS}" --max-cardinality "${MAX_CARDINALITY}"
           done

@@ -23,6 +23,7 @@ admin-listen-addr: 0.0.0.0:9404
 wal-bootstrap-server: broker:9092
 object-store-url: s3://krabka-logs
 index-prefix: logs
+querier-index-source: tenant-object-store-shards
 data-root: /var/lib/krabka
 # How long one stage of the stop may take before the next is asked to stop
 # anyway. The stop is staged: the data port drains first, so nothing new
