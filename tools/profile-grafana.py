@@ -87,21 +87,25 @@ def capture(deployment, output, seconds, windows, cpu=True):
     memory_snapshot('end')
 
 
-def configure_allocations(deployment, output):
-    """Intercept the release binary's existing allocator; do not rebuild it."""
-    library = next(pathlib.Path('/usr/lib').rglob('libheaptrack_preload.so'))
-    libraries = output / 'heaptrack-libraries'
-    libraries.mkdir()
-    shutil.copy2(library, libraries / library.name)
-    for line in env.command('ldd', str(library)).splitlines():
+def copy_profiler(binary, destination):
+    destination.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(binary, destination / binary.name)
+    for line in env.command('ldd', str(binary)).splitlines():
         if '=>' not in line:
             continue
         path = pathlib.Path(line.split('=>', 1)[1].strip().split()[0])
         # Keep the container's libc and loader. Other profiler dependencies
         # are copied from the runner, so its absolute library paths need not
         # exist inside the application image.
-        if path.is_file() and not path.name.startswith(('libc.so', 'ld-linux')):
-            shutil.copy2(path, libraries / path.name)
+        if path.is_file() and not path.name.startswith(('libc.so', 'libm.so', 'libpthread.so', 'libdl.so', 'librt.so', 'ld-linux')):
+            shutil.copy2(path, destination / path.name)
+
+
+def configure_allocations(deployment, output):
+    """Intercept the release binary's existing allocator; do not rebuild it."""
+    library = next(pathlib.Path('/usr/lib').rglob('libheaptrack_preload.so'))
+    libraries = output / 'heaptrack-libraries'
+    copy_profiler(library, libraries)
     traces = output / 'allocations'
     traces.mkdir()
     traces.chmod(0o777)  # Container runs as uid 65532, not the runner uid.
@@ -132,9 +136,14 @@ def analyze_allocations(deployment, output, role):
         root.mkdir()
         env.command('docker', 'export', '--output', str(archive), deployment.ids[role])
         env.command('tar', '-xf', str(archive), '-C', str(root))
+        copy_profiler(interpreter, root / 'opt/heaptrack-analysis')
         interpreted = raw.with_suffix('.interpreted')
         with raw.open('rb') as source, interpreted.open('wb') as destination:
-            subprocess.run([str(interpreter), '--sysroot', str(root)], stdin=source, stdout=destination, check=True)
+            # Ubuntu's heaptrack 1.5 interpreter has no --sysroot option.
+            # Resolve modules inside the exact exported image instead.
+            subprocess.run(['sudo', '-n', 'env', 'LD_LIBRARY_PATH=/opt/heaptrack-analysis',
+                            'chroot', str(root), '/opt/heaptrack-analysis/heaptrack_interpret'],
+                           stdin=source, stdout=destination, check=True)
         result = env.command('heaptrack_print', '-f', str(interpreted))
         raw.with_suffix('.summary.txt').write_text(result)
     for path in (raw, interpreted):
