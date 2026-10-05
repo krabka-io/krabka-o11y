@@ -39,7 +39,7 @@ on:
       profiling:
         description: Diagnostic profiles instead of a qualified comparison
         type: choice
-        options: [none, cpu]
+        options: [none, cpu, allocations]
         default: none
       profiles_target:
         description: Profiles layout (both compares split and all on the same VM)
@@ -169,19 +169,20 @@ jobs:
               --max-writers "${MAX_WRITERS}" --max-cardinality "${MAX_CARDINALITY}"
           done
       - name: Install profiling tools
-        if: inputs.profiling == 'cpu'
-        run: sudo apt-get update && sudo apt-get install -y golang-go
+        if: inputs.profiling == 'cpu' || inputs.profiling == 'allocations'
+        run: sudo apt-get update && sudo apt-get install -y golang-go heaptrack
       - name: Profile the measured Krabka image
-        if: inputs.profiling == 'cpu'
+        if: inputs.profiling == 'cpu' || inputs.profiling == 'allocations'
         env:
           SIGNAL: ${{ matrix.signal }}
           DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
+          PROFILE_MODE: ${{ inputs.profiling }}
         run: |
           set -euo pipefail
           target="${DEPLOYMENT_TARGET}"
           if [[ "${SIGNAL}" == metrics ]]; then target=split; fi
           [[ "${target}" != both ]]
-          python3 -u tools/profile-grafana.py --signal "${SIGNAL}" \
+          python3 -u tools/profile-grafana.py --signal "${SIGNAL}" --mode "${PROFILE_MODE}" \
             --image "$(cat qualification/image/tag)" \
             --image-digest "$(cat qualification/image/manifest-digest)" \
             --image-commit "$(cat qualification/image/commit)" \
