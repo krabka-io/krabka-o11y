@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "experiment": "Fold canonical label fingerprint bytes without per-byte chain state",
-  "status": "candidate_restored_full_validation_running",
+  "status": "correctness_qualified_comparisons_pending",
   "baseline_source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
   "source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649",
   "performance_qualified": false,
-  "retention_decision": "Pending a candidate, meaningful correctness checks and exact-image GCP comparisons for all four signals. Static code generation is selection evidence only.",
+  "retention_decision": "All 374 correctness targets pass; the one flaky Grafana wrapper and the previous-image wrapper each pass three fresh runs with retries disabled. All-four-signal native and alternating controls remain required for performance retention.",
   "scope": {
     "production_paths": [
       "crates/blockstore/src/labels/labels_type.rs"
@@ -99,7 +99,7 @@
     },
     "initial_scope_log_sha256": "ef41201f39bbe4b3cc99c65d05e0a65563f86a2d88174322385a795cfbcab3ce",
     "final_scoped_targets": 374,
-    "final_scope_status": "running",
+    "final_scope_status": "passed",
     "final_scope_targets_list": [
       "//crates/blockstore:blockstore_clippy",
       "//crates/blockstore:blockstore_doc_test",
@@ -477,7 +477,335 @@
       "//crates/traces:wal_group_scale_out_test_clippy"
     ],
     "final_scope_target_list_sha256": "df3e7eee145c2b4eb83f0aa3003861e1b8704caed4e1c5b24eb698bce760b196",
-    "final_validation_source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649"
+    "final_validation_source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649",
+    "final_validation_log_sha256": "98a2d046e5d2c3b636d829868e1ffb9f2fc1e164abd90c7352b3d2eb28fd8e40",
+    "native_docker_wrappers": [
+      {
+        "target": "//crates/metrics-service:diff_mimir_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "c982ab0591556bbb78d0585dd0524b0417442565041eb9dad06a478058a0870e"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "f211f3a0ec4d16f83b248af91a030dab36253023c5114afea029af26234a2049"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "1854d0656e2ec6d6ff088313cef1213ffb652bc2b88a1a7a3c61cc95adc08517"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "b20a90d2beefdd827fda6ddb910994e1a1f9024b38b43b00ddbd5a497be14367"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "a4e5643e06d364a02c431b41ab6203e56cd73c31bf431d4347c00d2a34e20279"
+      },
+      {
+        "target": "//crates/metrics-service:metrics_deployment_docker_test",
+        "passed": 12,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "5a0ab0a618dfa05322f13638e2000eee8ce5b8e71caae1e0da07d7afb75c8693"
+      },
+      {
+        "target": "//crates/metrics-service:tsdb_import_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "b62f8d71cca72bff9925e0702241321fe5ab35277cf245b0488d789a6b9205a8"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "40c874bf47ee8a8a676afe968f58510fc1a09e41c6e892062c77e2aeb5964f1f"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "2e4e958926a43d30f8e78c210f9be05c06954c7209354d89199c9922467c545a"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "aa9e8b0e43136fddebfa1e96f9e708e6de12418360fbf44bd0d048d4cd9364b4"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "343135cbcd99e15ba91576182c17f5829dcfb4c4014b0886e850281ff6a36219"
+      },
+      {
+        "target": "//crates/observability:loki_differential_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "26bce5b2af22d0ae97c726dc21955e3c8a8c7adc2c2a56abc8e7380254e57035"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_docker_test",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "3e6bf56d80d789504c8f1ba6b4acecd65dde0a32a5edceaff8ba3800d3ef1805"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_previous_docker_test",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "c0ad226ba7305774ad890f4643d0e388d6c052d78a277bd215b348c5e78a49de"
+      },
+      {
+        "target": "//crates/traces:grafana_e2e_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "0fe02bd853901513545b4c6db0d9eddf48b729919bcc457441bd8bf79c8a36a6"
+      },
+      {
+        "target": "//crates/traces:grafana_e2e_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "32bfce7f649c39bda1374b6e737dc6850a5b8934c8c651c5e48ffaea80fede39"
+      },
+      {
+        "target": "//crates/traces:tempo_differential_docker_test",
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "4f1baa4c71034b2e8690992e1d6c7517d3557a0b6409962fd2cf0cb4e43f46e1"
+      },
+      {
+        "target": "//crates/traces:tempo_differential_previous_docker_test",
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "475797cbf5dc174458b63452666d79dda03386466dd1630dcc6762ed20cd039c"
+      }
+    ],
+    "full_unit_checks": [
+      {
+        "target": "//crates/blockstore:blockstore_test",
+        "passed": 337,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "0be345de2554101c9c5041f76c6aaa43d7e28d2f91a1c61f88062d8c620ae3c3"
+      },
+      {
+        "target": "//crates/promql:promql_test",
+        "passed": 569,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "52dce3a377417e0177e740cdac3ecc8d4c68f5f197e641f5cefa08c9ed59ff1b"
+      },
+      {
+        "target": "//crates/metrics:metrics_test",
+        "passed": 327,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "854ea69a582a90d83f305a9d0684db5dfcd5b2095c5e15fe9beebe814cf9e3bb"
+      },
+      {
+        "target": "//crates/metrics-service:metrics-service_test",
+        "passed": 66,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "2c2d71a653e426b22074c47a4bbaccd4a96fdd1be3b7565cd4ad0fcbe1158627"
+      },
+      {
+        "target": "//crates/logql:logql_test",
+        "passed": 60,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "cc0bd0a70fc7e3ef7ccbbdc3b7eb381aa21d1cf1d7afa2a6cec6e84e66fd4672"
+      },
+      {
+        "target": "//crates/traceql:traceql_test",
+        "passed": 405,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "797fbde679010b316aac7c11c5e0dab4b243051c61d69b00b5676f2734ccddad"
+      },
+      {
+        "target": "//crates/pprof:pprof_test",
+        "passed": 123,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "c01fc6f1b968dcc4754aa7517f6a1464644195793cbc9c6155ebbc56f53b6a11"
+      },
+      {
+        "target": "//crates/profiles:profiles_test",
+        "passed": 284,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "499e25ac0342678bf8b7b2a681bcb6b10983eecfed47b3521e2ffe3f5c2780c6"
+      },
+      {
+        "target": "//crates/observability:observability_test",
+        "passed": 383,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "538a182264e550f3d42f635af28ca2ab42edac0fcbd40aea5e37c5470fa2f487"
+      },
+      {
+        "target": "//crates/traces:traces_test",
+        "passed": 465,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "52f0ea3d5f5819696e1f2ecf965b559ce70ec55b0ec1810d0285f083b9e0a7c0"
+      }
+    ],
+    "cross_signal_caller_checks": [
+      {
+        "target": "//crates/integration:logs_to_traces_trace_id_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "36b24636d06b7172fcf395e34b3d5f62f64ee29c2a51fbc0832a2f046bfba496"
+      },
+      {
+        "target": "//crates/integration:traces_to_metrics_exemplars_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "39907b830049270d5944cb2d347f712d7a4914e74f2c66639d3082b07e8d9cfd"
+      },
+      {
+        "target": "//crates/integration:traces_to_profiles_span_profiles_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "ee60f614996b8afcaf6ca52c710d3b0f411abe98567dba34c7d6193272e89fd3"
+      }
+    ],
+    "correctness_scope_qualified": true,
+    "flaky_follow_up_status": "passed",
+    "full_validation_flaky_targets": [
+      {
+        "target": "//crates/observability:grafana_integration_docker_test",
+        "failed_attempts": 1,
+        "successful_attempts": 1,
+        "failure": "HTTP 404 through Grafana proxy for Loki label/env/values. The response body was not captured; cause is unverified."
+      }
+    ],
+    "flaky_follow_up": {
+      "source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649",
+      "command_options": [
+        "--runs_per_test=3",
+        "--flaky_test_attempts=1",
+        "--local_test_jobs=1"
+      ],
+      "runs": [
+        {
+          "target": "//crates/observability:grafana_integration_docker_test",
+          "run": "run_1_of_3",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "e17590236447a02d39c064c17cf862dfe5da7d6025f3b81584ff573888e1d970"
+        },
+        {
+          "target": "//crates/observability:grafana_integration_docker_test",
+          "run": "run_2_of_3",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "90d8b2a30da60edb6ba0f19fb42b0930cea58a990c953ba4fe2886c4ea0e04e0"
+        },
+        {
+          "target": "//crates/observability:grafana_integration_docker_test",
+          "run": "run_3_of_3",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "3452260687d24fd939cfbbd5b867dcec329de520935709d356abe8844fc7ba4c"
+        },
+        {
+          "target": "//crates/observability:grafana_integration_previous_docker_test",
+          "run": "run_1_of_3",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "cba658b844b2d5d208f6a4495a0945ed9f429284d35cd4b61b16f9999c496cd9"
+        },
+        {
+          "target": "//crates/observability:grafana_integration_previous_docker_test",
+          "run": "run_2_of_3",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "2568dad09fce7c55c49900719a230ee54cadaaf1b636b5a8e98d49d93e3db954"
+        },
+        {
+          "target": "//crates/observability:grafana_integration_previous_docker_test",
+          "run": "run_3_of_3",
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "01f5b26a7b00e46d48c24dff4a5da1fc4931416dafa3c66cabc652e7a6c7bf49"
+        }
+      ],
+      "log_sha256": "3c2763f1cc5e6c81791d515eced3d805cc177fbdeeb555e4a06956a7d59d804c",
+      "interpretation": "Both Grafana image wrappers pass three fresh runs each without retries on unchanged source. The original HTTP 404 and successful retry remain preserved; its response body and cause were not captured."
+    },
+    "preserved_raw_logs": [
+      {
+        "path": "qualification/evidence/correctness/canonical-fingerprint-fold-7ea9840085ab/canonical-fingerprint-fold-final-validation.log",
+        "sha256": "98a2d046e5d2c3b636d829868e1ffb9f2fc1e164abd90c7352b3d2eb28fd8e40"
+      },
+      {
+        "path": "qualification/evidence/correctness/canonical-fingerprint-fold-7ea9840085ab/canonical-fingerprint-fold-final-validation-targets.txt",
+        "sha256": "df3e7eee145c2b4eb83f0aa3003861e1b8704caed4e1c5b24eb698bce760b196"
+      },
+      {
+        "path": "qualification/evidence/correctness/canonical-fingerprint-fold-7ea9840085ab/canonical-fingerprint-fold-grafana-follow-up.log",
+        "sha256": "3c2763f1cc5e6c81791d515eced3d805cc177fbdeeb555e4a06956a7d59d804c"
+      },
+      {
+        "path": "qualification/evidence/correctness/canonical-fingerprint-fold-7ea9840085ab/canonical-fingerprint-fold-original-golden.log",
+        "sha256": "5250f29e70bd958e3fb59b1678928b96afdf741e5e3d4414bd19f47fe7052525"
+      },
+      {
+        "path": "qualification/evidence/correctness/canonical-fingerprint-fold-7ea9840085ab/canonical-fingerprint-fold-initial-validation.log",
+        "sha256": "ef41201f39bbe4b3cc99c65d05e0a65563f86a2d88174322385a795cfbcab3ce"
+      },
+      {
+        "path": "qualification/evidence/correctness/canonical-fingerprint-fold-7ea9840085ab/canonical-fingerprint-fold-negative.log",
+        "sha256": "e9f2a7346daedbac96e3b431e92948de9f8693c66148aadd7a75f4c5aa5ad331"
+      },
+      {
+        "path": "qualification/evidence/correctness/canonical-fingerprint-fold-7ea9840085ab/canonical-fingerprint-fold-negative-golden.log",
+        "sha256": "f7a69990dee71c07be12769c59051b743ba18a8f5cfb6fb6c5644ed1cf2580a5"
+      },
+      {
+        "path": "qualification/evidence/correctness/canonical-fingerprint-fold-7ea9840085ab/grafana-original-failed-attempt.log",
+        "sha256": "5cf6eb817d1ed96d13cf254ea84d0fe8c8f664edde8d9a7ff3ca91fa49157aa6"
+      }
+    ]
   },
   "gcp_runs": {
     "baseline_source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
@@ -842,5 +1170,459 @@
       }
     ],
     "interpretation": "Fresh restored-source capture validates the fingerprint selection. Sparse sampled windows do not establish a normalized gain. The capture accepts 360000 rows and completes 719 queries."
+  },
+  "image_runtime_control": {
+    "verified": true,
+    "all_runtime_paths": 380,
+    "runtime_configuration_equal": true,
+    "os_architecture_equal": true,
+    "base_layer_equal": true,
+    "base_rootfs_diff_ids_equal": true,
+    "changed_paths": [
+      "usr/local/bin/krabka-metrics",
+      "usr/local/bin/krabka-metrics-service",
+      "usr/local/bin/krabka-o11y-bootstrap",
+      "usr/local/bin/krabka-o11y-recovery",
+      "usr/local/bin/krabka-observability",
+      "usr/local/bin/krabka-profiles",
+      "usr/local/bin/krabka-traces"
+    ],
+    "only_verified_application_binaries_changed": true,
+    "binary_identities": {
+      "baseline": {
+        "krabka-metrics": {
+          "path": "usr/local/bin/krabka-metrics",
+          "sha256": "56fd1802d44d3bf3663552e3e7a068fd1c4aac835131883efbc190ab1df7564a",
+          "size_in_bytes": 72331696
+        },
+        "krabka-metrics-service": {
+          "path": "usr/local/bin/krabka-metrics-service",
+          "sha256": "2847a667a6a666f5be183ab2565ccc23ec56e7cbd884cbe2ab26a025769f4dbb",
+          "size_in_bytes": 236267608
+        },
+        "krabka-o11y-bootstrap": {
+          "path": "usr/local/bin/krabka-o11y-bootstrap",
+          "sha256": "98e991f8cc82aaaafaf010daa9f2658601361771de3fef95f324431f417d72cb",
+          "size_in_bytes": 26754688
+        },
+        "krabka-o11y-recovery": {
+          "path": "usr/local/bin/krabka-o11y-recovery",
+          "sha256": "9d8139ee00e5965989176e9afdb9bee34ed1ecafdd6b452e45fc7c6d7fdc552d",
+          "size_in_bytes": 36711944
+        },
+        "krabka-observability": {
+          "path": "usr/local/bin/krabka-observability",
+          "sha256": "9167c5564f7bd660ff731ed04b3b0f8c9c08713b4e666a06b58370a9b19587a4",
+          "size_in_bytes": 222375176
+        },
+        "krabka-profiles": {
+          "path": "usr/local/bin/krabka-profiles",
+          "sha256": "85e706ee500c0b3c6af8a9e59ed01e9fb761490473576057462902505d1b143b",
+          "size_in_bytes": 219807320
+        },
+        "krabka-traces": {
+          "path": "usr/local/bin/krabka-traces",
+          "sha256": "f11cf640a055e5d50d2a252bff3125e74c67f9ebb0807b9d3e93dd0d9b908d0c",
+          "size_in_bytes": 223528288
+        }
+      },
+      "candidate": {
+        "krabka-metrics": {
+          "path": "usr/local/bin/krabka-metrics",
+          "sha256": "8928b35fa4b4d23e5102c5ae3af3d9a196942d7f1219e6223a222659538f2666",
+          "size_in_bytes": 72323808
+        },
+        "krabka-metrics-service": {
+          "path": "usr/local/bin/krabka-metrics-service",
+          "sha256": "78effd305edf4d099ab09d33616264acf17c7f01f54143ecde97b033855abf0b",
+          "size_in_bytes": 236258496
+        },
+        "krabka-o11y-bootstrap": {
+          "path": "usr/local/bin/krabka-o11y-bootstrap",
+          "sha256": "da34832eb8c9ecd5d4a620ebfac4a1cb10c8073a5721fb0bdec2e1701090a006",
+          "size_in_bytes": 26753352
+        },
+        "krabka-o11y-recovery": {
+          "path": "usr/local/bin/krabka-o11y-recovery",
+          "sha256": "552627f09c064eea7677795b0ecd718ed7752036a5182f34874ca29e3bade859",
+          "size_in_bytes": 36713168
+        },
+        "krabka-observability": {
+          "path": "usr/local/bin/krabka-observability",
+          "sha256": "fe3e0e4b992f3ea7d5de55f68e7b179eba4ac09d9e30eb1116f4da7953eece5b",
+          "size_in_bytes": 222370040
+        },
+        "krabka-profiles": {
+          "path": "usr/local/bin/krabka-profiles",
+          "sha256": "35fab2b56291cef48e9105ff01dbf547500d577030f54d15efd6b34c8e670fa7",
+          "size_in_bytes": 219801832
+        },
+        "krabka-traces": {
+          "path": "usr/local/bin/krabka-traces",
+          "sha256": "83a8b89c7e07c6a8f906bd60ba26c0f5ea310485e0a50e70d11acbbe657b3d51",
+          "size_in_bytes": 223525200
+        }
+      }
+    },
+    "runtime_report_sha256": {
+      "baseline": "1b245d8b204486bad47d98d29258f9edaed8a9850b9b20f66e3b8590dd1bd194",
+      "candidate": "ee1654646900d4579154268a931c850b6ddd6fd0bbd063227b8610be8cdff978"
+    }
+  },
+  "verified_candidate_capture": {
+    "diagnostic_only": true,
+    "comparison_qualified": false,
+    "source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649",
+    "provenance": {
+      "run_id": 37354008253,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37354008253",
+      "head_sha": "7ea9840085ab587b5491c3d47a17388b749a9649",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111911694180,
+          "name": "compare (metrics)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37354008253/job/111911694180",
+          "runner_name": "gcp-runner-1501ee5379dd43d4",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T18:12:28Z",
+          "completed_at": "2026-10-05T18:29:23Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11364806320,
+          "name": "grafana-comparison-metrics-7ea9840085ab587b5491c3d47a17388b749a9649-1",
+          "digest": "sha256:66a600420dc4a5c07805c8dfbcd3234efa1c1bc9927034829a9d564a720adcb7",
+          "size_in_bytes": 5689599,
+          "expires_at": "2027-01-03T18:10:58Z",
+          "signal": "metrics",
+          "verified_raw_files": 234,
+          "diagnostic_only": true
+        }
+      ]
+    },
+    "image_producer": {
+      "run_id": 37354008253,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37354008253",
+      "source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649",
+      "artifact": {
+        "id": 11363953421,
+        "name": "comparison-image-metrics-7ea9840085ab587b5491c3d47a17388b749a9649",
+        "digest": "sha256:453213f6401244097739f9dc6ca54b1f200dbdb567a71d188fce1725a7616219",
+        "size_in_bytes": 308285390,
+        "expires_at": "2027-01-03T18:10:58Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-7ea9840085ab",
+      "manifest_digest": "sha256:c310b4632bcb780296b9c03c285f5064df34d145724f61bf48ff15791b45dcfe",
+      "config_digest": "sha256:c310b4632bcb780296b9c03c285f5064df34d145724f61bf48ff15791b45dcfe"
+    },
+    "host": {
+      "cpu_count": 16,
+      "kernel": "7.0.0-1011-gcp",
+      "lscpu": {
+        "lscpu": [
+          {
+            "field": "Architecture:",
+            "data": "x86_64"
+          },
+          {
+            "field": "CPU op-mode(s):",
+            "data": "32-bit, 64-bit"
+          },
+          {
+            "field": "Address sizes:",
+            "data": "46 bits physical, 48 bits virtual"
+          },
+          {
+            "field": "Byte Order:",
+            "data": "Little Endian"
+          },
+          {
+            "field": "CPU(s):",
+            "data": "16"
+          },
+          {
+            "field": "On-line CPU(s) list:",
+            "data": "0-15"
+          },
+          {
+            "field": "Vendor ID:",
+            "data": "GenuineIntel"
+          },
+          {
+            "field": "Model name:",
+            "data": "Intel(R) Xeon(R) CPU @ 2.20GHz"
+          },
+          {
+            "field": "CPU family:",
+            "data": "6"
+          },
+          {
+            "field": "Model:",
+            "data": "79"
+          },
+          {
+            "field": "Thread(s) per core:",
+            "data": "2"
+          },
+          {
+            "field": "Core(s) per socket:",
+            "data": "8"
+          },
+          {
+            "field": "Socket(s):",
+            "data": "1"
+          },
+          {
+            "field": "Stepping:",
+            "data": "0"
+          },
+          {
+            "field": "BogoMIPS:",
+            "data": "4399.99"
+          },
+          {
+            "field": "Flags:",
+            "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch pti ssbd ibrs ibpb stibp fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm rdseed adx smap xsaveopt arat md_clear arch_capabilities"
+          },
+          {
+            "field": "Hypervisor vendor:",
+            "data": "KVM"
+          },
+          {
+            "field": "Virtualization type:",
+            "data": "full"
+          },
+          {
+            "field": "L1d cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L1i cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L2 cache:",
+            "data": "2 MiB (8 instances)"
+          },
+          {
+            "field": "L3 cache:",
+            "data": "55 MiB (1 instance)"
+          },
+          {
+            "field": "NUMA node(s):",
+            "data": "1"
+          },
+          {
+            "field": "NUMA node0 CPU(s):",
+            "data": "0-15"
+          },
+          {
+            "field": "Vulnerability Gather data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Ghostwrite:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Indirect target selection:",
+            "data": "Mitigation; Aligned branch/return thunks"
+          },
+          {
+            "field": "Vulnerability Itlb multihit:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability L1tf:",
+            "data": "Mitigation; PTE Inversion"
+          },
+          {
+            "field": "Vulnerability Mds:",
+            "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+          },
+          {
+            "field": "Vulnerability Meltdown:",
+            "data": "Mitigation; PTI"
+          },
+          {
+            "field": "Vulnerability Mmio stale data:",
+            "data": "Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown"
+          },
+          {
+            "field": "Vulnerability Old microcode:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Reg file data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Retbleed:",
+            "data": "Mitigation; IBRS"
+          },
+          {
+            "field": "Vulnerability Spec rstack overflow:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Spec store bypass:",
+            "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+          },
+          {
+            "field": "Vulnerability Spectre v1:",
+            "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+          },
+          {
+            "field": "Vulnerability Spectre v2:",
+            "data": "Mitigation; IBRS; IBPB conditional; STIBP conditional; RSB filling; PBRSB-eIBRS Not affected; BHI SW loop, KVM SW loop"
+          },
+          {
+            "field": "Vulnerability Srbds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsa:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsx async abort:",
+            "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+          },
+          {
+            "field": "Vulnerability Vmscape:",
+            "data": "Not affected"
+          }
+        ]
+      }
+    },
+    "workload": {
+      "signal": "metrics",
+      "writers": 2,
+      "cardinality": 1000,
+      "warmup_seconds": 15,
+      "duration_seconds": 180.4185146740001,
+      "write_interval_seconds": 1,
+      "ingest": {
+        "attempts": 360,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 360000,
+        "accepted_rows_per_sec": 1995.360623883238,
+        "latency_seconds": {
+          "count": 360,
+          "p50": 0.027142199000081746,
+          "p95": 0.03183413399995061,
+          "p99": 0.03619833999982802
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 360
+        }
+      },
+      "query": {
+        "attempts": 720,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 720,
+          "p50": 0.012284763000025123,
+          "p95": 0.01929241500010903,
+          "p99": 0.021869864000109374
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 720
+        }
+      },
+      "telemetry": {
+        "wal_lag_records_max": 3905.0,
+        "wal_lag_records_last": [
+          0.0,
+          3811.0
+        ],
+        "rss_kib_peak_by_role": {
+          "metrics-distributor": 25388,
+          "minio": 321668,
+          "metrics-block-builder": 41784,
+          "metrics-querier": 111696,
+          "metrics-compactor": 33572,
+          "broker": 36472
+        },
+        "object_requests": 4485.0,
+        "object_bytes": 115542826.0,
+        "maintenance": {
+          "krabka_metrics_compaction_runs_total{status=\"ok\"}": 162.0,
+          "krabka_metrics_compaction_blocks_total": 67.0,
+          "krabka_metrics_compaction_deletion_sweeps_total": 179.0,
+          "krabka_metrics_compaction_deleted_blocks_total": 132.0,
+          "krabka_metrics_compaction_deleted_sidecars_total": 134.0,
+          "krabka_metrics_compaction_deletion_failures_total": 0.0,
+          "krabka_metrics_compaction_orphan_sweeps_total": 89.0,
+          "krabka_metrics_compaction_orphans_deleted_total": 0.0,
+          "krabka_metrics_compaction_orphan_failures_total": 0.0
+        },
+        "cpu_seconds_by_role": {},
+        "expected_restart_gaps": 0,
+        "scrape_errors": 0
+      },
+      "tenant": "soak",
+      "tenants": {
+        "soak": {
+          "attempts": 360,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 360000,
+          "accepted_rows_per_sec": 1995.360623883238,
+          "latency_seconds": {
+            "count": 360,
+            "p50": 0.027142199000081746,
+            "p95": 0.03183413399995061,
+            "p99": 0.03619833999982802
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "200": 360
+          }
+        }
+      },
+      "objectives_met": true
+    },
+    "querier_fingerprint_windows": [
+      {
+        "window": 1,
+        "samples": 206,
+        "fingerprint_self_percent": 1.94,
+        "fingerprint_fold_self_percent": 4.85,
+        "fingerprint_and_fold_self_percent": 6.79,
+        "report_sha256": "f3ef4d53e4874abee23dc4a332e5cf4754c8dc4e59be598b6548397cbc2e4107"
+      },
+      {
+        "window": 2,
+        "samples": 233,
+        "fingerprint_self_percent": 2.58,
+        "fingerprint_fold_self_percent": 3.43,
+        "fingerprint_and_fold_self_percent": 6.01,
+        "report_sha256": "9f0230be6fac5be52ec6855556f542e92743448b9a5a3df52d6f8271dcfad32c"
+      },
+      {
+        "window": 3,
+        "samples": 289,
+        "fingerprint_self_percent": 1.38,
+        "fingerprint_fold_self_percent": 2.08,
+        "fingerprint_and_fold_self_percent": 3.46,
+        "report_sha256": "2ab9f14dbf33483f16a54f3ab28beffc23e5d6896d97d032f9f376bb6356a055"
+      }
+    ],
+    "interpretation": "The candidate fingerprint work is split between the fingerprint and its out-of-line iterator fold. Their sampled shares must be considered together. These sparse diagnostic windows on different hosts do not establish a normalized gain; baseline completes 719 queries and candidate 720."
   }
 }
