@@ -155,6 +155,16 @@ gh workflow run grafana-comparison.yml --repo krabka-io/krabka-o11y \
 
 Select the producer run's exact artifact name. Its source commit and digest
 remain visible in every report, even if the harness branch has since changed.
+For a before/after optimization check, also supply
+`baseline_image_artifact_run` and `baseline_image_artifact_name`. Use
+`profiling=none`, `phases=steady` and one concrete layout. After the native
+comparison, the workflow alternates fresh baseline and candidate deployments
+on that same VM, reversing their order on even pairs. Each revision report
+retains its own image identity, workload, telemetry and host activity gates
+under `revisions/PAIR-REVISION/`. Pair numbers are directory names; each
+individual report contains one repetition. The baseline archive reference and
+its original image checksum list are preserved separately. This avoids
+attributing differences between AMD and Intel E2 hosts to a source change.
 Use a quiet qualification host for published ratios. A local diagnostic run
 uses the same payloads and reports its actual host:
 
