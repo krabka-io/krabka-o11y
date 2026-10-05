@@ -57,15 +57,13 @@ def capture(deployment, output, seconds, windows, cpu=True):
             cpu_profile(port, seconds, output / f'{name}.{window + 1}.cpu.pb.gz')
 
     def minio():
-        identity = deployment.ids['minio']
-        # The pinned dev image contains mc. This is the synthetic benchmark
-        # account, and --airgap explicitly disables uploads to MinIO support.
-        command = ('mc alias set profile http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" && '
-                   f'mc support profile --airgap --type cpu,mem --duration {seconds} profile')
-        log = env.command('docker', 'exec', '--workdir', '/tmp', identity, '/bin/sh', '-c', command)
-        (output / 'minio-client.txt').write_text(log)
         archive = output / 'minio-profile.zip'
-        env.command('docker', 'cp', identity + ':/tmp/profile.zip', str(archive))
+        # Call the local admin Profile API directly using curl's SigV4 signer.
+        # The benchmark account is synthetic. No support service is contacted.
+        env.command('curl', '--fail', '--silent', '--show-error', '--max-time', str(seconds + 30),
+                    '--aws-sigv4', 'aws:amz:us-east-1:s3', '--user', 'krabka:krabka-secret',
+                    '--request', 'POST', '--output', str(archive),
+                    f'http://127.0.0.1:19000/minio/admin/v3/profile?duration={seconds}s&profilerType=cpu%2Cmem')
         with zipfile.ZipFile(archive) as profiles:
             for member in profiles.infolist():
                 if member.is_dir():
