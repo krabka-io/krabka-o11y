@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Reuse canonical cold-series keys in instant labels and cardinality",
-  "status": "restored_source_correctness_scope_qualified_image_builds_running",
+  "status": "restored_source_correctness_scope_qualified_both_images_verified",
   "baseline_source_commit": "d4125ea317b203173f80e5feba1991b0b942c469",
   "source_commit": "1dbd10da44b6b319efea54de61dfdddb40f70c7d",
   "performance_qualified": false,
@@ -65,9 +65,16 @@
       "retries_disabled": true,
       "provenance_path": "qualification/evidence/correctness/cold-canonical-fingerprint-reuse/restored-native-7fbd49b6/provenance.json",
       "provenance_sha256": "e232981fe88f28d175e16cbf58c588852c95154497abf86e70d1b8940f0a4f76"
+    },
+    "restored_metadata_combined_scope": {
+      "source_commit": "0c1e117a37b53d8f7098a4a75d3571e0fa9963ce",
+      "targets_passed": 7,
+      "provenance_path": "qualification/evidence/correctness/dense-block-metadata/restored-original-0c1e117a/provenance.json",
+      "provenance_sha256": "12f8d33f5eb5980b709060a0c065237258773083f2f5320ec12c41fcf04743e6",
+      "scope": "The full metadata ledger, blockstore/PromQL/metrics-service unit and library Clippy checks pass with the original metadata and fingerprint implementations restored. Prior native checks remain pinned to their earlier source."
     }
   },
-  "next_action": "Collect both exact restored-source images and profiles, compare all runtime settings and nonbinary filesystem entries, then dispatch matched Mimir pairs. These image-producing captures are diagnostic only.",
+  "next_action": "Dispatch the matched Mimir comparison using these exact images. Both retain equal subsequently rejected dense metadata; this isolates cold fingerprint reuse and does not qualify the final restored source.",
   "correctness_scope_qualified": true,
   "restored_image_builds": {
     "baseline_source_commit": "8718820c9d8f287292445ace014e67587dc80713",
@@ -116,6 +123,77 @@
         "name": "gcp-runner-6fe9ac82325b445a",
         "status": "RUNNING"
       }
+    ],
+    "baseline_verified": {
+      "status": "image_and_cpu_profile_verified",
+      "image_provenance": {
+        "run_id": 37370655001,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37370655001",
+        "source_commit": "8718820c9d8f287292445ace014e67587dc80713",
+        "artifact": {
+          "id": 11370127006,
+          "name": "comparison-image-metrics-8718820c9d8f287292445ace014e67587dc80713",
+          "digest": "sha256:7e663863e786d16e44a696ce6455407df58ae752c9720c9b61797610078797d8",
+          "size_in_bytes": 308374902,
+          "expires_at": "2027-01-03T20:35:10Z"
+        },
+        "archive_digest_verified": true,
+        "all_image_file_checksums_verified": true,
+        "image_tag": "localhost/krabka-o11y:sha-8718820c9d8f",
+        "manifest_digest": "sha256:bceceea04e127f9c78c40e225ef5a15183c8945a4c220451674ae93bf0f39d22",
+        "config_digest": "sha256:bceceea04e127f9c78c40e225ef5a15183c8945a4c220451674ae93bf0f39d22"
+      },
+      "cpu_profile_provenance_path": "qualification/evidence/profiling/gcp-37370655001/provenance.json",
+      "cpu_profile_provenance_sha256": "c63faa513e31e570eea32cc4fe77fccbd304febd8cea5c6cff7db63e84dc54d2",
+      "raw_files_verified": 238,
+      "binary_checksums_path": "qualification/evidence/profiling/gcp-37370655001/cold-fingerprint-reuse-baseline-image.binaries.json",
+      "binary_checksums_sha256": "915d639bb98f84e636fd42d36b77d51b65576569653ad502aa5d70d7ed31c7fe",
+      "runtime_snapshot_path": "qualification/evidence/profiling/gcp-37370655001/cold-fingerprint-reuse-baseline-image.runtime.json",
+      "runtime_snapshot_sha256": "0fb3fbbd088d670a98d23724b044279ac32bbd682c36aa774131518dfac6b760",
+      "diagnostic_only": true,
+      "performance_qualified": false
+    },
+    "candidate_verified": {
+      "status": "image_and_cpu_profile_verified",
+      "image_provenance": {
+        "run_id": 37371016528,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
+        "source_commit": "7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+        "artifact": {
+          "id": 11370623488,
+          "name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+          "digest": "sha256:23dbcd9961bbe0b94637404828d35ba6b5a09569594b231b0c50c36eb5d80830",
+          "size_in_bytes": 308374623,
+          "expires_at": "2027-01-03T20:38:45Z"
+        },
+        "archive_digest_verified": true,
+        "all_image_file_checksums_verified": true,
+        "image_tag": "localhost/krabka-o11y:sha-7fbd49b60f16",
+        "manifest_digest": "sha256:78777fbc9fd21daaaf6129c1ef4e65e67f9dc336034817697f3f7d542f776ee7",
+        "config_digest": "sha256:78777fbc9fd21daaaf6129c1ef4e65e67f9dc336034817697f3f7d542f776ee7"
+      },
+      "cpu_profile_provenance_path": "qualification/evidence/profiling/gcp-37371016528/provenance.json",
+      "cpu_profile_provenance_sha256": "3e9f8d995dd8c8c987c6794eec4c32fabd766b193d7ddf310ed0ec51a09d3443",
+      "raw_files_verified": 238,
+      "binary_checksums_path": "qualification/evidence/profiling/gcp-37371016528/cold-fingerprint-reuse-candidate-image.binaries.json",
+      "binary_checksums_sha256": "40352d3ac7599fe8166d3a84b17552308f11e89fa3aa51ad351f1e9b55340f19",
+      "runtime_snapshot_path": "qualification/evidence/profiling/gcp-37371016528/cold-fingerprint-reuse-candidate-image.runtime.json",
+      "runtime_snapshot_sha256": "2ac3e9bebc32ed1c276e9c3d809cacd56fd5ae6b06d5f007946f90ee1766caed",
+      "diagnostic_only": true,
+      "performance_qualified": false
+    }
+  },
+  "image_runtime_control": {
+    "verified": true,
+    "proof_path": "qualification/evidence/profiling/cold-fingerprint-reuse-image-pair.json",
+    "proof_sha256": "94a8ea422214f9d2122455425cbc5295e632c601855b936f2a9b105fa75f8c34",
+    "runtime_config_equal": true,
+    "architecture_os_equal": true,
+    "base_layers_equal": true,
+    "filesystem_paths_checked": 380,
+    "all_non_application_binary_paths_equal": true,
+    "changed_application_binary_paths": [
+      "usr/local/bin/krabka-metrics-service"
     ]
   }
 }
