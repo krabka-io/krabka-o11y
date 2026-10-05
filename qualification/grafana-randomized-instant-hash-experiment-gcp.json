@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "experiment": "Keyed randomized hashing for the latest-series map in the fused Mimir instant scan",
+  "source_commit": "ebc1ff330abed44b97bdd3d6a17b3c969cf836ed",
+  "baseline_source_commit": "703ec4c80380c372ad708d171683b74d6db4c2bf",
+  "performance_qualified": false,
+  "retention_decision": "Pending verified exact-image GCP CPU, RSS and latency comparison. Reject regressions; diagnostic hashing removal alone does not qualify a gain.",
+  "scope": {
+    "production_paths": [
+      "crates/promql/src/merged_store/instant_scan.rs"
+    ],
+    "change": "Only the ephemeral latest-series HashMap uses ahash::RandomState. Keep the cold conflict HashMap, canonical series fingerprints, complete equality checks, final fingerprint sort, cold-first labels, hot-first ties, sample counting, stale markers, one snapshot and all fallback paths unchanged.",
+    "dependency": "Expose existing ahash 0.8.12 directly to krabka-promql. Cargo.lock adds one dependency edge; no package versions change. Default runtime randomness remains enabled.",
+    "upstream_reference": "https://github.com/tkaitchuck/aHash",
+    "no_configuration_changes": true,
+    "no_wire_changes": true
+  },
+  "profile_selection": {
+    "path": "crates/promql/src/merged_store/instant_scan.rs",
+    "sha256": "fb5c42bb5014a507db5fb5e289c3e22b610b94d2de1abbcb1f4a0950292831ca",
+    "profile_run": 37335061905,
+    "profile_source": "241b7dce19fda5c54f868ff6657115f9f5ba1de4",
+    "byte_identical_after_rebase_and_ordered_map_reversion": true,
+    "dependency_version": "ahash 0.8.12",
+    "upstream_reference": "https://github.com/tkaitchuck/aHash",
+    "profile_selection_only": true,
+    "performance_qualified": false
+  },
+  "validation": {
+    "original_rebased_hash_map_scope": {
+      "status": "passed",
+      "targets": 41,
+      "log_sha256": "3557a2b18e9492a72a24d8d9b1c02c30f085e1291c5201d7014c6cf586cb7821",
+      "native_wrappers": 6,
+      "native_cases_per_wrapper": 1,
+      "ignored": 0
+    },
+    "initial_candidate_scope": {
+      "status": "passed",
+      "targets": [
+        "//crates/promql:promql_test",
+        "//crates/promql:promql_clippy",
+        "//crates/metrics-service:metrics-service_test",
+        "//crates/metrics-service:metrics-service_clippy"
+      ],
+      "log_sha256": "67f39ceb3e33e7b48e73cfa7226a1025f80acc41bf00f94b9e0c9ea86db3ef8f"
+    },
+    "negative_control": {
+      "mutation": "Reverse the final canonical fingerprint sort with the candidate hasher.",
+      "result": "Exactly the independent full production scan ledger fails; 65 other metrics-service unit cases pass. Original candidate restored.",
+      "log_sha256": "4835688e8d1bd52732381787541e650e7650b05e2f07332f8ad45a909c613c92",
+      "unit_log_sha256": "a29802b823a178ea0ebe8b33f6271191a3463adc2736efc3128b0dd9458ec880"
+    },
+    "final_scope_status": "running",
+    "final_scope_targets": 43,
+    "final_scope_target_list": [
+      "//crates/integration:traces_to_metrics_exemplars_test",
+      "//crates/integration:traces_to_metrics_exemplars_test_clippy",
+      "//crates/metrics-service:diff_mimir_docker_test",
+      "//crates/metrics-service:diff_prometheus_docker_test",
+      "//crates/metrics-service:diff_prometheus_previous_docker_test",
+      "//crates/metrics-service:grafana_integration_docker_test",
+      "//crates/metrics-service:grafana_integration_previous_docker_test",
+      "//crates/metrics-service:metrics-service_clippy",
+      "//crates/metrics-service:metrics-service_test",
+      "//crates/metrics-service:metrics-service_test_clippy",
+      "//crates/metrics-service:metrics_deployment_docker_test",
+      "//crates/metrics-service:metrics_deployment_test_clippy",
+      "//crates/metrics-service:tsdb_import_docker_test",
+      "//crates/promql:conformance_experimental_test",
+      "//crates/promql:conformance_report_experimental_test",
+      "//crates/promql:conformance_report_experimental_test_clippy",
+      "//crates/promql:conformance_report_test",
+      "//crates/promql:conformance_report_test_clippy",
+      "//crates/promql:conformance_test",
+      "//crates/promql:engine_proptest_experimental_test",
+      "//crates/promql:engine_proptest_experimental_test_clippy",
+      "//crates/promql:engine_proptest_test",
+      "//crates/promql:engine_proptest_test_clippy",
+      "//crates/promql:http_api_experimental_test",
+      "//crates/promql:http_api_experimental_test_clippy",
+      "//crates/promql:http_api_test",
+      "//crates/promql:http_api_test_clippy",
+      "//crates/promql:parser_proptest_experimental_test",
+      "//crates/promql:parser_proptest_experimental_test_clippy",
+      "//crates/promql:parser_proptest_test",
+      "//crates/promql:parser_proptest_test_clippy",
+      "//crates/promql:promql_clippy",
+      "//crates/promql:promql_doc_test",
+      "//crates/promql:promql_experimental_clippy",
+      "//crates/promql:promql_experimental_test",
+      "//crates/promql:promql_experimental_test_clippy",
+      "//crates/promql:promql_no_harness_check",
+      "//crates/promql:promql_test",
+      "//crates/promql:promql_test_clippy",
+      "//crates/promql:tenant_isolation_experimental_test",
+      "//crates/promql:tenant_isolation_experimental_test_clippy",
+      "//crates/promql:tenant_isolation_test",
+      "//crates/promql:tenant_isolation_test_clippy"
+    ]
+  },
+  "gcp_runs": {
+    "baseline_source_commit": "703ec4c80380c372ad708d171683b74d6db4c2bf",
+    "baseline_image_run": 37343291419,
+    "baseline_cpu": 37343291419,
+    "candidate_source_commit": "ebc1ff330abed44b97bdd3d6a17b3c969cf836ed",
+    "candidate_image_run": 37343900919,
+    "candidate_cpu": 37343900919
+  },
+  "comparison_plan": "Independently checksummed release images built from the rebased baseline and candidate on private GCP runners. Verify seven binaries, image config, base layer and all nonbinary paths. Three fresh alternating baseline/candidate pairs plus three native Mimir pairs; steady 60-second load with unchanged aggregate budgets. Include broker and MinIO CPU/RSS; require accepted rows, query results, telemetry coverage and no errors/OOM."
+}
