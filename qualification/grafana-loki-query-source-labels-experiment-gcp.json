@@ -3,7 +3,7 @@
   "experiment": "Omit per-entry source label copies for ordinary Loki queries; retain original labels for distinct and tail frames.",
   "source_commit": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
   "retained_in_branch": true,
-  "retention_decision": "First exact-image control: total peak RSS lower in all three pairs with disjoint ranges; logs-role CPU lower in all three, whole-stack CPU mixed and query p99 mixed. Await confirmation before a retention decision. Both experimental images include the same subsequently reverted metric-WAL move; current branch requires final source qualification.",
+  "retention_decision": "Retain after two verified exact-image controls. Peak RSS and logs-role CPU fall in all six pairs. Median total CPU falls 5.5% and 5.2%; peak RSS falls 4.0% and 4.8%, with disjoint ranges in both controls. First total CPU/query p99 are mixed; confirmation total CPU and query p99 fall in all three pairs with disjoint ranges. Query counts match within each control (239 first, 240 repeat), so do not pool unmatched totals. Both images contain the same later-reverted metric-WAL experiment; this qualifies the isolated Loki change, not all signals at current HEAD.",
   "baseline_source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
   "baseline_harness_commit": "aeb67637f680bf67f006d343b811f019662bad87",
   "diagnostic_selection": {
@@ -131,7 +131,7 @@
       ]
     }
   },
-  "performance_qualified": false,
+  "performance_qualified": true,
   "final_scoped_validation": {
     "targets_passed": 120,
     "status_at_recording": "completed",
@@ -3111,7 +3111,2817 @@
       "run_id": 37336578599,
       "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37336578599",
       "head_sha": "f4c5a6034678dbde565d59dca71350146f21ddb0",
-      "status_at_recording": "pending"
+      "status_at_recording": "completed",
+      "conclusion": "success"
     }
-  }
+  },
+  "confirmation_revision_control": {
+    "measurement_qualified": true,
+    "provenance": {
+      "run_id": 37336578599,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37336578599",
+      "head_sha": "f4c5a6034678dbde565d59dca71350146f21ddb0",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111852779305,
+          "name": "compare (logs)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37336578599/job/111852779305",
+          "runner_name": "gcp-runner-bf8dc3d3b2664214",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T15:55:26Z",
+          "completed_at": "2026-10-05T16:18:22Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11357753157,
+          "name": "grafana-comparison-logs-f4c5a6034678dbde565d59dca71350146f21ddb0-1",
+          "digest": "sha256:b597b0c83ca0c3c4a0ff0856dbd07aeaa91c77ee86899a59b1c03c1bfa8b9ce2",
+          "size_in_bytes": 7730080,
+          "expires_at": "2027-01-03T15:54:20Z",
+          "signal": "logs",
+          "verified_raw_files": 725
+        }
+      ]
+    },
+    "host": {
+      "cpu_count": 16,
+      "kernel": "7.0.0-1011-gcp",
+      "lscpu": {
+        "lscpu": [
+          {
+            "field": "Architecture:",
+            "data": "x86_64"
+          },
+          {
+            "field": "CPU op-mode(s):",
+            "data": "32-bit, 64-bit"
+          },
+          {
+            "field": "Address sizes:",
+            "data": "48 bits physical, 48 bits virtual"
+          },
+          {
+            "field": "Byte Order:",
+            "data": "Little Endian"
+          },
+          {
+            "field": "CPU(s):",
+            "data": "16"
+          },
+          {
+            "field": "On-line CPU(s) list:",
+            "data": "0-15"
+          },
+          {
+            "field": "Vendor ID:",
+            "data": "AuthenticAMD"
+          },
+          {
+            "field": "Model name:",
+            "data": "AMD EPYC 7B12"
+          },
+          {
+            "field": "CPU family:",
+            "data": "23"
+          },
+          {
+            "field": "Model:",
+            "data": "49"
+          },
+          {
+            "field": "Thread(s) per core:",
+            "data": "2"
+          },
+          {
+            "field": "Core(s) per socket:",
+            "data": "8"
+          },
+          {
+            "field": "Socket(s):",
+            "data": "1"
+          },
+          {
+            "field": "Stepping:",
+            "data": "0"
+          },
+          {
+            "field": "BogoMIPS:",
+            "data": "4499.99"
+          },
+          {
+            "field": "Flags:",
+            "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+          },
+          {
+            "field": "Hypervisor vendor:",
+            "data": "KVM"
+          },
+          {
+            "field": "Virtualization type:",
+            "data": "full"
+          },
+          {
+            "field": "L1d cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L1i cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L2 cache:",
+            "data": "4 MiB (8 instances)"
+          },
+          {
+            "field": "L3 cache:",
+            "data": "32 MiB (2 instances)"
+          },
+          {
+            "field": "NUMA node(s):",
+            "data": "1"
+          },
+          {
+            "field": "NUMA node0 CPU(s):",
+            "data": "0-15"
+          },
+          {
+            "field": "Vulnerability Gather data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Ghostwrite:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Indirect target selection:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Itlb multihit:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability L1tf:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Meltdown:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mmio stale data:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Old microcode:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Reg file data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Retbleed:",
+            "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+          },
+          {
+            "field": "Vulnerability Spec rstack overflow:",
+            "data": "Mitigation; Safe RET"
+          },
+          {
+            "field": "Vulnerability Spec store bypass:",
+            "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+          },
+          {
+            "field": "Vulnerability Spectre v1:",
+            "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+          },
+          {
+            "field": "Vulnerability Spectre v2:",
+            "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+          },
+          {
+            "field": "Vulnerability Srbds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsa:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsx async abort:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Vmscape:",
+            "data": "Not affected"
+          }
+        ]
+      }
+    },
+    "pairing": "Three fresh baseline/candidate deployment pairs on one VM, alternating first revision; native comparison also retained separately.",
+    "image_producers": {
+      "baseline": {
+        "run_id": 37321844038,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37321844038",
+        "source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
+        "artifact": {
+          "id": 11350743469,
+          "name": "comparison-image-metrics-02c1cafee97563352e283296e85914cc5de232d3",
+          "digest": "sha256:815b739ff58d14f34f1954c7c64b291a57b033a566d8f1f9c2a2a029b25d4a50",
+          "size_in_bytes": 308276470,
+          "expires_at": "2027-01-03T14:05:06Z"
+        },
+        "archive_digest_verified": true,
+        "all_image_file_checksums_verified": true,
+        "image_tag": "localhost/krabka-o11y:sha-02c1cafee975",
+        "manifest_digest": "sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3",
+        "config_digest": "sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3"
+      },
+      "candidate": {
+        "run_id": 37330880469,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37330880469",
+        "source_commit": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
+        "artifact": {
+          "id": 11355350164,
+          "name": "comparison-image-logs-bc7e65436eb12247ccf413b66bb0db3549d8faed",
+          "digest": "sha256:1a020541b8f0b45a2e842cf4bd6e9384408f9d927552692d0e3c952f25dc6842",
+          "size_in_bytes": 308268970,
+          "expires_at": "2027-01-03T15:12:07Z"
+        },
+        "archive_digest_verified": true,
+        "all_image_file_checksums_verified": true,
+        "image_tag": "localhost/krabka-o11y:sha-bc7e65436eb1",
+        "manifest_digest": "sha256:befe2e14913bacaf24a473d0f5342043fbb7fe20639ec0d159969b5ec9fb77c7",
+        "config_digest": "sha256:befe2e14913bacaf24a473d0f5342043fbb7fe20639ec0d159969b5ec9fb77c7"
+      }
+    },
+    "pairs": [
+      {
+        "pair": 1,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
+          "image_manifest_digest": "sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3",
+          "report": "revisions/1-baseline/comparison-report.json",
+          "entry": {
+            "signal": "logs",
+            "writers": 2,
+            "cardinality": 100,
+            "warmup_seconds": 15.0,
+            "duration_seconds": 60.63962974899994,
+            "write_interval_seconds": 1,
+            "ingest": {
+              "attempts": 120,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 120000,
+              "accepted_rows_per_sec": 1978.9039032181595,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.02721044300005815,
+                "p95": 0.05206329499992535,
+                "p99": 0.0708419769999864
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "204": 120
+              }
+            },
+            "query": {
+              "attempts": 240,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 0,
+              "accepted_rows_per_sec": 0.0,
+              "latency_seconds": {
+                "count": 240,
+                "p50": 0.037934292999921126,
+                "p95": 0.05348657499996534,
+                "p99": 0.056983156000001145
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 240
+              }
+            },
+            "telemetry": {
+              "wal_lag_records_max": 0.0,
+              "wal_lag_records_last": [
+                0.0
+              ],
+              "rss_kib_peak_by_role": {
+                "logs-all": 160128,
+                "broker": 37572,
+                "minio": 179460
+              },
+              "object_requests": 258.0,
+              "object_bytes": 2950362.0,
+              "maintenance": {
+                "krabka_logs_compaction_runs_total{status=\"ok\"}": 60.0,
+                "krabka_logs_compaction_blocks_total": 60.0,
+                "krabka_logs_compaction_deletion_sweeps_total": 0.0,
+                "krabka_logs_compaction_deleted_blocks_total": 0.0,
+                "krabka_logs_compaction_deleted_sidecars_total": 0.0,
+                "krabka_logs_compaction_deletion_failures_total": 0.0,
+                "krabka_logs_compaction_orphan_sweeps_total": 0.0,
+                "krabka_logs_compaction_orphans_deleted_total": 0.0,
+                "krabka_logs_compaction_orphan_failures_total": 0.0
+              },
+              "cpu_seconds_by_role": {},
+              "expected_restart_gaps": 0,
+              "scrape_errors": 0
+            },
+            "tenant": "soak",
+            "tenants": {
+              "soak": {
+                "attempts": 120,
+                "errors": 0,
+                "error_rate": 0.0,
+                "accepted_rows": 120000,
+                "accepted_rows_per_sec": 1978.9039032181595,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.02721044300005815,
+                  "p95": 0.05206329499992535,
+                  "p99": 0.0708419769999864
+                },
+                "empty_queries": 0,
+                "status_counts": {
+                  "204": 120
+                }
+              }
+            },
+            "objectives_met": true,
+            "resources": {
+              "cpu_seconds_by_role": {
+                "broker": 2.53742,
+                "logs-all": 15.300565,
+                "minio": 1.31276
+              },
+              "cpu_seconds_total": 19.150745,
+              "load_generator_cpu_seconds": 1.04787872,
+              "throttled_seconds_by_role": {
+                "broker": 0.0,
+                "logs-all": 0.0,
+                "minio": 0.0
+              },
+              "rss_kib_simultaneous_peak": 376712,
+              "s3_requests": 258.0,
+              "s3_read_bytes": 1385519.0,
+              "s3_write_bytes": 1713629.0,
+              "external_cpu_cores_mean": 0.05693879719698512,
+              "external_cpu_cores_peak_window": 0.06805440026137945,
+              "host_activity_qualified": true,
+              "sample_count": 61,
+              "sampled_seconds": 60.615545988082886,
+              "coverage_fraction": 0.9996028379293089,
+              "cpu_seconds_per_million_accepted_rows": 159.58954166666666
+            },
+            "backend": "krabka",
+            "repetition": 1,
+            "phase": "steady",
+            "deployment_target": "all",
+            "service_cpu": 5.0,
+            "service_memory_gib": 5.0,
+            "minio_cpu": 2,
+            "minio_memory_gib": 2,
+            "container_states": {
+              "broker": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 16921,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:07:31.981062723Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:08:52.833271305Z",
+                      "End": "2026-10-05T16:08:52.877113669Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:08:57.878462168Z",
+                      "End": "2026-10-05T16:08:57.922128272Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:09:02.923836701Z",
+                      "End": "2026-10-05T16:09:02.966105185Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:09:07.967179263Z",
+                      "End": "2026-10-05T16:09:08.012391307Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:09:13.014088456Z",
+                      "End": "2026-10-05T16:09:13.05879756Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              },
+              "logs-all": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 17301,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:07:38.346428068Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:08:49.100493136Z",
+                      "End": "2026-10-05T16:08:49.14210858Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:08:54.143115157Z",
+                      "End": "2026-10-05T16:08:54.184090152Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:08:59.185587091Z",
+                      "End": "2026-10-05T16:08:59.226618525Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:09:04.227808683Z",
+                      "End": "2026-10-05T16:09:04.267574977Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:09:09.268769606Z",
+                      "End": "2026-10-05T16:09:09.30923376Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              },
+              "minio": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 16826,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:07:31.501899268Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:08:52.337580195Z",
+                      "End": "2026-10-05T16:08:52.382356169Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:08:57.383939557Z",
+                      "End": "2026-10-05T16:08:57.426858351Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:09:02.4280331Z",
+                      "End": "2026-10-05T16:09:02.470733584Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:09:07.471815233Z",
+                      "End": "2026-10-05T16:09:07.517530517Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:09:12.518841826Z",
+                      "End": "2026-10-05T16:09:12.561266781Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "candidate": {
+          "source_commit": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
+          "image_manifest_digest": "sha256:befe2e14913bacaf24a473d0f5342043fbb7fe20639ec0d159969b5ec9fb77c7",
+          "report": "revisions/1-candidate/comparison-report.json",
+          "entry": {
+            "signal": "logs",
+            "writers": 2,
+            "cardinality": 100,
+            "warmup_seconds": 15.0,
+            "duration_seconds": 60.65390447699997,
+            "write_interval_seconds": 1,
+            "ingest": {
+              "attempts": 120,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 120000,
+              "accepted_rows_per_sec": 1978.43817367939,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.02666641200005415,
+                "p95": 0.04715547399996467,
+                "p99": 0.06396369599997342
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "204": 120
+              }
+            },
+            "query": {
+              "attempts": 240,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 0,
+              "accepted_rows_per_sec": 0.0,
+              "latency_seconds": {
+                "count": 240,
+                "p50": 0.032293391999928645,
+                "p95": 0.044328952000000754,
+                "p99": 0.051377314999967894
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 240
+              }
+            },
+            "telemetry": {
+              "wal_lag_records_max": 0.0,
+              "wal_lag_records_last": [
+                0.0
+              ],
+              "rss_kib_peak_by_role": {
+                "minio": 179000,
+                "broker": 37972,
+                "logs-all": 146264
+              },
+              "object_requests": 258.0,
+              "object_bytes": 2950362.0,
+              "maintenance": {
+                "krabka_logs_compaction_runs_total{status=\"ok\"}": 60.0,
+                "krabka_logs_compaction_blocks_total": 60.0,
+                "krabka_logs_compaction_deletion_sweeps_total": 0.0,
+                "krabka_logs_compaction_deleted_blocks_total": 0.0,
+                "krabka_logs_compaction_deleted_sidecars_total": 0.0,
+                "krabka_logs_compaction_deletion_failures_total": 0.0,
+                "krabka_logs_compaction_orphan_sweeps_total": 0.0,
+                "krabka_logs_compaction_orphans_deleted_total": 0.0,
+                "krabka_logs_compaction_orphan_failures_total": 0.0
+              },
+              "cpu_seconds_by_role": {},
+              "expected_restart_gaps": 0,
+              "scrape_errors": 0
+            },
+            "tenant": "soak",
+            "tenants": {
+              "soak": {
+                "attempts": 120,
+                "errors": 0,
+                "error_rate": 0.0,
+                "accepted_rows": 120000,
+                "accepted_rows_per_sec": 1978.43817367939,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.02666641200005415,
+                  "p95": 0.04715547399996467,
+                  "p99": 0.06396369599997342
+                },
+                "empty_queries": 0,
+                "status_counts": {
+                  "204": 120
+                }
+              }
+            },
+            "objectives_met": true,
+            "resources": {
+              "cpu_seconds_by_role": {
+                "broker": 2.444946,
+                "logs-all": 13.71924,
+                "minio": 1.308026
+              },
+              "cpu_seconds_total": 17.472212,
+              "load_generator_cpu_seconds": 1.031326679,
+              "throttled_seconds_by_role": {
+                "broker": 0.0,
+                "logs-all": 0.0,
+                "minio": 0.0
+              },
+              "rss_kib_simultaneous_peak": 363236,
+              "s3_requests": 258.0,
+              "s3_read_bytes": 1385519.0,
+              "s3_write_bytes": 1713629.0,
+              "external_cpu_cores_mean": 0.052390520288493087,
+              "external_cpu_cores_peak_window": 0.06483916520029617,
+              "host_activity_qualified": true,
+              "sample_count": 61,
+              "sampled_seconds": 60.63045954704285,
+              "coverage_fraction": 0.9996134637966132,
+              "cpu_seconds_per_million_accepted_rows": 145.60176666666666
+            },
+            "backend": "krabka",
+            "repetition": 1,
+            "phase": "steady",
+            "deployment_target": "all",
+            "service_cpu": 5.0,
+            "service_memory_gib": 5.0,
+            "minio_cpu": 2,
+            "minio_memory_gib": 2,
+            "container_states": {
+              "broker": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 19934,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:09:19.842187279Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:10:40.713016805Z",
+                      "End": "2026-10-05T16:10:40.757451777Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:10:45.758376403Z",
+                      "End": "2026-10-05T16:10:45.802833965Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:10:50.804132319Z",
+                      "End": "2026-10-05T16:10:50.84689371Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:10:55.848512764Z",
+                      "End": "2026-10-05T16:10:55.892803256Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:11:00.893306332Z",
+                      "End": "2026-10-05T16:11:00.936318933Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              },
+              "logs-all": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 20313,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:09:26.220111299Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:10:36.966970584Z",
+                      "End": "2026-10-05T16:10:37.008142414Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:10:42.008937828Z",
+                      "End": "2026-10-05T16:10:42.048713651Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:10:47.050130134Z",
+                      "End": "2026-10-05T16:10:47.088806667Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:10:52.089550861Z",
+                      "End": "2026-10-05T16:10:52.130200253Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:10:57.130829666Z",
+                      "End": "2026-10-05T16:10:57.172780428Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              },
+              "minio": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 19747,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:09:18.997753304Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:10:39.825999661Z",
+                      "End": "2026-10-05T16:10:39.867964533Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:10:44.869147689Z",
+                      "End": "2026-10-05T16:10:44.911520321Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:10:49.912153615Z",
+                      "End": "2026-10-05T16:10:49.953367267Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:10:54.954157151Z",
+                      "End": "2026-10-05T16:10:54.996091443Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:10:59.996875067Z",
+                      "End": "2026-10-05T16:11:00.040167609Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "pair": 2,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
+          "image_manifest_digest": "sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3",
+          "report": "revisions/2-baseline/comparison-report.json",
+          "entry": {
+            "signal": "logs",
+            "writers": 2,
+            "cardinality": 100,
+            "warmup_seconds": 15.0,
+            "duration_seconds": 60.6690462869999,
+            "write_interval_seconds": 1,
+            "ingest": {
+              "attempts": 120,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 120000,
+              "accepted_rows_per_sec": 1977.9443941203583,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.026936890999877505,
+                "p95": 0.04898790300012479,
+                "p99": 0.06939839900019251
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "204": 120
+              }
+            },
+            "query": {
+              "attempts": 240,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 0,
+              "accepted_rows_per_sec": 0.0,
+              "latency_seconds": {
+                "count": 240,
+                "p50": 0.03829493800003547,
+                "p95": 0.05217514400010259,
+                "p99": 0.058122391000097196
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 240
+              }
+            },
+            "telemetry": {
+              "wal_lag_records_max": 0.0,
+              "wal_lag_records_last": [
+                0.0
+              ],
+              "rss_kib_peak_by_role": {
+                "broker": 37396,
+                "logs-all": 164692,
+                "minio": 180748
+              },
+              "object_requests": 258.0,
+              "object_bytes": 2950362.0,
+              "maintenance": {
+                "krabka_logs_compaction_runs_total{status=\"ok\"}": 60.0,
+                "krabka_logs_compaction_blocks_total": 60.0,
+                "krabka_logs_compaction_deletion_sweeps_total": 0.0,
+                "krabka_logs_compaction_deleted_blocks_total": 0.0,
+                "krabka_logs_compaction_deleted_sidecars_total": 0.0,
+                "krabka_logs_compaction_deletion_failures_total": 0.0,
+                "krabka_logs_compaction_orphan_sweeps_total": 0.0,
+                "krabka_logs_compaction_orphans_deleted_total": 0.0,
+                "krabka_logs_compaction_orphan_failures_total": 0.0
+              },
+              "cpu_seconds_by_role": {},
+              "expected_restart_gaps": 0,
+              "scrape_errors": 0
+            },
+            "tenant": "soak",
+            "tenants": {
+              "soak": {
+                "attempts": 120,
+                "errors": 0,
+                "error_rate": 0.0,
+                "accepted_rows": 120000,
+                "accepted_rows_per_sec": 1977.9443941203583,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.026936890999877505,
+                  "p95": 0.04898790300012479,
+                  "p99": 0.06939839900019251
+                },
+                "empty_queries": 0,
+                "status_counts": {
+                  "204": 120
+                }
+              }
+            },
+            "objectives_met": true,
+            "resources": {
+              "cpu_seconds_by_role": {
+                "broker": 2.474717,
+                "logs-all": 15.083705,
+                "minio": 1.343246
+              },
+              "cpu_seconds_total": 18.901668,
+              "load_generator_cpu_seconds": 1.050030405,
+              "throttled_seconds_by_role": {
+                "broker": 0.0,
+                "logs-all": 0.0,
+                "minio": 0.0
+              },
+              "rss_kib_simultaneous_peak": 380500,
+              "s3_requests": 258.0,
+              "s3_read_bytes": 1385519.0,
+              "s3_write_bytes": 1713629.0,
+              "external_cpu_cores_mean": 0.04845000857189327,
+              "external_cpu_cores_peak_window": 0.061550183718299144,
+              "host_activity_qualified": true,
+              "sample_count": 61,
+              "sampled_seconds": 60.64604902267456,
+              "coverage_fraction": 0.9996209390828966,
+              "cpu_seconds_per_million_accepted_rows": 157.5139
+            },
+            "backend": "krabka",
+            "repetition": 1,
+            "phase": "steady",
+            "deployment_target": "all",
+            "service_cpu": 5.0,
+            "service_memory_gib": 5.0,
+            "minio_cpu": 2,
+            "minio_memory_gib": 2,
+            "container_states": {
+              "broker": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 25943,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:12:55.301538288Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:14:16.204132523Z",
+                      "End": "2026-10-05T16:14:16.244615739Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:14:21.245714875Z",
+                      "End": "2026-10-05T16:14:21.29263611Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:14:26.293347154Z",
+                      "End": "2026-10-05T16:14:26.337366171Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:14:31.338521578Z",
+                      "End": "2026-10-05T16:14:31.386024307Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:14:36.38726143Z",
+                      "End": "2026-10-05T16:14:36.432802708Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              },
+              "logs-all": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 26327,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:13:01.689586668Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:14:12.450356347Z",
+                      "End": "2026-10-05T16:14:12.492215674Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:14:17.492930929Z",
+                      "End": "2026-10-05T16:14:17.534905985Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:14:22.535861491Z",
+                      "End": "2026-10-05T16:14:22.576057919Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:14:27.576868604Z",
+                      "End": "2026-10-05T16:14:27.61773994Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:14:32.618557698Z",
+                      "End": "2026-10-05T16:14:32.658894947Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              },
+              "minio": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 25839,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:12:54.814611992Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:14:15.669114379Z",
+                      "End": "2026-10-05T16:14:15.712568335Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:14:20.713693351Z",
+                      "End": "2026-10-05T16:14:20.757888286Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:14:25.759224041Z",
+                      "End": "2026-10-05T16:14:25.805463736Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:14:30.806625137Z",
+                      "End": "2026-10-05T16:14:30.849101956Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:14:35.850109257Z",
+                      "End": "2026-10-05T16:14:35.893097196Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "candidate": {
+          "source_commit": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
+          "image_manifest_digest": "sha256:befe2e14913bacaf24a473d0f5342043fbb7fe20639ec0d159969b5ec9fb77c7",
+          "report": "revisions/2-candidate/comparison-report.json",
+          "entry": {
+            "signal": "logs",
+            "writers": 2,
+            "cardinality": 100,
+            "warmup_seconds": 15.0,
+            "duration_seconds": 60.640896138000016,
+            "write_interval_seconds": 1,
+            "ingest": {
+              "attempts": 120,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 120000,
+              "accepted_rows_per_sec": 1978.8625769467017,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.026996111000016754,
+                "p95": 0.056748562999928254,
+                "p99": 0.06330202300000565
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "204": 120
+              }
+            },
+            "query": {
+              "attempts": 240,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 0,
+              "accepted_rows_per_sec": 0.0,
+              "latency_seconds": {
+                "count": 240,
+                "p50": 0.03314011199995548,
+                "p95": 0.04556229000013445,
+                "p99": 0.051329413000075874
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 240
+              }
+            },
+            "telemetry": {
+              "wal_lag_records_max": 0.0,
+              "wal_lag_records_last": [
+                0.0
+              ],
+              "rss_kib_peak_by_role": {
+                "broker": 37580,
+                "logs-all": 144204,
+                "minio": 179456
+              },
+              "object_requests": 265.0,
+              "object_bytes": 3085130.0,
+              "maintenance": {
+                "krabka_logs_compaction_runs_total{status=\"ok\"}": 60.0,
+                "krabka_logs_compaction_blocks_total": 60.0,
+                "krabka_logs_compaction_deletion_sweeps_total": 0.0,
+                "krabka_logs_compaction_deleted_blocks_total": 0.0,
+                "krabka_logs_compaction_deleted_sidecars_total": 0.0,
+                "krabka_logs_compaction_deletion_failures_total": 0.0,
+                "krabka_logs_compaction_orphan_sweeps_total": 0.0,
+                "krabka_logs_compaction_orphans_deleted_total": 0.0,
+                "krabka_logs_compaction_orphan_failures_total": 0.0
+              },
+              "cpu_seconds_by_role": {},
+              "expected_restart_gaps": 0,
+              "scrape_errors": 0
+            },
+            "tenant": "soak",
+            "tenants": {
+              "soak": {
+                "attempts": 120,
+                "errors": 0,
+                "error_rate": 0.0,
+                "accepted_rows": 120000,
+                "accepted_rows_per_sec": 1978.8625769467017,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.026996111000016754,
+                  "p95": 0.056748562999928254,
+                  "p99": 0.06330202300000565
+                },
+                "empty_queries": 0,
+                "status_counts": {
+                  "204": 120
+                }
+              }
+            },
+            "objectives_met": true,
+            "resources": {
+              "cpu_seconds_by_role": {
+                "broker": 2.531169,
+                "logs-all": 14.11548,
+                "minio": 1.329793
+              },
+              "cpu_seconds_total": 17.976442,
+              "load_generator_cpu_seconds": 1.040135257,
+              "throttled_seconds_by_role": {
+                "broker": 0.0,
+                "logs-all": 0.0,
+                "minio": 0.0
+              },
+              "rss_kib_simultaneous_peak": 358740,
+              "s3_requests": 265.0,
+              "s3_read_bytes": 1526613.0,
+              "s3_write_bytes": 1713629.0,
+              "external_cpu_cores_mean": 0.045424046134219534,
+              "external_cpu_cores_peak_window": 0.052964568204289984,
+              "host_activity_qualified": true,
+              "sample_count": 61,
+              "sampled_seconds": 60.61597275733948,
+              "coverage_fraction": 0.9995890004559989,
+              "cpu_seconds_per_million_accepted_rows": 149.80368333333334
+            },
+            "backend": "krabka",
+            "repetition": 1,
+            "phase": "steady",
+            "deployment_target": "all",
+            "service_cpu": 5.0,
+            "service_memory_gib": 5.0,
+            "minio_cpu": 2,
+            "minio_memory_gib": 2,
+            "container_states": {
+              "broker": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 22940,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:11:07.554139445Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:12:28.434492086Z",
+                      "End": "2026-10-05T16:12:28.478714439Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:12:33.479454441Z",
+                      "End": "2026-10-05T16:12:33.523210113Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:12:38.524371707Z",
+                      "End": "2026-10-05T16:12:38.569043329Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:12:43.570504633Z",
+                      "End": "2026-10-05T16:12:43.613990924Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:12:48.614875899Z",
+                      "End": "2026-10-05T16:12:48.65833007Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              },
+              "logs-all": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 23321,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:11:13.922917801Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:12:24.665439705Z",
+                      "End": "2026-10-05T16:12:24.707273486Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:12:29.707926218Z",
+                      "End": "2026-10-05T16:12:29.74705293Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:12:34.747924012Z",
+                      "End": "2026-10-05T16:12:34.789261144Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:12:39.789926428Z",
+                      "End": "2026-10-05T16:12:39.83257083Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:12:44.834048926Z",
+                      "End": "2026-10-05T16:12:44.878094667Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              },
+              "minio": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 22839,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:11:07.062322381Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:12:27.894463679Z",
+                      "End": "2026-10-05T16:12:27.938888881Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:12:32.940467974Z",
+                      "End": "2026-10-05T16:12:32.984303395Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:12:37.98550737Z",
+                      "End": "2026-10-05T16:12:38.028299981Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:12:43.029824249Z",
+                      "End": "2026-10-05T16:12:43.076528857Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:12:48.078221581Z",
+                      "End": "2026-10-05T16:12:48.119838962Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "pair": 3,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
+          "image_manifest_digest": "sha256:3e0fd42c74f784fe5c20e24bb38105c7923e57614c7691dcdea0eef7d307f0e3",
+          "report": "revisions/3-baseline/comparison-report.json",
+          "entry": {
+            "signal": "logs",
+            "writers": 2,
+            "cardinality": 100,
+            "warmup_seconds": 15.0,
+            "duration_seconds": 60.666102764000016,
+            "write_interval_seconds": 1,
+            "ingest": {
+              "attempts": 120,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 120000,
+              "accepted_rows_per_sec": 1978.0403641027922,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.025907629000130328,
+                "p95": 0.05069544800016956,
+                "p99": 0.0705696990000888
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "204": 120
+              }
+            },
+            "query": {
+              "attempts": 240,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 0,
+              "accepted_rows_per_sec": 0.0,
+              "latency_seconds": {
+                "count": 240,
+                "p50": 0.03761835900013466,
+                "p95": 0.0551564889999554,
+                "p99": 0.05965013800005181
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 240
+              }
+            },
+            "telemetry": {
+              "wal_lag_records_max": 0.0,
+              "wal_lag_records_last": [
+                0.0
+              ],
+              "rss_kib_peak_by_role": {
+                "minio": 179848,
+                "broker": 37428,
+                "logs-all": 157824
+              },
+              "object_requests": 258.0,
+              "object_bytes": 2950362.0,
+              "maintenance": {
+                "krabka_logs_compaction_runs_total{status=\"ok\"}": 60.0,
+                "krabka_logs_compaction_blocks_total": 60.0,
+                "krabka_logs_compaction_deletion_sweeps_total": 0.0,
+                "krabka_logs_compaction_deleted_blocks_total": 0.0,
+                "krabka_logs_compaction_deleted_sidecars_total": 0.0,
+                "krabka_logs_compaction_deletion_failures_total": 0.0,
+                "krabka_logs_compaction_orphan_sweeps_total": 0.0,
+                "krabka_logs_compaction_orphans_deleted_total": 0.0,
+                "krabka_logs_compaction_orphan_failures_total": 0.0
+              },
+              "cpu_seconds_by_role": {},
+              "expected_restart_gaps": 0,
+              "scrape_errors": 0
+            },
+            "tenant": "soak",
+            "tenants": {
+              "soak": {
+                "attempts": 120,
+                "errors": 0,
+                "error_rate": 0.0,
+                "accepted_rows": 120000,
+                "accepted_rows_per_sec": 1978.0403641027922,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.025907629000130328,
+                  "p95": 0.05069544800016956,
+                  "p99": 0.0705696990000888
+                },
+                "empty_queries": 0,
+                "status_counts": {
+                  "204": 120
+                }
+              }
+            },
+            "objectives_met": true,
+            "resources": {
+              "cpu_seconds_by_role": {
+                "broker": 2.456719,
+                "logs-all": 14.984635,
+                "minio": 1.293374
+              },
+              "cpu_seconds_total": 18.734728,
+              "load_generator_cpu_seconds": 1.031478977,
+              "throttled_seconds_by_role": {
+                "broker": 0.0,
+                "logs-all": 0.0,
+                "minio": 0.0
+              },
+              "rss_kib_simultaneous_peak": 371956,
+              "s3_requests": 258.0,
+              "s3_read_bytes": 1385519.0,
+              "s3_write_bytes": 1713629.0,
+              "external_cpu_cores_mean": 0.051512261051603996,
+              "external_cpu_cores_peak_window": 0.06286120282003903,
+              "host_activity_qualified": true,
+              "sample_count": 61,
+              "sampled_seconds": 60.64173769950867,
+              "coverage_fraction": 0.9995983743246846,
+              "cpu_seconds_per_million_accepted_rows": 156.12273333333334
+            },
+            "backend": "krabka",
+            "repetition": 1,
+            "phase": "steady",
+            "deployment_target": "all",
+            "service_cpu": 5.0,
+            "service_memory_gib": 5.0,
+            "minio_cpu": 2,
+            "minio_memory_gib": 2,
+            "container_states": {
+              "broker": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 28935,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:14:43.054835075Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:16:03.93387815Z",
+                      "End": "2026-10-05T16:16:03.975918519Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:16:08.97737346Z",
+                      "End": "2026-10-05T16:16:09.020995909Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:16:14.021782831Z",
+                      "End": "2026-10-05T16:16:14.0639981Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:16:19.064673972Z",
+                      "End": "2026-10-05T16:16:19.107133691Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:16:24.108059845Z",
+                      "End": "2026-10-05T16:16:24.151580973Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              },
+              "logs-all": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 29318,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:14:49.437205197Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:16:00.197979628Z",
+                      "End": "2026-10-05T16:16:00.238065907Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:16:05.238548439Z",
+                      "End": "2026-10-05T16:16:05.279333988Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:16:10.28083109Z",
+                      "End": "2026-10-05T16:16:10.321657088Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:16:15.322886361Z",
+                      "End": "2026-10-05T16:16:15.36653292Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:16:20.367979892Z",
+                      "End": "2026-10-05T16:16:20.406952351Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              },
+              "minio": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 28833,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:14:42.563386063Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:16:03.40875196Z",
+                      "End": "2026-10-05T16:16:03.451240348Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:16:08.452231438Z",
+                      "End": "2026-10-05T16:16:08.494132718Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:16:13.49536676Z",
+                      "End": "2026-10-05T16:16:13.538939888Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:16:18.53986204Z",
+                      "End": "2026-10-05T16:16:18.582911429Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:16:23.583453322Z",
+                      "End": "2026-10-05T16:16:23.62670159Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "candidate": {
+          "source_commit": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
+          "image_manifest_digest": "sha256:befe2e14913bacaf24a473d0f5342043fbb7fe20639ec0d159969b5ec9fb77c7",
+          "report": "revisions/3-candidate/comparison-report.json",
+          "entry": {
+            "signal": "logs",
+            "writers": 2,
+            "cardinality": 100,
+            "warmup_seconds": 15.0,
+            "duration_seconds": 60.65583646900018,
+            "write_interval_seconds": 1,
+            "ingest": {
+              "attempts": 120,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 120000,
+              "accepted_rows_per_sec": 1978.3751570441086,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.028108495999958905,
+                "p95": 0.054146443000036015,
+                "p99": 0.06780086100002336
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "204": 120
+              }
+            },
+            "query": {
+              "attempts": 240,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 0,
+              "accepted_rows_per_sec": 0.0,
+              "latency_seconds": {
+                "count": 240,
+                "p50": 0.03262851599993155,
+                "p95": 0.046330784000019776,
+                "p99": 0.05244952199996078
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 240
+              }
+            },
+            "telemetry": {
+              "wal_lag_records_max": 0.0,
+              "wal_lag_records_last": [
+                0.0
+              ],
+              "rss_kib_peak_by_role": {
+                "logs-all": 143212,
+                "minio": 181720,
+                "broker": 37476
+              },
+              "object_requests": 265.0,
+              "object_bytes": 3085130.0,
+              "maintenance": {
+                "krabka_logs_compaction_runs_total{status=\"ok\"}": 60.0,
+                "krabka_logs_compaction_blocks_total": 60.0,
+                "krabka_logs_compaction_deletion_sweeps_total": 0.0,
+                "krabka_logs_compaction_deleted_blocks_total": 0.0,
+                "krabka_logs_compaction_deleted_sidecars_total": 0.0,
+                "krabka_logs_compaction_deletion_failures_total": 0.0,
+                "krabka_logs_compaction_orphan_sweeps_total": 0.0,
+                "krabka_logs_compaction_orphans_deleted_total": 0.0,
+                "krabka_logs_compaction_orphan_failures_total": 0.0
+              },
+              "cpu_seconds_by_role": {},
+              "expected_restart_gaps": 0,
+              "scrape_errors": 0
+            },
+            "tenant": "soak",
+            "tenants": {
+              "soak": {
+                "attempts": 120,
+                "errors": 0,
+                "error_rate": 0.0,
+                "accepted_rows": 120000,
+                "accepted_rows_per_sec": 1978.3751570441086,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.028108495999958905,
+                  "p95": 0.054146443000036015,
+                  "p99": 0.06780086100002336
+                },
+                "empty_queries": 0,
+                "status_counts": {
+                  "204": 120
+                }
+              }
+            },
+            "objectives_met": true,
+            "resources": {
+              "cpu_seconds_by_role": {
+                "broker": 2.501163,
+                "logs-all": 14.090843,
+                "minio": 1.316905
+              },
+              "cpu_seconds_total": 17.908911,
+              "load_generator_cpu_seconds": 1.03425369,
+              "throttled_seconds_by_role": {
+                "broker": 0.0,
+                "logs-all": 0.0,
+                "minio": 0.0
+              },
+              "rss_kib_simultaneous_peak": 358688,
+              "s3_requests": 265.0,
+              "s3_read_bytes": 1526613.0,
+              "s3_write_bytes": 1713629.0,
+              "external_cpu_cores_mean": 0.052889357858401646,
+              "external_cpu_cores_peak_window": 0.06504479180497294,
+              "host_activity_qualified": true,
+              "sample_count": 61,
+              "sampled_seconds": 60.63290309906006,
+              "coverage_fraction": 0.9996219099220264,
+              "cpu_seconds_per_million_accepted_rows": 149.240925
+            },
+            "backend": "krabka",
+            "repetition": 1,
+            "phase": "steady",
+            "deployment_target": "all",
+            "service_cpu": 5.0,
+            "service_memory_gib": 5.0,
+            "minio_cpu": 2,
+            "minio_memory_gib": 2,
+            "container_states": {
+              "broker": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 32279,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:16:30.851044797Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:17:51.739430907Z",
+                      "End": "2026-10-05T16:17:51.782048261Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:17:56.783105649Z",
+                      "End": "2026-10-05T16:17:56.827587534Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:18:01.829221523Z",
+                      "End": "2026-10-05T16:18:01.876953018Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:18:06.878164786Z",
+                      "End": "2026-10-05T16:18:06.921266681Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:18:11.92252724Z",
+                      "End": "2026-10-05T16:18:11.966556806Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              },
+              "logs-all": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 32659,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:16:37.23422673Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:17:48.001521992Z",
+                      "End": "2026-10-05T16:17:48.043046276Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:17:53.044061874Z",
+                      "End": "2026-10-05T16:17:53.086592979Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:17:58.088071667Z",
+                      "End": "2026-10-05T16:17:58.130024662Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:18:03.131459991Z",
+                      "End": "2026-10-05T16:18:03.173956546Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:18:08.174623205Z",
+                      "End": "2026-10-05T16:18:08.21625966Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              },
+              "minio": {
+                "Status": "running",
+                "Running": true,
+                "Paused": false,
+                "Restarting": false,
+                "OOMKilled": false,
+                "Dead": false,
+                "Pid": 32175,
+                "ExitCode": 0,
+                "Error": "",
+                "StartedAt": "2026-10-05T16:16:30.356472175Z",
+                "FinishedAt": "0001-01-01T00:00:00Z",
+                "Health": {
+                  "Status": "healthy",
+                  "FailingStreak": 0,
+                  "Log": [
+                    {
+                      "Start": "2026-10-05T16:17:51.215488262Z",
+                      "End": "2026-10-05T16:17:51.259713756Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:17:56.261101766Z",
+                      "End": "2026-10-05T16:17:56.305569579Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:18:01.306812728Z",
+                      "End": "2026-10-05T16:18:01.350808833Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:18:06.351964552Z",
+                      "End": "2026-10-05T16:18:06.396650976Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    },
+                    {
+                      "Start": "2026-10-05T16:18:11.397901258Z",
+                      "End": "2026-10-05T16:18:11.440103651Z",
+                      "ExitCode": 0,
+                      "Output": ""
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "summary": {
+      "baseline": {
+        "query_attempts": {
+          "median": 240,
+          "min": 240,
+          "max": 240,
+          "values": [
+            240,
+            240,
+            240
+          ]
+        },
+        "average_cpu_cores": {
+          "median": 0.3115537355010347,
+          "min": 0.3088170682873898,
+          "max": 0.3158123669169638,
+          "values": [
+            0.3158123669169638,
+            0.3115537355010347,
+            0.3088170682873898
+          ]
+        },
+        "rss_kib": {
+          "median": 376712,
+          "min": 371956,
+          "max": 380500,
+          "values": [
+            376712,
+            380500,
+            371956
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.058122391000097196,
+          "min": 0.056983156000001145,
+          "max": 0.05965013800005181,
+          "values": [
+            0.056983156000001145,
+            0.058122391000097196,
+            0.05965013800005181
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.0705696990000888,
+          "min": 0.06939839900019251,
+          "max": 0.0708419769999864,
+          "values": [
+            0.0708419769999864,
+            0.06939839900019251,
+            0.0705696990000888
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.04079043847653626,
+            "min": 0.04049574454381873,
+            "max": 0.04184425285086519,
+            "values": [
+              0.04184425285086519,
+              0.04079043847653626,
+              0.04049574454381873
+            ]
+          },
+          "logs-all": {
+            "median": 0.2486227478942935,
+            "min": 0.24700177392789538,
+            "max": 0.25231956499952635,
+            "values": [
+              0.25231956499952635,
+              0.2486227478942935,
+              0.24700177392789538
+            ]
+          },
+          "minio": {
+            "median": 0.021648549066572258,
+            "min": 0.021319549815675708,
+            "max": 0.022140549130204957,
+            "values": [
+              0.021648549066572258,
+              0.022140549130204957,
+              0.021319549815675708
+            ]
+          }
+        }
+      },
+      "candidate": {
+        "query_attempts": {
+          "median": 240,
+          "min": 240,
+          "max": 240,
+          "values": [
+            240,
+            240,
+            240
+          ]
+        },
+        "average_cpu_cores": {
+          "median": 0.29525453843428306,
+          "min": 0.2880640933284927,
+          "max": 0.2964409028371076,
+          "values": [
+            0.2880640933284927,
+            0.2964409028371076,
+            0.29525453843428306
+          ]
+        },
+        "rss_kib": {
+          "median": 358740,
+          "min": 358688,
+          "max": 363236,
+          "values": [
+            363236,
+            358740,
+            358688
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.051377314999967894,
+          "min": 0.051329413000075874,
+          "max": 0.05244952199996078,
+          "values": [
+            0.051377314999967894,
+            0.051329413000075874,
+            0.05244952199996078
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.06396369599997342,
+          "min": 0.06330202300000565,
+          "max": 0.06780086100002336,
+          "values": [
+            0.06396369599997342,
+            0.06330202300000565,
+            0.06780086100002336
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.04123532285764928,
+            "min": 0.04030978749153941,
+            "max": 0.04174029675023005,
+            "values": [
+              0.04030978749153941,
+              0.04174029675023005,
+              0.04123532285764928
+            ]
+          },
+          "logs-all": {
+            "median": 0.23230811444174065,
+            "min": 0.22618890108224363,
+            "max": 0.23277162606366356,
+            "values": [
+              0.22618890108224363,
+              0.23277162606366356,
+              0.23230811444174065
+            ]
+          },
+          "minio": {
+            "median": 0.0217111011348931,
+            "min": 0.02156540475470965,
+            "max": 0.021928980023214042,
+            "values": [
+              0.02156540475470965,
+              0.021928980023214042,
+              0.0217111011348931
+            ]
+          }
+        }
+      }
+    },
+    "candidate_divided_by_baseline": {
+      "query_attempts": 1.0,
+      "average_cpu_cores": 0.9476841545791784,
+      "rss_kib": 0.9522924674552443,
+      "query_p99_seconds": 0.8839504727168223,
+      "ingest_p99_seconds": 0.9063903758452042
+    },
+    "scope": "Single-node API-accepted steady load with identical query pacing and accepted row counts; actual query completions are recorded and may vary with latency. Matched aggregate budgets; CPU and RSS include broker and MinIO."
+  },
+  "confirmation_native_comparison_summary": {
+    "host": {
+      "cpu_count": 16,
+      "kernel": "7.0.0-1011-gcp",
+      "lscpu": {
+        "lscpu": [
+          {
+            "field": "Architecture:",
+            "data": "x86_64"
+          },
+          {
+            "field": "CPU op-mode(s):",
+            "data": "32-bit, 64-bit"
+          },
+          {
+            "field": "Address sizes:",
+            "data": "48 bits physical, 48 bits virtual"
+          },
+          {
+            "field": "Byte Order:",
+            "data": "Little Endian"
+          },
+          {
+            "field": "CPU(s):",
+            "data": "16"
+          },
+          {
+            "field": "On-line CPU(s) list:",
+            "data": "0-15"
+          },
+          {
+            "field": "Vendor ID:",
+            "data": "AuthenticAMD"
+          },
+          {
+            "field": "Model name:",
+            "data": "AMD EPYC 7B12"
+          },
+          {
+            "field": "CPU family:",
+            "data": "23"
+          },
+          {
+            "field": "Model:",
+            "data": "49"
+          },
+          {
+            "field": "Thread(s) per core:",
+            "data": "2"
+          },
+          {
+            "field": "Core(s) per socket:",
+            "data": "8"
+          },
+          {
+            "field": "Socket(s):",
+            "data": "1"
+          },
+          {
+            "field": "Stepping:",
+            "data": "0"
+          },
+          {
+            "field": "BogoMIPS:",
+            "data": "4499.99"
+          },
+          {
+            "field": "Flags:",
+            "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+          },
+          {
+            "field": "Hypervisor vendor:",
+            "data": "KVM"
+          },
+          {
+            "field": "Virtualization type:",
+            "data": "full"
+          },
+          {
+            "field": "L1d cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L1i cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L2 cache:",
+            "data": "4 MiB (8 instances)"
+          },
+          {
+            "field": "L3 cache:",
+            "data": "32 MiB (2 instances)"
+          },
+          {
+            "field": "NUMA node(s):",
+            "data": "1"
+          },
+          {
+            "field": "NUMA node0 CPU(s):",
+            "data": "0-15"
+          },
+          {
+            "field": "Vulnerability Gather data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Ghostwrite:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Indirect target selection:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Itlb multihit:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability L1tf:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Meltdown:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mmio stale data:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Old microcode:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Reg file data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Retbleed:",
+            "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+          },
+          {
+            "field": "Vulnerability Spec rstack overflow:",
+            "data": "Mitigation; Safe RET"
+          },
+          {
+            "field": "Vulnerability Spec store bypass:",
+            "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+          },
+          {
+            "field": "Vulnerability Spectre v1:",
+            "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+          },
+          {
+            "field": "Vulnerability Spectre v2:",
+            "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+          },
+          {
+            "field": "Vulnerability Srbds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsa:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsx async abort:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Vmscape:",
+            "data": "Not affected"
+          }
+        ]
+      }
+    },
+    "harness_commit": "f4c5a6034678dbde565d59dca71350146f21ddb0",
+    "resource_coverage": [
+      {
+        "repetition": 1,
+        "backend": "krabka",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 61,
+        "sampled_seconds": 60.64717650413513,
+        "coverage_fraction": 0.999628346197392,
+        "valid": true
+      },
+      {
+        "repetition": 1,
+        "backend": "loki",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 61,
+        "sampled_seconds": 60.76984453201294,
+        "coverage_fraction": 0.9995127756837385,
+        "valid": true
+      },
+      {
+        "repetition": 2,
+        "backend": "loki",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 61,
+        "sampled_seconds": 60.84706711769104,
+        "coverage_fraction": 0.9995789022483161,
+        "valid": true
+      },
+      {
+        "repetition": 2,
+        "backend": "krabka",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 61,
+        "sampled_seconds": 60.66472339630127,
+        "coverage_fraction": 0.9995424594134342,
+        "valid": true
+      },
+      {
+        "repetition": 3,
+        "backend": "krabka",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 61,
+        "sampled_seconds": 60.63053846359253,
+        "coverage_fraction": 0.9995209745144277,
+        "valid": true
+      },
+      {
+        "repetition": 3,
+        "backend": "loki",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 61,
+        "sampled_seconds": 60.80262613296509,
+        "coverage_fraction": 0.9994801993914235,
+        "valid": true
+      }
+    ],
+    "seed_value_mismatches": [],
+    "correctness_disqualified": false,
+    "host_activity_disqualified": false,
+    "host_activity_failures": [],
+    "backends": {
+      "krabka": {
+        "steady_objectives_met": true,
+        "steady": {
+          "rows_per_second": {
+            "median": 1977.922278632511,
+            "min": 1977.1802855846397,
+            "max": 1978.252543703772,
+            "values": [
+              1977.922278632511,
+              1977.1802855846397,
+              1978.252543703772
+            ]
+          },
+          "accepted_rows": {
+            "median": 120000,
+            "min": 120000,
+            "max": 120000,
+            "values": [
+              120000,
+              120000,
+              120000
+            ]
+          },
+          "ingest_p99_seconds": {
+            "median": 0.07344856400001731,
+            "min": 0.07257224500000348,
+            "max": 0.07463567299998886,
+            "values": [
+              0.07344856400001731,
+              0.07257224500000348,
+              0.07463567299998886
+            ]
+          },
+          "query_p99_seconds": {
+            "median": 0.05097852999998054,
+            "min": 0.050833289999900444,
+            "max": 0.052501415000051566,
+            "values": [
+              0.05097852999998054,
+              0.052501415000051566,
+              0.050833289999900444
+            ]
+          },
+          "query_attempts": {
+            "median": 240,
+            "min": 239,
+            "max": 240,
+            "values": [
+              240,
+              239,
+              240
+            ]
+          },
+          "cpu_seconds": {
+            "median": 18.096739,
+            "min": 17.909066,
+            "max": 19.619731,
+            "values": [
+              18.096739,
+              19.619731,
+              17.909066
+            ]
+          },
+          "rss_kib": {
+            "median": 359940,
+            "min": 357132,
+            "max": 360196,
+            "values": [
+              357132,
+              360196,
+              359940
+            ]
+          },
+          "cpu_seconds_per_million_rows": {
+            "median": 150.80615833333334,
+            "min": 149.24221666666668,
+            "max": 163.49775833333334,
+            "values": [
+              150.80615833333334,
+              163.49775833333334,
+              149.24221666666668
+            ]
+          },
+          "generator_cpu_seconds": {
+            "median": 1.061916775,
+            "min": 1.0465692670000006,
+            "max": 1.1388471840000003,
+            "values": [
+              1.061916775,
+              1.1388471840000003,
+              1.0465692670000006
+            ]
+          },
+          "s3_requests": {
+            "median": 258.0,
+            "min": 258.0,
+            "max": 265.0,
+            "values": [
+              258.0,
+              265.0,
+              258.0
+            ]
+          },
+          "s3_read_bytes": {
+            "median": 1385519.0,
+            "min": 1385519.0,
+            "max": 1527189.0,
+            "values": [
+              1385519.0,
+              1527189.0,
+              1385519.0
+            ]
+          },
+          "s3_write_bytes": {
+            "median": 1713629.0,
+            "min": 1713629.0,
+            "max": 1713629.0,
+            "values": [
+              1713629.0,
+              1713629.0,
+              1713629.0
+            ]
+          },
+          "duration_seconds": {
+            "median": 60.66972463800002,
+            "min": 60.659595955999976,
+            "max": 60.692492674999926,
+            "values": [
+              60.66972463800002,
+              60.692492674999926,
+              60.659595955999976
+            ]
+          },
+          "query_attempts_per_second": {
+            "median": 3.955844557265022,
+            "min": 3.937884068789407,
+            "max": 3.9565050874075443,
+            "values": [
+              3.955844557265022,
+              3.937884068789407,
+              3.9565050874075443
+            ]
+          },
+          "average_cpu_cores": {
+            "median": 0.2982828603224819,
+            "min": 0.2952387947488228,
+            "max": 0.3232645445139484,
+            "values": [
+              0.2982828603224819,
+              0.3232645445139484,
+              0.2952387947488228
+            ]
+          },
+          "driver_average_cpu_cores": {
+            "median": 0.017503240394384063,
+            "min": 0.017253152621707863,
+            "max": 0.018764218337486527,
+            "values": [
+              0.017503240394384063,
+              0.018764218337486527,
+              0.017253152621707863
+            ]
+          }
+        },
+        "service_cpu": 5.0,
+        "service_memory_gib": 5.0,
+        "burst": {
+          "passing_levels": [],
+          "highest_consistently_passing_tested_level": null,
+          "per_repetition": [
+            {
+              "repetition": 1,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 2,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 3,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            }
+          ],
+          "failed_points": []
+        },
+        "high_cardinality": {
+          "passing_levels": [],
+          "highest_consistently_passing_tested_level": null,
+          "per_repetition": [
+            {
+              "repetition": 1,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 2,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 3,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            }
+          ],
+          "failed_points": []
+        }
+      },
+      "loki": {
+        "steady_objectives_met": true,
+        "steady": {
+          "rows_per_second": {
+            "median": 1972.5730869697547,
+            "min": 1971.3270327029963,
+            "max": 1973.7014962884205,
+            "values": [
+              1973.7014962884205,
+              1971.3270327029963,
+              1972.5730869697547
+            ]
+          },
+          "accepted_rows": {
+            "median": 120000,
+            "min": 120000,
+            "max": 120000,
+            "values": [
+              120000,
+              120000,
+              120000
+            ]
+          },
+          "ingest_p99_seconds": {
+            "median": 0.016109680999988996,
+            "min": 0.012898402000018905,
+            "max": 0.01653391100001045,
+            "values": [
+              0.012898402000018905,
+              0.01653391100001045,
+              0.016109680999988996
+            ]
+          },
+          "query_p99_seconds": {
+            "median": 0.0916321240000002,
+            "min": 0.08814202799999293,
+            "max": 0.09165836199997557,
+            "values": [
+              0.09165836199997557,
+              0.0916321240000002,
+              0.08814202799999293
+            ]
+          },
+          "query_attempts": {
+            "median": 239,
+            "min": 234,
+            "max": 239,
+            "values": [
+              234,
+              239,
+              239
+            ]
+          },
+          "cpu_seconds": {
+            "median": 20.839593,
+            "min": 20.833605,
+            "max": 22.434023,
+            "values": [
+              20.833605,
+              22.434023,
+              20.839593
+            ]
+          },
+          "rss_kib": {
+            "median": 381112,
+            "min": 377232,
+            "max": 387724,
+            "values": [
+              377232,
+              387724,
+              381112
+            ]
+          },
+          "cpu_seconds_per_million_rows": {
+            "median": 173.663275,
+            "min": 173.613375,
+            "max": 186.95019166666665,
+            "values": [
+              173.613375,
+              186.95019166666665,
+              173.663275
+            ]
+          },
+          "generator_cpu_seconds": {
+            "median": 1.2262687859999994,
+            "min": 1.1921134000000002,
+            "max": 1.3148423509999998,
+            "values": [
+              1.1921134000000002,
+              1.3148423509999998,
+              1.2262687859999994
+            ]
+          },
+          "s3_requests": {
+            "median": 201.0,
+            "min": 201.0,
+            "max": 201.0,
+            "values": [
+              201.0,
+              201.0,
+              201.0
+            ]
+          },
+          "s3_read_bytes": {
+            "median": 241.0,
+            "min": 241.0,
+            "max": 241.0,
+            "values": [
+              241.0,
+              241.0,
+              241.0
+            ]
+          },
+          "s3_write_bytes": {
+            "median": 604883.0,
+            "min": 601910.0,
+            "max": 607096.0,
+            "values": [
+              604883.0,
+              601910.0,
+              607096.0
+            ]
+          },
+          "duration_seconds": {
+            "median": 60.83424781200006,
+            "min": 60.799467511000046,
+            "max": 60.87270047499999,
+            "values": [
+              60.799467511000046,
+              60.87270047499999,
+              60.83424781200006
+            ]
+          },
+          "query_attempts_per_second": {
+            "median": 3.926226340133468,
+            "min": 3.84871791776242,
+            "max": 3.928708064881428,
+            "values": [
+              3.84871791776242,
+              3.926226340133468,
+              3.928708064881428
+            ]
+          },
+          "average_cpu_cores": {
+            "median": 0.3426609780131826,
+            "min": 0.3425635024600274,
+            "max": 0.36853996660150645,
+            "values": [
+              0.3426609780131826,
+              0.36853996660150645,
+              0.3425635024600274
+            ]
+          },
+          "driver_average_cpu_cores": {
+            "median": 0.020157540038788935,
+            "min": 0.01960730001104564,
+            "max": 0.021599868918908843,
+            "values": [
+              0.01960730001104564,
+              0.021599868918908843,
+              0.020157540038788935
+            ]
+          }
+        },
+        "service_cpu": 5.0,
+        "service_memory_gib": 5.0,
+        "burst": {
+          "passing_levels": [],
+          "highest_consistently_passing_tested_level": null,
+          "per_repetition": [
+            {
+              "repetition": 1,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 2,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 3,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            }
+          ],
+          "failed_points": []
+        },
+        "high_cardinality": {
+          "passing_levels": [],
+          "highest_consistently_passing_tested_level": null,
+          "per_repetition": [
+            {
+              "repetition": 1,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 2,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 3,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            }
+          ],
+          "failed_points": []
+        }
+      }
+    },
+    "deployment_target": "all",
+    "highest_common_burst_writers": null,
+    "steady_krabka_divided_by_native": {
+      "average_cpu_cores": 0.8704897244267089,
+      "rss_kib": 0.9444467768005206,
+      "query_p99_seconds": 0.5563390629249239,
+      "ingest_p99_seconds": 4.559281093155568
+    }
+  },
+  "current_branch_all_signal_qualified": false
 }
