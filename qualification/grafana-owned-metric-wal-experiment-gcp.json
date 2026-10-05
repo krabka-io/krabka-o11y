@@ -7998,7 +7998,7 @@
     }
   },
   "reversion": {
-    "source_commit": null,
+    "source_commit": "176085eab891bc0861bd7a99139f94ec80354f24",
     "baseline_source_commit": "838680039ce5d8aeeb70095ca5922b0b8ee5735a",
     "production_file_proof": {
       "crates/promql/src/in_memory/ingest.rs": {
