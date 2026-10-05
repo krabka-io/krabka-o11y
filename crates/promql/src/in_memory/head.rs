@@ -161,7 +161,15 @@ impl WalHead {
     /// the stats.
     #[must_use]
     pub fn prune(&self, now_ms: i64) -> PruneStats {
-        self.update(|store| store.prune(now_ms))
+        let mut guard = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        if !guard.has_expired_samples(now_ms) {
+            return PruneStats::default();
+        }
+        // Preserve update's publish-after-success behavior for an actual prune.
+        let mut next = Arc::clone(&guard);
+        let stats = Arc::make_mut(&mut next).prune(now_ms);
+        *guard = next;
+        stats
     }
 
     /// The lowest WAL offset materialized in the head for `partition`.

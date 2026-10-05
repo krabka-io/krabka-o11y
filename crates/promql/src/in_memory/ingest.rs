@@ -14,6 +14,19 @@ use crate::{
 };
 
 impl InMemoryMetricStore {
+    fn observe_sample_timestamp(&mut self, timestamp_ms: i64) {
+        self.oldest_sample_timestamp_ms = Some(
+            self.oldest_sample_timestamp_ms
+                .map_or(timestamp_ms, |oldest| oldest.min(timestamp_ms)),
+        );
+    }
+
+    pub(crate) fn has_expired_samples(&self, now_ms: i64) -> bool {
+        let cutoff = now_ms.saturating_sub(self.retention.millis_i64());
+        self.oldest_sample_timestamp_ms
+            .is_some_and(|oldest| oldest < cutoff)
+    }
+
     /// Removes every queryable value owned by `tenant`.
     pub fn delete_tenant(&mut self, tenant: &str) {
         self.floats.remove(tenant);
@@ -68,6 +81,7 @@ impl InMemoryMetricStore {
         value: f64,
         start_timestamp_ms: Option<i64>,
     ) {
+        self.observe_sample_timestamp(ts_ms);
         let (fp, labels) = self.intern_series_labels(tenant, labels.into());
         self.floats
             .entry(tenant.to_string())
@@ -90,6 +104,7 @@ impl InMemoryMetricStore {
         ts_ms: i64,
         hist: impl Into<Arc<NativeHistogram>>,
     ) {
+        self.observe_sample_timestamp(ts_ms);
         let (fp, labels) = self.intern_series_labels(tenant, labels.into());
         self.hists
             .entry(tenant.to_string())
@@ -112,6 +127,7 @@ impl InMemoryMetricStore {
         ts_ms: i64,
         value: f64,
     ) {
+        self.observe_sample_timestamp(ts_ms);
         let (_, series_labels) = self.intern_series_labels(tenant, series_labels.into());
         self.exemplars
             .entry(tenant.to_string())
@@ -269,8 +285,12 @@ impl InMemoryMetricStore {
     /// does not touch the offset watermarks: they track ingestion progress, not
     /// retention.
     pub fn prune(&mut self, now_ms: i64) -> PruneStats {
+        if !self.has_expired_samples(now_ms) {
+            return PruneStats::default();
+        }
         let cutoff = now_ms.saturating_sub(self.retention.millis_i64());
         let mut stats = PruneStats::default();
+        let mut oldest: Option<i64> = None;
 
         // Fingerprints with at least one surviving sample after pruning.
         let mut live: BTreeSet<SeriesFingerprint> = BTreeSet::new();
@@ -286,6 +306,7 @@ impl InMemoryMetricStore {
             stats.samples_dropped += before - rows.len();
             for row in rows.iter() {
                 live.insert(row.fp);
+                oldest = Some(oldest.map_or(row.ts_ms, |current| current.min(row.ts_ms)));
             }
         }
         for rows in self.hists.values_mut() {
@@ -297,6 +318,7 @@ impl InMemoryMetricStore {
             stats.samples_dropped += before - rows.len();
             for row in rows.iter() {
                 live.insert(row.fp);
+                oldest = Some(oldest.map_or(row.ts_ms, |current| current.min(row.ts_ms)));
             }
         }
         // Exemplars are not part of the series index, but they are samples that
@@ -305,6 +327,9 @@ impl InMemoryMetricStore {
             let before = rows.len();
             rows.retain(|row| row.ts_ms >= cutoff);
             stats.samples_dropped += before - rows.len();
+            for row in rows.iter() {
+                oldest = Some(oldest.map_or(row.ts_ms, |current| current.min(row.ts_ms)));
+            }
         }
 
         // Drop the now-empty per-tenant vectors so iteration stays cheap and the
@@ -328,6 +353,7 @@ impl InMemoryMetricStore {
         });
 
         stats.series_dropped = seen.difference(&live).count();
+        self.oldest_sample_timestamp_ms = oldest;
         stats
     }
 }
