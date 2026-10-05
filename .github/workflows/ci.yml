@@ -40,6 +40,12 @@ jobs:
           # a clean Rust dependency rebuild.
           disk-cache: false
           repository-cache: true
+      - uses: ./.github/actions/remote-cache
+        with:
+          api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+          client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
+          client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
+          upload: ${{ github.event_name != 'pull_request' }}
       # This job builds and tests every target, and it ran the runner out of
       # disk: the link died as `clang++: linker command failed due to signal`
       # with `zstd: cannot write block: No space left on device` beside it.
@@ -72,8 +78,7 @@ jobs:
       # `--severity` defaults to `auto`, which the CLI resolves to `fail` on CI
       # and `info` off it -- so this gates here and only reports locally.
       - name: format
-        # Formatting must not depend on optional Aspect remote-cache auth.
-        run: aspect format --bazel-flag=--remote_cache=
+        run: aspect format
       # `aspect lint` narrows to the targets a change touched and annotates the
       # pull request. It reads the `rules_lint_machine` output group, which is
       # why the clippy aspect comes from aspect_rules_lint_rust rather than from
@@ -82,11 +87,11 @@ jobs:
       # CLI. The aspect is named here rather than left to the `build:lint`
       # bazelrc config, which `aspect lint` does not read.
       - name: lint
-        run: aspect lint --bazel-flag=--remote_cache= --aspect=//tools/lint:linters.bzl%clippy
+        run: aspect lint --aspect=//tools/lint:linters.bzl%clippy
       - name: build
-        run: aspect build --bazel-flag=--remote_cache= //...
+        run: aspect build //...
       - name: test
-        run: aspect test --bazel-flag=--remote_cache= //...
+        run: aspect test //...
   # Cargo, gated. Bazel is what the rest of CI builds with, but the two are not
   # the same build, so the cargo path can break with nothing to say so:
   # //bazel/defs.bzl strips the `vendored-protoc` feature and hands `PROTOC` to
@@ -425,6 +430,12 @@ jobs:
           # below; keep only the output needed by this run.
           disk-cache: false
           repository-cache: true
+      - uses: ./.github/actions/remote-cache
+        with:
+          api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+          client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
+          client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
+          upload: ${{ github.event_name != 'pull_request' }}
       # Instrumented binaries are far larger than a normal build, and this job
       # links every test target in the workspace. It ran the runner's disk to
       # 15 MB free and the link died as `clang++: Bus error (core dumped)`,
@@ -553,8 +564,14 @@ jobs:
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
           bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}-docker
+          disk-cache: false
           repository-cache: true
+      - uses: ./.github/actions/remote-cache
+        with:
+          api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+          client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
+          client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
+          upload: ${{ github.event_name != 'pull_request' }}
       - id: select
         run: |
           set -euo pipefail
@@ -642,8 +659,14 @@ jobs:
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
           bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}-docker
+          disk-cache: false
           repository-cache: true
+      - uses: ./.github/actions/remote-cache
+        with:
+          api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+          client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
+          client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
+          upload: ${{ github.event_name != 'pull_request' }}
       # The differential suites point a Grafana-stack container back at a
       # collector running on the host, under the name `host.docker.internal`.
       # The container resolves it through
@@ -871,8 +894,14 @@ jobs:
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         with:
           bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}-scale
+          disk-cache: false
           repository-cache: true
+      - uses: ./.github/actions/remote-cache
+        with:
+          api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+          client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
+          client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
+          upload: ${{ github.event_name != 'pull_request' }}
       - run: |
           bazel test --config=scale ${{ matrix.suite.target }} \
             --test_env=KRABKA_SOAK_COMMIT=${GITHUB_SHA}

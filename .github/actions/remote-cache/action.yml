@@ -1,0 +1,175 @@
+name: point Bazel at the remote cache
+description: Write the BuildBuddy configuration into user.bazelrc, when this run holds a credential for it.
+
+# The flags go in `user.bazelrc` rather than `.bazelrc` for three reasons, and
+# the first is the one BuildBuddy's own documentation gives for open source
+# repositories: `.bazelrc` cannot interpolate an environment variable, so a key
+# written there is a key committed. `.bazelrc` already ends with
+# `try-import %workspace%/user.bazelrc`, and `.gitignore` already ignores that
+# file, so the hook this needs was there before the cache was.
+#
+# Second, a pull request from a fork sees no secrets. This step then writes
+# nothing, `try-import` finds nothing, and Bazel builds exactly as it does
+# today -- no `if:` guard on any job, and no failure that has to be explained
+# to a first-time contributor. The same path covers the window before any
+# secret exists at all.
+#
+# Third, a developer's own `user.bazelrc` is untouched off CI.
+#
+# BuildBuddy accepts either credential, and this takes whichever is present:
+# an API key as a request header, or a client certificate and its key over
+# mTLS. The certificate pair wins when both are set, because it is the more
+# specific configuration.
+#
+# Every value is validated before it is written. A `user.bazelrc` is read line
+# by line, so a multi-line secret -- a PEM block pasted into the API key
+# variable, say -- does not fail as a bad credential. It fails as
+# `invalid command name '-----END'`, several layers down inside whatever Bazel
+# command ran first, with the real cause redacted out of the log by the secret
+# masker. Refusing to write that file is worth more than the flags it holds.
+#
+# A malformed credential warns and disables the cache rather than failing the
+# job. This is an accelerator, not a gate: a secret pasted wrong should cost
+# the cache, not every build in the repository. It is not silent -- the
+# annotation says which variable is wrong and what it should hold.
+#
+# A credential that is well-formed but *rejected* is a different matter, and is
+# left to fail loudly wherever Bazel hits it. A cache that silently stops
+# working looks exactly like a cache that is working badly, and the point of
+# this is to be able to measure it.
+
+inputs:
+  api-key:
+    # One line, sent as the `x-buildbuddy-api-key` header. Empty on a fork,
+    # whose pull requests cannot read secrets, and empty until the secret is
+    # added -- both mean "build locally".
+    description: A BuildBuddy API key.
+    required: false
+    default: ""
+  client-cert:
+    # For organizations that authenticate the cache over mTLS instead of with
+    # an API key. Must be set together with `client-key`.
+    description: A PEM client certificate.
+    required: false
+    default: ""
+  client-key:
+    description: The PEM private key for `client-cert`.
+    required: false
+    default: ""
+  upload:
+    # Only trusted contexts should: a pull request reads the third-party
+    # closure and every unchanged crate, which is the bulk of the win, and
+    # cannot poison an entry it never writes.
+    description: Whether this run may write to the cache.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        API_KEY: ${{ inputs.api-key }}
+        CLIENT_CERT: ${{ inputs.client-cert }}
+        CLIENT_KEY: ${{ inputs.client-key }}
+        UPLOAD: ${{ inputs.upload }}
+      run: |
+        set -euo pipefail
+
+        endpoint_flags() {
+          echo "# Written by .github/actions/remote-cache. Not for committing."
+          echo "build --remote_cache=grpcs://remote.buildbuddy.io"
+          echo "build --bes_backend=grpcs://remote.buildbuddy.io"
+          echo "build --bes_results_url=https://app.buildbuddy.io/invocation/"
+          # The profile BES carries, made legible. Bazel's default `slim_profile`
+          # collapses the many small actions this build is mostly made of into
+          # aggregate rows, and without the target label a row says `Rustc` and
+          # not which crate. That is the difference between "the build spent
+          # eleven minutes compiling" and "these four crates are the critical
+          # path", which is the whole reason to look at a profile. Suggested by
+          # the BuildBuddy team.
+          #
+          # Here rather than in `.bazelrc` because an unslimmed profile only
+          # earns its size when something is uploading it to look at; a local
+          # build would pay for a profile nobody reads.
+          echo "build --noslim_profile"
+          echo "build --experimental_profile_include_target_label"
+          echo "build --experimental_profile_include_primary_output"
+          # Ten minutes: Rust link actions are large, and the default
+          # 60s times out on the first cold upload of one.
+          echo "build --remote_timeout=600"
+          # Already the Bazel 9.2 default, and pinned anyway because the plan
+          # bills cache *transfer*: `toplevel` keeps intermediate rlibs on the
+          # server and downloads only what a test or a push actually runs. A
+          # future default of `all` would multiply this repository's transfer
+          # without anything else changing.
+          echo "build --remote_download_outputs=toplevel"
+          # The 9.2 name. `--experimental_remote_cache_async` still resolves to
+          # it, but only as a deprecated alias.
+          echo "build --remote_cache_async"
+          # zstd on the wire. BuildBuddy measure 60-70% fewer bytes
+          # transferred, and transfer is exactly what the free tier bills --
+          # 100 GB of it -- so this is the difference between the quota
+          # lasting a week and lasting a quarter. It also helps a runner whose
+          # bottleneck is network rather than CPU, which is what a cache hit
+          # makes every one of these jobs.
+          #
+          # No threshold flag: `--experimental_remote_cache_compression_threshold`
+          # already defaults to 100 bytes on 9.2, which is what keeps zstd off
+          # blobs too small to gain from it.
+          echo "build --remote_cache_compression"
+        }
+
+        # `test` and `coverage` inherit `build`, so one block covers the
+        # `bazel test`, `bazel coverage` and `aspect build` invocations alike.
+        if [ -n "${CLIENT_CERT}" ] || [ -n "${CLIENT_KEY}" ]; then
+          if [ -z "${CLIENT_CERT}" ] || [ -z "${CLIENT_KEY}" ]; then
+            echo "::warning::mTLS needs both a client certificate and its key; only one was set. Building without the remote cache."
+            exit 0
+          fi
+          # Outside the workspace: a PEM inside it is a file Bazel would glob
+          # into a target's sources, and one `git add -A` away from a commit.
+          cert_dir="${RUNNER_TEMP:-/tmp}/buildbuddy"
+          mkdir -p "${cert_dir}"
+          printf '%s\n' "${CLIENT_CERT}" >"${cert_dir}/client.crt"
+          printf '%s\n' "${CLIENT_KEY}" >"${cert_dir}/client.key"
+          chmod 600 "${cert_dir}/client.crt" "${cert_dir}/client.key"
+          {
+            endpoint_flags
+            echo "build --tls_client_certificate=${cert_dir}/client.crt"
+            echo "build --tls_client_key=${cert_dir}/client.key"
+          } >user.bazelrc
+          echo "Authenticating to BuildBuddy with a client certificate."
+        elif [ -n "${API_KEY}" ]; then
+          # A `--remote_header` is one flag on one line. Anything with a
+          # newline in it is not an API key, and the most likely thing it is
+          # -- a PEM block -- has a matching input above.
+          if [ "${API_KEY}" != "${API_KEY%%$'\n'*}" ]; then
+            echo "::warning::The BuildBuddy API key secret contains more than one line, so it cannot be sent as a request header, and the remote cache is off for this run. A BuildBuddy API key is a single opaque token. If what you have is a PEM certificate and key, put them in BUILDBUDDY_CLIENT_CERT and BUILDBUDDY_CLIENT_KEY instead."
+            exit 0
+          fi
+          if [ "${API_KEY#-----BEGIN}" != "${API_KEY}" ]; then
+            echo "::warning::The BuildBuddy API key secret looks like a PEM block rather than an API key, and the remote cache is off for this run. Put a certificate and its key in BUILDBUDDY_CLIENT_CERT and BUILDBUDDY_CLIENT_KEY instead."
+            exit 0
+          fi
+          {
+            endpoint_flags
+            echo "build --remote_header=x-buildbuddy-api-key=${API_KEY}"
+          } >user.bazelrc
+          echo "Authenticating to BuildBuddy with an API key."
+        else
+          echo "No BuildBuddy credential on this run: Bazel will build locally."
+          exit 0
+        fi
+
+        if [ "${UPLOAD}" != "true" ]; then
+          echo "build --noremote_upload_local_results" >>user.bazelrc
+        fi
+
+        # The credential is the one thing that must not reach the log.
+        # Everything else is worth showing, because "is the cache configured"
+        # is the first question anyone debugging a slow run will ask.
+        echo "::group::user.bazelrc"
+        grep -v -e remote_header -e tls_client user.bazelrc
+        echo "::endgroup::"
+        echo "uploads enabled: ${UPLOAD}"
