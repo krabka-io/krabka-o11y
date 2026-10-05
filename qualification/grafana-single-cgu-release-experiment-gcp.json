@@ -48,14 +48,14 @@
   },
   "schema_version": 1,
   "experiment": "One Rust code generation unit for executable footprint and runtime efficiency",
-  "status": "setting_analysis_verified_image_build_queued_canonical_goldens_running",
+  "status": "canonical_goldens_and_setting_analysis_passed_image_build_running",
   "baseline_image_reuse": "The exact restored-source cold fingerprint reuse candidate supplies the baseline image. All source, dependencies and workload harness files match; only .bazelrc differs. Both contain the same dense metadata and cold fingerprint reuse candidates.",
   "candidate_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371662781",
   "baseline_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
   "setting_analysis_provenance_path": "qualification/evidence/profiling/single-cgu-setting-analysis/single-cgu-setting-analysis.json",
   "setting_analysis_provenance_sha256": "0ba966d16e8a5bc5a92917b405014e06ef39931af775e52deb1c79f2b2452d7c",
   "validation": {
-    "canonical_goldens_status": "running",
+    "canonical_goldens_status": "passed",
     "source_commit": "7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
     "configuration_equivalent_to_candidate_ref": "codex/grafana-single-cgu",
     "explicit_compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
@@ -63,7 +63,35 @@
       "//crates/blockstore:label_fingerprint_test",
       "//crates/profiles:label_fingerprint_test"
     ],
-    "retries_disabled": true
+    "retries_disabled": true,
+    "targets_passed": 2,
+    "provenance_path": "qualification/evidence/correctness/single-cgu-canonical-goldens/provenance.json",
+    "provenance_sha256": "392aaff4e15c0bbbe575e2bd11622c2085043288895d40cdcc513af7567d761d"
   },
-  "next_action": "Verify exact image source and checksums, compare code sections and runtime filesystem/configuration against the baseline, and complete correctness checks. Static executable size and sampled profiles do not qualify RSS or CPU improvement; matched Mimir and other-signal measurements remain required before retention."
+  "next_action": "Verify exact image source and checksums, compare code sections and runtime filesystem/configuration against the baseline, and complete correctness checks. Static executable size and sampled profiles do not qualify RSS or CPU improvement; matched Mimir and other-signal measurements remain required before retention.",
+  "baseline_image_verified": {
+    "image_provenance": {
+      "run_id": 37371016528,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
+      "source_commit": "7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+      "artifact": {
+        "id": 11370623488,
+        "name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+        "digest": "sha256:23dbcd9961bbe0b94637404828d35ba6b5a09569594b231b0c50c36eb5d80830",
+        "size_in_bytes": 308374623,
+        "expires_at": "2027-01-03T20:38:45Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-7fbd49b60f16",
+      "manifest_digest": "sha256:78777fbc9fd21daaaf6129c1ef4e65e67f9dc336034817697f3f7d542f776ee7",
+      "config_digest": "sha256:78777fbc9fd21daaaf6129c1ef4e65e67f9dc336034817697f3f7d542f776ee7"
+    },
+    "reused_existing_verification": true,
+    "cpu_profile_provenance_path": "qualification/evidence/profiling/gcp-37371016528/provenance.json",
+    "cpu_profile_provenance_sha256": "3e9f8d995dd8c8c987c6794eec4c32fabd766b193d7ddf310ed0ec51a09d3443",
+    "raw_files_verified": 238,
+    "diagnostic_only": true,
+    "performance_qualified": false
+  }
 }
