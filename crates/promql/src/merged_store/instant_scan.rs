@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, btree_map::Entry},
+    collections::{BTreeMap, HashMap, hash_map::Entry},
     sync::Arc,
 };
 
@@ -73,7 +73,7 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
             return Ok(None);
         }
         let prepared = prepare_matchers(matchers)?;
-        let mut latest = BTreeMap::<u64, LatestSeries>::new();
+        let mut latest = HashMap::<u64, LatestSeries>::new();
         let mut upper_count = 0_usize;
         if let Some(rows) = hot.floats.get(tenant) {
             for row in rows.iter() {
@@ -246,6 +246,8 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
                 }
             }
         }
+        let mut series = latest.into_iter().collect::<Vec<_>>();
+        series.sort_unstable_by_key(|(fp, _)| *fp);
         let mut labels = BTreeMap::new();
         for cold in self
             .cold
@@ -255,7 +257,7 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
             labels.entry(cold.fingerprint()).or_insert(cold);
         }
         let mut samples = Vec::new();
-        for (_, entry) in latest {
+        for (_, entry) in series {
             if let Some(hot) = entry.labels {
                 labels.entry(hot.fingerprint()).or_insert(hot);
             }
