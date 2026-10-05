@@ -4,7 +4,7 @@
   "source_commit": "8d3b9510458fa2249b817157b7f9446733525711",
   "baseline_source_commit": "45b41ba77d16f017c80c502893cee1157bc30fde",
   "performance_qualified": false,
-  "retention_decision": "Pending other signal controls and final retained-source qualification. Mimir CPU is lower in each pair (median ratio 0.991), but ranges overlap. Aggregate RSS median is 2.6% lower, with one pair worse; query p99 is worse in two pairs. No consistent latency gain claimed. Exact baseline contains the subsequently rejected Loki owned-index change.",
+  "retention_decision": "All four original controls verified. Retention remains pending the new Mimir control after Loki reversion. Mimir and Loki CPU are lower in every pair; ranges overlap. Loki query p99 is lower in every pair, while RSS is mixed. Tempo RSS is lower in every pair but two pairs have unequal query completions. Pyroscope CPU, RSS, query p99 and ingestion are mixed. No across-the-board CPU, memory or latency advantage claimed. Original controls include the subsequently rejected Loki change in both images; the new control omits it in both images.",
   "validation": {
     "combined_scoped_targets_passed": 368,
     "target_list_sha256": "b6e1cfba61e758b0ccd3b05f9eace89ae0975948e34f36f57f08048f8c96245e",
@@ -3417,6 +3417,843 @@
         "ingest_p99_seconds": 1.0176617055637147
       },
       "scope": "Single-node API-accepted steady load with identical query pacing and accepted row counts; actual query completions are recorded and may vary with latency. Matched aggregate budgets; CPU and RSS include broker and MinIO."
+    },
+    "profiles": {
+      "measurement_qualified": true,
+      "provenance": {
+        "run_id": 37316282221,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37316282221",
+        "head_sha": "274af2b4a99c3c22f477b436572e2b6dd60cd80b",
+        "run_conclusion": "success",
+        "jobs": [
+          {
+            "id": 111783729470,
+            "name": "compare (profiles)",
+            "conclusion": "success",
+            "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37316282221/job/111783729470",
+            "runner_name": "gcp-runner-d9a22682531b41b4",
+            "runner_group_name": "default",
+            "labels": [
+              "gcp-ubuntu-24-04-16core"
+            ],
+            "started_at": "2026-10-05T13:23:46Z",
+            "completed_at": "2026-10-05T13:52:40Z"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": 11349696703,
+            "name": "grafana-comparison-profiles-274af2b4a99c3c22f477b436572e2b6dd60cd80b-1",
+            "digest": "sha256:983acae6bbcaee54cea6203a18e665ce90ffea394fb8716513089227f8feb6df",
+            "size_in_bytes": 8777042,
+            "expires_at": "2027-01-03T13:22:25Z",
+            "signal": "profiles",
+            "verified_raw_files": 743
+          }
+        ]
+      },
+      "host": {
+        "cpu_count": 16,
+        "kernel": "7.0.0-1011-gcp",
+        "lscpu": {
+          "lscpu": [
+            {
+              "field": "Architecture:",
+              "data": "x86_64"
+            },
+            {
+              "field": "CPU op-mode(s):",
+              "data": "32-bit, 64-bit"
+            },
+            {
+              "field": "Address sizes:",
+              "data": "46 bits physical, 48 bits virtual"
+            },
+            {
+              "field": "Byte Order:",
+              "data": "Little Endian"
+            },
+            {
+              "field": "CPU(s):",
+              "data": "16"
+            },
+            {
+              "field": "On-line CPU(s) list:",
+              "data": "0-15"
+            },
+            {
+              "field": "Vendor ID:",
+              "data": "GenuineIntel"
+            },
+            {
+              "field": "Model name:",
+              "data": "Intel(R) Xeon(R) CPU @ 2.20GHz"
+            },
+            {
+              "field": "CPU family:",
+              "data": "6"
+            },
+            {
+              "field": "Model:",
+              "data": "79"
+            },
+            {
+              "field": "Thread(s) per core:",
+              "data": "2"
+            },
+            {
+              "field": "Core(s) per socket:",
+              "data": "8"
+            },
+            {
+              "field": "Socket(s):",
+              "data": "1"
+            },
+            {
+              "field": "Stepping:",
+              "data": "0"
+            },
+            {
+              "field": "BogoMIPS:",
+              "data": "4399.99"
+            },
+            {
+              "field": "Flags:",
+              "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch pti ssbd ibrs ibpb stibp fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm rdseed adx smap xsaveopt arat md_clear arch_capabilities"
+            },
+            {
+              "field": "Hypervisor vendor:",
+              "data": "KVM"
+            },
+            {
+              "field": "Virtualization type:",
+              "data": "full"
+            },
+            {
+              "field": "L1d cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L1i cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L2 cache:",
+              "data": "2 MiB (8 instances)"
+            },
+            {
+              "field": "L3 cache:",
+              "data": "55 MiB (1 instance)"
+            },
+            {
+              "field": "NUMA node(s):",
+              "data": "1"
+            },
+            {
+              "field": "NUMA node0 CPU(s):",
+              "data": "0-15"
+            },
+            {
+              "field": "Vulnerability Gather data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Ghostwrite:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Indirect target selection:",
+              "data": "Mitigation; Aligned branch/return thunks"
+            },
+            {
+              "field": "Vulnerability Itlb multihit:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability L1tf:",
+              "data": "Mitigation; PTE Inversion"
+            },
+            {
+              "field": "Vulnerability Mds:",
+              "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+            },
+            {
+              "field": "Vulnerability Meltdown:",
+              "data": "Mitigation; PTI"
+            },
+            {
+              "field": "Vulnerability Mmio stale data:",
+              "data": "Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown"
+            },
+            {
+              "field": "Vulnerability Old microcode:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Reg file data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Retbleed:",
+              "data": "Mitigation; IBRS"
+            },
+            {
+              "field": "Vulnerability Spec rstack overflow:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Spec store bypass:",
+              "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+            },
+            {
+              "field": "Vulnerability Spectre v1:",
+              "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+            },
+            {
+              "field": "Vulnerability Spectre v2:",
+              "data": "Mitigation; IBRS; IBPB conditional; STIBP conditional; RSB filling; PBRSB-eIBRS Not affected; BHI SW loop, KVM SW loop"
+            },
+            {
+              "field": "Vulnerability Srbds:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsa:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsx async abort:",
+              "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+            },
+            {
+              "field": "Vulnerability Vmscape:",
+              "data": "Not affected"
+            }
+          ]
+        }
+      },
+      "pairing": "Three fresh baseline/candidate deployment pairs on one VM, alternating first revision; native comparison also retained separately.",
+      "image_producers": {
+        "baseline": {
+          "run_id": 37307305944,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37307305944",
+          "source_commit": "45b41ba77d16f017c80c502893cee1157bc30fde",
+          "artifact": {
+            "id": 11344996950,
+            "name": "comparison-image-logs-45b41ba77d16f017c80c502893cee1157bc30fde",
+            "digest": "sha256:a5900934bad5d4ce388a3fd926280b524bbaadc6af9c3b9b428c91b0e0998555",
+            "size_in_bytes": 308297240,
+            "expires_at": "2027-01-03T12:06:56Z"
+          },
+          "archive_digest_verified": true,
+          "all_image_file_checksums_verified": true,
+          "image_tag": "localhost/krabka-o11y:sha-45b41ba77d16",
+          "manifest_digest": "sha256:1bca6608f9e4841a298f2d8e5fbe1243c3d3bd3cde40c2267c4278bb72afc62c",
+          "config_digest": "sha256:1bca6608f9e4841a298f2d8e5fbe1243c3d3bd3cde40c2267c4278bb72afc62c"
+        },
+        "candidate": {
+          "run_id": 37313303710,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37313303710",
+          "source_commit": "8d3b9510458fa2249b817157b7f9446733525711",
+          "artifact": {
+            "id": 11346923216,
+            "name": "comparison-image-metrics-8d3b9510458fa2249b817157b7f9446733525711",
+            "digest": "sha256:312648b3123dfde2c8926b9a2cef28279b5770684ba187624e8143857e488f41",
+            "size_in_bytes": 308247478,
+            "expires_at": "2027-01-03T12:58:41Z"
+          },
+          "archive_digest_verified": true,
+          "all_image_file_checksums_verified": true,
+          "image_tag": "localhost/krabka-o11y:sha-8d3b9510458f",
+          "manifest_digest": "sha256:8bb1c65fa4f1828bbc4199af3d0dec29b90a1b916ca53c08ad79bbe5cb4adfaf",
+          "config_digest": "sha256:8bb1c65fa4f1828bbc4199af3d0dec29b90a1b916ca53c08ad79bbe5cb4adfaf"
+        }
+      },
+      "pairs": [
+        {
+          "pair": 1,
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "source_commit": "45b41ba77d16f017c80c502893cee1157bc30fde",
+            "image_manifest_digest": "sha256:1bca6608f9e4841a298f2d8e5fbe1243c3d3bd3cde40c2267c4278bb72afc62c",
+            "report": "revisions/1-baseline/comparison-report.json",
+            "entry": {
+              "backend": "krabka",
+              "repetition": 1,
+              "phase": "steady",
+              "deployment_target": "all",
+              "duration_seconds": 60.593033706999904,
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "minio_cpu": 2,
+              "minio_memory_gib": 2,
+              "objectives_met": true,
+              "ingest": {
+                "accepted_rows": 1200,
+                "errors": 0,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.013107817999980398,
+                  "p95": 0.016509738999957335,
+                  "p99": 0.019039585000200532
+                }
+              },
+              "query": {
+                "attempts": 240,
+                "errors": 0,
+                "empty_queries": 0,
+                "latency_seconds": {
+                  "count": 240,
+                  "p50": 0.009671386000036364,
+                  "p95": 0.018905939999967813,
+                  "p99": 0.020528645000013057
+                }
+              },
+              "resources": {
+                "cpu_seconds_total": 8.210355,
+                "cpu_seconds_by_role": {
+                  "broker": 1.177111,
+                  "profiles-all": 3.768255,
+                  "minio": 3.264989
+                },
+                "rss_kib_simultaneous_peak": 371780,
+                "coverage_fraction": 0.9998618679650546,
+                "host_activity_qualified": true,
+                "s3_requests": 2334.0,
+                "s3_read_bytes": 4220452.0,
+                "s3_write_bytes": 538074.0
+              },
+              "rss_kib_peak_by_role": {
+                "broker": 34916,
+                "minio": 245508,
+                "profiles-all": 91356
+              },
+              "scrape_errors": 0,
+              "container_started_at_by_role": {
+                "broker": "2026-10-05T13:40:00.870941427Z",
+                "profiles-all": "2026-10-05T13:40:07.260247349Z",
+                "minio": "2026-10-05T13:39:59.562365685Z"
+              },
+              "any_oom_killed": false
+            }
+          },
+          "candidate": {
+            "source_commit": "8d3b9510458fa2249b817157b7f9446733525711",
+            "image_manifest_digest": "sha256:8bb1c65fa4f1828bbc4199af3d0dec29b90a1b916ca53c08ad79bbe5cb4adfaf",
+            "report": "revisions/1-candidate/comparison-report.json",
+            "entry": {
+              "backend": "krabka",
+              "repetition": 1,
+              "phase": "steady",
+              "deployment_target": "all",
+              "duration_seconds": 60.619360845999836,
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "minio_cpu": 2,
+              "minio_memory_gib": 2,
+              "objectives_met": true,
+              "ingest": {
+                "accepted_rows": 1200,
+                "errors": 0,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.013551692000191906,
+                  "p95": 0.01690245899999354,
+                  "p99": 0.019529340999952183
+                }
+              },
+              "query": {
+                "attempts": 240,
+                "errors": 0,
+                "empty_queries": 0,
+                "latency_seconds": {
+                  "count": 240,
+                  "p50": 0.009798456999988048,
+                  "p95": 0.019229690999964077,
+                  "p99": 0.021758935999969253
+                }
+              },
+              "resources": {
+                "cpu_seconds_total": 8.392088,
+                "cpu_seconds_by_role": {
+                  "broker": 1.222972,
+                  "profiles-all": 3.840964,
+                  "minio": 3.328152
+                },
+                "rss_kib_simultaneous_peak": 369440,
+                "coverage_fraction": 0.9998627577322758,
+                "host_activity_qualified": true,
+                "s3_requests": 2304.0,
+                "s3_read_bytes": 4139076.0,
+                "s3_write_bytes": 537469.0
+              },
+              "rss_kib_peak_by_role": {
+                "profiles-all": 92476,
+                "broker": 35316,
+                "minio": 241648
+              },
+              "scrape_errors": 0,
+              "container_started_at_by_role": {
+                "broker": "2026-10-05T13:42:06.835206272Z",
+                "profiles-all": "2026-10-05T13:42:13.318670467Z",
+                "minio": "2026-10-05T13:42:06.331815022Z"
+              },
+              "any_oom_killed": false
+            }
+          }
+        },
+        {
+          "pair": 2,
+          "order": [
+            "candidate",
+            "baseline"
+          ],
+          "baseline": {
+            "source_commit": "45b41ba77d16f017c80c502893cee1157bc30fde",
+            "image_manifest_digest": "sha256:1bca6608f9e4841a298f2d8e5fbe1243c3d3bd3cde40c2267c4278bb72afc62c",
+            "report": "revisions/2-baseline/comparison-report.json",
+            "entry": {
+              "backend": "krabka",
+              "repetition": 1,
+              "phase": "steady",
+              "deployment_target": "all",
+              "duration_seconds": 60.609623586,
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "minio_cpu": 2,
+              "minio_memory_gib": 2,
+              "objectives_met": true,
+              "ingest": {
+                "accepted_rows": 1200,
+                "errors": 0,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.010007137999991755,
+                  "p95": 0.016665140999975847,
+                  "p99": 0.017324543999848174
+                }
+              },
+              "query": {
+                "attempts": 240,
+                "errors": 0,
+                "empty_queries": 0,
+                "latency_seconds": {
+                  "count": 240,
+                  "p50": 0.010031779999962964,
+                  "p95": 0.019802983000090535,
+                  "p99": 0.022447841000030166
+                }
+              },
+              "resources": {
+                "cpu_seconds_total": 8.501762,
+                "cpu_seconds_by_role": {
+                  "broker": 1.223364,
+                  "profiles-all": 3.918311,
+                  "minio": 3.360087
+                },
+                "rss_kib_simultaneous_peak": 368288,
+                "coverage_fraction": 0.9998598091415213,
+                "host_activity_qualified": true,
+                "s3_requests": 2314.0,
+                "s3_read_bytes": 4172956.0,
+                "s3_write_bytes": 532152.0
+              },
+              "rss_kib_peak_by_role": {
+                "minio": 242564,
+                "broker": 34824,
+                "profiles-all": 91316
+              },
+              "scrape_errors": 0,
+              "container_started_at_by_role": {
+                "broker": "2026-10-05T13:46:18.67155852Z",
+                "profiles-all": "2026-10-05T13:46:25.037671549Z",
+                "minio": "2026-10-05T13:46:17.82560602Z"
+              },
+              "any_oom_killed": false
+            }
+          },
+          "candidate": {
+            "source_commit": "8d3b9510458fa2249b817157b7f9446733525711",
+            "image_manifest_digest": "sha256:8bb1c65fa4f1828bbc4199af3d0dec29b90a1b916ca53c08ad79bbe5cb4adfaf",
+            "report": "revisions/2-candidate/comparison-report.json",
+            "entry": {
+              "backend": "krabka",
+              "repetition": 1,
+              "phase": "steady",
+              "deployment_target": "all",
+              "duration_seconds": 60.591051474000096,
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "minio_cpu": 2,
+              "minio_memory_gib": 2,
+              "objectives_met": true,
+              "ingest": {
+                "accepted_rows": 1200,
+                "errors": 0,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.013466277999896192,
+                  "p95": 0.0156562600000143,
+                  "p99": 0.019206165000014153
+                }
+              },
+              "query": {
+                "attempts": 240,
+                "errors": 0,
+                "empty_queries": 0,
+                "latency_seconds": {
+                  "count": 240,
+                  "p50": 0.009726854000064122,
+                  "p95": 0.018864869000026374,
+                  "p99": 0.02116993699996783
+                }
+              },
+              "resources": {
+                "cpu_seconds_total": 8.119729,
+                "cpu_seconds_by_role": {
+                  "broker": 1.178494,
+                  "profiles-all": 3.753221,
+                  "minio": 3.188014
+                },
+                "rss_kib_simultaneous_peak": 375984,
+                "coverage_fraction": 0.9998616906567898,
+                "host_activity_qualified": true,
+                "s3_requests": 2310.0,
+                "s3_read_bytes": 4142003.0,
+                "s3_write_bytes": 538370.0
+              },
+              "rss_kib_peak_by_role": {
+                "minio": 249344,
+                "profiles-all": 91880,
+                "broker": 34944
+              },
+              "scrape_errors": 0,
+              "container_started_at_by_role": {
+                "broker": "2026-10-05T13:44:12.784378224Z",
+                "profiles-all": "2026-10-05T13:44:19.173483823Z",
+                "minio": "2026-10-05T13:44:12.34516572Z"
+              },
+              "any_oom_killed": false
+            }
+          }
+        },
+        {
+          "pair": 3,
+          "order": [
+            "baseline",
+            "candidate"
+          ],
+          "baseline": {
+            "source_commit": "45b41ba77d16f017c80c502893cee1157bc30fde",
+            "image_manifest_digest": "sha256:1bca6608f9e4841a298f2d8e5fbe1243c3d3bd3cde40c2267c4278bb72afc62c",
+            "report": "revisions/3-baseline/comparison-report.json",
+            "entry": {
+              "backend": "krabka",
+              "repetition": 1,
+              "phase": "steady",
+              "deployment_target": "all",
+              "duration_seconds": 60.6153860500001,
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "minio_cpu": 2,
+              "minio_memory_gib": 2,
+              "objectives_met": true,
+              "ingest": {
+                "accepted_rows": 1200,
+                "errors": 0,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.013526122000030227,
+                  "p95": 0.016103041999940615,
+                  "p99": 0.020112534999952913
+                }
+              },
+              "query": {
+                "attempts": 240,
+                "errors": 0,
+                "empty_queries": 0,
+                "latency_seconds": {
+                  "count": 240,
+                  "p50": 0.010096966999981305,
+                  "p95": 0.019967459000099552,
+                  "p99": 0.02263288500012095
+                }
+              },
+              "resources": {
+                "cpu_seconds_total": 8.600086,
+                "cpu_seconds_by_role": {
+                  "broker": 1.226553,
+                  "profiles-all": 3.895111,
+                  "minio": 3.478422
+                },
+                "rss_kib_simultaneous_peak": 370792,
+                "coverage_fraction": 0.9998636475029606,
+                "host_activity_qualified": true,
+                "s3_requests": 2302.0,
+                "s3_read_bytes": 4133623.0,
+                "s3_write_bytes": 531844.0
+              },
+              "rss_kib_peak_by_role": {
+                "broker": 35040,
+                "profiles-all": 90380,
+                "minio": 245628
+              },
+              "scrape_errors": 0,
+              "container_started_at_by_role": {
+                "broker": "2026-10-05T13:48:24.507514012Z",
+                "profiles-all": "2026-10-05T13:48:30.905855736Z",
+                "minio": "2026-10-05T13:48:24.013196541Z"
+              },
+              "any_oom_killed": false
+            }
+          },
+          "candidate": {
+            "source_commit": "8d3b9510458fa2249b817157b7f9446733525711",
+            "image_manifest_digest": "sha256:8bb1c65fa4f1828bbc4199af3d0dec29b90a1b916ca53c08ad79bbe5cb4adfaf",
+            "report": "revisions/3-candidate/comparison-report.json",
+            "entry": {
+              "backend": "krabka",
+              "repetition": 1,
+              "phase": "steady",
+              "deployment_target": "all",
+              "duration_seconds": 60.595057190000034,
+              "service_cpu": 6.0,
+              "service_memory_gib": 6.0,
+              "minio_cpu": 2,
+              "minio_memory_gib": 2,
+              "objectives_met": true,
+              "ingest": {
+                "accepted_rows": 1200,
+                "errors": 0,
+                "latency_seconds": {
+                  "count": 120,
+                  "p50": 0.013583466999989469,
+                  "p95": 0.01670786899990162,
+                  "p99": 0.019544057000075554
+                }
+              },
+              "query": {
+                "attempts": 240,
+                "errors": 0,
+                "empty_queries": 0,
+                "latency_seconds": {
+                  "count": 240,
+                  "p50": 0.009994467000069562,
+                  "p95": 0.019810049999932744,
+                  "p99": 0.021789758999830156
+                }
+              },
+              "resources": {
+                "cpu_seconds_total": 8.54016,
+                "cpu_seconds_by_role": {
+                  "broker": 1.204885,
+                  "profiles-all": 3.893171,
+                  "minio": 3.442104
+                },
+                "rss_kib_simultaneous_peak": 384772,
+                "coverage_fraction": 0.9998788697354632,
+                "host_activity_qualified": true,
+                "s3_requests": 2336.0,
+                "s3_read_bytes": 4229153.0,
+                "s3_write_bytes": 538075.0
+              },
+              "rss_kib_peak_by_role": {
+                "profiles-all": 91876,
+                "broker": 35288,
+                "minio": 257684
+              },
+              "scrape_errors": 0,
+              "container_started_at_by_role": {
+                "broker": "2026-10-05T13:50:30.620524815Z",
+                "profiles-all": "2026-10-05T13:50:37.010139469Z",
+                "minio": "2026-10-05T13:50:29.739827594Z"
+              },
+              "any_oom_killed": false
+            }
+          }
+        }
+      ],
+      "summary": {
+        "baseline": {
+          "query_attempts": {
+            "median": 240,
+            "min": 240,
+            "max": 240,
+            "values": [
+              240,
+              240,
+              240
+            ]
+          },
+          "average_cpu_cores": {
+            "median": 0.14027082659466955,
+            "min": 0.1354999823857889,
+            "max": 0.14187958801262118,
+            "values": [
+              0.1354999823857889,
+              0.14027082659466955,
+              0.14187958801262118
+            ]
+          },
+          "rss_kib": {
+            "median": 370792,
+            "min": 368288,
+            "max": 371780,
+            "values": [
+              371780,
+              368288,
+              370792
+            ]
+          },
+          "query_p99_seconds": {
+            "median": 0.022447841000030166,
+            "min": 0.020528645000013057,
+            "max": 0.02263288500012095,
+            "values": [
+              0.020528645000013057,
+              0.022447841000030166,
+              0.02263288500012095
+            ]
+          },
+          "ingest_p99_seconds": {
+            "median": 0.019039585000200532,
+            "min": 0.017324543999848174,
+            "max": 0.020112534999952913,
+            "values": [
+              0.019039585000200532,
+              0.017324543999848174,
+              0.020112534999952913
+            ]
+          },
+          "average_cpu_cores_by_role": {
+            "broker": {
+              "median": 0.02018431938063678,
+              "min": 0.019426507107928752,
+              "max": 0.020235010942407386,
+              "values": [
+                0.019426507107928752,
+                0.02018431938063678,
+                0.020235010942407386
+              ]
+            },
+            "profiles-all": {
+              "median": 0.06425944391061077,
+              "min": 0.06218957476566615,
+              "max": 0.06464833087835042,
+              "values": [
+                0.06218957476566615,
+                0.06464833087835042,
+                0.06425944391061077
+              ]
+            },
+            "minio": {
+              "median": 0.055438176335682356,
+              "min": 0.053883900512193994,
+              "max": 0.05738513315960304,
+              "values": [
+                0.053883900512193994,
+                0.055438176335682356,
+                0.05738513315960304
+              ]
+            }
+          }
+        },
+        "candidate": {
+          "query_attempts": {
+            "median": 240,
+            "min": 240,
+            "max": 240,
+            "values": [
+              240,
+              240,
+              240
+            ]
+          },
+          "average_cpu_cores": {
+            "median": 0.13843907099778963,
+            "min": 0.13400871584947183,
+            "max": 0.14093822823240734,
+            "values": [
+              0.13843907099778963,
+              0.13400871584947183,
+              0.14093822823240734
+            ]
+          },
+          "rss_kib": {
+            "median": 375984,
+            "min": 369440,
+            "max": 384772,
+            "values": [
+              369440,
+              375984,
+              384772
+            ]
+          },
+          "query_p99_seconds": {
+            "median": 0.021758935999969253,
+            "min": 0.02116993699996783,
+            "max": 0.021789758999830156,
+            "values": [
+              0.021758935999969253,
+              0.02116993699996783,
+              0.021789758999830156
+            ]
+          },
+          "ingest_p99_seconds": {
+            "median": 0.019529340999952183,
+            "min": 0.019206165000014153,
+            "max": 0.019544057000075554,
+            "values": [
+              0.019529340999952183,
+              0.019206165000014153,
+              0.019544057000075554
+            ]
+          },
+          "average_cpu_cores_by_role": {
+            "broker": {
+              "median": 0.019884212605361506,
+              "min": 0.019449967797731605,
+              "max": 0.020174610601832198,
+              "values": [
+                0.020174610601832198,
+                0.019449967797731605,
+                0.019884212605361506
+              ]
+            },
+            "profiles-all": {
+              "median": 0.06336200095803977,
+              "min": 0.061943486846577085,
+              "max": 0.06424898631240979,
+              "values": [
+                0.06336200095803977,
+                0.061943486846577085,
+                0.06424898631240979
+              ]
+            },
+            "minio": {
+              "median": 0.05490245943791766,
+              "min": 0.05261526120516313,
+              "max": 0.05680502931463605,
+              "values": [
+                0.05490245943791766,
+                0.05261526120516313,
+                0.05680502931463605
+              ]
+            }
+          }
+        }
+      },
+      "candidate_divided_by_baseline": {
+        "query_attempts": 1.0,
+        "average_cpu_cores": 0.9869412932015221,
+        "rss_kib": 1.0140024595999915,
+        "query_p99_seconds": 0.9693108571082633,
+        "ingest_p99_seconds": 1.0257230396432744
+      },
+      "scope": "Single-node API-accepted steady load with identical query pacing and accepted row counts; actual query completions are recorded and may vary with latency. Matched aggregate budgets; CPU and RSS include broker and MinIO."
     }
   },
   "completed_other_native_comparisons": {
@@ -4683,6 +5520,640 @@
           20000
         ]
       }
+    },
+    "profiles": {
+      "schema_version": 1,
+      "commit": "274af2b4a99c3c22f477b436572e2b6dd60cd80b",
+      "signal": "profiles",
+      "seed": 267,
+      "phase_seconds": 60,
+      "acknowledgements": "API accepted; native durability contracts differ",
+      "write_interval_seconds": 1,
+      "query_interval_seconds": 0.25,
+      "image_commit": "8d3b9510458fa2249b817157b7f9446733525711",
+      "image_digest": "sha256:8bb1c65fa4f1828bbc4199af3d0dec29b90a1b916ca53c08ad79bbe5cb4adfaf",
+      "image_identity": {
+        "Id": "sha256:8bb1c65fa4f1828bbc4199af3d0dec29b90a1b916ca53c08ad79bbe5cb4adfaf",
+        "RepoTags": [
+          "localhost/krabka-o11y:sha-8d3b9510458f"
+        ],
+        "RepoDigests": [
+          "localhost/krabka-o11y@sha256:8bb1c65fa4f1828bbc4199af3d0dec29b90a1b916ca53c08ad79bbe5cb4adfaf"
+        ],
+        "Config": {
+          "User": "65532:65532",
+          "Env": [
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/sbin:/bin",
+            "SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt"
+          ],
+          "WorkingDir": "/var/lib/krabka",
+          "Labels": {
+            "org.opencontainers.image.created": "2026-09-09T19:39:56Z",
+            "org.opencontainers.image.description": "The krabka observability stack: metrics, traces, profiles and logs",
+            "org.opencontainers.image.licenses": "Apache-2.0",
+            "org.opencontainers.image.source": "https://github.com/krabka-io/krabka-o11y",
+            "org.opencontainers.image.title": "krabka-o11y",
+            "org.opencontainers.image.url": "https://github.com/krabka-io/krabka-o11y"
+          }
+        },
+        "Architecture": "amd64",
+        "Os": "linux",
+        "Size": 1355805030,
+        "RootFS": {
+          "Type": "layers",
+          "Layers": [
+            "sha256:9b8a747849ff50a2b9c8dc9d8375bb847c0a3a46739467e1251b340bd4a65a29",
+            "sha256:198f541f91f17043a47041eab76df5f1225af25b00939f30c599869ec0015d7e"
+          ]
+        },
+        "Metadata": {
+          "LastTagTime": "2026-10-05T13:24:15.255604959Z"
+        },
+        "Descriptor": {
+          "mediaType": "application/vnd.oci.image.manifest.v1+json",
+          "digest": "sha256:8bb1c65fa4f1828bbc4199af3d0dec29b90a1b916ca53c08ad79bbe5cb4adfaf",
+          "size": 695,
+          "annotations": {
+            "com.apple.containerization.image.name": "krabka-o11y:dev",
+            "io.containerd.image.name": "localhost/krabka-o11y:sha-8d3b9510458f",
+            "org.opencontainers.image.base.digest": "sha256:632d298481b94837520040a2d3d6c0b40e32d193166ad89ed32a096226bfbb77",
+            "org.opencontainers.image.ref.name": "sha-8d3b9510458f"
+          }
+        }
+      },
+      "profiles_target": "all",
+      "deployment_target": "all",
+      "host_activity": {
+        "wait_seconds": 120,
+        "external_cpu_cores_mean_limit": 2,
+        "external_cpu_cores_window_limit": 4,
+        "window_sample_intervals": 10
+      },
+      "harness_sha256": {
+        "compare-grafana.py": "f407e6f1a6730d35b395a207a3e567455bc4ac8dc379d1d0eac04acaf416be67",
+        "deployment-envelope.py": "184a1a12717fe93a25080df5e7b00d95e84f4f75a29e8be13c63170bcc5b2923",
+        "fuzz-corpus.py": "5e2def627007234cdf5ae081ed2f8b894bb9dd678daf4cc5578be7a903a33eeb"
+      },
+      "dataset": {
+        "metric_samples_per_request": 1000,
+        "metric_points_per_series": 1,
+        "other_signals": "deployment-envelope dataset; profile units=nanoseconds, unquoted legacy labels, sampleRate=1e9",
+        "seed_concurrency": 64
+      },
+      "host": {
+        "cpu_count": 16,
+        "kernel": "7.0.0-1011-gcp",
+        "lscpu": {
+          "lscpu": [
+            {
+              "field": "Architecture:",
+              "data": "x86_64"
+            },
+            {
+              "field": "CPU op-mode(s):",
+              "data": "32-bit, 64-bit"
+            },
+            {
+              "field": "Address sizes:",
+              "data": "46 bits physical, 48 bits virtual"
+            },
+            {
+              "field": "Byte Order:",
+              "data": "Little Endian"
+            },
+            {
+              "field": "CPU(s):",
+              "data": "16"
+            },
+            {
+              "field": "On-line CPU(s) list:",
+              "data": "0-15"
+            },
+            {
+              "field": "Vendor ID:",
+              "data": "GenuineIntel"
+            },
+            {
+              "field": "Model name:",
+              "data": "Intel(R) Xeon(R) CPU @ 2.20GHz"
+            },
+            {
+              "field": "CPU family:",
+              "data": "6"
+            },
+            {
+              "field": "Model:",
+              "data": "79"
+            },
+            {
+              "field": "Thread(s) per core:",
+              "data": "2"
+            },
+            {
+              "field": "Core(s) per socket:",
+              "data": "8"
+            },
+            {
+              "field": "Socket(s):",
+              "data": "1"
+            },
+            {
+              "field": "Stepping:",
+              "data": "0"
+            },
+            {
+              "field": "BogoMIPS:",
+              "data": "4399.99"
+            },
+            {
+              "field": "Flags:",
+              "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch pti ssbd ibrs ibpb stibp fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm rdseed adx smap xsaveopt arat md_clear arch_capabilities"
+            },
+            {
+              "field": "Hypervisor vendor:",
+              "data": "KVM"
+            },
+            {
+              "field": "Virtualization type:",
+              "data": "full"
+            },
+            {
+              "field": "L1d cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L1i cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L2 cache:",
+              "data": "2 MiB (8 instances)"
+            },
+            {
+              "field": "L3 cache:",
+              "data": "55 MiB (1 instance)"
+            },
+            {
+              "field": "NUMA node(s):",
+              "data": "1"
+            },
+            {
+              "field": "NUMA node0 CPU(s):",
+              "data": "0-15"
+            },
+            {
+              "field": "Vulnerability Gather data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Ghostwrite:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Indirect target selection:",
+              "data": "Mitigation; Aligned branch/return thunks"
+            },
+            {
+              "field": "Vulnerability Itlb multihit:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability L1tf:",
+              "data": "Mitigation; PTE Inversion"
+            },
+            {
+              "field": "Vulnerability Mds:",
+              "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+            },
+            {
+              "field": "Vulnerability Meltdown:",
+              "data": "Mitigation; PTI"
+            },
+            {
+              "field": "Vulnerability Mmio stale data:",
+              "data": "Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown"
+            },
+            {
+              "field": "Vulnerability Old microcode:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Reg file data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Retbleed:",
+              "data": "Mitigation; IBRS"
+            },
+            {
+              "field": "Vulnerability Spec rstack overflow:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Spec store bypass:",
+              "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+            },
+            {
+              "field": "Vulnerability Spectre v1:",
+              "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+            },
+            {
+              "field": "Vulnerability Spectre v2:",
+              "data": "Mitigation; IBRS; IBPB conditional; STIBP conditional; RSB filling; PBRSB-eIBRS Not affected; BHI SW loop, KVM SW loop"
+            },
+            {
+              "field": "Vulnerability Srbds:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsa:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsx async abort:",
+              "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+            },
+            {
+              "field": "Vulnerability Vmscape:",
+              "data": "Not affected"
+            }
+          ]
+        }
+      },
+      "phases": [
+        "steady"
+      ],
+      "backends": [
+        "krabka",
+        "native"
+      ],
+      "entries": [
+        {
+          "backend": "krabka",
+          "repetition": 1,
+          "phase": "steady",
+          "deployment_target": "all",
+          "duration_seconds": 60.663759312000025,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "objectives_met": true,
+          "ingest": {
+            "accepted_rows": 1200,
+            "errors": 0,
+            "latency_seconds": {
+              "count": 120,
+              "p50": 0.013972593999994842,
+              "p95": 0.017594116999987364,
+              "p99": 0.020747250999988864
+            }
+          },
+          "query": {
+            "attempts": 240,
+            "errors": 0,
+            "empty_queries": 0,
+            "latency_seconds": {
+              "count": 240,
+              "p50": 0.010557564999999158,
+              "p95": 0.021389752999994016,
+              "p99": 0.02626247699998885
+            }
+          },
+          "resources": {
+            "cpu_seconds_total": 9.169201,
+            "cpu_seconds_by_role": {
+              "broker": 1.317802,
+              "profiles-all": 4.159291,
+              "minio": 3.692108
+            },
+            "rss_kib_simultaneous_peak": 369676,
+            "coverage_fraction": 0.9998598529230426,
+            "host_activity_qualified": true,
+            "s3_requests": 2297.0,
+            "s3_read_bytes": 4105889.0,
+            "s3_write_bytes": 532886.0
+          },
+          "rss_kib_peak_by_role": {
+            "broker": 35164,
+            "minio": 243192,
+            "profiles-all": 91664
+          },
+          "scrape_errors": 0,
+          "container_started_at_by_role": {
+            "broker": "2026-10-05T13:25:09.373493789Z",
+            "profiles-all": "2026-10-05T13:25:15.835863496Z",
+            "minio": "2026-10-05T13:25:08.364907779Z"
+          },
+          "any_oom_killed": false
+        },
+        {
+          "backend": "pyroscope",
+          "repetition": 1,
+          "phase": "steady",
+          "deployment_target": "native",
+          "duration_seconds": 60.079433411000025,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "objectives_met": true,
+          "ingest": {
+            "accepted_rows": 1200,
+            "errors": 0,
+            "latency_seconds": {
+              "count": 120,
+              "p50": 0.3433977789999858,
+              "p95": 0.35484156699999403,
+              "p99": 0.3558004899999787
+            }
+          },
+          "query": {
+            "attempts": 240,
+            "errors": 0,
+            "empty_queries": 0,
+            "latency_seconds": {
+              "count": 240,
+              "p50": 0.016893539999955465,
+              "p95": 0.02154310999998188,
+              "p99": 0.024515261999965787
+            }
+          },
+          "resources": {
+            "cpu_seconds_total": 21.036358,
+            "cpu_seconds_by_role": {
+              "pyroscope": 16.236861,
+              "minio": 4.799497
+            },
+            "rss_kib_simultaneous_peak": 400076,
+            "coverage_fraction": 0.9998606306707541,
+            "host_activity_qualified": true,
+            "s3_requests": 4075.0,
+            "s3_read_bytes": 39284583.0,
+            "s3_write_bytes": 500524.0
+          },
+          "rss_kib_peak_by_role": {
+            "minio": 266668,
+            "pyroscope": 133484
+          },
+          "scrape_errors": 0,
+          "container_started_at_by_role": {
+            "pyroscope": "2026-10-05T13:27:27.292811297Z",
+            "minio": "2026-10-05T13:27:20.857273676Z"
+          },
+          "any_oom_killed": false
+        },
+        {
+          "backend": "pyroscope",
+          "repetition": 2,
+          "phase": "steady",
+          "deployment_target": "native",
+          "duration_seconds": 60.08307077699999,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "objectives_met": true,
+          "ingest": {
+            "accepted_rows": 1200,
+            "errors": 0,
+            "latency_seconds": {
+              "count": 120,
+              "p50": 0.343710901999998,
+              "p95": 0.35456819400008044,
+              "p99": 0.35546335799995177
+            }
+          },
+          "query": {
+            "attempts": 240,
+            "errors": 0,
+            "empty_queries": 0,
+            "latency_seconds": {
+              "count": 240,
+              "p50": 0.01702420800006621,
+              "p95": 0.021859934999952202,
+              "p99": 0.02504753999994591
+            }
+          },
+          "resources": {
+            "cpu_seconds_total": 21.279234,
+            "cpu_seconds_by_role": {
+              "pyroscope": 16.610043,
+              "minio": 4.669191
+            },
+            "rss_kib_simultaneous_peak": 400788,
+            "coverage_fraction": 0.999857051033218,
+            "host_activity_qualified": true,
+            "s3_requests": 4031.0,
+            "s3_read_bytes": 38953500.0,
+            "s3_write_bytes": 500516.0
+          },
+          "rss_kib_peak_by_role": {
+            "minio": 263024,
+            "pyroscope": 141072
+          },
+          "scrape_errors": 0,
+          "container_started_at_by_role": {
+            "pyroscope": "2026-10-05T13:30:15.591566462Z",
+            "minio": "2026-10-05T13:30:09.192497288Z"
+          },
+          "any_oom_killed": false
+        },
+        {
+          "backend": "krabka",
+          "repetition": 2,
+          "phase": "steady",
+          "deployment_target": "all",
+          "duration_seconds": 60.602151781999964,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "objectives_met": true,
+          "ingest": {
+            "accepted_rows": 1200,
+            "errors": 0,
+            "latency_seconds": {
+              "count": 120,
+              "p50": 0.013039778999996088,
+              "p95": 0.016919341999937387,
+              "p99": 0.01713795900002424
+            }
+          },
+          "query": {
+            "attempts": 240,
+            "errors": 0,
+            "empty_queries": 0,
+            "latency_seconds": {
+              "count": 240,
+              "p50": 0.01027610200003437,
+              "p95": 0.019519623000064712,
+              "p99": 0.021954305999997814
+            }
+          },
+          "resources": {
+            "cpu_seconds_total": 8.610859,
+            "cpu_seconds_by_role": {
+              "broker": 1.284018,
+              "profiles-all": 3.978487,
+              "minio": 3.348354
+            },
+            "rss_kib_simultaneous_peak": 372892,
+            "coverage_fraction": 0.9998568019636603,
+            "host_activity_qualified": true,
+            "s3_requests": 2182.0,
+            "s3_read_bytes": 3731318.0,
+            "s3_write_bytes": 535094.0
+          },
+          "rss_kib_peak_by_role": {
+            "broker": 35132,
+            "minio": 245764,
+            "profiles-all": 91996
+          },
+          "scrape_errors": 0,
+          "container_started_at_by_role": {
+            "broker": "2026-10-05T13:32:59.118493003Z",
+            "profiles-all": "2026-10-05T13:33:05.641800197Z",
+            "minio": "2026-10-05T13:32:57.84389767Z"
+          },
+          "any_oom_killed": false
+        },
+        {
+          "backend": "krabka",
+          "repetition": 3,
+          "phase": "steady",
+          "deployment_target": "all",
+          "duration_seconds": 60.619266294,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "objectives_met": true,
+          "ingest": {
+            "accepted_rows": 1200,
+            "errors": 0,
+            "latency_seconds": {
+              "count": 120,
+              "p50": 0.013700877000019318,
+              "p95": 0.016801175000068724,
+              "p99": 0.019115812999984882
+            }
+          },
+          "query": {
+            "attempts": 240,
+            "errors": 0,
+            "empty_queries": 0,
+            "latency_seconds": {
+              "count": 240,
+              "p50": 0.010289636000038627,
+              "p95": 0.020505481999975927,
+              "p99": 0.02208341300001848
+            }
+          },
+          "resources": {
+            "cpu_seconds_total": 8.82631,
+            "cpu_seconds_by_role": {
+              "broker": 1.295983,
+              "profiles-all": 4.044148,
+              "minio": 3.486179
+            },
+            "rss_kib_simultaneous_peak": 374164,
+            "coverage_fraction": 0.999863762726354,
+            "host_activity_qualified": true,
+            "s3_requests": 2336.0,
+            "s3_read_bytes": 4218551.0,
+            "s3_write_bytes": 538155.0
+          },
+          "rss_kib_peak_by_role": {
+            "broker": 35052,
+            "minio": 248080,
+            "profiles-all": 91676
+          },
+          "scrape_errors": 0,
+          "container_started_at_by_role": {
+            "broker": "2026-10-05T13:35:05.651134497Z",
+            "profiles-all": "2026-10-05T13:35:12.070518818Z",
+            "minio": "2026-10-05T13:35:04.263291405Z"
+          },
+          "any_oom_killed": false
+        },
+        {
+          "backend": "pyroscope",
+          "repetition": 3,
+          "phase": "steady",
+          "deployment_target": "native",
+          "duration_seconds": 60.0797960540001,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "objectives_met": true,
+          "ingest": {
+            "accepted_rows": 1200,
+            "errors": 0,
+            "latency_seconds": {
+              "count": 120,
+              "p50": 0.3418390410000711,
+              "p95": 0.3541820870000265,
+              "p99": 0.35614782100003595
+            }
+          },
+          "query": {
+            "attempts": 240,
+            "errors": 0,
+            "empty_queries": 0,
+            "latency_seconds": {
+              "count": 240,
+              "p50": 0.0163864859999876,
+              "p95": 0.021733645999916007,
+              "p99": 0.02347502300005999
+            }
+          },
+          "resources": {
+            "cpu_seconds_total": 20.635077,
+            "cpu_seconds_by_role": {
+              "pyroscope": 16.156553,
+              "minio": 4.478524
+            },
+            "rss_kib_simultaneous_peak": 386196,
+            "coverage_fraction": 0.9998542899253726,
+            "host_activity_qualified": true,
+            "s3_requests": 4031.0,
+            "s3_read_bytes": 38954058.0,
+            "s3_write_bytes": 500522.0
+          },
+          "rss_kib_peak_by_role": {
+            "minio": 256112,
+            "pyroscope": 137648
+          },
+          "scrape_errors": 0,
+          "container_started_at_by_role": {
+            "pyroscope": "2026-10-05T13:37:17.027541821Z",
+            "minio": "2026-10-05T13:37:10.627373646Z"
+          },
+          "any_oom_killed": false
+        }
+      ],
+      "workload": {
+        "writers": [
+          1,
+          2,
+          4,
+          8,
+          16,
+          32,
+          64,
+          128,
+          256
+        ],
+        "cardinalities": [
+          1000,
+          5000,
+          20000
+        ]
+      }
     }
-  }
+  },
+  "original_four_signal_controls_completed": true,
+  "completed_original_control_raw_file_checksums": 2918
 }
