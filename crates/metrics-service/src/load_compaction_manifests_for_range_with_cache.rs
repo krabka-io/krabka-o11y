@@ -8,8 +8,8 @@ pub(crate) async fn load_compaction_manifests_for_range_with_cache(
     manifest_prefix: &str,
     start_ms: i64,
     end_ms: i64,
-    cache: &tokio::sync::RwLock<BTreeMap<String, CompactionIndexManifest>>,
-) -> Result<Vec<CompactionIndexManifest>, MetricsServiceError> {
+    cache: &tokio::sync::RwLock<BTreeMap<String, Arc<CompactionIndexManifest>>>,
+) -> Result<Vec<Arc<CompactionIndexManifest>>, MetricsServiceError> {
     load_compaction_manifests_filtered_with_cache(
         store,
         manifest_prefix,

@@ -32,9 +32,18 @@ impl MetricBlockStore {
 
     #[must_use]
     pub fn from_compaction_manifests(
-        mut float_store: BlockStore,
+        float_store: BlockStore,
         histogram_store: Option<BlockStore>,
         manifests: &[CompactionIndexManifest],
+    ) -> Self {
+        Self::from_compaction_manifest_refs(float_store, histogram_store, manifests)
+    }
+
+    #[must_use]
+    pub fn from_compaction_manifest_refs<'a>(
+        mut float_store: BlockStore,
+        histogram_store: Option<BlockStore>,
+        manifests: impl IntoIterator<Item = &'a CompactionIndexManifest>,
     ) -> Self {
         let mut histograms = histogram_store;
         let mut exemplars = None::<BlockStore>;
