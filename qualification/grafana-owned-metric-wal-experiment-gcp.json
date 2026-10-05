@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "experiment": "Consume the fully decoded metric WAL poll and move label strings into the existing atomic head ingestion path.",
+  "source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
+  "implementation_commit": "02c1cafee97563352e283296e85914cc5de232d3",
+  "baseline_source_commit": "838680039ce5d8aeeb70095ca5922b0b8ee5735a",
+  "retained_in_branch": true,
+  "performance_qualified": false,
+  "retention_decision": "Pending exact-image CPU/allocation captures and matched uninstrumented controls. No measured gain claimed.",
+  "validation": {
+    "scoped_targets_passed": 41,
+    "default_promql_unit_cases_passed": 569,
+    "metrics_service_unit_cases_passed": 66,
+    "target_list_sha256": "fe3f2389a4dba06a26d07bf70853564e118d5f88cc637618f72471df5e2112bd",
+    "bazel_log_sha256": "d3ceeb98794c3bf680fb70821df3d8b152a227535987b037f4df6159187f980e",
+    "native_docker_wrappers": [
+      {
+        "target": "//crates/metrics-service:diff_mimir_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "8c621e5d845294d86040e59ce317cfd15cecfb0aaf2c874c443c960cba4f15a1"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "c963785e3f052d60c60b4e070d053890c45045c332d26a1b4fd131739504e7a2"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "7fca974738511bbb22362575d9f5a4bc0c8ca801cd2e2af3a8b27406b8426306"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "95785032bc68cfd151b962c3c690874be590bc98cfc70ab6c4cac0593889243c"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "4e07f5d70608e5fe2b6aaa2a70574eeb5806b2079a89ba6b244bd80844707989"
+      },
+      {
+        "target": "//crates/metrics-service:tsdb_import_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "de0bd979adc1e26032dd0b6acf4c6f5d1423b1751d9c4f46409c2aa8913ba3bb"
+      }
+    ],
+    "native_trace_to_metrics_exemplars": true,
+    "original_production_query_golden": {
+      "source_commit": "bc4bb24193bf485624cf082958a8ff97f33f9763",
+      "result": "PASS on original production code before candidate; golden preserves the existing later duplicate-timestamp value in the direct hot-store query.",
+      "bazel_log_sha256": "c7ae07a4db2f686d8d5d89d4710d88e9ee31119c6b009989a32217e1eb7d4b48"
+    },
+    "negative_control": {
+      "mutation": "Route only the consuming head API through the original borrowed/copying ingestion path.",
+      "expected_failure": "owned_batch_moves_labels_and_preserves_rows_snapshots_and_watermarks",
+      "ownership_regressions_failed": 1,
+      "other_unit_cases_passed": 634,
+      "source_restored_before_final_validation": true,
+      "promql_log_sha256": "9cf5521dc0d04d8ec65d6bbb4af45c99c533945ddb5413b2829612512f6a2f5a",
+      "metrics_service_log_sha256": "8f1ed6efe839257563a2a4c6c85823044ff1796d5d2690e4d0b6c92e7fd938d5"
+    },
+    "coverage": [
+      "Complete float, histogram, metadata and exemplar ledgers",
+      "Canonical duplicate names and fixed FNV fingerprints",
+      "Unicode and tenant isolation",
+      "Original string-buffer identity through the owned head API",
+      "Snapshot isolation and weak-label release",
+      "Complete watermark ranges and atomic rollback after an iterator panic",
+      "Real production decode rollback and full PromQL result goldens",
+      "Experimental PromQL, native upstream/API suites, Clippy and formatting"
+    ]
+  },
+  "gcp_cpu_image_build": {
+    "run_id": 37321844038,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37321844038",
+    "head_sha": "02c1cafee97563352e283296e85914cc5de232d3",
+    "status_at_recording": "in_progress"
+  },
+  "prospective_baseline_image": {
+    "run_id": 37318871557,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37318871557",
+    "source_commit": "838680039ce5d8aeeb70095ca5922b0b8ee5735a",
+    "artifact": {
+      "id": 11350695633,
+      "name": "comparison-image-metrics-838680039ce5d8aeeb70095ca5922b0b8ee5735a",
+      "digest": "sha256:e63f34f0ca494608b10dd8f262f424cab8c2cc1a94825f0c47d4b88e41d8c897",
+      "size_in_bytes": 308258865,
+      "expires_at": "2027-01-03T13:42:24Z"
+    },
+    "archive_digest_verified": true,
+    "all_image_file_checksums_verified": true,
+    "image_tag": "localhost/krabka-o11y:sha-838680039ce5",
+    "manifest_digest": "sha256:29712d6d08b5fd12a4b3488c2094322c0b8b570b4f970981f47a075a5f51b24d",
+    "config_digest": "sha256:29712d6d08b5fd12a4b3488c2094322c0b8b570b4f970981f47a075a5f51b24d",
+    "docker_image_id": "sha256:29712d6d08b5fd12a4b3488c2094322c0b8b570b4f970981f47a075a5f51b24d",
+    "oci_config_digest": "sha256:5987d22eb8b0d764961e54ad027438bc201b7a9fc8e270b9171e8a2fd5330771",
+    "identity_note": "Archived config-digest is Docker inspect Id (OCI manifest identity in this containerd store); OCI config digest comes from the verified image archive."
+  },
+  "scope": "Three fresh alternating same-VM revision pairs will use the preserved preceding product image and identical workload pacing and aggregate budgets. CPU/RSS include broker and MinIO. Instrumented profiles remain diagnostics. Final retained-source qualification must reflect separate cold-label retention review."
+}
