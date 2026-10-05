@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "experiment": "Omit per-entry source label copies for ordinary Loki queries; retain original labels for distinct and tail frames.",
+  "source_commit": null,
+  "retained_in_branch": true,
+  "retention_decision": "All 120 scoped targets and five actual Loki/Grafana Docker wrappers pass. Baseline CPU capture is verified; baseline allocation and candidate exact-image captures and paired comparison remain pending. No measured efficiency gain qualified.",
+  "baseline_source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
+  "baseline_harness_commit": "aeb67637f680bf67f006d343b811f019662bad87",
+  "diagnostic_selection": {
+    "run_id": 37309122926,
+    "source_commit": "45b41ba77d16f017c80c502893cee1157bc30fde",
+    "observed_string_clone_substack_calls": 1445070,
+    "actual_caller_chain": [
+      "String::clone",
+      "BTreeMap::clone_subtree",
+      "matching_loki_stream_entry",
+      "append_matching_hot_log_record",
+      "execute_http_logql_expr",
+      "LogsQueryFrontendAdapter::execute"
+    ],
+    "matcher_source_byte_identical_to_current_baseline": true,
+    "limitations": "Summarized allocation counts include startup and seed; no performance ratio inferred."
+  },
+  "original_production_golden": {
+    "unit_cases_passed": 382,
+    "bazel_log_sha256": "2728b1e51a65fca46ff943524a943ace7a6c9b8d5bf851e9c309e73119e4a0cb",
+    "scope": "Complete folded/categorized query, distinct after source-label rewriting, backfill/live tail frames and unchanged input records. Original folded encoding retains empty buckets after distinct."
+  },
+  "negative_controls": {
+    "copying": {
+      "expected_failed_cases": 1,
+      "other_unit_cases_passed": 382,
+      "unit_log_sha256": "2773a13b56a965944fdc2cdc03fbf3c018b9ba697324bc853794a1e5a8aae842",
+      "bazel_log_sha256": "90507ec0da6103715a0f45888a0b5c13956d35909a3c796ef6175a02bd0d5af3"
+    },
+    "distinct": {
+      "expected_failed_cases": 2,
+      "other_unit_cases_passed": 381,
+      "unit_log_sha256": "47e8437f49d3559e6c4e00e11f7bb990206dfd6630bbca6d2283be03c296c406",
+      "bazel_log_sha256": "3ad45af9a614b9142f0e33318461ef14ea668fbbd10deea70ed19152c9af55c0"
+    },
+    "tail": {
+      "expected_failed_cases": 2,
+      "other_unit_cases_passed": 381,
+      "unit_log_sha256": "8997cb0c82d9787c9e38096001b4aa55d0fffec9130bd9dd0db0d12601ecaf10",
+      "bazel_log_sha256": "a92ea60cca005c7deb4238fb843ab539a72b93f5995c3a9ffc2c9f3f4d8a86de"
+    }
+  },
+  "candidate_source_restored": true,
+  "scoped_initial_checks": {
+    "targets_passed": 3,
+    "unit_cases_passed": 383,
+    "bazel_log_sha256": "104883bfe5d004f476bf550a634d60f4e9fea5794fa7417e470f5c866548404d"
+  },
+  "baseline_profile_runs": {
+    "source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
+    "image_run": 37321844038,
+    "image_artifact": "comparison-image-metrics-02c1cafee97563352e283296e85914cc5de232d3",
+    "runs": {
+      "cpu": 37329585983,
+      "allocations": 37329590449
+    },
+    "head_shas": {
+      "cpu": "aeb67637f680bf67f006d343b811f019662bad87",
+      "allocations": "aeb67637f680bf67f006d343b811f019662bad87"
+    }
+  },
+  "performance_qualified": false,
+  "final_scoped_validation": {
+    "targets_passed": 120,
+    "status_at_recording": "completed",
+    "conclusion": "success",
+    "unit_cases_passed": 383,
+    "target_list_sha256": "a1fbb8c351731c1cd168ce8c3dde1102b163f0e98bc164846ccdb6fcdedd0f9e",
+    "bazel_log_sha256": "f0de0f02c6a1148822162cccbe4fac37263899aa4547cb933daa2b982e121c80",
+    "native_docker_wrappers": [
+      {
+        "target": "//crates/observability:loki_differential_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "5f3e436665ed1bc5e641b2320e0ca5f7e88fabcb3cfc938a3ba5030f27c3ad12"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "376d1aa82764c8a58a571eec30ba818f7d96cb4fdc33b6dc10163399c88fefbf"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "bd471bffe4f5196dd089dfafb069629c2b343cd9fa08afaa7f4a740f09ff1530"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "be6a3dd6298167e1c84024b733de676ff5ecd553ec58860db99df510c42af0ab"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "23b7662f79fb320c14bbccc9ec87430616299a884bc8ffed5e9e0159862b1c84"
+      }
+    ]
+  },
+  "scope": "Matched all-role release image and workload with unchanged API, label categorization, publication pacing, budgets and tenant filtering. Instrumented captures remain diagnostics. A same-VM revision control is needed before retention."
+}
