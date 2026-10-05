@@ -439,6 +439,7 @@ mod tests {
         list_calls: Arc<AtomicUsize>,
         get_calls: Arc<AtomicUsize>,
         parquet_reads: Arc<AtomicUsize>,
+        parquet_keys: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
         list_delay: Time,
         manifest_get_delay: Time,
         manifest_active: Arc<AtomicUsize>,
@@ -453,6 +454,7 @@ mod tests {
                 list_calls,
                 get_calls: Arc::new(AtomicUsize::new(0)),
                 parquet_reads: Arc::new(AtomicUsize::new(0)),
+                parquet_keys: Arc::new(std::sync::Mutex::new(std::collections::BTreeSet::new())),
                 list_delay,
                 manifest_get_delay: Time::ZERO,
                 manifest_active: Arc::new(AtomicUsize::new(0)),
@@ -532,6 +534,10 @@ mod tests {
             }
             if !options.head && location.as_ref().ends_with(".parquet") {
                 self.parquet_reads.fetch_add(1, Ordering::SeqCst);
+                self.parquet_keys
+                    .lock()
+                    .unwrap()
+                    .insert(location.to_string());
             }
             self.inner.get_opts(location, options).await
         }
@@ -543,6 +549,10 @@ mod tests {
         ) -> object_store::Result<Vec<Bytes>> {
             if location.as_ref().ends_with(".parquet") {
                 self.parquet_reads.fetch_add(ranges.len(), Ordering::SeqCst);
+                self.parquet_keys
+                    .lock()
+                    .unwrap()
+                    .insert(location.to_string());
             }
             self.inner.get_ranges(location, ranges).await
         }
