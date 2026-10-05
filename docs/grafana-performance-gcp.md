@@ -66,7 +66,9 @@ are preserved in the [experiment record](../qualification/grafana-fused-instant-
 The later shared-records Loki image measures 0.87× CPU, 1.00× RSS and
 54.44/78.17ms p99 in its [own record](../qualification/grafana-loki-shared-records-experiment-gcp.json).
 All seven binaries differ in that image, so it cannot replace rows for the
-other three signals by binary equivalence. The metrics cache-hit experiment still requires its isolated comparison.
+other three signals by binary equivalence. The isolated metrics cache-hit comparison retained the change: median
+query p99 fell 7.3%; whole-deployment CPU was unchanged. Its exact images
+and full pair ranges are in the live-label experiment record.
 The decimal fingerprint formatting experiment was measured and reverted;
 its CPU and query latency gains were not established.
 
