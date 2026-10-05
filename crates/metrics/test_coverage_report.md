@@ -5,7 +5,7 @@
 | **Crate** | `krabka-metrics` |
 | **Signal** | metrics |
 | **Upstream surface** | Remote write, OTLP, WAL records, blocks, and indexes |
-| **Date** | 2026-09-13 |
+| **Date** | 2026-10-05 |
 
 ## Compatibility Coverage Summary
 
@@ -14,10 +14,11 @@ The owned behavior below has executable coverage, and delegated compatibility is
 | Surface | Behavior | Result | Test | Oracle |
 | :--- | :--- | :--- | :--- | :--- |
 | **Remote write, OTLP, WAL records, blocks, and indexes** | Remote write reaches a metric block | Pass | `tests/ingest_roundtrip.rs::remote_write_v1_lands_as_block` | End-to-end crate test |
+| **Metric-family metadata** | Classic histogram metadata is indexed by the base family while samples retain their suffixed series identity | Pass | `src/compactor.rs::tests::classic_histogram_metadata_is_indexed_by_its_metric_family` | Independent bucket and family labels through WAL generation and compaction |
 
 ## Test Inventory
 
-The crate has 382 source-declared unit, property, corpus, or integration tests.
+The crate has 437 source-declared unit, property, corpus, or integration tests.
 
 Run the complete non-container inventory with:
 
@@ -34,8 +35,9 @@ Docker-tagged differential suites are listed in the root [compatibility matrix](
 | Area | Scenario | Planned | Implemented | Status |
 | :--- | :--- | :--- | :--- | :--- |
 | Owned surface | Remote write reaches a metric block | 1 | 1 | Complete |
+| Owned surface | Classic histogram metadata is indexed by the base family while samples retain their suffixed series identity | 1 | 1 | Complete |
 | Delegated or external surface | PromQL response behavior is delegated to krabka-promql and krabka-metrics-service. | — | — | Delegated or excluded |
-| **Total owned** |  | **1** | **1** | **100%** |
+| **Total owned** |  | **2** | **2** | **100%** |
 
 ## Line Coverage
 

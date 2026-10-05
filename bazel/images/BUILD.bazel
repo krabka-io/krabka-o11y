@@ -15,7 +15,7 @@ load("@rules_img//img:convert.bzl", "image_manifest_from_oci_layout")
 load("@rules_img//img:load.bzl", "image_load")
 load("@rules_img//img:media_types.bzl", "GZIP_LAYER")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load(":images.bzl", "BUILT_IMAGES", "CLIENTS", "IMAGES", "ORACLES", "PULLED_IMAGES")
+load(":images.bzl", "BUILT_IMAGES", "CLIENTS", "ORACLES", "PULLED_IMAGES")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -67,6 +67,13 @@ package(default_visibility = ["//visibility:public"])
 ]
 
 # The tarball each `image_load` produces, which is what a test consumes.
+filegroup(
+    name = "krabka_tar",
+    srcs = ["//bazel/images/krabka:metrics_deployment_load"],
+    output_group = "tarball",
+    tags = ["docker"],
+)
+
 [
     filegroup(
         name = name + "_tar",
@@ -74,7 +81,7 @@ package(default_visibility = ["//visibility:public"])
         output_group = "tarball",
         tags = ["docker"],
     )
-    for name in IMAGES
+    for name in dict(PULLED_IMAGES.items() + BUILT_IMAGES.items())
 ]
 
 [

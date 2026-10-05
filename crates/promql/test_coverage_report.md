@@ -5,7 +5,7 @@
 | **Crate** | `krabka-promql` |
 | **Signal** | metrics |
 | **Upstream surface** | PromQL parsing, evaluation, and Prometheus HTTP behavior |
-| **Date** | 2026-09-13 |
+| **Date** | 2026-10-05 |
 
 ## Compatibility Coverage Summary
 
@@ -14,10 +14,11 @@ The owned behavior below has executable coverage, and delegated compatibility is
 | Surface | Behavior | Result | Test | Oracle |
 | :--- | :--- | :--- | :--- | :--- |
 | **PromQL parsing, evaluation, and Prometheus HTTP behavior** | The checked-in Prometheus corpus passes in full | Pass | `tests/conformance_report.rs::checked_in_corpus_is_green_and_writes_report` | Vendored Prometheus corpus |
+| **Remote-read range hints** | Positive hint endpoints override individually, unset bounds retain the query range, and invalid or oversized hint ranges are rejected | Pass | `tests/http_api.rs::remote_read_endpoint_returns_matching_float_samples; remote_read_endpoint_rejects_invalid_or_oversized_hint_ranges` | Fixed samples and configured tenant range limits |
 
 ## Test Inventory
 
-The crate has 686 source-declared unit, property, corpus, or integration tests.
+The crate has 708 source-declared unit, property, corpus, or integration tests.
 
 Run the complete non-container inventory with:
 
@@ -34,8 +35,9 @@ Docker-tagged differential suites are listed in the root [compatibility matrix](
 | Area | Scenario | Planned | Implemented | Status |
 | :--- | :--- | :--- | :--- | :--- |
 | Owned surface | The checked-in Prometheus corpus passes in full | 1 | 1 | Complete |
+| Owned surface | Positive hint endpoints override individually, unset bounds retain the query range, and invalid or oversized hint ranges are rejected | 1 | 1 | Complete |
 | Delegated or external surface | Live upstream HTTP comparison is delegated to krabka-metrics-service. | — | — | Delegated or excluded |
-| **Total owned** |  | **1** | **1** | **100%** |
+| **Total owned** |  | **2** | **2** | **100%** |
 
 ## Line Coverage
 

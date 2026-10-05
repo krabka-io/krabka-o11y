@@ -93,6 +93,8 @@ pull_image = use_repo_rule("@rules_img//img:pull.bzl", "pull")
         # target reports a difference nobody changed.
         ("alloy", "mirror.gcr.io", "grafana/alloy", "v1.19.2", "sha256:1eeba15ef3193438c72f66efd3d76f769c523a4c661db0fae6eddde906004bc8"),
         ("alloy_previous", "mirror.gcr.io", "grafana/alloy", "v1.18.1", "sha256:754409730f1a4ed9781f8a2ea3b6a8c55750ee125a267ecf8fb449f9a25c109a"),
+        # The same broker image as the standalone Compose deployment.
+        ("broker", "ghcr.io", "krabka-io/krabka-broker", "v0.7.0", "sha256:54ae711e5a7c8bdb03414402722f5c41dd50980ab315ab84d0803cca775fb463"),
         ("grafana", "mirror.gcr.io", "grafana/grafana", "13.2.2", "sha256:9924c7fe0effe4a5fea08b3451905de54f09fde9d1589463a5f2d02d9ec158bc"),
         ("grafana_previous", "mirror.gcr.io", "grafana/grafana", "13.1.6", "sha256:66611512245b182e0928918b71db91fef25cb8f13d94f71fd2fb6253c383bb64"),
         ("loki", "mirror.gcr.io", "grafana/loki", "3.7.7", "sha256:550d599ec4efacd8ebc0a5871766855057cba2bd0c669c0711d898c00d6d901f"),

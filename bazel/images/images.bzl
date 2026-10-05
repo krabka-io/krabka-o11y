@@ -85,6 +85,7 @@ CLIENTS = {
 
 # The images //MODULE.bazel pulls by digest.
 PULLED_IMAGES = {
+    "broker": "ghcr.io/krabka-io/krabka-broker:v0.7.0",
     "alloy": CLIENTS["alloy"].image,
     "alloy_previous": CLIENTS["alloy_previous"].image,
     "grafana": CLIENTS["grafana"].image,
@@ -118,7 +119,9 @@ BUILT_IMAGES = {
     "minio": "docker.io/krabka-io/minio:RELEASE.2026-09-22T19-25-18Z",
 }
 
-IMAGES = dict(PULLED_IMAGES.items() + BUILT_IMAGES.items())
+# The application tarball comes from //bazel/images/krabka:metrics_deployment_load and contains
+# the binaries built from this checkout, rather than a released image.
+IMAGES = dict(PULLED_IMAGES.items() + BUILT_IMAGES.items(), krabka = "docker.io/krabka-io/krabka-o11y:metrics-deployment")
 
 def image_tag_env(name):
     """The environment variable a suite reads image `name`'s tag from."""

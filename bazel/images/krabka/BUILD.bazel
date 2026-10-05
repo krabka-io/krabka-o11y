@@ -13,6 +13,7 @@ load("@rules_img//img:layer.bzl", "file_metadata", "image_layer")
 load("@rules_img//img:load.bzl", "image_load")
 load("@rules_img//img:media_types.bzl", "GZIP_LAYER")
 load("@rules_img//img:push.bzl", "image_push")
+load("//bazel/images:images.bzl", "IMAGES")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -126,6 +127,16 @@ image_load(
     name = "load",
     image = ":image",
     tag = "krabka-o11y:dev",
+)
+
+# A canonical reference for Docker's containerd image store. The test wrapper
+# records its content ID before starting any role, so tag changes cannot alter
+# a deployment already under test.
+image_load(
+    name = "metrics_deployment_load",
+    image = ":image",
+    tag = IMAGES["krabka"],
+    tags = ["docker"],
 )
 
 image_push(
