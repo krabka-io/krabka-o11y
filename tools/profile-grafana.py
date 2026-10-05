@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -69,7 +70,8 @@ def capture(deployment, output, seconds, windows, cpu=True):
                 if member.is_dir():
                     continue
                 # Flatten untrusted archive paths instead of extracting them.
-                path = output / ('minio-' + pathlib.PurePosixPath(member.filename).name)
+                name = re.sub(r'[^A-Za-z0-9._-]', '_', pathlib.PurePosixPath(member.filename).name)
+                path = output / ('minio-' + name)
                 path.write_bytes(profiles.read(member))
                 if 'mem' in path.name or 'heap' in path.name:
                     summarize(path, 'inuse_space')
@@ -133,7 +135,7 @@ def analyze_allocations(deployment, output, role):
         root = pathlib.Path(directory) / 'root'
         root.mkdir()
         env.command('docker', 'export', '--output', str(archive), deployment.ids[role])
-        env.command('tar', '-xf', str(archive), '-C', str(root))
+        env.command('tar', '-xf', str(archive), '-C', str(root), '--exclude=dev', '--exclude=./dev')
         copy_profiler(interpreter, root / 'opt/heaptrack-analysis')
         interpreted = raw.with_suffix('.interpreted')
         with raw.open('rb') as source, interpreted.open('wb') as destination:
@@ -158,9 +160,9 @@ def run(args):
               'image_commit': args.image_commit, 'image_digest': args.image_digest,
               'image_identity': json.loads(env.command('docker', 'inspect', args.image))[0],
               'signal': args.signal, 'deployment_target': args.deployment_target,
-              'profile_seconds': args.profile_seconds, 'windows': args.windows,
+              'profile_seconds': args.profile_seconds, 'windows': args.windows if args.mode == 'cpu' else 1,
               'mode': args.mode,
-              'tool_versions': {'go': env.command('go', 'version')},
+              'tool_versions': {'go': env.command('go', 'version'), 'curl': env.command('curl', '--version')},
               'host': {'cpu_count': os.cpu_count(), 'kernel': env.command('uname', '-r'),
                        'lscpu': json.loads(env.command('lscpu', '-J'))},
               'seed': env.SEED, 'writers': 2, 'write_interval_seconds': 1,
@@ -170,6 +172,9 @@ def run(args):
     deployment = comparison.ComparisonDeployment(output / 'deployment', args.image, args.signal, False,
                                                  args.deployment_target, args.deployment_target)
     allocation_role = configure_allocations(deployment, output) if args.mode == 'allocations' else None
+    if allocation_role:
+        report['instrumented_role'] = allocation_role
+        report['tool_versions']['heaptrack'] = env.command('heaptrack', '--version')
     try:
         deployment.start()
         cardinality = 1000 if args.signal == 'metrics' else 100
