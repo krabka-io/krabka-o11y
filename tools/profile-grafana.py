@@ -32,6 +32,22 @@ def cpu_profile(port, seconds, output):
     summarize(output)
 
 
+def perf_profile(deployment, role, seconds, output):
+    pid = deployment.pids[role]
+    result = subprocess.run(['sudo', '-n', 'perf', 'record', '-e', 'cpu-clock:u', '-F', '99',
+                             '--call-graph', 'dwarf,16384', '-p', str(pid), '-o', str(output),
+                             '--', 'sleep', str(seconds)], capture_output=True, text=True, check=True)
+    output.with_name(output.name + '.record.txt').write_text(result.stdout + result.stderr)
+    env.command('sudo', '-n', 'chown', f'{os.getuid()}:{os.getgid()}', str(output))
+    for kind in ('top', 'cum'):
+        report = env.command('sudo', '-n', 'perf', 'report', '--stdio', '-i', str(output),
+                             '--symfs', f'/proc/{pid}/root', '--sort', 'symbol', '--percent-limit', '0.5',
+                             '--children' if kind == 'cum' else '--no-children')
+        output.with_name(output.name + '.' + kind + '.txt').write_text(report)
+        if re.search(r'Samples:\s+0\b', report) or 'Samples:' not in report:
+            raise RuntimeError(f'empty CPU profile: {output}')
+
+
 def summarize(profile, sample_index=None):
     options = ['-sample_index=' + sample_index] if sample_index else []
     for kind in ('top', 'cum'):
@@ -44,7 +60,7 @@ def summarize(profile, sample_index=None):
             raise RuntimeError(f'empty CPU profile: {profile}')
 
 
-def capture(deployment, output, seconds, windows, cpu=True):
+def capture(deployment, output, seconds, windows, cpu=True, cpu_profiler='perf'):
     def memory_snapshot(name):
         records = {}
         for role, pid in deployment.pids.items():
@@ -55,7 +71,10 @@ def capture(deployment, output, seconds, windows, cpu=True):
     def role(name, port):
         for window in range(windows):
             print('CPU profile', name, window + 1, flush=True)
-            cpu_profile(port, seconds, output / f'{name}.{window + 1}.cpu.pb.gz')
+            if cpu_profiler == 'perf':
+                perf_profile(deployment, name, seconds, output / f'{name}.{window + 1}.cpu.perf.data')
+            else:
+                cpu_profile(port, seconds, output / f'{name}.{window + 1}.cpu.pb.gz')
 
     def minio():
         archive = output / 'minio-profile.zip'
@@ -145,7 +164,8 @@ def analyze_allocations(deployment, output, role):
                             'chroot', str(root), '/opt/heaptrack-analysis/heaptrack_interpret'],
                            stdin=source, stdout=destination, check=True)
         result = env.command('heaptrack_print', '-f', str(interpreted))
-        raw.with_suffix('.summary.txt').write_text(result)
+        demangled = subprocess.check_output(['c++filt', '-s', 'rust'], input=result, text=True)
+        raw.with_suffix('.summary.txt').write_text(demangled)
     for path in (raw, interpreted):
         env.command('gzip', str(path))
 
@@ -162,6 +182,7 @@ def run(args):
               'signal': args.signal, 'deployment_target': args.deployment_target,
               'profile_seconds': args.profile_seconds, 'windows': args.windows if args.mode == 'cpu' else 1,
               'mode': args.mode,
+              'cpu_profiler': args.cpu_profiler,
               'tool_versions': {'go': env.command('go', 'version'), 'curl': env.command('curl', '--version')},
               'host': {'cpu_count': os.cpu_count(), 'kernel': env.command('uname', '-r'),
                        'lscpu': json.loads(env.command('lscpu', '-J'))},
@@ -172,6 +193,8 @@ def run(args):
     deployment = comparison.ComparisonDeployment(output / 'deployment', args.image, args.signal, False,
                                                  args.deployment_target, args.deployment_target)
     allocation_role = configure_allocations(deployment, output) if args.mode == 'allocations' else None
+    if args.mode == 'cpu' and args.cpu_profiler == 'perf':
+        report['tool_versions']['perf'] = env.command('perf', 'version')
     if allocation_role:
         report['instrumented_role'] = allocation_role
         report['tool_versions']['heaptrack'] = env.command('heaptrack', '--version')
@@ -184,7 +207,8 @@ def run(args):
         report['started_unix'] = time.time()
         result, operations, samples = env.measure(deployment, args.signal, seconds, 15, 2,
             cardinality, interval=1, check_durability=False,
-            on_measurement=lambda: capture(deployment, output, args.profile_seconds, args.windows, cpu=args.mode == 'cpu'))
+            on_measurement=lambda: capture(deployment, output, args.profile_seconds, args.windows,
+                                           cpu=args.mode == 'cpu', cpu_profiler=args.cpu_profiler))
         report['workload'] = result
         for name, records in [('operations', operations), ('telemetry', samples)]:
             (output / (name + '.jsonl')).write_text(''.join(json.dumps(record) + '\n' for record in records))
@@ -207,6 +231,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--signal', choices=comparison.PRODUCTS, required=True)
     parser.add_argument('--mode', choices=['cpu', 'allocations'], default='cpu')
+    parser.add_argument('--cpu-profiler', choices=['perf', 'pprof'], default='perf')
     parser.add_argument('--image', required=True)
     parser.add_argument('--image-commit', required=True)
     parser.add_argument('--image-digest', required=True)
