@@ -147,6 +147,25 @@ async fn refreshing_store_preserves_shared_labels_and_tenant_deletion() {
     assert!(published[0].as_ref() == &labels());
     assert!(!Arc::ptr_eq(&published[0], &hot[0]));
     assert!(Arc::ptr_eq(&shared[0], &hot[0]));
+    let repeated = fixture
+        .store
+        .series_shared("tenant-a", &matchers, 5_000, 12_000)
+        .await
+        .unwrap();
+    assert!(repeated.len() == 1 && repeated[0].as_ref() == &labels());
+    assert!(Arc::ptr_eq(&repeated[0], &published[0]));
+    let cold_first_scan = fixture
+        .store
+        .try_latest_float_scan("tenant-a", &matchers, 5_000, 5_001, 12_000, 5)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(cold_first_scan.samples == vec![(labels().fingerprint(), 11_000, 7.0, Some(5_000))]);
+    assert!(cold_first_scan.labels.len() == 1);
+    assert!(Arc::ptr_eq(
+        &cold_first_scan.labels[&labels().fingerprint()],
+        &published[0]
+    ));
 
     fixture
         .objects
