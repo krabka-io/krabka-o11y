@@ -96,7 +96,7 @@
       "provenance_sha256": "684a830d6b4d78c47e0ebbdd1e702a2b3d16cefe7a320d175a0d9086ceb49bd3"
     },
     "other_native_scope": {
-      "status": "running",
+      "status": "passed",
       "source_commit": "116f67626ea8c242549b283c0ca85dcedc03f3e9",
       "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
       "targets": [
@@ -109,17 +109,26 @@
         "//crates/profiles:pyroscope_differential_previous_docker_test"
       ],
       "retries_disabled": true,
-      "scope": "Native compatibility and deployment checks on current source with original metadata restored. They supplement core checks and do not qualify the historical image source globally."
+      "scope": "Native compatibility and deployment checks on current source with original metadata restored. They supplement core checks and do not qualify the historical image source globally.",
+      "targets_passed": 7,
+      "rust_cases_passed": 53,
+      "ignored_cases": 0,
+      "provenance_path": "qualification/evidence/correctness/single-cgu-other_native_scope-116f6762/provenance.json",
+      "provenance_sha256": "c54648081ce7f714b280420bbe0fe1c114e6e3def88eaa8c013008384089242b",
+      "native_wrappers_passed": 7
     },
     "full_ordinary_scope": {
-      "status": "queued_behind_native_checks",
+      "status": "running",
       "source_commit": "45d9c94b273b6cf0781249a9c71002ca46afac07",
       "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
       "target_pattern": "//...",
       "docker_and_scale_excluded_by_repository_defaults": true,
       "retries_disabled": true,
-      "scope": "Full ordinary Bazel suite on current source, including integration tests and Clippy, with one codegen unit. Native compatibility checks remain a separate scope."
-    }
+      "scope": "Full ordinary Bazel suite on current source, including integration tests and Clippy, with one codegen unit. Native compatibility checks remain a separate scope.",
+      "targets": 385
+    },
+    "native_wrappers_passed": 10,
+    "native_cases_passed": 67
   },
   "next_action": "Measure Loki, Tempo and Pyroscope with the same exact images. Finish native and ordinary correctness checks. Validate final combined source before retention.",
   "baseline_image_verified": {
