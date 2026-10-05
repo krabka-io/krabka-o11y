@@ -399,6 +399,15 @@ Decimal length-prefix construction still accounts for 4,513,200 allocation
 calls, and pipeline evaluation still clones label maps repeatedly. These are
 the next concrete targets.
 
+The decimal length prefix now writes directly into the canonical byte buffer
+with the standard I/O formatter, avoiding the temporary decimal `String`.
+The encoding and XXH3 input remain identical. An independent byte ledger
+covers empty strings, multi-digit lengths, Unicode byte lengths, delimiters
+and existing buffer contents. All 120 scoped checks pass, including
+block-store unit tests, the observability/LogQL scope and real Loki and
+Grafana integration and end-to-end suites. Allocation and uninstrumented
+release-image checks are still required before claiming its performance effect.
+
 The [experiment record](../qualification/grafana-loki-shared-records-experiment-gcp.json)
 retains the source actually built, its equivalent rebased commit and all
 checks. All seven application binaries differ in this image; earlier metrics,
