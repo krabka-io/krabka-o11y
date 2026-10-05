@@ -24,6 +24,9 @@ use super::{Arc, BTreeMap, HashMap, Labels, ScannedRows, SeriesFingerprint, Wind
 /// directly and is not kept. Results therefore never change, and only the
 /// redundant store scans are removed.
 pub(crate) struct RangeScanCacheInner {
+    /// A single instant leaf can use latest samples without changing the
+    /// shared full-scan snapshot seen by composite or range expressions.
+    pub(crate) allow_latest_float_samples: bool,
     /// The window that a range query scans for each matcher set, or `None`
     /// for an instant query.
     pub(crate) union: Option<(i64, i64)>,
@@ -51,6 +54,7 @@ impl RangeScanCacheInner {
 
     fn new(union: Option<(i64, i64)>) -> Self {
         Self {
+            allow_latest_float_samples: false,
             union,
             rows: HashMap::new(),
             labels: HashMap::new(),

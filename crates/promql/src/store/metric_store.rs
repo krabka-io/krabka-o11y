@@ -6,6 +6,23 @@ use super::{
 /// Resolves `PromQL` matchers to `DataFusion` tables over the metric data of a tenant.
 #[async_trait::async_trait]
 pub trait MetricStore: Send + Sync {
+    /// Latest float sample per series for one instant, or `None` to use a full scan.
+    ///
+    /// An implementation must prove that its complete scan would stay within
+    /// `max_samples`, preserve hot-source precedence and stale markers, and
+    /// return at most one row per fingerprint. Bounds are inclusive. Range
+    /// queries do not use this shortcut.
+    async fn try_latest_float_samples(
+        &self,
+        _tenant: &str,
+        _matchers: &[LabelMatcher],
+        _start_ms: i64,
+        _end_ms: i64,
+        _max_samples: usize,
+    ) -> Result<Option<Vec<krabka_metrics::FloatSampleRow>>, PromqlError> {
+        Ok(None)
+    }
+
     /// Registers the float and histogram tables for matched series in `[start_ms, end_ms]`.
     ///
     /// The result also names every block the scan answered without. See

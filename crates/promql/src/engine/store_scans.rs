@@ -7,7 +7,9 @@ use super::{
     annotations::emit_warning,
     merge_by_fingerprint::merge_by_fingerprint,
     record_queryable_samples,
-    row_cache::{FloatRow, FloatWindow, HistogramRow, ScannedRows, through_scan_cache},
+    row_cache::{
+        FloatRow, FloatWindow, HistogramRow, RANGE_SCAN_CACHE, ScannedRows, through_scan_cache,
+    },
     samples_per_query_exceeded, series_per_query_exceeded,
 };
 use crate::{
@@ -32,6 +34,67 @@ fn emit_scan_warnings(scan: &ScanResult) {
 }
 
 impl<S: MetricStore> PromqlEngine<S> {
+    pub(super) async fn latest_labeled_series(
+        &self,
+        tenant: &str,
+        matcher_sets: &[Vec<LabelMatcher>],
+        after_ms: i64,
+        through_ms: i64,
+    ) -> Result<Option<Vec<LabeledSeries>>> {
+        let allowed = RANGE_SCAN_CACHE
+            .try_with(|cache| {
+                cache
+                    .lock()
+                    .expect("range scan cache poisoned")
+                    .allow_latest_float_samples
+            })
+            .unwrap_or(false);
+        if !allowed {
+            return Ok(None);
+        }
+        let [matchers] = matcher_sets else {
+            return Ok(None);
+        };
+        let Some(rows) = self
+            .store
+            .try_latest_float_samples(
+                tenant,
+                matchers,
+                after_ms.saturating_add(1),
+                through_ms,
+                self.opts.max_samples,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        if rows.len() > self.opts.max_samples {
+            return Err(samples_per_query_exceeded(
+                self.opts.max_samples,
+                rows.len(),
+            ));
+        }
+        let labels = self
+            .labels_by_fingerprint_sets(tenant, matcher_sets, after_ms, through_ms)
+            .await?;
+        record_queryable_samples(rows.len());
+        Ok(Some(
+            rows.into_iter()
+                .filter_map(|(fp, ts_ms, value, start_timestamp_ms)| {
+                    Some(LabeledSeries {
+                        fp,
+                        labels: Arc::clone(labels.get(&fp)?),
+                        samples: vec![TimedValue {
+                            ts_ms,
+                            value,
+                            start_timestamp_ms,
+                        }],
+                    })
+                })
+                .collect(),
+        ))
+    }
+
     /// The series of one matcher set over `[start_ms, end_ms]`, by fingerprint.
     ///
     /// A range query resolves the same selector's series at every step. Labels
