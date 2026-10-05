@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::*;
 
 #[test]
-fn owned_batch_moves_labels_and_preserves_rows_snapshots_and_watermarks() {
+fn wal_batch_preserves_rows_snapshots_and_watermarks() {
     let head = WalHead::new();
     let before = head.snapshot();
     let first = WalRecord {
@@ -18,7 +18,6 @@ fn owned_batch_moves_labels_and_preserves_rows_snapshots_and_watermarks() {
         },
         exemplars: Vec::new(),
     };
-    let buffers = [first.labels[1].1.as_ptr(), first.labels[2].1.as_ptr()];
     let labels = lbls(&[("a", "=x\n"), ("b", "last")]);
     let other = lbls(&[("é", "🦀\0"), ("", ""), ("x", "y=z\n")]);
     let record = |tenant: &str, labels: &Labels, payload, exemplars| WalRecord {
@@ -27,7 +26,7 @@ fn owned_batch_moves_labels_and_preserves_rows_snapshots_and_watermarks() {
         payload,
         exemplars,
     };
-    head.apply_owned_wal_records_at([
+    let records = [
         (first, PartitionIndex(0), Offset(7)),
         (
             record(
@@ -85,7 +84,12 @@ fn owned_batch_moves_labels_and_preserves_rows_snapshots_and_watermarks() {
             PartitionIndex(0),
             Offset(9),
         ),
-    ]);
+    ];
+    head.apply_wal_records_at(
+        records
+            .iter()
+            .map(|(record, partition, offset)| (record, *partition, *offset)),
+    );
     let after = head.snapshot();
     let mut floats = after
         .floats
@@ -126,8 +130,6 @@ fn owned_batch_moves_labels_and_preserves_rows_snapshots_and_watermarks() {
             ]
     );
     let first = after.floats["t"].iter().next().unwrap();
-    assert2::assert!(first.labels.get("a").unwrap().as_ptr() == buffers[0]);
-    assert2::assert!(first.labels.get("b").unwrap().as_ptr() == buffers[1]);
     assert2::assert!(after.hists.len() == 1 && after.hists["t"].len() == 1);
     let hist = after.hists["t"].iter().next().unwrap();
     assert2::assert!(
@@ -182,27 +184,21 @@ fn owned_batch_moves_labels_and_preserves_rows_snapshots_and_watermarks() {
 }
 
 #[test]
-fn owned_batch_panic_does_not_publish_a_prefix_or_poison_later_writes() {
+fn wal_batch_panic_does_not_publish_a_prefix_or_poison_later_writes() {
     let head = WalHead::new();
     let labels = lbls(&[("app", "api")]);
+    let first = float_record("t", &labels, 100, 1.0);
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        head.apply_owned_wal_records_at(
-            std::iter::once((
-                float_record("t", &labels, 100, 1.0),
-                PartitionIndex(0),
-                Offset(7),
-            ))
-            .chain(std::iter::from_fn(|| panic!("failed after first record"))),
+        head.apply_wal_records_at(
+            std::iter::once((&first, PartitionIndex(0), Offset(7)))
+                .chain(std::iter::from_fn(|| panic!("failed after first record"))),
         );
     }));
     assert2::assert!(panicked.is_err());
     assert2::assert!(head.snapshot().floats.is_empty());
     assert2::assert!(head.high_water_offset(PartitionIndex(0)).is_none());
-    head.apply_owned_wal_records_at([(
-        float_record("t", &labels, 200, 2.0),
-        PartitionIndex(0),
-        Offset(8),
-    )]);
+    let next = float_record("t", &labels, 200, 2.0);
+    head.apply_wal_records_at([(&next, PartitionIndex(0), Offset(8))]);
     let snapshot = head.snapshot();
     assert2::assert!(
         snapshot.floats["t"]
