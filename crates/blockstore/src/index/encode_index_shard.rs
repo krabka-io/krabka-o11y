@@ -1,6 +1,6 @@
 use super::{
-    BTreeMap, INDEX_SHARD_FORMAT_VERSION, INDEX_SHARD_MAGIC, IndexShardPayload, Labels,
-    push_ivarint, push_uvarint,
+    BTreeMap, INDEX_SHARD_FORMAT_VERSION, INDEX_SHARD_MAGIC, IndexShardPayload, push_ivarint,
+    push_uvarint,
 };
 
 /// Encodes one shard.
@@ -50,7 +50,7 @@ pub(crate) fn encode_index_shard(payload: &IndexShardPayload<'_>) -> Vec<u8> {
     for fingerprint in &payload.selected {
         out.extend_from_slice(&fingerprint.to_le_bytes());
         let labels = payload.series.get(fingerprint);
-        let count = labels.map_or(0, Labels::len);
+        let count = labels.map_or(0, |labels| labels.len());
         push_len(&mut out, count);
         if let Some(labels) = labels {
             for (name, value) in labels.iter() {

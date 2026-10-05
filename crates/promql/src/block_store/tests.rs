@@ -52,6 +52,7 @@ mod metadata_reads_compacted_metadata_sidecar_blocks;
 mod prometheus_query_reads_float_samples_from_blockstore;
 mod prometheus_query_rebuilds_float_index_from_compaction_manifest;
 mod request_counts;
+mod shared_cold_series_labels;
 mod sidecar_manifest;
 mod tsdb_blocks_reports_compaction_manifest_blocks;
 mod write_float_block;
