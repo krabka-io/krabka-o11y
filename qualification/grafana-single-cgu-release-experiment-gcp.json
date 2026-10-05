@@ -48,7 +48,7 @@
   },
   "schema_version": 1,
   "experiment": "One Rust code generation unit for executable footprint and runtime efficiency",
-  "status": "canonical_goldens_and_setting_analysis_passed_image_build_running",
+  "status": "image_verified_text_size_reduced_core_correctness_running_profile_upload_pending",
   "baseline_image_reuse": "The exact restored-source cold fingerprint reuse candidate supplies the baseline image. All source, dependencies and workload harness files match; only .bazelrc differs. Both contain the same dense metadata and cold fingerprint reuse candidates.",
   "candidate_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371662781",
   "baseline_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
@@ -66,7 +66,14 @@
     "retries_disabled": true,
     "targets_passed": 2,
     "provenance_path": "qualification/evidence/correctness/single-cgu-canonical-goldens/provenance.json",
-    "provenance_sha256": "392aaff4e15c0bbbe575e2bd11622c2085043288895d40cdcc513af7567d761d"
+    "provenance_sha256": "392aaff4e15c0bbbe575e2bd11622c2085043288895d40cdcc513af7567d761d",
+    "core_scope": {
+      "status": "running",
+      "source_commit": "df216f0730426dad2b978e11ea1d748d82d0796b",
+      "targets": 23,
+      "explicit_compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
+      "scope": "Ten core unit suites, library Clippy checks, both canonical goldens and the full metadata ledger on the current source with the original metadata implementation restored. This supplements the earlier two goldens on the immutable trial source."
+    }
   },
   "next_action": "Verify exact image source and checksums, compare code sections and runtime filesystem/configuration against the baseline, and complete correctness checks. Static executable size and sampled profiles do not qualify RSS or CPU improvement; matched Mimir and other-signal measurements remain required before retention.",
   "baseline_image_verified": {
@@ -93,5 +100,50 @@
     "raw_files_verified": 238,
     "diagnostic_only": true,
     "performance_qualified": false
+  },
+  "candidate_image_verified": {
+    "image_provenance": {
+      "run_id": 37371662781,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371662781",
+      "source_commit": "8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+      "artifact": {
+        "id": 11369739706,
+        "name": "comparison-image-logs-8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+        "digest": "sha256:af6d8ebab2943f29ae8a4ebbf3d3c6a4d1b65132a88f9c22e93d72d8eae35982",
+        "size_in_bytes": 212855054,
+        "expires_at": "2027-01-03T20:45:00Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-8b4356bd16c0",
+      "manifest_digest": "sha256:a4c7192ee7e48f9a573f7534e863b152cac56c02bb092a8255fb5837a9c1c995",
+      "config_digest": "sha256:a4c7192ee7e48f9a573f7534e863b152cac56c02bb092a8255fb5837a9c1c995"
+    },
+    "verified_before_profile_artifact_upload_complete": true,
+    "diagnostic_only": true
+  },
+  "image_runtime_control": {
+    "verified": true,
+    "proof_path": "qualification/evidence/profiling/single-cgu-image-pair.json",
+    "proof_sha256": "5b14419f3c0452871bfd245b37cbdc2cbc0fa090a8772701da3a610066471704",
+    "filesystem_paths_checked": 380,
+    "changed_application_binary_paths": [
+      "usr/local/bin/krabka-metrics",
+      "usr/local/bin/krabka-metrics-service",
+      "usr/local/bin/krabka-o11y-bootstrap",
+      "usr/local/bin/krabka-o11y-recovery",
+      "usr/local/bin/krabka-observability",
+      "usr/local/bin/krabka-profiles",
+      "usr/local/bin/krabka-traces"
+    ]
+  },
+  "static_code_sections": {
+    "proof_path": "qualification/evidence/profiling/single-cgu-code-sections.json",
+    "proof_sha256": "a30466b9b24f93952627653a7cafb369bcf885092e428a11cbe7e6607756f477",
+    "metrics_service_text_bytes_before": 127234880,
+    "metrics_service_text_bytes_after": 87449056,
+    "metrics_service_text_ratio": 0.6873041103194344,
+    "diagnostic_only": true,
+    "runtime_rss_cpu_qualified": false
   }
 }
