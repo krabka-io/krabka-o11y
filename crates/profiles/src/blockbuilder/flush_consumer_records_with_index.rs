@@ -24,7 +24,8 @@ pub async fn flush_consumer_records_with_index(
         )
         .map_err(|error| ProfilesError::Wal(error.to_string()))?;
     }
-    let mut batches: BTreeMap<(String, i32), Vec<(i64, ProfileRecord)>> = BTreeMap::new();
+    let mut batches: BTreeMap<(String, i32), Vec<(crate::wal::WalPosition, ProfileRecord)>> =
+        BTreeMap::new();
     for record in records {
         let value = record
             .value
@@ -43,15 +44,21 @@ pub async fn flush_consumer_records_with_index(
         batches
             .entry((decoded.tenant.clone(), record.partition))
             .or_default()
-            .push((record.offset, decoded));
+            .push((crate::wal::WalPosition::from_record(record, value), decoded));
     }
 
     let mut metas = Vec::new();
     for ((tenant, partition), mut records) in batches {
-        records.sort_by_key(|(offset, _)| *offset);
+        records.sort_by_key(|(position, _)| position.offset);
         for chunk in records.chunks(flush_records.max(1)) {
-            let min_offset = chunk.first().map(|(offset, _)| *offset).unwrap_or_default();
-            let max_offset = chunk.last().map(|(offset, _)| *offset).unwrap_or_default();
+            let min_offset = chunk
+                .first()
+                .map(|(position, _)| position.offset)
+                .unwrap_or_default();
+            let max_offset = chunk
+                .last()
+                .map(|(position, _)| position.offset)
+                .unwrap_or_default();
             let built = build_block_with_positions(
                 store,
                 &tenant,

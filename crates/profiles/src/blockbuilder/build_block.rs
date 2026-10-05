@@ -35,13 +35,13 @@ pub(crate) async fn build_block_with_positions(
     store: &Arc<dyn ObjectStore>,
     tenant: &str,
     partition: i32,
-    records: &[(i64, ProfileRecord)],
+    records: &[(crate::wal::WalPosition, ProfileRecord)],
     offset_range: (i64, i64),
     metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
     let records = records
         .iter()
-        .map(|(offset, record)| (Some(*offset), record))
+        .map(|(position, record)| (Some(*position), record))
         .collect::<Vec<_>>();
     write_block(store, tenant, partition, &records, offset_range, metrics).await
 }
@@ -50,7 +50,7 @@ async fn write_block(
     store: &Arc<dyn ObjectStore>,
     tenant: &str,
     partition: i32,
-    records: &[(Option<i64>, &ProfileRecord)],
+    records: &[(Option<crate::wal::WalPosition>, &ProfileRecord)],
     offset_range: (i64, i64),
     metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
@@ -62,7 +62,7 @@ async fn write_block(
     let mut min_ts = i64::MAX;
     let mut max_ts = i64::MIN;
 
-    for &(offset, rec) in records {
+    for &(position, rec) in records {
         let stack_ids = intern_record(&mut symdb, rec)?;
         let fp = rec.series_fingerprint();
         let total_value = rec.samples.iter().map(|sample| sample.value).sum();
@@ -80,10 +80,9 @@ async fn write_block(
                 total_value,
                 span_id: sample.span_id,
                 trace_id: sample.trace_id.clone(),
-                wal_sample_ids: offset
-                    .map(|offset| {
-                        u64::try_from(ordinal)
-                            .map(|ordinal| crate::wal::sample_identity(partition, offset, ordinal))
+                wal_sample_ids: position
+                    .map(|position| {
+                        u64::try_from(ordinal).map(|ordinal| position.sample_identity(ordinal))
                     })
                     .transpose()
                     .map_err(|error| ProfilesError::Decode(error.to_string()))?

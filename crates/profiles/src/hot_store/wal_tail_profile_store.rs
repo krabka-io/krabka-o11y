@@ -67,7 +67,7 @@ impl WalTailProfileStore {
 
     pub(crate) fn append_records_with_positions(
         &self,
-        records: impl IntoIterator<Item = (ProfileRecord, Option<(i32, i64)>)>,
+        records: impl IntoIterator<Item = (ProfileRecord, Option<crate::wal::WalPosition>)>,
     ) -> Result<(), ProfilesError> {
         let mut fresh = Vec::new();
         {

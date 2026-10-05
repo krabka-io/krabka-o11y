@@ -335,17 +335,52 @@ mod tests {
         });
         store
             .append_records_with_positions([
-                (record_at(1, 1_000_000), Some((0, 0))),
-                (record_at(2, 2_000_000), Some((0, 1))),
-                (record_at(4, 3_000_000), Some((0, 2))),
+                (
+                    record_at(1, 1_000_000),
+                    Some(crate::wal::WalPosition {
+                        partition: 0,
+                        offset: 0,
+                        record_hash: [42; 32],
+                    }),
+                ),
+                (
+                    record_at(2, 2_000_000),
+                    Some(crate::wal::WalPosition {
+                        partition: 0,
+                        offset: 1,
+                        record_hash: [42; 32],
+                    }),
+                ),
+                (
+                    record_at(4, 3_000_000),
+                    Some(crate::wal::WalPosition {
+                        partition: 0,
+                        offset: 2,
+                        record_hash: [42; 32],
+                    }),
+                ),
             ])
             .unwrap();
         // A rebuild must keep the source positions, otherwise the persisted
         // copies of surviving records are counted again during handoff.
         let cold = super::WalTailProfileStore::new();
         cold.append_records_with_positions([
-            (record_at(2, 2_000_000), Some((0, 1))),
-            (record_at(4, 3_000_000), Some((0, 2))),
+            (
+                record_at(2, 2_000_000),
+                Some(crate::wal::WalPosition {
+                    partition: 0,
+                    offset: 1,
+                    record_hash: [42; 32],
+                }),
+            ),
+            (
+                record_at(4, 3_000_000),
+                Some(crate::wal::WalPosition {
+                    partition: 0,
+                    offset: 2,
+                    record_hash: [42; 32],
+                }),
+            ),
         ])
         .unwrap();
         let union = krabka_pprof::UnionProfileStore::new(Arc::new(store), Arc::new(cold));

@@ -311,6 +311,85 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn handoff_distinguishes_reused_wal_positions() {
+        use krabka_pprof::{EngineOpts, FlameEngine, UnionProfileStore};
+
+        let record = |value| {
+            let mut record = rec("cpu", value);
+            record.samples[0].stacktrace_location_refs = vec![0];
+            record.symbols.functions = vec![crate::wal::WalFunction {
+                name: 1,
+                system_name: 1,
+                filename: 2,
+                start_line: 1,
+            }];
+            record.symbols.locations = vec![crate::wal::WalLocation {
+                address: 0x40,
+                mapping_id: 0,
+                lines: vec![(0, 11)],
+            }];
+            record
+        };
+        let profile_type = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
+        for (name, topic, offset, value, expected) in [
+            ("same WAL record", PROFILES_WAL_TOPIC, 10, 7, 7),
+            ("different topic", "replacement-profiles-wal", 10, 7, 14),
+            (
+                "reused offset with different data",
+                PROFILES_WAL_TOPIC,
+                10,
+                11,
+                18,
+            ),
+            (
+                "independent identical record",
+                PROFILES_WAL_TOPIC,
+                11,
+                7,
+                14,
+            ),
+        ] {
+            let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+            let mut index = ProfileIndex::new();
+            let stored = consumer_record(0, 10, record(7));
+            flush_consumer_records_with_index(
+                &store,
+                &mut index,
+                &[stored],
+                100,
+                &ObjectStoreMetrics::unregistered(),
+            )
+            .await
+            .unwrap();
+
+            let mut incoming = consumer_record(0, offset, record(value));
+            incoming.topic = topic.to_string();
+            let bytes = incoming.value.as_deref().unwrap();
+            let hot = crate::hot_store::WalTailProfileStore::new();
+            hot.append_records_with_positions([(
+                ProfileRecord::decode(bytes).unwrap(),
+                Some(crate::wal::WalPosition::from_record(&incoming, bytes)),
+            )])
+            .unwrap();
+            let cold = crate::cold_store::ColdProfileStore::new(store, Arc::new(index));
+            let union = UnionProfileStore::new(Arc::new(hot), Arc::new(cold));
+            let engine = FlameEngine::new(Arc::new(union), EngineOpts::default());
+            let flamegraph = engine
+                .select_merge_stacktraces(
+                    "t",
+                    profile_type,
+                    r#"{service_name="api"}"#,
+                    0,
+                    i64::MAX,
+                    0,
+                )
+                .await
+                .unwrap();
+            check!(flamegraph.total == expected, "{name}");
+        }
+    }
+
     #[test]
     fn accumulator_flushes_on_record_threshold() {
         let mut accumulator = ConsumerRecordAccumulator::new(2, minutes(1));

@@ -6,7 +6,7 @@ use super::{
 pub(crate) fn apply_record(
     store: &mut InMemoryProfileStore,
     record: &ProfileRecord,
-    position: Option<(i32, i64)>,
+    position: Option<crate::wal::WalPosition>,
 ) -> Result<(), ProfilesError> {
     let stack_ids = intern_record(store.symbols_mut(), record)?;
     let total_value = record.samples.iter().map(|sample| sample.value).sum();
@@ -22,9 +22,8 @@ pub(crate) fn apply_record(
                 sample.span_id,
                 sample.trace_id.clone(),
                 position
-                    .map(|(partition, offset)| {
-                        u64::try_from(ordinal)
-                            .map(|ordinal| crate::wal::sample_identity(partition, offset, ordinal))
+                    .map(|position| {
+                        u64::try_from(ordinal).map(|ordinal| position.sample_identity(ordinal))
                     })
                     .transpose()
                     .map_err(|error| ProfilesError::Decode(error.to_string()))?

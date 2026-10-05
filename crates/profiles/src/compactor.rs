@@ -309,7 +309,24 @@ mod tests {
             &store,
             "t",
             0,
-            &[(0, rec_a.clone()), (1, rec_b.clone())],
+            &[
+                (
+                    crate::wal::WalPosition {
+                        partition: 0,
+                        offset: 0,
+                        record_hash: [42; 32],
+                    },
+                    rec_a.clone(),
+                ),
+                (
+                    crate::wal::WalPosition {
+                        partition: 0,
+                        offset: 1,
+                        record_hash: [42; 32],
+                    },
+                    rec_b.clone(),
+                ),
+            ],
             (0, 1),
             &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
@@ -320,7 +337,14 @@ mod tests {
             &store,
             "t",
             0,
-            &[(2, rec_c.clone())],
+            &[(
+                crate::wal::WalPosition {
+                    partition: 0,
+                    offset: 2,
+                    record_hash: [42; 32],
+                },
+                rec_c.clone(),
+            )],
             (2, 2),
             &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
@@ -356,9 +380,30 @@ mod tests {
         let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
         let hot = crate::hot_store::WalTailProfileStore::new();
         hot.append_records_with_positions([
-            (rec_a, Some((0, 0))),
-            (rec_b, Some((0, 1))),
-            (rec_c, Some((0, 2))),
+            (
+                rec_a,
+                Some(crate::wal::WalPosition {
+                    partition: 0,
+                    offset: 0,
+                    record_hash: [42; 32],
+                }),
+            ),
+            (
+                rec_b,
+                Some(crate::wal::WalPosition {
+                    partition: 0,
+                    offset: 1,
+                    record_hash: [42; 32],
+                }),
+            ),
+            (
+                rec_c,
+                Some(crate::wal::WalPosition {
+                    partition: 0,
+                    offset: 2,
+                    record_hash: [42; 32],
+                }),
+            ),
         ])
         .unwrap();
         let union = krabka_pprof::UnionProfileStore::new(Arc::new(hot), cold);

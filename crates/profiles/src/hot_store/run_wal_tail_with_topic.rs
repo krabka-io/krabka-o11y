@@ -106,8 +106,12 @@ pub async fn run_wal_tail_with_topic(
             .iter()
             .filter_map(|record| record.value.as_deref().map(|value| (record, value)))
             .map(|(record, value)| {
-                ProfileRecord::decode(value)
-                    .map(|decoded| (decoded, Some((record.partition, record.offset))))
+                ProfileRecord::decode(value).map(|decoded| {
+                    (
+                        decoded,
+                        Some(crate::wal::WalPosition::from_record(record, value)),
+                    )
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
         store.append_records_with_positions(decoded)?;

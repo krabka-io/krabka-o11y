@@ -16,13 +16,13 @@ The owned behavior below has executable coverage, and delegated compatibility is
 | **Pyroscope ingest, Connect query, storage, and roles** | Render output matches Pyroscope after identical ingest | Pass | `tests/pyroscope_differential.rs::real_pyroscope_render_matches_krabka_after_identical_ingest` | Pinned Pyroscope image |
 | **Deployed ingestion** | JSON/binary Connect push, plain/gzip pprof, speedscope, and four OTLP transports preserve every stack and value after persistence and restart | Covered | Nine cases in `tests/pyroscope_deployment.rs` | Fixed collapsed stack/value maps adapted from pinned Pyroscope tests |
 | **Metadata and tenant isolation** | Types, labels, projected series, selectors, and identical profile labels remain correct across restart and tenants | Covered | Two deployment cases | Whole metadata responses and distinct expected values |
-| **Hot/storage handoff** | Separate batches add once while hot and stored copies overlap | Covered | `separate_batches_merge_without_double_counting_hot_and_cold` and union/downsampling regressions | WAL provenance; independent expected sample sums |
+| **Hot/storage handoff** | Separate batches add once while hot and stored copies overlap | Covered | `separate_batches_merge_without_double_counting_hot_and_cold` and namespace/union/downsampling regressions | WAL provenance; independent expected sample sums |
 | **Malformed requests** | Invalid pprof string references are rejected before WAL append; query methods/content/JSON/selectors/types return expected HTTP codes | Covered | Two deployment cases and shared ingest regression | Pinned upstream status codes and absence of rejected profiles |
 | **Shutdown** | The all-in-one role drains accepted samples to storage before stopping | Covered | `single_binary_shutdown_drains_profiles_to_storage` | Empty storage before stop, exact fresh-process stored result afterward |
 
 ## Test Inventory
 
-The crate has 394 source-declared unit, property, corpus, or integration tests.
+The crate has 395 source-declared unit, property, corpus, or integration tests.
 
 Run the complete non-container inventory with:
 
