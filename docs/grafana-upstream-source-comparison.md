@@ -198,6 +198,14 @@ explains parser, delete-filter, interval and response-order hazards. Loki's
 iterator ordering also differs from Krabka's established folded response
 budget, so transplanting the upstream merge unchanged can change answers.
 
+Keep the existing block-fetch concurrency and block-level failure behavior.
+The current reader discards a block if a later batch fails, then emits a
+warning. Incremental consumption must discard that block's partial rows too.
+Row validation errors still fail the query. See the
+[concurrent scan caller](../crates/observability/src/querier/scan/stream_scans/execute_stream_query_from_object_store_with_hot_tail_frontier_and_scan_options.rs).
+Keep each block's rows separate until its stream ends successfully; merge
+them in the existing block order before the final sort and response limit.
+
 Loki recognizes finite regex alternatives and reads only their postings.
 Krabka's shared index runs the regex against every distinct value. A safe
 finite-alternative optimization is missing, but needs a real regex parser or
