@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::{CompactionFrontier, QuerierState, TimeRange, WalLogRecord};
 
 /// Snapshots the hot-tail records that overlap `time_range`, plus the
@@ -13,14 +15,14 @@ use super::{CompactionFrontier, QuerierState, TimeRange, WalLogRecord};
 pub(crate) fn hot_tail_snapshot(
     state: &QuerierState,
     time_range: TimeRange,
-) -> (Vec<WalLogRecord>, CompactionFrontier) {
+) -> (Vec<Arc<WalLogRecord>>, CompactionFrontier) {
     state.hot_tail.as_ref().map_or(
         (Vec::new(), CompactionFrontier::new(i64::MAX)),
         |hot_tail| {
             (
                 hot_tail
                     .source
-                    .records_in_range(time_range.start_ns, time_range.end_ns),
+                    .records_shared_in_range(time_range.start_ns, time_range.end_ns),
                 hot_tail.frontier.snapshot(),
             )
         },

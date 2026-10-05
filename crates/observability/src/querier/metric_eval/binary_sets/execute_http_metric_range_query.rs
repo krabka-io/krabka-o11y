@@ -41,7 +41,7 @@ pub(crate) async fn execute_http_metric_range_query(
     if let Some(hot_tail) = &state.hot_tail {
         let records = hot_tail
             .source
-            .records_in_range(plan.time_range.start_ns, plan.time_range.end_ns);
+            .records_shared_in_range(plan.time_range.start_ns, plan.time_range.end_ns);
         let frontier = hot_tail.frontier.snapshot();
         return execute_metric_query_range_with_hot_tail_frontier_and_deletes(
             &state.root,

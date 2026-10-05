@@ -1,14 +1,17 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    borrow::Borrow,
+    collections::{HashMap, HashSet},
+};
 
 use super::{
     CompactionFrontier, Labels, StreamPlan, Value, WalLogRecord, json_object_to_labels,
     matching_loki_stream_entry,
 };
 
-pub(crate) fn count_loki_stream_result_hot_tail_lines(
+pub(crate) fn count_loki_stream_result_hot_tail_lines<R: Borrow<WalLogRecord> + Sync>(
     value: &Value,
     plan: &StreamPlan,
-    hot_tail: &[WalLogRecord],
+    hot_tail: &[R],
     frontier: &CompactionFrontier,
 ) -> u64 {
     let Some(streams) = value.pointer("/data/result").and_then(Value::as_array) else {
@@ -54,6 +57,7 @@ pub(crate) fn count_loki_stream_result_hot_tail_lines(
     let mut labels_cache: HashMap<&Labels, Option<Labels>> = HashMap::new();
     let mut matched = 0_u64;
     for record in hot_tail {
+        let record: &WalLogRecord = record.borrow();
         if record.tenant != plan.tenant
             || !returned_timestamps.contains(&record.timestamp_ns)
             || frontier.is_compacted(record)

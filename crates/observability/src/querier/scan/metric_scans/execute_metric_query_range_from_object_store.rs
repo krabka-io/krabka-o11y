@@ -25,7 +25,7 @@ pub async fn execute_metric_query_range_from_object_store(
         query,
         label_index,
         (eval_range, step_ns),
-        QueryHotTail {
+        QueryHotTail::<crate::WalLogRecord> {
             records: &[],
             frontier: &CompactionFrontier::new(i64::MAX),
             delete_filters: &[],

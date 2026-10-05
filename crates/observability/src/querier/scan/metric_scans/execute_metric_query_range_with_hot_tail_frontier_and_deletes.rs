@@ -1,17 +1,22 @@
+use std::borrow::Borrow;
+
 use super::{
     BTreeMap, FsPath, LabelIndex, MetricQuery, MetricWindow, QueryError, QueryHotTail,
     SessionContext, StreamPlan, TimeRange, Value, append_matching_hot_metric_record,
     apply_absent_over_time, eval_times, format_metric_samples, loki_matrix_response,
     metric_plan_scan_sql, metric_samples_from_batches, register_log_blocks,
 };
+use crate::WalLogRecord;
 
-pub(crate) async fn execute_metric_query_range_with_hot_tail_frontier_and_deletes(
+pub(crate) async fn execute_metric_query_range_with_hot_tail_frontier_and_deletes<
+    R: Borrow<WalLogRecord> + Sync,
+>(
     root: impl AsRef<FsPath>,
     plan: &StreamPlan,
     query: &MetricQuery,
     label_index: &LabelIndex,
     evaluation: (TimeRange, i64),
-    hot_tail: QueryHotTail<'_>,
+    hot_tail: QueryHotTail<'_, R>,
 ) -> Result<Value, QueryError> {
     let (eval_range, step_ns) = evaluation;
     if step_ns <= 0 {
@@ -37,6 +42,7 @@ pub(crate) async fn execute_metric_query_range_with_hot_tail_frontier_and_delete
     }
 
     for record in hot_tail.records {
+        let record: &WalLogRecord = record.borrow();
         append_matching_hot_metric_record(
             &mut samples,
             plan,
