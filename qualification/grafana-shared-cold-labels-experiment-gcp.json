@@ -1732,5 +1732,15 @@
       ]
     }
   },
-  "evidence_detail": "Derived records preserve provenance, summary/ranges, each deployment budget, counts/errors/latencies, CPU by role, aggregate and role RSS, S3 traffic, telemetry gates and container start/OOM state. Full raw telemetry remains in the independently checksum-verified artifacts."
+  "evidence_detail": "Derived records preserve provenance, summary/ranges, each deployment budget, counts/errors/latencies, CPU by role, aggregate and role RSS, S3 traffic, telemetry gates and container start/OOM state. Full raw telemetry remains in the independently checksum-verified artifacts.",
+  "reverted_loki_followup": {
+    "comparison": 37318871557,
+    "source_commit": "838680039ce5d8aeeb70095ca5922b0b8ee5735a",
+    "baseline_source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+    "baseline_image_run": 37298567310,
+    "baseline_image_artifact": "comparison-image-traces-ca99cacd35074c404e0e57500eb10d4767d95bc5",
+    "scope": "Measure cold-series sharing after removing the rejected Loki owned-index change. Isolate against ca99 without that Loki change; preserve the new source image as the prospective owned-WAL baseline. This is not final all-four-signal qualification.",
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37318871557",
+    "status_at_recording": "in_progress"
+  }
 }
