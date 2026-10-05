@@ -7604,9 +7604,100 @@
   },
   "confirmation_raw_file_checksums": 725,
   "reversion": {
-    "status": "implemented; 366-target validation in progress",
+    "status": "implemented and locally validated; pushed",
+    "source_commit": "bc4bb24193bf485624cf082958a8ff97f33f9763",
     "product_reference_source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
     "semantic_regression_retained": true,
+    "combined_scoped_targets_passed": 366,
+    "target_list_sha256": "d66d58a19bf529f620e77222cafd2fcfa889f407c6f99af6df0c1e7dc9ae0702",
+    "bazel_log_sha256": "c9c3e511a09e21285aa426196a978c39254be2ca1c3f1deb2abc4df710ddebb5",
+    "native_docker_wrappers": [
+      {
+        "target": "//crates/metrics-service:diff_mimir_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "5109cf938c9cbb084e671bfa8ef60d8cc82048704b0f6dcff5d5cc7685e29680"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "d685990976ed12ca6ee5150cfb064811a34a8f7ea5b621c478cc55a5e0b1ed80"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "a9a42d8c2db62829c4a2a8f3bc37378b3cf9dc6839bd98f25a795c82a9c1882a"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "540dfdf9632039242e235ceeed66ebaf57e97dc2fef41943cf4d7814cfa6dc1d"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "b0f617a998948873b4f8229871d62253c4d773cf338ddeb5f01667be3f50d1cc"
+      },
+      {
+        "target": "//crates/metrics-service:tsdb_import_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "b094f6b2473cab4437df9605098d384d61fc5b2cd11d93624f66620503f5dfe5"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "78c3294be363142d8f1ea2ecff8b91c767b92996ed7874968106f5101f018d40"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "8e239af8eb7afba4628a59a1dff7d5e2680877171ae043b143a18a809cfd921a"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "0679c5050d214b0e6678ded0ccdcdd2762481ba9ec804523ef1de4b77e22041d"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "15d7f394dbf75d1989621d909efb6dddd96994b4dbfe2ce99bf88a06a607c03e"
+      },
+      {
+        "target": "//crates/observability:loki_differential_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "fe7565d0f6dceabc8cd2c9d65fdf555d8bb1bda7b54501d18ca1f61dea8f45e4"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_docker_test",
+        "passed_cases": 8,
+        "test_log_sha256": "9b69865c15929214ba8f941ae96e353cb0f59d2bacf8991cc23becde3d263988"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_previous_docker_test",
+        "passed_cases": 8,
+        "test_log_sha256": "b2e68202d61b392cc57d2b0a84bd0e80a011415fb582c24526b477f212e2b89a"
+      },
+      {
+        "target": "//crates/traces:grafana_e2e_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "fea1776b51c154d9ad503d3ede596f351129808b0d99a9cc79d4765d2fe67029"
+      },
+      {
+        "target": "//crates/traces:grafana_e2e_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "53145da44c87993f9cb45fa1c1ef8fe3308c224af7d54538389bbcd5e67de3bc"
+      },
+      {
+        "target": "//crates/traces:tempo_differential_docker_test",
+        "passed_cases": 6,
+        "test_log_sha256": "078f265eecfbeab27365aaf9be0fc5259036e03aa5fbc52c4125cb03376e254a"
+      },
+      {
+        "target": "//crates/traces:tempo_differential_previous_docker_test",
+        "passed_cases": 6,
+        "test_log_sha256": "ca40e4597c6144a79ec145c8d09d388d2fc470fd894c4ef39374d2362a77cd76"
+      }
+    ],
     "removed_consuming_api_test_targets": 2
   }
 }
