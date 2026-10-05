@@ -456,7 +456,7 @@ their payload. All 37 scoped traces/TraceQL checks pass, including the real
 Tempo differential suite, Grafana, both corpus wrappers and Clippy. An
 independent full-row ledger checks clipped roots, equal-time ordering,
 duplicate attributes, reserved resource keys, bytes, events, links, tenant
-filtering and output lifetime. Performance qualification is pending.
+filtering and output lifetime. The qualified comparison below retains the change for its lower RSS.
 
 The live-label cache hit is now retained after its
 [isolated same-VM comparison](https://github.com/krabka-io/krabka-o11y/actions/runs/37293323368).
@@ -482,7 +482,7 @@ values into a temporary canonical label map before hashing, reached through
 the production hot-store caller. Flame-tree construction also copies strings.
 These stacks select the next investigation; no new Pyroscope gain is claimed.
 
-The borrowed-selection image `ca99cacd` has verified [CPU](https://github.com/krabka-io/krabka-o11y/actions/runs/37299759203) and [allocation](https://github.com/krabka-io/krabka-o11y/actions/runs/37299762062) captures. Archive digests and all 162 and 130 raw checksums pass. The whole-span clone is absent from the allocation summary. It records 73,220,999 allocations and 7,010,365 string clones over 104.90 seconds including startup and seed. Both this pass and the preceding pass accept 14,000 spans on AMD EPYC 7B12, but this pass completes 147 queries versus 138. These totals are not a per-operation comparison; peak Rust heap rises from 35.16 to 41.84MB. The same-VM uninstrumented comparison remains the retention gate.
+The borrowed-selection image `ca99cacd` has verified [CPU](https://github.com/krabka-io/krabka-o11y/actions/runs/37299759203) and [allocation](https://github.com/krabka-io/krabka-o11y/actions/runs/37299762062) captures. Archive digests and all 162 and 130 raw checksums pass. The whole-span clone is absent from the allocation summary. It records 73,220,999 allocations and 7,010,365 string clones over 104.90 seconds including startup and seed. Both this pass and the preceding pass accept 14,000 spans on AMD EPYC 7B12, but this pass completes 147 queries versus 138. These totals are not a per-operation comparison; peak Rust heap rises from 35.16 to 41.84MB. The same-VM uninstrumented comparison below establishes the retention decision.
 
 Independent image checks show that only `krabka-traces` differs from `8541b68f`; the other six application binaries, runtime configuration, base layer and all remaining filesystem entries match. All 380 entries were compared. This equivalence does not establish a performance result for the new traces binary.
 
@@ -491,3 +491,5 @@ The Pyroscope fingerprint experiment on `913fa01b` hashes borrowed label pairs i
 Six fixed hash vectors cover empty inputs, sorting, duplicate names, Unicode byte lengths, NULs and delimiter ambiguity. Production sample insertion and WAL record regressions check canonical hashes and complete payloads. Changing duplicate handling to first-value wins fails all three regressions while the other 121 pprof unit cases pass. All 79 scoped checks pass with the correct code, including the real Pyroscope suites with both Grafana versions, Mimir, Prometheus and Clippy.
 
 Its [same-VM revision comparison](https://github.com/krabka-io/krabka-o11y/actions/runs/37301689980) uses the verified `ca99cacd` image as baseline. Performance qualification and candidate profiles are pending; the source change alone is not a measured gain.
+
+The borrowed-selection change is retained after its [same-VM comparison](https://github.com/krabka-io/krabka-o11y/actions/runs/37298567310). All 725 raw checksums and source, image, host, budget and workload gates pass. Each of the six revision deployments accepts 12,000 spans and completes 235 queries without errors or empty results. Candidate RSS is lower in every pair, with a 2.9% lower median (ratio 0.971). Median CPU and query p99 ratios are 0.992 and 0.981, but their ranges overlap and one pair regresses for each; neither has a consistent gain. The native comparison on this image measures 0.69× Tempo CPU, 0.95× RSS and 98.01/108.89ms query p99. The [experiment record](../qualification/grafana-tempo-borrowed-selection-experiment-gcp.json) preserves all values, exact source and image provenance.

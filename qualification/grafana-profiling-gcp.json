@@ -2623,6 +2623,6 @@
       }
     },
     "allocation_comparison_limit": "Baseline completes 138 queries; candidate completes 147, both accepting 14000 spans. Startup-inclusive allocation totals are diagnostics rather than per-operation measurements; candidate peak Rust heap is higher.",
-    "retention_decision": "Pending same-VM uninstrumented revision comparison 37298567310."
+    "retention_decision": "Retained after verified same-VM comparison 37298567310; see qualification/grafana-tempo-borrowed-selection-experiment-gcp.json. Captures remain diagnostic only."
   }
 }

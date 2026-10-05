@@ -69,6 +69,10 @@ All seven binaries differ in that image, so it cannot replace rows for the
 other three signals by binary equivalence. The isolated metrics cache-hit comparison retained the change: median
 query p99 fell 7.3%; whole-deployment CPU was unchanged. Its exact images
 and full pair ranges are in the live-label experiment record.
+The retained borrowed-selection Tempo image measures 0.69× CPU, 0.95× RSS
+and 98.01/108.89ms query p99 in its [own record](../qualification/grafana-tempo-borrowed-selection-experiment-gcp.json).
+Its isolated control lowers median RSS 2.9%, with all three pairs lower;
+CPU and query p99 gains are not established.
 The decimal fingerprint formatting experiment was measured and reverted;
 its CPU and query latency gains were not established.
 
