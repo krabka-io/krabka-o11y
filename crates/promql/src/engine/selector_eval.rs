@@ -40,6 +40,29 @@ impl<S: MetricStore> PromqlEngine<S> {
         )?;
         let start_ms = eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64());
         let matcher_sets = label_matcher_sets(selector);
+        if let Some(series) = self
+            .latest_labeled_series(tenant, &matcher_sets, start_ms, eval_time_ms)
+            .await?
+        {
+            // Sum and average use this evaluator to preserve compensated
+            // accumulation, rather than the operator selector plan.
+            let samples = series
+                .into_iter()
+                .filter_map(|series| {
+                    let sample = series.samples.last()?;
+                    if is_stale_nan(sample.value) {
+                        return None;
+                    }
+                    Some(InstantSample {
+                        labels: (*series.labels).clone(),
+                        ts_ms: sample.ts_ms,
+                        value: SampleValue::Float(sample.value),
+                        drop_name: false,
+                    })
+                })
+                .collect();
+            return Ok(QueryResult::InstantVector(samples));
+        }
         let labels_by_fp = self
             .labels_by_fingerprint_sets(tenant, &matcher_sets, start_ms, eval_time_ms)
             .await?;

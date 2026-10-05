@@ -41,6 +41,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         after_ms: i64,
         through_ms: i64,
     ) -> Result<Option<Vec<LabeledSeries>>> {
+        if after_ms >= through_ms {
+            return Ok(None);
+        }
         let allowed = RANGE_SCAN_CACHE
             .try_with(|cache| {
                 cache
