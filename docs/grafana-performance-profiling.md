@@ -17,8 +17,8 @@ Reuse a preserved image to avoid rebuilding or changing the measured binary:
 ```bash
 gh workflow run grafana-comparison.yml --ref codex/grafana-performance \
   -f signal=metrics -f profiling=cpu \
-  -f image_artifact_run=37258326193 \
-  -f image_artifact_name=comparison-image-logs-1c31b6830961637b98f2918f8b3dd5ee7ecc1b3a \
+  -f image_artifact_run=37270733261 \
+  -f image_artifact_name=comparison-image-metrics-7184a4c9a4a11c95a3605be42d5074560dc5d77e \
   -f deployment_target=split
 ```
 
@@ -169,7 +169,7 @@ queued after capacity frees. Check the failed operation and retry only jobs
 that never started. Do not replace a completed measurement with a profiling
 result or silently change runner size to bypass the limit.
 
-The next product change carries the hot head's immutable `Arc<Labels>` through
+The shared-label change carries the hot head's immutable `Arc<Labels>` through
 series discovery and engine label resolution, avoiding the string-cloning
 path identified above. The default adapter for other stores preserves their
 owned labels, and merged stores retain cold-first precedence. The regression
@@ -177,6 +177,64 @@ reaches the engine resolution path, checks complete expected labels and
 series limits, and retains labels across pruning/deletion. Restoring owned
 resolution fails the pointer checks while the other 563 unit cases pass.
 All 33 scoped targets and both real Mimir/Prometheus differential suites pass.
+
+The production allocation follow-up in
+[run 37269298396](https://github.com/krabka-io/krabka-o11y/actions/runs/37269298396)
+passed on the `50f03683` image. Its artifact digest and all 130 evidence-file
+checksums were verified. It still recorded 6,122,458 string-clone allocations,
+close to the earlier 6,131,850. The stack resolved the missing delegation:
+`RefreshingMetricBlockStore::series_shared` used the trait's default owned
+adapter, which reached `InMemoryMetricStore::matched_series`. The engine and
+underlying stores shared labels, but the production refresh wrapper copied
+them. This capture did not demonstrate removal of the cloning path.
+
+The wrapper now delegates shared discovery through its current tenant store,
+including the tenant-deletion check. A production-wrapper regression checks
+the original hot-label pointer, complete independent PromQL output, time and
+tenant filtering, cold-first precedence after manifest publication, and
+held labels after deletion, with zero Parquet reads. Removing just this
+delegation fails the new test while the other 62 service unit cases pass.
+All 35 scoped targets, including both real Mimir/Prometheus differential
+suites, pass with the delegation restored.
+
+The corrected-image allocation pass in
+[run 37272649805](https://github.com/krabka-io/krabka-o11y/actions/runs/37272649805)
+passed on `7184a4c9`. Its artifact digest and 130 evidence-file checksums were
+verified. Over 106.34 seconds including startup and seed, allocation calls
+fell to 11,998,303 and string-clone allocations to 4,778,871. The owned
+`matched_series` caller is absent from its summary. Peak Rust heap is 16.76MB;
+the clone reduction does not establish a resident-memory reduction.
+
+The corrected-image CPU pass in
+[run 37272647187](https://github.com/krabka-io/krabka-o11y/actions/runs/37272647187)
+also passed, with its artifact digest and 234 evidence-file checksums verified.
+The three querier windows contain 429, 740 and 1,000 samples, with no lost
+samples. Pruning remains below the 0.5% reporting threshold. Shared series
+discovery now accounts for 23.54%, 32.16% and 37.10% of self samples. The code
+does an ordered-map membership lookup for every retained row, including many
+repeated fingerprints. This selected a hash-lookup experiment, preserving
+float-first precedence and fingerprint order by sorting distinct series once.
+
+The experiment's CPU follow-up in
+[run 37276157021](https://github.com/krabka-io/krabka-o11y/actions/runs/37276157021)
+passed on `fd1ded9b`; its artifact digest and all 234 evidence-file checksums
+were verified. The three querier windows contain 353, 556 and 763 samples,
+with no lost samples. Discovery's self percentages fell to 3.12%, 6.12% and
+8.13%, while hashing routines became prominent. Its uninstrumented comparison
+in [run 37274237464](https://github.com/krabka-io/krabka-o11y/actions/runs/37274237464)
+passed all three pairs and all 239 evidence-file checksums. Whole-deployment
+Krabka CPU remained essentially unchanged (0.21777 versus 0.21754 cores),
+and median p99 was 36.64ms versus the preceding 33.33ms. The p99 ranges
+overlap (33.00–38.51ms versus 32.39–35.55ms), so a regression is not established,
+but neither is a gain. The hash lookup was reverted; a changed flat-sample
+percentage alone is insufficient evidence of an optimization.
+
+The [experiment record](../qualification/grafana-series-discovery-experiment-gcp.json)
+preserves its actual source, measurements, image and checksums. The next
+target is the instant selector's separate hot-head walks for latest samples
+and labels. Combining those reads must preserve cold-first label precedence,
+the distinct sample and label window boundaries, series and sample limits,
+out-of-order arrivals, equal-time ties, stale samples and captured snapshots.
 
 The prune follow-up in
 [run 37264751159](https://github.com/krabka-io/krabka-o11y/actions/runs/37264751159)
