@@ -103,7 +103,7 @@ impl InMemoryMetricStore {
         end_ms: i64,
     ) -> Result<Vec<Arc<Labels>>> {
         let matchers = prepare_matchers(matchers)?;
-        let mut by_fp: HashMap<SeriesFingerprint, Arc<Labels>> = HashMap::new();
+        let mut by_fp: BTreeMap<SeriesFingerprint, Arc<Labels>> = BTreeMap::new();
         if let Some(rows) = self.floats.get(tenant) {
             for row in rows.iter() {
                 if !by_fp.contains_key(&row.fp)
@@ -126,9 +126,6 @@ impl InMemoryMetricStore {
                 }
             }
         }
-        // Rows repeat fingerprints; order only the distinct matching series.
-        let mut series: Vec<_> = by_fp.into_iter().collect();
-        series.sort_unstable_by_key(|(fp, _)| *fp);
-        Ok(series.into_iter().map(|(_, labels)| labels).collect())
+        Ok(by_fp.into_values().collect())
     }
 }
