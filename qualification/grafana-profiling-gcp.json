@@ -1120,8 +1120,9 @@
     "limitations": [
       "Earlier corrected-wrapper CPU profile used Intel model 79; this CPU profile used AMD EPYC 7B12 model 49.",
       "Allocation totals include startup and seeding. String clones are essentially unchanged from the corrected-wrapper capture.",
-      "Retention awaits an uninstrumented same-VM baseline/candidate comparison."
-    ]
+      "CPU/latency retention is supported by the separate uninstrumented same-VM three-pair comparison in run 37289143258; instrumented profile totals are excluded."
+    ],
+    "retention_decision": "retained_after_same_vm_revision_comparison"
   },
   "loki_shared_record_captures": {
     "source_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",

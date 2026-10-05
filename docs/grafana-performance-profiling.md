@@ -275,6 +275,23 @@ fusion or replacing the retained performance checkpoint. The
 [experiment record](../qualification/grafana-fused-instant-scan-experiment-gcp.json)
 preserves the actual source, per-role CPU, all repetitions and this limitation.
 
+The subsequent [same-VM check](https://github.com/krabka-io/krabka-o11y/actions/runs/37289143258)
+passed with three fresh baseline/candidate pairs on AMD EPYC 7B12, alternating
+the first revision. The baseline is the corrected wrapper image `7184a4c9`;
+the candidate is the exact fused image `5b40aec6`. The artifact digest and
+all 725 evidence-file checksums were verified, including the separate native
+comparison and all six revision deployments. Each revision ingests 120,000
+rows and completes 240 queries per pair without errors or empty results.
+
+Median aggregate CPU falls from 0.22139 to 0.18368 cores (17.0%) and p99 from
+34.37 to 24.10ms (29.9%). Both improve in every pair; the query p99 ranges
+are disjoint, at 32.72–39.18ms and 24.02–26.35ms. Querier CPU falls 31.8%
+and MinIO CPU falls 22.0%, consistent with removal of the duplicate scan and
+manifest refresh. RSS and ingest p99 vary between pairs, so their lower
+medians do not establish a consistent improvement. The fusion is retained
+on this evidence and the complete correctness checks, without relying on
+profile sample totals from different CPU models.
+
 The fused profile also shows copying of the head's shared weak-label cache.
 Label interning now checks a live, equal-label hit before taking a mutable
 cache reference. Such hits keep the cache shared with held query snapshots.
