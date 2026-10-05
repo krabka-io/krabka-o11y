@@ -4908,6 +4908,8 @@
     ],
     "negative_control": "First-value duplicate handling fails all three fingerprint regressions; the other 121 pprof cases pass.",
     "reversion": "Original FNV encoder and both original owned-label callers restored; independent fixed hashes and complete sample/WAL payload regressions retained.",
-    "reversion_initial_scoped_targets_passed": 8
+    "reversion_initial_scoped_targets_passed": 8,
+    "reversion_combined_scoped_targets_passed": 202,
+    "reversion_validation_source_commit": "45b41ba77d16f017c80c502893cee1157bc30fde"
   }
 }
