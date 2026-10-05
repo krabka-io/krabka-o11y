@@ -275,6 +275,17 @@ fusion or replacing the retained performance checkpoint. The
 [experiment record](../qualification/grafana-fused-instant-scan-experiment-gcp.json)
 preserves the actual source, per-role CPU, all repetitions and this limitation.
 
+The fused profile also shows copying of the head's shared weak-label cache.
+Label interning now checks a live, equal-label hit before taking a mutable
+cache reference. Such hits keep the cache shared with held query snapshots.
+Missing labels, hash collisions with different labels and dead weak entries
+use the existing mutation and cleanup path. The snapshot regression checks
+float, histogram and exemplar hits, unchanged held rows and dead-entry
+cleanup. Removing only the fast path fails that regression while the other
+565 unit cases pass. All 35 scoped checks, including real Mimir and
+Prometheus differential suites, pass. The release-image comparison must
+establish the effect before claiming a performance gain.
+
 The prune follow-up in
 [run 37264751159](https://github.com/krabka-io/krabka-o11y/actions/runs/37264751159)
 passed using the `dd67ca1e` image. Its querier windows contain 303, 447 and
