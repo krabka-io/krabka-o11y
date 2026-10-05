@@ -10,6 +10,14 @@ on:
         description: Exact image artifact name (empty selects deployment-image-*)
         type: string
         default: ''
+      baseline_image_artifact_run:
+        description: Optional preserved baseline image for alternating revision pairs on this VM
+        type: string
+        default: ''
+      baseline_image_artifact_name:
+        description: Exact baseline image artifact name (requires steady comparison and one layout)
+        type: string
+        default: ''
       phases:
         description: Phases to measure
         type: choice
@@ -68,6 +76,21 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
+      - name: Validate revision comparison inputs
+        env:
+          BASELINE_RUN: ${{ inputs.baseline_image_artifact_run }}
+          BASELINE_NAME: ${{ inputs.baseline_image_artifact_name }}
+          PROFILING: ${{ inputs.profiling }}
+          PHASES: ${{ inputs.phases }}
+          DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
+          PROFILES_TARGET: ${{ inputs.profiles_target }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${BASELINE_RUN}" || -n "${BASELINE_NAME}" ]]; then
+            [[ "${BASELINE_RUN}" =~ ^[1-9][0-9]*$ && -n "${BASELINE_NAME}" ]]
+            [[ "${PROFILING}" == none && "${PHASES}" == steady ]]
+            [[ "${DEPLOYMENT_TARGET}" != both && "${PROFILES_TARGET}" != both ]]
+          fi
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
         if: inputs.image_artifact_run == ''
         with:
@@ -120,6 +143,22 @@ jobs:
           sha256sum -c SHA256SUMS
           docker load -i image.tar
           [[ "$(docker inspect --format '{{.Id}}' "$(cat tag)")" == "$(cat config-digest)" ]]
+      - name: Download the baseline image
+        if: inputs.baseline_image_artifact_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.baseline_image_artifact_run }}
+          name: ${{ inputs.baseline_image_artifact_name }}
+          path: qualification/baseline-image
+      - name: Load the exact baseline image
+        if: inputs.baseline_image_artifact_run != ''
+        run: |
+          set -euo pipefail
+          cd qualification/baseline-image
+          sha256sum -c SHA256SUMS
+          docker load -i image.tar
+          [[ "$(docker inspect --format '{{.Id}}' "$(cat tag)")" == "$(cat config-digest)" ]]
       - name: Compare both backends on this host
         if: inputs.profiling == 'none' || inputs.profiling == ''
         env:
@@ -167,6 +206,48 @@ jobs:
               --host-wait-seconds 120 --output "${output}" \
               --seconds "${PHASE_SECONDS}" --repetitions "${REPETITIONS}" \
               --max-writers "${MAX_WRITERS}" --max-cardinality "${MAX_CARDINALITY}"
+          done
+      - name: Compare revisions on this host
+        if: inputs.baseline_image_artifact_run != ''
+        env:
+          SIGNAL: ${{ matrix.signal }}
+          DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
+          PROFILES_TARGET: ${{ inputs.profiles_target }}
+          PHASE_SECONDS: ${{ inputs.phase_seconds }}
+          REPETITIONS: ${{ inputs.repetitions }}
+          BASELINE_RUN: ${{ inputs.baseline_image_artifact_run }}
+          BASELINE_NAME: ${{ inputs.baseline_image_artifact_name }}
+          KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
+        run: |
+          set -euo pipefail
+          root=qualification/evidence/comparison/revisions
+          mkdir -p "${root}/baseline-image"
+          cp qualification/baseline-image/{tag,commit,manifest-digest,config-digest} "${root}/baseline-image/"
+          cp qualification/baseline-image/SHA256SUMS "${root}/baseline-image/IMAGE-SHA256SUMS"
+          BASELINE_REFERENCE="${root}/baseline-image/reference.json" python3 - <<'PY'
+          import json, os, pathlib
+          pathlib.Path(os.environ['BASELINE_REFERENCE']).write_text(json.dumps({
+              'run_id': int(os.environ['BASELINE_RUN']),
+              'artifact_name': os.environ['BASELINE_NAME'],
+          }, indent=2) + '\n')
+          PY
+          target="${DEPLOYMENT_TARGET}"
+          if [[ "${SIGNAL}" == metrics ]]; then target=split; fi
+          if [[ "${SIGNAL}" == profiles && "${target}" == split ]]; then target="${PROFILES_TARGET}"; fi
+          for ((pair=1; pair<=REPETITIONS; pair++)); do
+            revisions=(baseline candidate)
+            if (( pair % 2 == 0 )); then revisions=(candidate baseline); fi
+            for revision in "${revisions[@]}"; do
+              image_dir=qualification/image
+              if [[ "${revision}" == baseline ]]; then image_dir=qualification/baseline-image; fi
+              python3 -u tools/compare-grafana.py --phases steady --backends krabka --signal "${SIGNAL}" \
+                --image "$(cat "${image_dir}/tag")" \
+                --image-digest "$(cat "${image_dir}/manifest-digest")" \
+                --image-commit "$(cat "${image_dir}/commit")" \
+                --deployment-target "${target}" --profiles-target "${target}" \
+                --host-wait-seconds 120 --seconds "${PHASE_SECONDS}" --repetitions 1 \
+                --output "${root}/${pair}-${revision}"
+            done
           done
       - name: Install profiling tools
         if: inputs.profiling == 'cpu' || inputs.profiling == 'allocations'

@@ -856,5 +856,271 @@
     "retained_in_branch": false,
     "finding": "No demonstrated end-to-end efficiency gain. Krabka CPU medians are 0.21777 cores before and 0.21754 after; p99 medians are 33.33 ms before and 36.64 ms after. The p99 ranges overlap, so causality of a regression is unproven. The hash lookup is reverted because a gain is not established.",
     "performance_record": "qualification/grafana-series-discovery-experiment-gcp.json"
+  },
+  "fused_instant_scan_captures": {
+    "source_commit": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+    "diagnostic_only": true,
+    "comparison_qualified": false,
+    "image_producer": {
+      "run_id": 37282607469,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37282607469",
+      "source_commit": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+      "artifact": {
+        "id": 11334237731,
+        "name": "comparison-image-metrics-5b40aec6a591aac531f0c18698264f0304f37cdb",
+        "digest": "sha256:5b292140d7db41a08e5fe4eee5b00cd657f14e003a1abd1ec19c0793ac88923b",
+        "size_in_bytes": 308301768,
+        "expires_at": "2027-01-03T08:16:27Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-5b40aec6a591",
+      "manifest_digest": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+      "config_digest": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+      "docker_image_id": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+      "oci_config_digest": "sha256:6fb26a50f075528482e962e0793c4e50f21c8b17daa47779dae691a7e4339ff0",
+      "identity_note": "The archived config-digest field is Docker inspect Id; this containerd store reports OCI manifest identity. oci_config_digest comes from the independently verified image archive."
+    },
+    "cpu": {
+      "source_commit": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+      "provenance": {
+        "run_id": 37286209489,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37286209489",
+        "head_sha": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+        "run_conclusion": "success",
+        "jobs": [
+          {
+            "id": 111685611465,
+            "name": "compare (metrics)",
+            "conclusion": "success",
+            "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37286209489/job/111685611465",
+            "runner_name": "gcp-runner-af568fe25ce54f7a",
+            "runner_group_name": "default",
+            "labels": [
+              "gcp-ubuntu-24-04-16core"
+            ],
+            "started_at": "2026-10-05T08:52:10Z",
+            "completed_at": "2026-10-05T08:57:23Z"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": 11335000942,
+            "name": "grafana-comparison-metrics-5b40aec6a591aac531f0c18698264f0304f37cdb-1",
+            "digest": "sha256:451c6a2b6e95fb1955fdfe32faa0f8898d175a8e1c96a49a9904f55906bfcc03",
+            "size_in_bytes": 4948797,
+            "expires_at": "2027-01-03T08:51:04Z",
+            "signal": "metrics",
+            "verified_raw_files": 234,
+            "diagnostic_only": true
+          }
+        ]
+      },
+      "querier_windows": [
+        {
+          "samples": "170",
+          "lost_samples": 0,
+          "top_self_symbols": [
+            {
+              "self_percent": 16.47,
+              "symbol": "<krabka_promql::merged_store::MergedMetricStore<krabka_promql::block_store::metric_block_store::MetricBlockStore, krabka_promql::in_memory::head::WalHead>>::try_latest_float_scan::{closure#0}"
+            },
+            {
+              "self_percent": 6.47,
+              "symbol": "_int_malloc"
+            },
+            {
+              "self_percent": 5.29,
+              "symbol": "__memmove_avx_unaligned_erms"
+            },
+            {
+              "self_percent": 4.71,
+              "symbol": "<krabka_blockstore::labels::labels_type::Labels>::fingerprint"
+            },
+            {
+              "self_percent": 4.12,
+              "symbol": "<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u64>"
+            },
+            {
+              "self_percent": 4.12,
+              "symbol": "unlink_chunk.isra.0"
+            },
+            {
+              "self_percent": 3.53,
+              "symbol": "malloc"
+            },
+            {
+              "self_percent": 2.94,
+              "symbol": "__memcmp_avx2_movbe"
+            },
+            {
+              "self_percent": 2.35,
+              "symbol": "_int_free_merge_chunk"
+            },
+            {
+              "self_percent": 1.76,
+              "symbol": "<alloc::string::String as core::clone::Clone>::clone"
+            }
+          ],
+          "prune_above_report_threshold": false
+        },
+        {
+          "samples": "225",
+          "lost_samples": 0,
+          "top_self_symbols": [
+            {
+              "self_percent": 28.89,
+              "symbol": "<krabka_promql::merged_store::MergedMetricStore<krabka_promql::block_store::metric_block_store::MetricBlockStore, krabka_promql::in_memory::head::WalHead>>::try_latest_float_scan::{closure#0}"
+            },
+            {
+              "self_percent": 8.89,
+              "symbol": "<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u64>"
+            },
+            {
+              "self_percent": 5.33,
+              "symbol": "<krabka_blockstore::labels::labels_type::Labels>::fingerprint"
+            },
+            {
+              "self_percent": 4.89,
+              "symbol": "<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write"
+            },
+            {
+              "self_percent": 4.0,
+              "symbol": "_int_malloc"
+            },
+            {
+              "self_percent": 3.56,
+              "symbol": "__memmove_avx_unaligned_erms"
+            },
+            {
+              "self_percent": 3.56,
+              "symbol": "unlink_chunk.isra.0"
+            },
+            {
+              "self_percent": 2.22,
+              "symbol": "<hashbrown::raw::RawTable<(u64, alloc::vec::Vec<alloc::sync::Weak<krabka_blockstore::labels::labels_type::Labels>>)> as core::clone::Clone>::clone"
+            },
+            {
+              "self_percent": 2.22,
+              "symbol": "core::ptr::drop_glue::<hashbrown::raw::RawTable<(u64, alloc::vec::Vec<alloc::sync::Weak<krabka_blockstore::labels::labels_type::Labels>>)>>"
+            },
+            {
+              "self_percent": 2.22,
+              "symbol": "malloc"
+            }
+          ],
+          "prune_above_report_threshold": false
+        },
+        {
+          "samples": "288",
+          "lost_samples": 0,
+          "top_self_symbols": [
+            {
+              "self_percent": 31.25,
+              "symbol": "<krabka_promql::merged_store::MergedMetricStore<krabka_promql::block_store::metric_block_store::MetricBlockStore, krabka_promql::in_memory::head::WalHead>>::try_latest_float_scan::{closure#0}"
+            },
+            {
+              "self_percent": 9.38,
+              "symbol": "<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u64>"
+            },
+            {
+              "self_percent": 6.94,
+              "symbol": "<krabka_blockstore::labels::labels_type::Labels>::fingerprint"
+            },
+            {
+              "self_percent": 5.21,
+              "symbol": "unlink_chunk.isra.0"
+            },
+            {
+              "self_percent": 4.17,
+              "symbol": "_int_malloc"
+            },
+            {
+              "self_percent": 3.47,
+              "symbol": "<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write"
+            },
+            {
+              "self_percent": 2.43,
+              "symbol": "__memmove_avx_unaligned_erms"
+            },
+            {
+              "self_percent": 2.08,
+              "symbol": "malloc"
+            },
+            {
+              "self_percent": 1.74,
+              "symbol": "_int_free_create_chunk"
+            },
+            {
+              "self_percent": 1.39,
+              "symbol": "<alloc::collections::btree::map::BTreeMap<_, _, _> as core::clone::Clone>::clone::clone_subtree::<alloc::string::String, alloc::string::String, alloc::alloc::Global>"
+            }
+          ],
+          "prune_above_report_threshold": false
+        }
+      ],
+      "host": {
+        "cpu_count": 16,
+        "kernel": "7.0.0-1011-gcp",
+        "cpu_models": [
+          "AMD EPYC 7B12"
+        ]
+      }
+    },
+    "allocations": {
+      "source_commit": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+      "provenance": {
+        "run_id": 37286212807,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37286212807",
+        "head_sha": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+        "run_conclusion": "success",
+        "jobs": [
+          {
+            "id": 111685621246,
+            "name": "compare (metrics)",
+            "conclusion": "success",
+            "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37286212807/job/111685621246",
+            "runner_name": "gcp-runner-82d2ee2b2cb04169",
+            "runner_group_name": "default",
+            "labels": [
+              "gcp-ubuntu-24-04-16core"
+            ],
+            "started_at": "2026-10-05T08:52:16Z",
+            "completed_at": "2026-10-05T08:55:44Z"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": 11334128934,
+            "name": "grafana-comparison-metrics-5b40aec6a591aac531f0c18698264f0304f37cdb-1",
+            "digest": "sha256:9b0b642f0abed9cebb5e6bad037d007a761d38a7e4cf359f477cc6513450ecc1",
+            "size_in_bytes": 66413810,
+            "expires_at": "2027-01-03T08:51:05Z",
+            "signal": "metrics",
+            "verified_raw_files": 130,
+            "diagnostic_only": true
+          }
+        ]
+      },
+      "runtime_including_startup_and_seed_seconds": 105.68,
+      "allocation_calls": 11672891,
+      "temporary_allocations": 1548831,
+      "peak_heap_decimal_mb": 16.44,
+      "string_clone_calls": 4762565,
+      "owned_matched_series_present_in_summary": false,
+      "host": {
+        "cpu_count": 16,
+        "kernel": "7.0.0-1011-gcp",
+        "cpu_models": [
+          "AMD EPYC 7B12"
+        ]
+      }
+    },
+    "attribution": "The separate matched_series_shared walk is below the 0.5 percent flat-report threshold. Latest float selection and hashing remain prominent; sample totals across different CPU models do not establish a CPU gain.",
+    "limitations": [
+      "Earlier corrected-wrapper CPU profile used Intel model 79; this CPU profile used AMD EPYC 7B12 model 49.",
+      "Allocation totals include startup and seeding. String clones are essentially unchanged from the corrected-wrapper capture.",
+      "Retention awaits an uninstrumented same-VM baseline/candidate comparison."
+    ]
   }
 }
