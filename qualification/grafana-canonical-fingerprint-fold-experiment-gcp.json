@@ -5,7 +5,7 @@
   "baseline_source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
   "source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649",
   "performance_qualified": false,
-  "retention_decision": "Pending Mimir confirmation. First control has mixed total CPU/RSS for Mimir and mixed latency for Pyroscope. Tempo CPU and query improve in all three pairs; query ranges are disjoint. Loki RSS and query improve in all three pairs, with overlapping ranges. No global retention is qualified.",
+  "retention_decision": "Mimir query and ingest gains do not repeat: confirmation ratios are 1.0790 and 1.0245. Total CPU median is lower by about 2.4%, but only two confirmation pairs and one first-control pair have lower CPU. RSS signs reverse between controls. No repeated Mimir query, aggregate CPU or RSS advantage is qualified. Pyroscope confirmation remains in progress before the final shared-function decision.",
   "scope": {
     "production_paths": [
       "crates/blockstore/src/labels/labels_type.rs"
@@ -2709,9 +2709,281 @@
       "baseline_image_artifact_run": "37351427961",
       "baseline_image_artifact_name": "comparison-image-metrics-63bf9c519032bb6d4736b1ad9c064f879b90082c"
     },
-    "status": "dispatched",
+    "status": "measurement_verified",
     "same_verified_images": true,
-    "performance_qualified": false
+    "performance_qualified": false,
+    "measurement_qualified": true,
+    "provenance": {
+      "run_id": 37363580969,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37363580969",
+      "head_sha": "001518f62343234decaf83d4ab0e1bfb9b476089",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111943549861,
+          "name": "compare (metrics)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37363580969/job/111943549861",
+          "runner_name": "gcp-runner-6d5ddde63ef64a50",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T19:29:20Z",
+          "completed_at": "2026-10-05T19:53:30Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11368860535,
+          "name": "grafana-comparison-metrics-001518f62343234decaf83d4ab0e1bfb9b476089-1",
+          "digest": "sha256:0230bff7bb235e8e59dabbf59e31321d1e7a3205ed38df5382ae4b050be4691e",
+          "size_in_bytes": 9255302,
+          "expires_at": "2027-01-03T19:28:09Z",
+          "signal": "metrics",
+          "verified_raw_files": 725
+        }
+      ]
+    },
+    "summary": {
+      "baseline": {
+        "query_attempts": {
+          "median": 240,
+          "min": 240,
+          "max": 240,
+          "values": [
+            240,
+            240,
+            240
+          ]
+        },
+        "average_cpu_cores": {
+          "median": 0.23821847554998757,
+          "min": 0.22777566981142286,
+          "max": 0.24012849593413443,
+          "values": [
+            0.22777566981142286,
+            0.23821847554998757,
+            0.24012849593413443
+          ]
+        },
+        "rss_kib": {
+          "median": 493828,
+          "min": 492580,
+          "max": 511124,
+          "values": [
+            492580,
+            511124,
+            493828
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.03133505400001013,
+          "min": 0.030547049000006155,
+          "max": 0.03188477599996986,
+          "values": [
+            0.03133505400001013,
+            0.030547049000006155,
+            0.03188477599996986
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.04303595600003973,
+          "min": 0.03983402500000466,
+          "max": 0.045838356000103886,
+          "values": [
+            0.03983402500000466,
+            0.045838356000103886,
+            0.04303595600003973
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.04468605131491716,
+            "min": 0.042154728941271626,
+            "max": 0.04474623106390891,
+            "values": [
+              0.042154728941271626,
+              0.04468605131491716,
+              0.04474623106390891
+            ]
+          },
+          "metrics-block-builder": {
+            "median": 0.031799548394504405,
+            "min": 0.030218585419529466,
+            "max": 0.03189229480510684,
+            "values": [
+              0.030218585419529466,
+              0.031799548394504405,
+              0.03189229480510684
+            ]
+          },
+          "metrics-compactor": {
+            "median": 0.009966640202503778,
+            "min": 0.009572183672101104,
+            "max": 0.010206329027082047,
+            "values": [
+              0.009572183672101104,
+              0.009966640202503778,
+              0.010206329027082047
+            ]
+          },
+          "metrics-distributor": {
+            "median": 0.03525084217027456,
+            "min": 0.033474816351603376,
+            "max": 0.035893539619041875,
+            "values": [
+              0.033474816351603376,
+              0.03525084217027456,
+              0.035893539619041875
+            ]
+          },
+          "metrics-querier": {
+            "median": 0.05679592504544848,
+            "min": 0.0544265803839202,
+            "max": 0.056946471601874,
+            "values": [
+              0.0544265803839202,
+              0.056946471601874,
+              0.05679592504544848
+            ]
+          },
+          "minio": {
+            "median": 0.059568921865913685,
+            "min": 0.05792877504299709,
+            "max": 0.06059417637354629,
+            "values": [
+              0.05792877504299709,
+              0.059568921865913685,
+              0.06059417637354629
+            ]
+          }
+        }
+      },
+      "candidate": {
+        "query_attempts": {
+          "median": 240,
+          "min": 240,
+          "max": 240,
+          "values": [
+            240,
+            240,
+            240
+          ]
+        },
+        "average_cpu_cores": {
+          "median": 0.23245328250826236,
+          "min": 0.22999383853142186,
+          "max": 0.2370228473240313,
+          "values": [
+            0.2370228473240313,
+            0.23245328250826236,
+            0.22999383853142186
+          ]
+        },
+        "rss_kib": {
+          "median": 489560,
+          "min": 485804,
+          "max": 489640,
+          "values": [
+            489560,
+            489640,
+            485804
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.033810589000040636,
+          "min": 0.031166816999984803,
+          "max": 0.03383460899999591,
+          "values": [
+            0.033810589000040636,
+            0.03383460899999591,
+            0.031166816999984803
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.04409000400005425,
+          "min": 0.04205463299990697,
+          "max": 0.04568952799991166,
+          "values": [
+            0.04568952799991166,
+            0.04205463299990697,
+            0.04409000400005425
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.04411712000211887,
+            "min": 0.04323990328092967,
+            "max": 0.044360582139608064,
+            "values": [
+              0.044360582139608064,
+              0.04411712000211887,
+              0.04323990328092967
+            ]
+          },
+          "metrics-block-builder": {
+            "median": 0.030852011608877336,
+            "min": 0.03074304248415852,
+            "max": 0.03143284794540953,
+            "values": [
+              0.03143284794540953,
+              0.03074304248415852,
+              0.030852011608877336
+            ]
+          },
+          "metrics-compactor": {
+            "median": 0.009929316315100628,
+            "min": 0.009529050572557396,
+            "max": 0.009930434618669682,
+            "values": [
+              0.009929316315100628,
+              0.009930434618669682,
+              0.009529050572557396
+            ]
+          },
+          "metrics-distributor": {
+            "median": 0.03430596739653447,
+            "min": 0.03307693915484765,
+            "max": 0.034676122512428735,
+            "values": [
+              0.034676122512428735,
+              0.03430596739653447,
+              0.03307693915484765
+            ]
+          },
+          "metrics-querier": {
+            "median": 0.05580937413508273,
+            "min": 0.054775512777942896,
+            "max": 0.05693250895917097,
+            "values": [
+              0.05693250895917097,
+              0.05580937413508273,
+              0.054775512777942896
+            ]
+          },
+          "minio": {
+            "median": 0.0585204211362669,
+            "min": 0.05754734387169809,
+            "max": 0.05969146945231338,
+            "values": [
+              0.05969146945231338,
+              0.05754734387169809,
+              0.0585204211362669
+            ]
+          }
+        }
+      }
+    },
+    "candidate_divided_by_baseline": {
+      "query_attempts": 1.0,
+      "average_cpu_cores": 0.9757987157443822,
+      "rss_kib": 0.991357314692565,
+      "query_p99_seconds": 1.0790020977793657,
+      "ingest_p99_seconds": 1.0244922640968763
+    },
+    "verified_pairs_path": "qualification/evidence/performance/gcp-37363580969/metrics/verified-revision-pairs.json",
+    "verified_pairs_sha256": "5c05588ad6ba9a057b7238a4227e1e814f2c32d32a58f4ac1fb57aa8561b1354"
   },
   "profiles_confirmation": {
     "run_id": 37365605239,
