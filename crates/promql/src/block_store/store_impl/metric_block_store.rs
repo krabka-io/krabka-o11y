@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use super::{
     BTreeMap, BTreeSet, EXEMPLAR_TABLE, ExemplarScan, FLOAT_TABLE, HISTOGRAM_TABLE, LabelMatcher,
     LabelNameCardinality, LabelValueCardinality, Labels, METADATA_TABLE, MetadataRecord,
@@ -16,23 +14,11 @@ impl MetricBlockStore {
         tenant: &str,
         matchers: &[LabelMatcher],
     ) -> Result<Vec<Labels>> {
-        Ok(self
-            .matching_series_by_fingerprint(tenant, matchers)?
-            .into_values()
-            .map(|labels| labels.as_ref().clone())
-            .collect())
-    }
-
-    fn matching_series_by_fingerprint(
-        &self,
-        tenant: &str,
-        matchers: &[LabelMatcher],
-    ) -> Result<BTreeMap<SeriesFingerprint, Arc<Labels>>> {
-        let mut by_fp = BTreeMap::<SeriesFingerprint, Arc<Labels>>::new();
+        let mut by_fp = BTreeMap::<SeriesFingerprint, Labels>::new();
         for labels in self
             .floats
             .index()
-            .series_shared(tenant, matchers)
+            .series(tenant, matchers)
             .map_err(blockstore_error)?
         {
             by_fp.insert(labels.fingerprint(), labels);
@@ -40,13 +26,13 @@ impl MetricBlockStore {
         if let Some(histograms) = &self.histograms {
             for labels in histograms
                 .index()
-                .series_shared(tenant, matchers)
+                .series(tenant, matchers)
                 .map_err(blockstore_error)?
             {
                 by_fp.insert(labels.fingerprint(), labels);
             }
         }
-        Ok(by_fp)
+        Ok(by_fp.into_values().collect())
     }
 }
 
@@ -190,19 +176,6 @@ impl MetricStore for MetricBlockStore {
         _end_ms: i64,
     ) -> Result<Vec<Labels>> {
         self.matching_series(tenant, matchers)
-    }
-
-    async fn series_shared(
-        &self,
-        tenant: &str,
-        matchers: &[LabelMatcher],
-        _start_ms: i64,
-        _end_ms: i64,
-    ) -> Result<Vec<Arc<Labels>>> {
-        Ok(self
-            .matching_series_by_fingerprint(tenant, matchers)?
-            .into_values()
-            .collect())
     }
 
     async fn exemplars(
