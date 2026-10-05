@@ -60,7 +60,7 @@ pub(crate) async fn object_store_metric_query_batches_cold_block_reads() {
         &query,
         &label_index,
         (TimeRange::new(39, 39).unwrap(), 1),
-        QueryHotTail {
+        QueryHotTail::<crate::WalLogRecord> {
             records: &[],
             frontier: &CompactionFrontier::new(i64::MAX),
             delete_filters: &[],

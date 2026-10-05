@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+
 use super::{
     Arc, BTreeMap, LabelIndex, Labels, LokiDirection, LokiStreamEntry, ObjectPath, ObjectStore,
     ObjectStoreStreamScan, QueryError, QueryHotTail, StreamPlan, StreamScanOptions,
@@ -6,18 +8,22 @@ use super::{
     loki_streams_response_with_warnings, object_store_stream_blocks_in_scan_order,
     sort_loki_stream_values,
 };
+use crate::WalLogRecord;
 
-pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontier_and_scan_options(
+pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontier_and_scan_options<
+    R: Borrow<WalLogRecord> + Sync,
+>(
     store: Arc<dyn ObjectStore>,
     prefix: &ObjectPath,
     plan: &StreamPlan,
     label_index: &LabelIndex,
-    hot_tail: QueryHotTail<'_>,
+    hot_tail: QueryHotTail<'_, R>,
     options: StreamScanOptions,
 ) -> Result<ObjectStoreStreamScan, QueryError> {
     if plan.blocks.is_empty() || plan.fingerprints.is_empty() {
         let mut streams = BTreeMap::new();
         for record in hot_tail.records {
+            let record: &WalLogRecord = record.borrow();
             append_matching_hot_log_record(
                 &mut streams,
                 plan,
@@ -46,6 +52,7 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
 
     if matches!(options.direction, LokiDirection::Backward) {
         for record in hot_tail.records {
+            let record: &WalLogRecord = record.borrow();
             append_matching_hot_log_record(
                 &mut streams,
                 plan,
@@ -95,6 +102,7 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
         && (!can_short_circuit || !options.reached_limit(&streams))
     {
         for record in hot_tail.records {
+            let record: &WalLogRecord = record.borrow();
             append_matching_hot_log_record(
                 &mut streams,
                 plan,

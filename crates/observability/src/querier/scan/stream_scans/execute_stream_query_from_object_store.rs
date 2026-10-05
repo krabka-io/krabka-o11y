@@ -16,7 +16,7 @@ pub async fn execute_stream_query_from_object_store(
         prefix,
         plan,
         label_index,
-        QueryHotTail {
+        QueryHotTail::<crate::WalLogRecord> {
             records: &[],
             frontier: &CompactionFrontier::new(i64::MAX),
             delete_filters: &[],

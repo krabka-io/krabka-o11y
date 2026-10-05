@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::WalLogRecord;
 
 pub trait LogHotTail: Send + Sync + 'static {
@@ -17,6 +19,16 @@ pub trait LogHotTail: Send + Sync + 'static {
         self.records()
             .into_iter()
             .filter(|record| record.timestamp_ns >= start_ns && record.timestamp_ns <= end_ns)
+            .collect()
+    }
+
+    /// Immutable records in the same inclusive window and order as
+    /// [`Self::records_in_range`]. Buffered sources share their retained
+    /// records; the default owns the existing range result.
+    fn records_shared_in_range(&self, start_ns: i64, end_ns: i64) -> Vec<Arc<WalLogRecord>> {
+        self.records_in_range(start_ns, end_ns)
+            .into_iter()
+            .map(Arc::new)
             .collect()
     }
 }

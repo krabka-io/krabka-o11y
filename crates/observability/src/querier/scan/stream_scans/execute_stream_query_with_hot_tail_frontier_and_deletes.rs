@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+
 use super::{
     ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, FsPath, LabelIndex, Labels,
     LokiStreamEncoding, LokiStreamEntry, QueryError, SessionContext, StreamPlan, Value,
@@ -6,11 +8,13 @@ use super::{
     stream_plan_scan_sql,
 };
 
-pub(crate) async fn execute_stream_query_with_hot_tail_frontier_and_deletes(
+pub(crate) async fn execute_stream_query_with_hot_tail_frontier_and_deletes<
+    R: Borrow<WalLogRecord> + Sync,
+>(
     root: impl AsRef<FsPath>,
     plan: &StreamPlan,
     label_index: &LabelIndex,
-    hot_tail: &[WalLogRecord],
+    hot_tail: &[R],
     frontier: &CompactionFrontier,
     delete_filters: &[ActiveLogDeleteFilter],
     encoding: LokiStreamEncoding,
@@ -26,6 +30,7 @@ pub(crate) async fn execute_stream_query_with_hot_tail_frontier_and_deletes(
     }
 
     for record in hot_tail {
+        let record: &WalLogRecord = record.borrow();
         append_matching_hot_log_record(&mut streams, plan, record, frontier, delete_filters);
     }
     sort_loki_stream_values(&mut streams);

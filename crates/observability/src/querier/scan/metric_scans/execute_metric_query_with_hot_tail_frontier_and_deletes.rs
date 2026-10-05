@@ -1,15 +1,19 @@
+use std::borrow::Borrow;
+
 use super::{
     ActiveLogDeleteFilter, CompactionFrontier, FsPath, LabelIndex, MetricQuery, QueryError,
     QueryHotTail, StreamPlan, TimeRange, Value, WalLogRecord,
     execute_metric_query_range_with_hot_tail_frontier_and_deletes,
 };
 
-pub(crate) async fn execute_metric_query_with_hot_tail_frontier_and_deletes(
+pub(crate) async fn execute_metric_query_with_hot_tail_frontier_and_deletes<
+    R: Borrow<WalLogRecord> + Sync,
+>(
     root: impl AsRef<FsPath>,
     plan: &StreamPlan,
     query: &MetricQuery,
     label_index: &LabelIndex,
-    hot_tail: &[WalLogRecord],
+    hot_tail: &[R],
     frontier: &CompactionFrontier,
     delete_filters: &[ActiveLogDeleteFilter],
 ) -> Result<Value, QueryError> {
