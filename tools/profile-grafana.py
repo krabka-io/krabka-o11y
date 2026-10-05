@@ -43,8 +43,9 @@ def perf_profile(deployment, role, seconds, output):
 
 def report_perf(pid, output):
     for kind in ('top', 'cum'):
-        report = env.command('sudo', '-n', 'perf', 'report', '--stdio', '-i', str(output),
+        report = env.command('sudo', '-n', 'perf', 'report', '--force', '--stdio', '-i', str(output),
                              '--symfs', f'/proc/{pid}/root', '--sort', 'symbol', '--percent-limit', '0.5',
+                             '--call-graph', 'none',
                              '--children' if kind == 'cum' else '--no-children')
         output.with_name(output.name + '.' + kind + '.txt').write_text(report)
         if re.search(r'Samples:\s+0\b', report) or 'Samples:' not in report:
