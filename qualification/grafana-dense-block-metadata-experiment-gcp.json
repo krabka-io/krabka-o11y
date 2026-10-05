@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Rebuild block fingerprints by live time-order position",
-  "status": "correctness_scope_qualified_with_grafana_flake_limitation_image_builds_running",
+  "status": "correctness_scope_qualified_with_grafana_flake_limitation_images_and_profiles_verified",
   "performance_qualified": false,
   "retained": false,
   "production_paths": [
@@ -824,6 +824,17 @@
       "raw_evidence": "qualification/evidence/correctness/dense-block-metadata/tempo-response-diagnostics",
       "diagnostic_negative": "Removing the fixed Grafana startup delay in a temporary diagnostic also passed three filtered runs. This did not reproduce the failure or establish a cause. The test source is byte-restored.",
       "limitation": "Original proxy 404 and two failed unmodified follow-up attempts remain preserved. Fresh runs pass, but the response body and cause remain unverified. The assertion only improves future failure reporting; no setup fix is claimed."
+    },
+    "rebased_tempo_follow_up": {
+      "source_commit": "d4125ea317b203173f80e5feba1991b0b942c469",
+      "base_main": "92989bb29d44c629fa4ac88147a3fce8b1604776",
+      "targets_passed": 4,
+      "deployment_cases_passed": 12,
+      "deployment_cases_ignored": 0,
+      "retries_disabled": true,
+      "provenance_path": "qualification/evidence/correctness/dense-block-metadata/rebased-tempo-92989bb2/provenance.json",
+      "provenance_sha256": "8d3e972c6c59130d328551e8631dc11cc10ee2da0557a8866e75ca685d078bef",
+      "scope": "Tempo unit tests, library Clippy, deployment test Clippy and the deployed Tempo lifecycle suite. Supplements the earlier correctness scope."
     }
   },
   "retention_decision": "The 376-target original scope, seven post-rebase bridge targets, six fresh full Tempo wrappers and response-capture Clippy gate pass. Historical Grafana proxy failures remain unresolved and preserved. No setup fix is claimed. Performance retention still needs the exact-image controls and fingerprint decision.",
@@ -845,7 +856,36 @@
           "profiles_target": "all"
         },
         "status_at_dispatch_observation": "queued",
-        "diagnostic_only": true
+        "diagnostic_only": true,
+        "verified": {
+          "status": "image_and_cpu_profile_verified",
+          "image_provenance": {
+            "run_id": 37365264758,
+            "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37365264758",
+            "source_commit": "a2e9e16ebbd2df7fda125f186ee2e4bdb4615908",
+            "artifact": {
+              "id": 11368212125,
+              "name": "comparison-image-metrics-a2e9e16ebbd2df7fda125f186ee2e4bdb4615908",
+              "digest": "sha256:d2276d63ee61a8650ed8ceeff9a8b0f60a83a6b3418922857543150a19f39ff2",
+              "size_in_bytes": 308350009,
+              "expires_at": "2027-01-03T19:43:45Z"
+            },
+            "archive_digest_verified": true,
+            "all_image_file_checksums_verified": true,
+            "image_tag": "localhost/krabka-o11y:sha-a2e9e16ebbd2",
+            "manifest_digest": "sha256:16cead7d885c2105d908397215801f9fc315132e751275c70f83b63e4663e52f",
+            "config_digest": "sha256:16cead7d885c2105d908397215801f9fc315132e751275c70f83b63e4663e52f"
+          },
+          "cpu_profile_provenance_path": "qualification/evidence/profiling/gcp-37365264758/provenance.json",
+          "cpu_profile_provenance_sha256": "965a0547cbf96c808f0c8be7479253ca3165251f4b9469a9efd2687cf04d052c",
+          "raw_files_verified": 234,
+          "diagnostic_only": true,
+          "performance_qualified": false,
+          "binary_checksums_path": "qualification/evidence/profiling/gcp-37365264758/dense-block-metadata-baseline-image.binaries.json",
+          "binary_checksums_sha256": "cc93b37cd667d1ccf59145d4bfdea822a8c3493f799e3673598ed6706240a565",
+          "runtime_snapshot_path": "qualification/evidence/profiling/gcp-37365264758/dense-block-metadata-baseline-image.runtime.json",
+          "runtime_snapshot_sha256": "f081cd38b50ff661042955f64b4b962a94d071df3ae2c216c5f22929c906cf5d"
+        }
       },
       "candidate": {
         "run_id": 37365268018,
@@ -859,7 +899,37 @@
           "profiles_target": "all"
         },
         "status_at_dispatch_observation": "pending",
-        "diagnostic_only": true
+        "diagnostic_only": true,
+        "latest_observed_status": "completed_success_verified",
+        "verified": {
+          "status": "image_and_cpu_profile_verified",
+          "image_provenance": {
+            "run_id": 37365268018,
+            "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37365268018",
+            "source_commit": "f7da956aee6f6f8eb1c4f261c255ad519915128b",
+            "artifact": {
+              "id": 11369650277,
+              "name": "comparison-image-metrics-f7da956aee6f6f8eb1c4f261c255ad519915128b",
+              "digest": "sha256:2ab4a266789b73e8c49719677283dc44410d7d1b5187fb4a3d7ee6846b0469c0",
+              "size_in_bytes": 308373702,
+              "expires_at": "2027-01-03T19:43:47Z"
+            },
+            "archive_digest_verified": true,
+            "all_image_file_checksums_verified": true,
+            "image_tag": "localhost/krabka-o11y:sha-f7da956aee6f",
+            "manifest_digest": "sha256:9ae38176078fce504380f994d687e34f8d0391fe7958edbfd9071dc8b01dd909",
+            "config_digest": "sha256:9ae38176078fce504380f994d687e34f8d0391fe7958edbfd9071dc8b01dd909"
+          },
+          "cpu_profile_provenance_path": "qualification/evidence/profiling/gcp-37365268018/provenance.json",
+          "cpu_profile_provenance_sha256": "2ed062c96c3db782f0ac61a6ad014416a001f032c5cf54e88a9c36685786d96b",
+          "raw_files_verified": 238,
+          "diagnostic_only": true,
+          "performance_qualified": false,
+          "binary_checksums_path": "qualification/evidence/profiling/gcp-37365268018/dense-block-metadata-candidate-image.binaries.json",
+          "binary_checksums_sha256": "b411806af1d779b1972d013bb918f6d04674aa4d43572db1e84d6a1f8b18d82d",
+          "runtime_snapshot_path": "qualification/evidence/profiling/gcp-37365268018/dense-block-metadata-candidate-image.runtime.json",
+          "runtime_snapshot_sha256": "e9ea134b46486372e561eef389a12182fffa9da5ba947ac979fde15d88c6cabd"
+        }
       }
     },
     "production_diff_paths": [
@@ -870,5 +940,25 @@
     ],
     "dependency_configuration_equal": true,
     "performance_qualified": false
-  }
+  },
+  "image_runtime_control": {
+    "verified": true,
+    "proof_path": "qualification/evidence/profiling/dense-block-metadata-image-pair.json",
+    "proof_sha256": "972e49ba70469b821b77e4d3992d2a2cc1bd9ceaf44444633162cd70584ab11c",
+    "runtime_config_equal": true,
+    "architecture_os_equal": true,
+    "base_layers_equal": true,
+    "filesystem_paths_checked": 380,
+    "all_non_application_binary_paths_equal": true,
+    "changed_application_binary_paths": [
+      "usr/local/bin/krabka-metrics",
+      "usr/local/bin/krabka-metrics-service",
+      "usr/local/bin/krabka-o11y-bootstrap",
+      "usr/local/bin/krabka-o11y-recovery",
+      "usr/local/bin/krabka-observability",
+      "usr/local/bin/krabka-profiles",
+      "usr/local/bin/krabka-traces"
+    ]
+  },
+  "next_action": "Dispatch the matched Mimir measurement using the exact verified images. Both contain the same subsequently rejected fingerprint fold; this isolates dense metadata and does not qualify the restored current branch or its new cold fingerprint reuse candidate."
 }

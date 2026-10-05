@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "experiment": "Fold canonical label fingerprint bytes without per-byte chain state",
-  "status": "all_signal_measurements_verified_mimir_confirmation_running",
+  "status": "rejected_original_loop_restored_core_scope_passed",
   "baseline_source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
   "source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649",
   "performance_qualified": false,
-  "retention_decision": "Mimir query and ingest gains do not repeat: confirmation ratios are 1.0790 and 1.0245. Total CPU median is lower by about 2.4%, but only two confirmation pairs and one first-control pair have lower CPU. RSS signs reverse between controls. No repeated Mimir query, aggregate CPU or RSS advantage is qualified. Pyroscope confirmation remains in progress before the final shared-function decision.",
+  "retention_decision": "Reject the fold. Mimir has no repeated aggregate CPU, RSS or query advantage; only three of six matched pairs have lower total CPU and query p99. Pyroscope confirmation has 9.05% higher median total CPU and 16.15% higher median query p99, CPU higher in two of three pairs and query p99 higher in all three pairs, with overlapping ranges. The first Pyroscope control also has higher median query p99. Small RSS reductions and Tempo improvements do not qualify a reliable shared-function advantage. Restore the original loop and retain both new canonical golden vectors.",
   "scope": {
     "production_paths": [
       "crates/blockstore/src/labels/labels_type.rs"
@@ -3002,8 +3002,257 @@
       "baseline_image_artifact_run": "37351427961",
       "baseline_image_artifact_name": "comparison-image-metrics-63bf9c519032bb6d4736b1ad9c064f879b90082c"
     },
-    "status": "dispatched",
+    "status": "measurement_verified",
     "same_verified_images": true,
-    "performance_qualified": false
+    "performance_qualified": false,
+    "measurement_qualified": true,
+    "provenance": {
+      "run_id": 37365605239,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37365605239",
+      "head_sha": "dcd3c0cb4b51d18b37980d3492f02b8349701167",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111949872461,
+          "name": "compare (profiles)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37365605239/job/111949872461",
+          "runner_name": "gcp-runner-8869e028c49345d6",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T19:48:26Z",
+          "completed_at": "2026-10-05T20:17:48Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11369041556,
+          "name": "grafana-comparison-profiles-dcd3c0cb4b51d18b37980d3492f02b8349701167-1",
+          "digest": "sha256:0b2f6ce0865b44f80a9d8b7dd88723cf4eb8200f7ea72d78150b912dfa962f6a",
+          "size_in_bytes": 8801168,
+          "expires_at": "2027-01-03T19:46:55Z",
+          "signal": "profiles",
+          "verified_raw_files": 743
+        }
+      ]
+    },
+    "candidate_divided_by_baseline": {
+      "query_attempts": 1.0,
+      "average_cpu_cores": 1.0904857868273667,
+      "rss_kib": 0.9962124839083761,
+      "query_p99_seconds": 1.1615378994700474,
+      "ingest_p99_seconds": 0.9337260626984752
+    },
+    "summary": {
+      "baseline": {
+        "query_attempts": {
+          "median": 240,
+          "min": 240,
+          "max": 240,
+          "values": [
+            240,
+            240,
+            240
+          ]
+        },
+        "average_cpu_cores": {
+          "median": 0.17359298008241014,
+          "min": 0.16041219510563537,
+          "max": 0.18062484248684266,
+          "values": [
+            0.18062484248684266,
+            0.17359298008241014,
+            0.16041219510563537
+          ]
+        },
+        "rss_kib": {
+          "median": 375972,
+          "min": 369072,
+          "max": 377808,
+          "values": [
+            369072,
+            377808,
+            375972
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.027384780999909708,
+          "min": 0.024679317999925843,
+          "max": 0.02888411900016763,
+          "values": [
+            0.02888411900016763,
+            0.027384780999909708,
+            0.024679317999925843
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.021043838000196047,
+          "min": 0.020231599999988248,
+          "max": 0.022857950000116034,
+          "values": [
+            0.021043838000196047,
+            0.022857950000116034,
+            0.020231599999988248
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.02629183375647135,
+            "min": 0.023190216274696605,
+            "max": 0.02801601967561969,
+            "values": [
+              0.02801601967561969,
+              0.02629183375647135,
+              0.023190216274696605
+            ]
+          },
+          "profiles-all": {
+            "median": 0.07756006802152157,
+            "min": 0.07314128794184559,
+            "max": 0.08041419176988614,
+            "values": [
+              0.08041419176988614,
+              0.07756006802152157,
+              0.07314128794184559
+            ]
+          },
+          "minio": {
+            "median": 0.06974107830441723,
+            "min": 0.06408069088909317,
+            "max": 0.07219463104133682,
+            "values": [
+              0.07219463104133682,
+              0.06974107830441723,
+              0.06408069088909317
+            ]
+          }
+        }
+      },
+      "candidate": {
+        "query_attempts": {
+          "median": 240,
+          "min": 240,
+          "max": 240,
+          "values": [
+            240,
+            240,
+            240
+          ]
+        },
+        "average_cpu_cores": {
+          "median": 0.18930067747287443,
+          "min": 0.15628319218508044,
+          "max": 0.20953690441674092,
+          "values": [
+            0.18930067747287443,
+            0.20953690441674092,
+            0.15628319218508044
+          ]
+        },
+        "rss_kib": {
+          "median": 374548,
+          "min": 366956,
+          "max": 378292,
+          "values": [
+            366956,
+            374548,
+            378292
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.03180846100008239,
+          "min": 0.02631825100002061,
+          "max": 0.034667848000026424,
+          "values": [
+            0.03180846100008239,
+            0.034667848000026424,
+            0.02631825100002061
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.01964917999998761,
+          "min": 0.01950730399994427,
+          "max": 0.02033769000013308,
+          "values": [
+            0.02033769000013308,
+            0.01950730399994427,
+            0.01964917999998761
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.028598091747481808,
+            "min": 0.02325863550297846,
+            "max": 0.02999333211911493,
+            "values": [
+              0.028598091747481808,
+              0.02999333211911493,
+              0.02325863550297846
+            ]
+          },
+          "profiles-all": {
+            "median": 0.08484968546651356,
+            "min": 0.07092135363513916,
+            "max": 0.09219477787871593,
+            "values": [
+              0.08484968546651356,
+              0.09219477787871593,
+              0.07092135363513916
+            ]
+          },
+          "minio": {
+            "median": 0.07585290025887907,
+            "min": 0.06210320304696281,
+            "max": 0.08734879441891008,
+            "values": [
+              0.07585290025887907,
+              0.08734879441891008,
+              0.06210320304696281
+            ]
+          }
+        }
+      }
+    },
+    "pair_comparison": {
+      "average_cpu_cores": {
+        "candidate_divided_by_baseline": 1.0904857868273667,
+        "candidate_lower_pairs": 1,
+        "pairs": 3,
+        "ranges_overlap": true
+      },
+      "rss_kib": {
+        "candidate_divided_by_baseline": 0.9962124839083761,
+        "candidate_lower_pairs": 2,
+        "pairs": 3,
+        "ranges_overlap": true
+      },
+      "query_p99_seconds": {
+        "candidate_divided_by_baseline": 1.1615378994700474,
+        "candidate_lower_pairs": 0,
+        "pairs": 3,
+        "ranges_overlap": true
+      },
+      "ingest_p99_seconds": {
+        "candidate_divided_by_baseline": 0.9337260626984752,
+        "candidate_lower_pairs": 3,
+        "pairs": 3,
+        "ranges_overlap": true
+      }
+    },
+    "verified_pairs_path": "qualification/evidence/performance/gcp-37365605239/profiles/verified-revision-pairs.json",
+    "verified_pairs_sha256": "75da79e5abe8bbf7a295e33fa3c8544e6988a9c0e210fb2bd6b65ac6297f1af5"
+  },
+  "retained": false,
+  "restoration": {
+    "source_commit": "92d353cb6f52ab962cf69224549c4114c4d12862",
+    "production_source_sha256": "21f3cb9e40281627fb7cc71a83bd198e50e36091c604c7311faca524745caecd",
+    "production_source_byte_equal_to": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
+    "stronger_golden_vectors_retained": true,
+    "status": "passed",
+    "targets_passed": 22,
+    "provenance_path": "qualification/evidence/correctness/canonical-fingerprint-restoration/core-92d353cb/provenance.json",
+    "provenance_sha256": "3490357fbf95a1eb319eb45767c7602bb618b219b4357884fda8d8340e5717f4"
   }
 }

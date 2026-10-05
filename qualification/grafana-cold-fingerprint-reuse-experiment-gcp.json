@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "experiment": "Reuse canonical cold-series keys in instant labels and cardinality",
+  "status": "scoped_correctness_qualified_performance_pending",
+  "baseline_source_commit": "d4125ea317b203173f80e5feba1991b0b942c469",
+  "source_commit": "1dbd10da44b6b319efea54de61dfdddb40f70c7d",
+  "performance_qualified": false,
+  "retained": false,
+  "scope": {
+    "production_paths": [
+      "crates/promql/src/block_store/store_impl/metric_block_store.rs",
+      "crates/promql/src/merged_store/instant_scan.rs"
+    ],
+    "regression_path": "crates/promql/src/block_store/tests/cold_series_labels.rs",
+    "change": "Preserve the canonical-keyed cold-series map through instant label resolution and cardinality. Avoid hashing the same labels again and avoid the intermediate label vector. Keep canonical hash computation from labels, float/histogram deduplication, ordering, cold-first precedence and owned cold-label lifetime.",
+    "no_cache_or_persistent_memory_field": true,
+    "no_dependency_changes": true,
+    "no_configuration_changes": true,
+    "no_wire_changes": true
+  },
+  "profile_selection": {
+    "run_id": 37365264758,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37365264758",
+    "profile_source_commit": "a2e9e16ebbd2df7fda125f186ee2e4bdb4615908",
+    "source_paths_equal_to_prechange_baseline": true,
+    "diagnostic_only": true,
+    "provenance_path": "qualification/evidence/profiling/gcp-37365264758/provenance.json",
+    "provenance_sha256": "965a0547cbf96c808f0c8be7479253ca3165251f4b9469a9efd2687cf04d052c",
+    "interpretation": "Sampled fingerprint work guides selection. Source inspection identifies repeated canonical hashing in cold label resolution. Sparse flat profiles do not attribute the full hash cost to this path or establish an advantage."
+  },
+  "validation": {
+    "ordinary_scope_targets_passed": 56,
+    "retries_disabled": true,
+    "formatting_check_passed": true,
+    "provenance_path": "qualification/evidence/correctness/cold-canonical-fingerprint-reuse/ordinary-1dbd10da/provenance.json",
+    "provenance_sha256": "eff0fd275c614c9e6593975f0e74b574a631251c47d0e5fee0921e65531c3489",
+    "regression_scope": "Duplicate complete labels stored under different float and histogram index IDs still deduplicate by their canonical label hash. Mixed signals, tenant/matcher isolation, latest samples and retained label ownership match independent expected values. Existing instant engine ledgers cover cold-first precedence, boundaries, limits and complete output.",
+    "native_source_commit": "1dbd10da44b6b319efea54de61dfdddb40f70c7d",
+    "native_status": "passed",
+    "native_wrappers_passed": 3,
+    "native_cases": {
+      "diff_mimir_docker_test": 1,
+      "diff_prometheus_docker_test": 1,
+      "metrics_deployment_docker_test": 12
+    },
+    "native_cases_ignored": 0,
+    "native_provenance_path": "qualification/evidence/correctness/cold-canonical-fingerprint-reuse/native-1dbd10da/provenance.json",
+    "native_provenance_sha256": "fa12bf7a5290aa9e6704d618661206fdc264012488148d23248ed27f2fd6734a",
+    "restored_combined_core_scope": {
+      "source_commit": "92d353cb6f52ab962cf69224549c4114c4d12862",
+      "targets_passed": 22,
+      "provenance_path": "qualification/evidence/correctness/canonical-fingerprint-restoration/core-92d353cb/provenance.json",
+      "provenance_sha256": "3490357fbf95a1eb319eb45767c7602bb618b219b4357884fda8d8340e5717f4",
+      "scope": "Ten core unit suites, their library Clippy targets and both canonical fingerprint golden targets pass with the original fingerprint loop restored. The preceding 56 ordinary checks and three native wrappers remain pinned to their earlier source."
+    }
+  },
+  "next_action": "Choose exact matched GCP image sources on the restored original fingerprint implementation. Native and revision comparisons for this reuse candidate are not yet dispatched.",
+  "correctness_scope_qualified": true
+}
