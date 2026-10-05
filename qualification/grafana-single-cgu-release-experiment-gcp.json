@@ -48,7 +48,7 @@
   },
   "schema_version": 1,
   "experiment": "One Rust code generation unit for executable footprint and runtime efficiency",
-  "status": "mimir_cpu_and_rss_gain_verified_other_signal_comparisons_dispatched",
+  "status": "all_signal_controls_verified_global_setting_not_retained",
   "baseline_image_reuse": "The exact restored-source cold fingerprint reuse candidate supplies the baseline image. All source, dependencies and workload harness files match; only .bazelrc differs. Both contain the same dense metadata and cold fingerprint reuse candidates.",
   "candidate_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371662781",
   "baseline_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
@@ -129,14 +129,31 @@
       "targets_passed_before_abort": 80,
       "targets_skipped_after_abort": 304,
       "failed_target": "//crates/integration:backup_restore_test",
-      "failure": "Rust E0275: sqlparser AST Sync trait recursion overflow in the test crate. Default compiler configuration is being checked to classify the cause.",
+      "failure": "Rust E0275: sqlparser AST Sync trait recursion overflow in backup_restore_test. The same failure reproduces with the default compiler setting; it is independent of the single-codegen-unit experiment.",
       "failure_log_path": "qualification/evidence/correctness/single-cgu-full-ordinary-45d9c94b-failed/validation.log",
-      "failure_log_sha256": "b6f6c60b489da4e50493679a539b31c5b0287ce21c08a3005179c4445419a9d2"
+      "failure_log_sha256": "b6f6c60b489da4e50493679a539b31c5b0287ce21c08a3005179c4445419a9d2",
+      "default_configuration_diagnosis": {
+        "status": "same_build_failure_reproduced",
+        "target": "//crates/integration:backup_restore_test",
+        "compiler_setting": "repository default",
+        "source_commit": "848eb6a6f23e92f3ec44b3cb7625db0a9a9eebe8",
+        "production_source_unchanged_during_diagnosis": true,
+        "log_path": "qualification/evidence/correctness/single-cgu-full-ordinary-45d9c94b-failed/default-configuration-diagnosis.log",
+        "log_sha256": "8ef80e1622d2dc5d61f55a5ba7d99b193f0a438a9de0aef13cadcf166cad7a34"
+      }
     },
     "native_wrappers_passed": 10,
-    "native_cases_passed": 67
+    "native_cases_passed": 67,
+    "backup_restore_recursion_repair": {
+      "status": "passed_default_configuration",
+      "targets_passed": 2,
+      "rust_cases_passed": 3,
+      "ignored_cases": 0,
+      "provenance_path": "qualification/evidence/correctness/backup-restore-recursion-repair-fd779981/provenance.json",
+      "provenance_sha256": "9fe05af472c79c7536c00f97d38b66ac428d894a6b2a15ec4690da419b9136e7"
+    }
   },
-  "next_action": "Finish Tempo and Pyroscope controls and ordinary build checks. Loki query regression prevents global retention on this evidence; investigate a scoped metrics setting and validate final source.",
+  "next_action": "Rerun full ordinary correctness scope after the test-only recursion fix. Measure a metrics-specific compiler setting and a guarded compactor metadata candidate on final source.",
   "baseline_image_verified": {
     "image_provenance": {
       "run_id": 37371016528,
@@ -301,7 +318,7 @@
     },
     "scope": "Both exact images contain equal dense metadata and cold fingerprint reuse. Only the compiler setting differs. This isolates one codegen unit and does not qualify final HEAD."
   },
-  "decision": "CPU and RSS are lower in all three Mimir pairs with disjoint ranges. Query p99 is lower in two pairs with overlapping ranges. Measure other signals and finish full correctness checks before retaining the setting.",
+  "decision": "Do not enable codegen_units=1 globally. Mimir CPU and RSS fall in all three pairs, and all signals have lower RSS in all three pairs with disjoint ranges. Loki query p99 increases in all three pairs with disjoint ranges (+10.8% median). A metrics-specific setting is a separate candidate requiring a fresh build and final-source control.",
   "gcp_signal_comparisons": {
     "logs": {
       "run_id": 37380543910,
@@ -446,7 +463,7 @@
         "baseline_image_artifact_run": "37371016528",
         "baseline_image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6"
       },
-      "status": "dispatched",
+      "status": "success_verified",
       "live_instances_at_dispatch": [
         {
           "name": "gcp-runner-10bca65550514f20",
@@ -462,7 +479,41 @@
         }
       ],
       "image_runtime_control_verified": true,
-      "performance_qualified": false
+      "performance_qualified": false,
+      "measurement_qualified": true,
+      "verified_raw_files": 743,
+      "proof_path": "qualification/evidence/performance/gcp-37380853989/profiles/verified-revision-pairs.json",
+      "proof_sha256": "8dc454e924a5d74e1dfebbdf071e5293c6782ca7ef2a195079889a384292b4d8",
+      "candidate_divided_by_baseline": {
+        "query_attempts": 1.0,
+        "average_cpu_cores": 0.9955964030977509,
+        "rss_kib": 0.9548249304252152,
+        "query_p99_seconds": 0.9641552600760218,
+        "ingest_p99_seconds": 1.0223445342071242
+      },
+      "pair_directions": {
+        "query_attempts": {
+          "candidate_lower_pairs": 0,
+          "ranges_overlap": true
+        },
+        "average_cpu_cores": {
+          "candidate_lower_pairs": 2,
+          "ranges_overlap": true
+        },
+        "rss_kib": {
+          "candidate_lower_pairs": 3,
+          "ranges_overlap": false
+        },
+        "query_p99_seconds": {
+          "candidate_lower_pairs": 2,
+          "ranges_overlap": true
+        },
+        "ingest_p99_seconds": {
+          "candidate_lower_pairs": 1,
+          "ranges_overlap": true
+        }
+      },
+      "decision": "RSS falls in all three pairs with disjoint ranges. CPU/query/ingest results are mixed. This does not reverse the Loki query regression or qualify final source."
     }
   }
 }
