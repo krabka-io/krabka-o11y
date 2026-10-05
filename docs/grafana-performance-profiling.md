@@ -1,0 +1,232 @@
+# Profiling the Grafana comparison workload
+
+`tools/profile-grafana.py` reuses the comparison deployment, seed, request
+encoders, two writers at one request per second each, and four queries per
+second. It profiles Krabka's release image on the private
+`gcp-ubuntu-24-04-16core` pool. The
+[runner provisioner](https://github.com/Cyclenerd/google-cloud-github-runner)
+creates a fresh Google Cloud VM for each job.
+
+Run CPU and allocation profiling separately. Instrumentation changes CPU,
+latency and RSS; `profile-report.json` explicitly sets `diagnostic_only: true`
+and `comparison_qualified: false`. Use an uninstrumented paired comparison
+to establish an optimization's performance result.
+
+Reuse a preserved image to avoid rebuilding or changing the measured binary:
+
+```bash
+gh workflow run grafana-comparison.yml --ref codex/grafana-performance \
+  -f signal=metrics -f profiling=cpu \
+  -f image_artifact_run=37258326193 \
+  -f image_artifact_name=comparison-image-logs-1c31b6830961637b98f2918f8b3dd5ee7ecc1b3a \
+  -f deployment_target=split
+```
+
+Use `profiling=allocations` for a separate allocation pass. Use `signal=logs`,
+`traces`, or `profiles` with `deployment_target=all` to profile the pooled
+layout. `signal=all` schedules all four signals on separate VMs. An empty
+`image_artifact_run` builds and preserves the selected branch's image first.
+Profiling requires one concrete layout; `deployment_target=both` is rejected.
+
+The workflow validates the image artifact's file checksums and Docker image
+identity before starting it. The report records the source commit, image
+identity, harness hashes, workload, tool versions and host. Evidence includes
+request outcomes, container configuration and logs, telemetry, and SHA-256
+checksums. The normal comparison path remains the default (`profiling=none`).
+
+## CPU and object-store memory
+
+CPU profiling captures three consecutive 55-second Linux perf windows from every
+Krabka role, including the broker, after seeding and warming the deployment.
+The measured workload continues for 180 seconds. `perf record` samples the
+software `cpu-clock:u` event at 99Hz with DWARF call stacks. This works without
+a virtual hardware performance counter. Reports resolve symbols through each
+live process's container root; flat and cumulative reports accompany
+the raw perf data. Some recorded mappings could not be unwound completely,
+so cumulative reports do not establish complete caller attribution for those
+samples. The first optimization uses resolved flat samples plus the separate
+pprof and allocation captures. The preserved image supplies those same binaries for
+later offline analysis. The runner needs sudo and Linux tools for its kernel.
+
+`--cpu-profiler pprof` selects the existing admin endpoint instead. One repeat
+of in-process pprof sampling on the measured image ended with a querier
+segmentation fault (exit 139, no OOM kill); the default uses external perf.
+That failed diagnostic run is preserved separately from qualification.
+
+The harness also captures MinIO CPU and heap profiles through its local
+[admin Profile API](https://github.com/minio/madmin-go/blob/main/profiling-commands.go),
+using curl's AWS SigV4 signer and the synthetic benchmark account. The current
+`mc support profile` command requires cluster registration even with
+`--airgap`, and the old `mc admin profile` commands only print a deprecation
+message. The direct admin API saves the profile ZIP locally and contacts no
+support service. Heap summaries include both live bytes
+(`inuse_space`) and cumulative allocation bytes (`alloc_space`). Process
+`smaps_rollup` snapshots distinguish RSS, private dirty pages and proportional
+memory from the Go heap itself.
+
+## Rust allocations
+
+The allocation pass uses [heaptrack](https://github.com/KDE/heaptrack) to
+intercept allocations from process startup. It uses the same release binary
+and its existing allocator. In a split deployment it instruments the querier;
+in a pooled deployment it instruments the signal's `all` process. The other
+roles retain their normal binaries and configuration.
+
+The preload library and its dependencies are mounted into the container;
+the container keeps its own glibc. The pass records seeding, warm-up and
+70 seconds of steady traffic, then stops the instrumented role gracefully.
+The raw trace's timestamps distinguish startup from steady activity.
+Ubuntu's heaptrack 1.5 interpreter lacks `--sysroot`, so the harness resolves
+stacks inside an export of the exact container filesystem. The exported
+filesystem is temporary; the artifact retains compressed raw and interpreted
+traces, plus a text allocation summary.
+
+Inspect live memory, peak memory, allocation count and temporary allocations
+separately. A high allocation count can explain CPU without explaining live
+RSS; freed buffers and allocator pages can explain RSS without remaining live
+objects. Validate any resulting product change with correctness tests and a
+new paired, uninstrumented GCP run.
+
+## First Mimir finding
+
+The initial three 55-second querier CPU captures from
+[run 37260662006](https://github.com/krabka-io/krabka-o11y/actions/runs/37260662006)
+contain 3.19, 5.55 and 8.77 sampled CPU seconds. `InMemoryMetricStore::prune`
+accounts for 33.23%, 39.53% and 38.48% of cumulative sampled CPU. The job's
+Krabka CPU captures completed, but its MinIO client failed registration, so
+that run is incomplete diagnostic evidence. Its uploaded artifact's outer
+digest and every raw file checksum were independently verified.
+
+The external perf metrics capture in
+[run 37263608464](https://github.com/krabka-io/krabka-o11y/actions/runs/37263608464)
+also completed successfully using the preserved `1c31b683` release image.
+Its three querier windows contain 382, 609 and 839 samples, with zero lost
+samples. `prune` accounts for 21.47%, 28.41% and 30.87% of **self** CPU;
+chunk-retention helpers add further samples. This independent capture
+confirms that prune cost grows during this workload. The outer artifact
+digest and all 234 evidence-file checksums were verified. These percentages
+are sampled CPU attribution, not a latency or throughput comparison.
+
+Pruning walked every float and histogram sample to build fingerprint sets,
+retained every chunk, and copied the store on every replayed WAL poll, even
+when the oldest sample was within the five-minute retention window. A
+conservative minimum sample timestamp can prove that such a prune removes
+nothing. Late floats, histograms and exemplars lower that bound immediately;
+an actual prune recomputes it from surviving rows. Tenant deletion can leave
+the bound conservatively low, which causes extra work rather than skipping
+required retention. The WAL head keeps its existing `Arc` for a no-op and
+preserves publication after successful completion for an actual prune.
+
+The timestamp-ledger test covers mixed sample kinds and tenants, inclusive
+boundaries, late records, retention changes, deletion and saturated integer
+timestamps. A separate held-snapshot test verifies that an unexpired prune
+keeps the same store and that an actual prune cannot change an old snapshot.
+Restoring the old no-op copy made that new test fail, with the other 562 unit
+tests passing. A subsequent uninstrumented GCP comparison must establish the
+performance effect.
+
+The separate allocation pass in
+[run 37261831936](https://github.com/krabka-io/krabka-o11y/actions/runs/37261831936)
+passed on GCP. The artifact digest and all 130 evidence-file checksums were
+verified. Over 105.92 seconds including startup and seed, heaptrack recorded
+14,261,468 allocations, 1,584,222 temporary allocations, a 16.85MB peak heap,
+and 220.88KB remaining at exit. These are diagnostic totals, including
+instrumentation overhead, rather than steady comparison results. String
+cloning accounts for 6,131,850 allocations; the leading caller chain includes
+`matched_series`, `labels_by_fingerprint_uncached` and `latest_labeled_series`.
+The text summary can be demangled with `c++filt -s rust`.
+
+MinIO's final live heap was 191.47MiB: transition state used 64.85MiB,
+notification targets 32.81MiB, expiry workers 16.86MiB, and replication workers
+about 38MiB. Its start/end process snapshots measured roughly 162/275MiB RSS
+and 103/212MiB private dirty pages. This points to object-store worker queues
+as a separate memory cost from the Rust querier's live heap; allocation counts
+and RSS alone cannot identify that distinction.
+
+## Completed capture across all four signals
+
+All four jobs in
+[run 37263608464](https://github.com/krabka-io/krabka-o11y/actions/runs/37263608464)
+passed using the same preserved release image. Independent verification
+checked the four GitHub artifact digests and 234 metrics, 162 logs, 162 traces
+and 164 profiles evidence-file checksums. These include raw perf records,
+resolved reports, MinIO profiles, memory snapshots and workload outcomes.
+
+The third pooled Loki window shows allocator/free routines and copying among
+its leading self samples. Tempo likewise shows allocation/copying, with
+Arrow schema and column-name lookup also visible. These are investigation
+targets, not attribution of the caller responsible for each allocation.
+Pyroscope's third window has only 182 CPU samples; small differences in
+individual percentages at this load need a larger diagnostic workload before
+selecting another product change. Use the uninstrumented comparison for
+latency and resource ratios.
+
+The regional CPU quota allows at most four of these 16-core VMs at once.
+Keep concurrent workflow dispatches within that capacity. A VM creation can
+fail its asynchronous Compute operation with `QUOTA_EXCEEDED` even when the
+manager has already acknowledged the queue webhook; such a job can remain
+queued after capacity frees. Check the failed operation and retry only jobs
+that never started. Do not replace a completed measurement with a profiling
+result or silently change runner size to bypass the limit.
+
+The next product change carries the hot head's immutable `Arc<Labels>` through
+series discovery and engine label resolution, avoiding the string-cloning
+path identified above. The default adapter for other stores preserves their
+owned labels, and merged stores retain cold-first precedence. The regression
+reaches the engine resolution path, checks complete expected labels and
+series limits, and retains labels across pruning/deletion. Restoring owned
+resolution fails the pointer checks while the other 563 unit cases pass.
+All 33 scoped targets and both real Mimir/Prometheus differential suites pass.
+
+The prune follow-up in
+[run 37264751159](https://github.com/krabka-io/krabka-o11y/actions/runs/37264751159)
+passed using the `dd67ca1e` image. Its querier windows contain 303, 447 and
+614 samples. No `prune` entry exceeds the 0.5% flat-report threshold in any
+window, compared with 21.47–30.87% self CPU before the change. The GitHub
+artifact digest and all 234 evidence-file checksums were verified. Series
+discovery and latest-sample hash lookup are now prominent self samples.
+This confirms removal of the no-op prune hotspot; the sample totals are not
+a substitute for paired, uninstrumented CPU measurements.
+
+The separate prune-image Mimir comparison passed all three pairs in
+[run 37262286601](https://github.com/krabka-io/krabka-o11y/actions/runs/37262286601).
+Its median Krabka p99 is 40.81ms versus Mimir's 23.32ms, and RSS is
+488.88 versus 302.23MiB. The preceding Krabka measurement was 47.25ms and
+510.29MiB. CPU remains roughly 0.26 cores. Thus pruning improves tails and
+RSS in this workload, while a material Mimir gap remains.
+
+## Allocation captures for the pooled services
+
+The separate allocation jobs passed for
+[Loki](https://github.com/krabka-io/krabka-o11y/actions/runs/37266699448),
+[Tempo](https://github.com/krabka-io/krabka-o11y/actions/runs/37266701064) and
+[Pyroscope](https://github.com/krabka-io/krabka-o11y/actions/runs/37266914575),
+using the same `dd67ca1e` release image. Their GitHub artifact digests and
+130, 130 and 132 evidence-file checksums were independently verified.
+
+The metrics row is the earlier `1c31b683` split-querier pass; the other
+rows use `dd67ca1e` and the pooled layout. These totals include process
+startup, seeding and the 70-second workload; they measure different signal work and do not rank backend efficiency.
+Peak heap uses decimal MB and excludes MinIO. Instrumented RSS is excluded
+from the comparison table.
+
+| Signal and layout | Trace duration | Allocation calls | String clones | Peak heap |
+| --- | ---: | ---: | ---: | ---: |
+| Metrics querier, split | 105.92s | 14,261,468 | 6,131,850 | 16.85MB |
+| Logs, all | 105.34s | 75,988,258 | 39,998,496 | 50.59MB |
+| Traces, all | 105.88s | 75,300,558 | 11,291,035 | 39.52MB |
+| Profiles, all | 124.88s | 11,299,844 | 5,551,323 | 5.22MB |
+
+Loki's hot-tail snapshot path (`HotTailBuffer::records_in_range`) is a
+prominent string-cloning caller; label-map copying contributes 7.62MB at
+the recorded heap peak in that path. Length-prefixed series fingerprint
+encoding also produces many temporary allocations. Tempo's attribute
+conversion (`block_attr_value` / `push_span_attr`) produces repeated clones;
+search response assembly grows span-reference vectors. Pyroscope's
+fingerprint-label construction and tree assembly generate temporary string
+copies, while Parquet Zstandard decoder contexts are prominent peak live
+allocations. These are concrete next investigation targets. A caller's
+allocation count alone does not establish its contribution to CPU or RSS.
+
+The machine-readable [profiling record](../qualification/grafana-profiling-gcp.json)
+keeps every successful capture's source, run, artifact digest and limitations.

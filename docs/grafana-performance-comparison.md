@@ -3,6 +3,8 @@
 For subsequent changes on this branch, see the
 [local optimization measurements](grafana-performance-optimization.md) and
 [Pyroscope handoff and performance work](pyroscope-performance-optimization.md).
+The [private GCP performance record](grafana-performance-gcp.md) describes the
+subsequent source changes and measurement contract.
 The tables below retain the historical issue 267 results.
 
 Measured on 2026-10-04 using the installed [Cyclenerd Google Cloud GitHub runner](https://github.com/Cyclenerd/google-cloud-github-runner). This compares accepted API work in fixed, single-node deployment shapes, with one active signal at a time. The backends acknowledge writes at different durability boundaries; these are not equivalent durable-throughput results. The issue 267 [operating envelope](operating_envelope.md) and its durability qualification remain separate.
@@ -103,6 +105,11 @@ Full run IDs, archive digests, image manifests, source commits and expiry dates 
 The comparison workflow builds the selected branch's optimized image by default.
 It preserves the image, source commit, manifest digest, and raw measurements.
 Use `image_artifact_run` to compare an image preserved by the operating-envelope workflow.
+For an image produced by this comparison workflow, also set
+`image_artifact_name` to its exact `comparison-image-SIGNAL-SHA` artifact name.
+All matrix jobs then load that image after verifying its file checksums and
+Docker configuration digest, skipping the build. The report records its source
+commit independently of the harness commit.
 Use run `37183330836` to reproduce the historical measurements above.
 
 The workflow is registered on the default branch. Dispatch the branch you want
@@ -124,6 +131,26 @@ The workflow waits for low background CPU before warm-up. The harness records
 host CPU and rejects runs averaging more than two external cores or exceeding
 four external cores over ten sample intervals; the summarizer suppresses
 qualified ratios for failed steady objectives.
+Use `deployment_target=all` for the shipped single-process logs, traces and
+profiles services, or `deployment_target=both` for paired measurements of both
+layouts. Metrics always uses separate roles. Each layout retains the same
+aggregate resource ceilings; single-process layouts pool the application
+roles' allocations, with the broker remaining separate. Local invocation uses
+`--deployment-target all` or `--deployment-target split`.
+
+To reuse a newly built comparison image for all four signals:
+
+```sh
+gh workflow run grafana-comparison.yml --repo krabka-io/krabka-o11y \
+  --ref codex/grafana-performance \
+  -f image_artifact_run="$IMAGE_BUILD_RUN" \
+  -f image_artifact_name="$IMAGE_ARTIFACT_NAME" \
+  -f signal=all -f phases=steady -f phase_seconds=60 -f repetitions=3 \
+  -f deployment_target=all
+```
+
+Select the producer run's exact artifact name. Its source commit and digest
+remain visible in every report, even if the harness branch has since changed.
 Use a quiet qualification host for published ratios. A local diagnostic run
 uses the same payloads and reports its actual host:
 
@@ -160,6 +187,10 @@ and checks CPU, S3, and RSS accounting. CI runs it on each pull request:
 python3 tools/compare-grafana.py --self-test
 python3 tools/deployment-envelope.py --self-test
 ```
+
+For CPU stacks, live heap, and allocation traces on the private GCP runners,
+see [profiling the same release image and workload](grafana-performance-profiling.md).
+Those diagnostic runs are separate from qualified comparisons.
 
 Download the historical artifacts into one evidence directory as `metrics.zip`,
 `logs.zip`, `traces.zip`, and `profiles.zip`. Copy the provenance record there as
