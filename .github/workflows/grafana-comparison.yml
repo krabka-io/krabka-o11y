@@ -64,7 +64,7 @@ jobs:
     runs-on: gcp-ubuntu-24-04-16core
     timeout-minutes: 300
     concurrency:
-      group: grafana-comparison-${{ matrix.signal }}
+      group: grafana-comparison-${{ inputs.profiling || 'none' }}-${{ matrix.signal }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
