@@ -29,6 +29,9 @@ pub struct InMemoryMetricStore {
     /// Samples whose timestamp is older than `now_ms - retention` are eligible
     /// for [`crate::InMemoryMetricStore::prune`].
     pub(crate) retention: Time,
+    /// Lower bound on every retained sample timestamp. Deleting a tenant may
+    /// leave it conservatively low; pruning recomputes the exact minimum.
+    pub(crate) oldest_sample_timestamp_ms: Option<i64>,
     /// WAL offset range currently materialized in the head, keyed by partition.
     /// Offsets track ingestion progress for observability and rebuild bounds.
     /// They are independent of timestamp-based retention.
@@ -45,6 +48,7 @@ impl Default for InMemoryMetricStore {
             series_labels: HashMap::new(),
             blocks: HashMap::new(),
             retention: DEFAULT_RETENTION,
+            oldest_sample_timestamp_ms: None,
             watermarks: BTreeMap::new(),
         }
     }
