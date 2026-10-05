@@ -458,3 +458,15 @@ Tempo differential suite, Grafana, both corpus wrappers and Clippy. An
 independent full-row ledger checks clipped roots, equal-time ordering,
 duplicate attributes, reserved resource keys, bytes, events, links, tenant
 filtering and output lifetime. Performance qualification is pending.
+
+The live-label cache hit is now retained after its
+[isolated same-VM comparison](https://github.com/krabka-io/krabka-o11y/actions/runs/37293323368).
+Against the shared-record image, all three pairs lowered query p99: the
+median fell from 31.45 to 29.15ms (7.3%), with disjoint ranges. Querier CPU
+fell 3.3% at the median, also with disjoint ranges. Whole-deployment CPU was
+unchanged (ratio 1.001); RSS was lower in two pairs, so its 2.3% lower median
+does not establish a consistent memory gain. All 725 raw checksums and
+source, image, workload, host and resource gates passed. The
+[experiment record](../qualification/grafana-live-label-hit-experiment-gcp.json)
+also preserves the earlier combined control, which spans the shared Loki
+change and cannot isolate this optimization.
