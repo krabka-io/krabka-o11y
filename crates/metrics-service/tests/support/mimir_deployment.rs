@@ -267,11 +267,20 @@ async fn wait_data(client: &Client, url: &url::Url, tenant: &str, expected: &Val
 }
 
 fn matrix(series: Value) -> Value {
-    json!({"resultType": "matrix", "result": series})
+    Value::Object(
+        [
+            ("resultType".into(), json!("matrix")),
+            ("result".into(), series),
+        ]
+        .into_iter()
+        .collect(),
+    )
 }
 
 fn float_matrix(metric: &str, samples: &[(i64, i32)], extra: Value) -> Value {
-    let mut metric_labels = extra.as_object().expect("labels object").clone();
+    let Value::Object(mut metric_labels) = extra else {
+        panic!("labels object");
+    };
     metric_labels.insert("__name__".into(), json!(metric));
     matrix(
         json!([{"metric": metric_labels, "values": samples.iter().map(|&(time, value)| json!([timestamp(time), value.to_string()])).collect::<Vec<_>>() }]),

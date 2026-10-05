@@ -1,7 +1,7 @@
 //! Isolated deployment tests following Mimir's container integration pattern.
 //!
 //! Each case starts the locally built role binaries, a formatted broker, and
-//! MinIO on its own Docker network. Requests use public HTTP endpoints. A
+//! `MinIO` on its own Docker network. Requests use public HTTP endpoints. A
 //! querier without a WAL connection checks that blocks, rather than the hot
 //! head, supply the stored answer. Container and network cleanup is automatic.
 //!
