@@ -1,5 +1,5 @@
 use super::{
-    BTreeMap, BinModifier, BinaryOp, InstantSample, MissingSide, PromqlError, Result,
+    BTreeMap, BTreeSet, BinModifier, BinaryOp, InstantSample, MissingSide, PromqlError, Result,
     apply_binary_fill_value, apply_binary_sample_value, binary_match_key, binary_returns_bool,
     one_to_one_binary_result_labels,
 };
@@ -21,9 +21,10 @@ pub(crate) fn eval_one_to_one_vector_binary(
     }
 
     let mut out = Vec::new();
+    let mut matched_keys = BTreeSet::new();
     for left_sample in left {
         let key = binary_match_key(&left_sample.labels, modifier);
-        let Some(right_sample) = right_by_key.remove(&key) else {
+        let Some(right_sample) = right_by_key.get(&key) else {
             let Some(rhs_fill) = modifier.and_then(|modifier| modifier.fill_values.rhs) else {
                 continue;
             };
@@ -38,11 +39,8 @@ pub(crate) fn eval_one_to_one_vector_binary(
             } else {
                 true
             };
-            let labels = if preserves_name {
-                left_sample.labels
-            } else {
-                one_to_one_binary_result_labels(&left_sample.labels, modifier)
-            };
+            let labels =
+                one_to_one_binary_result_labels(&left_sample.labels, modifier, preserves_name);
             out.push(InstantSample {
                 labels,
                 ts_ms: left_sample.ts_ms,
@@ -51,7 +49,12 @@ pub(crate) fn eval_one_to_one_vector_binary(
             });
             continue;
         };
-        let Some(value) = apply_binary_sample_value(&left_sample, &right_sample, op, modifier)?
+        if !matched_keys.insert(key.clone()) {
+            return Err(PromqlError::Exec(format!(
+                "many-to-one matching must be explicit for key `{key}`"
+            )));
+        }
+        let Some(value) = apply_binary_sample_value(&left_sample, right_sample, op, modifier)?
         else {
             continue;
         };
@@ -61,11 +64,7 @@ pub(crate) fn eval_one_to_one_vector_binary(
         } else {
             true
         };
-        let labels = if preserves_name {
-            left_sample.labels
-        } else {
-            one_to_one_binary_result_labels(&left_sample.labels, modifier)
-        };
+        let labels = one_to_one_binary_result_labels(&left_sample.labels, modifier, preserves_name);
         out.push(InstantSample {
             labels,
             ts_ms: left_sample.ts_ms,
@@ -74,23 +73,18 @@ pub(crate) fn eval_one_to_one_vector_binary(
         });
     }
     if let Some(lhs_fill) = modifier.and_then(|modifier| modifier.fill_values.lhs) {
-        for right_sample in right_by_key.into_values() {
+        for (key, right_sample) in right_by_key {
+            if matched_keys.contains(&key) {
+                continue;
+            }
             let Some(value) =
                 apply_binary_fill_value(&right_sample, lhs_fill, op, modifier, MissingSide::Left)?
             else {
                 continue;
             };
-            let preserves_name = op.is_comparison() && !binary_returns_bool(modifier);
-            let drop_name = if preserves_name {
-                right_sample.drop_name
-            } else {
-                true
-            };
-            let labels = if preserves_name {
-                right_sample.labels
-            } else {
-                one_to_one_binary_result_labels(&right_sample.labels, modifier)
-            };
+            // The synthetic left side has no metric name, including filtered comparisons.
+            let drop_name = true;
+            let labels = one_to_one_binary_result_labels(&right_sample.labels, modifier, false);
             out.push(InstantSample {
                 labels,
                 ts_ms: right_sample.ts_ms,

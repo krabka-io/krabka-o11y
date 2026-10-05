@@ -148,6 +148,16 @@ impl<'a> DurationExprParser<'a> {
             .secs_f64()),
             "start" if args.is_empty() => Ok(ms_to_seconds(self.context.start_ms)),
             "end" if args.is_empty() => Ok(ms_to_seconds(self.context.end_ms)),
+            "min_of" if args.len() == 2 => Ok(if args[0].is_nan() || args[1].is_nan() {
+                f64::NAN
+            } else {
+                args[0].min(args[1])
+            }),
+            "max_of" if args.len() == 2 => Ok(if args[0].is_nan() || args[1].is_nan() {
+                f64::NAN
+            } else {
+                args[0].max(args[1])
+            }),
             "min" if !args.is_empty() => Ok(args.into_iter().fold(f64::INFINITY, f64::min)),
             "max" if !args.is_empty() => Ok(args.into_iter().fold(f64::NEG_INFINITY, f64::max)),
             _ => Err(PromqlError::Parse(format!(

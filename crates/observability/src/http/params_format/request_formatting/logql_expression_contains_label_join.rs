@@ -3,7 +3,10 @@ use super::LogqlExpr;
 pub(crate) fn logql_expression_contains_label_join(expression: &LogqlExpr) -> bool {
     match expression {
         LogqlExpr::LabelJoin { .. } => true,
-        LogqlExpr::Vector(expression)
+        LogqlExpr::Aggregation {
+            expr: expression, ..
+        }
+        | LogqlExpr::Vector(expression)
         | LogqlExpr::LabelReplace {
             expr: expression, ..
         }

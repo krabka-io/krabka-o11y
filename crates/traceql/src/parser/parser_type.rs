@@ -412,6 +412,11 @@ impl Parser {
             return Err(Self::err("use single = for equality; == is not TraceQL"));
         }
         let rhs = self.parse_value(&lhs)?;
+        if matches!(op, ComparisonOp::Re | ComparisonOp::Nre) && !matches!(rhs, Value::Str(_)) {
+            return Err(TraceqlError::Plan(
+                "regex comparison requires string value".into(),
+            ));
+        }
         Ok(FieldExpr::Comparison { lhs, op, rhs })
     }
 

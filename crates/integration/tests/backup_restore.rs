@@ -268,6 +268,13 @@ async fn an_empty_deployment_restores_every_tenant_and_signal_and_resumes_ingest
     check!(after.len() == before.len());
     evidence.write("query-before.json", &before);
     evidence.write("query-after-restore.json", &after);
+    evidence.write(
+        "backup-query-invariance.json",
+        &json!({"cases":before.iter().map(|(name, answer)| json!({
+        "id":name, "status":if after.get(name) == Some(answer) {"matched"} else {"mismatch"},
+        "before":answer, "restored":after.get(name),
+    })).collect::<Vec<_>>()}),
+    );
 
     // --- ingest resumes from the cut --------------------------------------
     let producer = Arc::new(
@@ -1030,6 +1037,76 @@ async fn query_everything(deployment: &Deployment, bootstrap: &str) -> BTreeMap<
             )
             .await,
         );
+        for (name, query) in [
+            (
+                "compound",
+                "(sum(sum_over_time(backup_probe[1h1ms])) + 2) * 3",
+            ),
+            ("absent", "sum(backup_probe{job=\"absent\"})"),
+        ] {
+            let query = url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>();
+            answers.insert(
+                format!("{tenant}/metrics/{name}"),
+                get_json(
+                    &metrics,
+                    tenant,
+                    &format!("/api/v1/query?query={query}&time={end_s}"),
+                )
+                .await,
+            );
+        }
+        let query = url::form_urlencoded::byte_serialize(
+            b"sum(count_over_time({app=\"checkout\"} |= \"generation\" [1h1ms]))",
+        )
+        .collect::<String>();
+        answers.insert(
+            format!("{tenant}/logs/compound"),
+            without_stats(
+                get_json(
+                    &logs,
+                    tenant,
+                    &format!("/loki/api/v1/query?query={query}&time={end_s}"),
+                )
+                .await,
+            ),
+        );
+        let trace_metrics = traces
+            .query_range(
+                tenant,
+                "{resource.service.name = \"checkout\"} | count_over_time()",
+                BASE_MS * 1_000_000,
+                (BASE_MS + 3_600_000) * 1_000_000,
+                3_600_000_000_000,
+            )
+            .await
+            .expect("TraceQL count ledger");
+        answers.insert(
+            format!("{tenant}/traces/metrics"),
+            serde_json::to_value(trace_metrics.series).expect("metrics ledger JSON"),
+        );
+        let search = traces
+            .search(
+                tenant,
+                "{resource.service.name = \"checkout\" && duration > 500us}",
+                (BASE_MS - 1) * 1_000_000,
+                (BASE_MS + 3_600_000) * 1_000_000,
+                100,
+            )
+            .await
+            .expect("TraceQL compound ledger");
+        let mut selected = search
+            .traces
+            .iter()
+            .flat_map(|trace| {
+                trace.span_sets.iter().flat_map(move |set| {
+                    set.spans
+                        .iter()
+                        .map(move |span| (hex::encode(trace.trace_id), hex::encode(span.span_id)))
+                })
+            })
+            .collect::<Vec<_>>();
+        selected.sort();
+        answers.insert(format!("{tenant}/traces/compound"), json!(selected));
         answers.insert(
             format!("{tenant}/metrics/recording_rule"),
             get_json(
@@ -1101,6 +1178,27 @@ async fn query_everything(deployment: &Deployment, bootstrap: &str) -> BTreeMap<
                 json!({"root": trace.root_trace_name, "spans": spans})
             });
         answers.insert(format!("{tenant}/traces/trace_by_id"), json!(trace));
+        for (name, selector) in [
+            (
+                "filtered",
+                "{service_name=~\"check.*\",service_name!=\"absent\"}",
+            ),
+            ("absent", "{service_name=\"absent\"}"),
+        ] {
+            let query = url::form_urlencoded::byte_serialize(
+                format!("{PROFILE_TYPE}{selector}").as_bytes(),
+            )
+            .collect::<String>();
+            answers.insert(
+                format!("{tenant}/profiles/{name}"),
+                get_json(
+                    &profiles,
+                    tenant,
+                    &format!("/pyroscope/render?query={query}&from=0&until={}", i64::MAX),
+                )
+                .await,
+            );
+        }
         answers.insert(
             format!("{tenant}/profiles/render"),
             get_json(
@@ -1205,6 +1303,48 @@ fn check_expected_answers(answers: &BTreeMap<String, Value>, generations: usize)
                 .map(Vec::len)
                 == Some(generations),
             "{tenant}: one span per generation"
+        );
+        check!(
+            answers[&format!("{tenant}/metrics/compound")]["data"]["result"][0]["value"][1]
+                == json!(((generations + 2) * 3).to_string()),
+            "{tenant}: composed PromQL value"
+        );
+        check!(
+            answers[&format!("{tenant}/metrics/absent")]["data"]["result"] == json!([]),
+            "{tenant}: absent selector stays empty"
+        );
+        check!(
+            answers[&format!("{tenant}/logs/compound")]["data"]["result"][0]["value"][1]
+                == json!(generations.to_string()),
+            "{tenant}: composed LogQL exact multiplicity"
+        );
+        check!(
+            answers[&format!("{tenant}/traces/metrics")]
+                == json!([{
+                    "labels": [], "points": [[BASE_MS * 1_000_000, f64::from(u32::try_from(generations).unwrap())], [(BASE_MS + 3_600_000) * 1_000_000, 0.0]], "exemplars": []
+                }]),
+            "{tenant}: exact TraceQL points across restore"
+        );
+        check!(
+            answers[&format!("{tenant}/traces/compound")]
+                == json!(
+                    (1..=generations)
+                        .map(|span| (
+                            trace_id.clone(),
+                            hex::encode(u64::try_from(span).unwrap().to_be_bytes())
+                        ))
+                        .collect::<Vec<_>>()
+                ),
+            "{tenant}: exact selected trace/span IDs"
+        );
+        check!(
+            answers[&format!("{tenant}/profiles/filtered")]["flamebearer"]["numTicks"]
+                == json!(7 * generations),
+            "{tenant}: profile regex and negative selector compose"
+        );
+        check!(
+            answers[&format!("{tenant}/profiles/absent")]["flamebearer"]["numTicks"] == json!(0),
+            "{tenant}: profile absence stays empty"
         );
         let render = &answers[&format!("{tenant}/profiles/render")];
         check!(

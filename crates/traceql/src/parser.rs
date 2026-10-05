@@ -30,6 +30,24 @@ mod tests {
     use crate::ast::*;
 
     #[test]
+    fn regex_operand_types_are_validated_before_attribute_discovery() {
+        for operand in ["1", "1.5", "true", "nil"] {
+            for operator in ["=~", "!~"] {
+                for selector in [
+                    format!(".missing {operator} {operand}"),
+                    format!("(.missing {operator} {operand}) || name = \"known\""),
+                ] {
+                    assert!(matches!(
+                        parse(&format!("{{ {selector} }}")),
+                        Err(TraceqlError::Plan(message)) if message == "regex comparison requires string value"
+                    ));
+                }
+            }
+        }
+        assert!(parse(r#"{ .missing =~ "known.*" }"#).is_ok());
+    }
+
+    #[test]
     fn bare_dot_is_both_scope() {
         let q = parse("{ .service = \"checkout\" }").unwrap();
         assert!(

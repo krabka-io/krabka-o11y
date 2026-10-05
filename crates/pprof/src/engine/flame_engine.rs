@@ -3,6 +3,7 @@ use krabka_query_frontend::{
     AdmissionLimits, CacheKey, CacheMetrics, ExecutionOptions, InMemoryCache, PlannedQuery,
     QueryFrontend, QueryFrontendAdapter, QueryFrontendError,
 };
+use krabka_units::{convert::TimeExt as _, millis};
 
 use super::{
     Arc, BTreeMap, Duration, EngineOpts, FRONTEND_RESULT_CACHE_ENTRIES, FRONTEND_RESULT_CACHE_TTL,
@@ -13,6 +14,7 @@ use super::{
     series_buckets_from_stacktrace_selector, series_buckets_from_totals, validate_range,
     validated_step,
 };
+use crate::series_bucket_ms;
 
 /// Profiles flamegraph engine.
 pub struct FlameEngine<S: ProfileStore> {
@@ -541,15 +543,38 @@ impl<S: ProfileStore> FlameEngine<S> {
         range: (i64, i64),
         call_sites: &[String],
     ) -> Result<Vec<Series>, ProfileError> {
+        self.select_series_with_anchor(query, group_by, (step, agg), range, call_sites, range)
+            .await
+    }
+
+    async fn select_series_with_anchor(
+        &self,
+        query: (&str, &str, &str),
+        group_by: &[String],
+        sampling: (Time, SeriesAgg),
+        range: (i64, i64),
+        call_sites: &[String],
+        anchor: (i64, i64),
+    ) -> Result<Vec<Series>, ProfileError> {
         let (tenant, profile_type, label_selector) = query;
         let (start_ms, end_ms) = range;
+        let (step, agg) = sampling;
         let step = validated_step(step)?;
+        validate_range(start_ms, end_ms)?;
+        validate_range(anchor.0, anchor.1)?;
+        // The first output point covers the one-step lookback through start.
+        // Extend only the first shard so each profile is scanned once.
+        let scan_start = if start_ms == anchor.0 {
+            start_ms.saturating_sub(step.millis_i64())
+        } else {
+            start_ms
+        };
         let base_matchers = crate::matcher::parse_label_selector(label_selector)?;
         let groups = if group_by.is_empty() {
             vec![Vec::new()]
         } else {
             self.store
-                .series(tenant, &base_matchers, group_by, start_ms, end_ms)
+                .series(tenant, &base_matchers, group_by, scan_start, end_ms)
                 .await?
         };
 
@@ -563,13 +588,22 @@ impl<S: ProfileStore> FlameEngine<S> {
             );
             let scan = self
                 .store
-                .select(tenant, profile_type, &matchers, start_ms, end_ms)
+                .select(tenant, profile_type, &matchers, scan_start, end_ms)
                 .await?;
-            let buckets = if call_sites.is_empty() {
-                series_buckets_from_totals(&scan, step).await?
+            // Retain raw per-profile timestamps and values until the global
+            // query anchor is known. Epoch-flooring first loses bucket edges
+            // and averaging per-timestamp means would lose profile weights.
+            let raw_points = if call_sites.is_empty() {
+                series_buckets_from_totals(&scan, millis(1)).await?
             } else {
-                series_buckets_from_stacktrace_selector(&scan, step, call_sites).await?
+                series_buckets_from_stacktrace_selector(&scan, millis(1), call_sites).await?
             };
+            let mut buckets: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
+            for (timestamp, values) in raw_points {
+                if let Some(endpoint) = series_bucket_ms(timestamp, step, anchor) {
+                    buckets.entry(endpoint).or_default().extend(values);
+                }
+            }
             if buckets.is_empty() {
                 continue;
             }
@@ -642,6 +676,7 @@ impl<S: ProfileStore> FlameEngine<S> {
             step,
             agg,
             ranges,
+            anchor: (start_ms, end_ms),
             call_sites,
             admission_limits: (self.admission_limits)(query.0),
         };
@@ -1120,6 +1155,7 @@ struct SeriesShardAdapter<'a, S: ProfileStore> {
     step: Time,
     agg: SeriesAgg,
     ranges: &'a [(i64, i64)],
+    anchor: (i64, i64),
     call_sites: &'a [String],
     admission_limits: AdmissionLimits,
 }
@@ -1143,7 +1179,7 @@ impl<S: ProfileStore> QueryFrontendAdapter for SeriesShardAdapter<'_, S> {
                     cache_key: CacheKey::new(
                         self.query.0,
                         format!(
-                            "profiles-series\0{}\0{}\0{:?}\0{:?}\0{:?}\0{}\0{}\0{:?}",
+                            "profiles-series\0{}\0{}\0{:?}\0{:?}\0{:?}\0{}\0{}\0{:?}\0{:?}",
                             self.query.1,
                             self.query.2,
                             self.group_by,
@@ -1152,6 +1188,7 @@ impl<S: ProfileStore> QueryFrontendAdapter for SeriesShardAdapter<'_, S> {
                             range.0,
                             range.1,
                             self.call_sites,
+                            self.anchor,
                         ),
                     ),
                     end_epoch_millis: range.1,
@@ -1163,13 +1200,13 @@ impl<S: ProfileStore> QueryFrontendAdapter for SeriesShardAdapter<'_, S> {
 
     async fn execute(&self, range: &Self::Query) -> Result<Self::Output, Self::Error> {
         self.engine
-            .select_series_with_stack_trace_selector(
+            .select_series_with_anchor(
                 self.query,
                 self.group_by,
-                self.step,
-                self.agg,
+                (self.step, self.agg),
                 *range,
                 self.call_sites,
+                self.anchor,
             )
             .await
     }

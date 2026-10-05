@@ -509,3 +509,8 @@ use spanned_histogram_counts::spanned_histogram_counts;
 use standard_histogram_bound::standard_histogram_bound;
 use zero_bucket_bounds::zero_bucket_bounds;
 use zero_count_at_threshold::zero_count_at_threshold;
+
+#[cfg(feature = "experimental-functions")]
+mod format_quantile_label;
+#[cfg(feature = "experimental-functions")]
+use format_quantile_label::format_quantile_label;

@@ -833,11 +833,10 @@ mod tests {
         assert2::assert!(
             body == json!({
                 "series": [{
-                    "labels": [],
+                    "labels": [{"key": "__name__", "value": {"stringValue": "rate"}}],
                     "promLabels": "{}",
                     "samples": [
-                        {"timestampMs": "0", "value": 2.0},
-                        {"timestampMs": "1000", "value": 0.0}
+                        {"timestampMs": "1000", "value": 2.0}
                     ],
                     "exemplars": [{
                         "labels": [
@@ -859,11 +858,10 @@ mod tests {
         assert2::assert!(
             body == json!({
                 "series": [{
-                    "labels": [],
+                    "labels": [{"key": "__name__", "value": {"stringValue": "count_over_time"}}],
                     "promLabels": "{}",
                     "samples": [
-                        {"timestampMs": "0", "value": 2.0},
-                        {"timestampMs": "1000", "value": 0.0}
+                        {"timestampMs": "1000", "value": 2.0}
                     ],
                     "exemplars": [{
                         "labels": [
@@ -901,11 +899,10 @@ mod tests {
         assert2::assert!(
             body == json!({
                 "series": [{
-                    "labels": [],
+                    "labels": [{"key": "__name__", "value": {"stringValue": "count_over_time"}}],
                     "promLabels": "{}",
                     "samples": [
-                        {"timestampMs": "0", "value": 1.0},
-                        {"timestampMs": "1000", "value": 0.0}
+                        {"timestampMs": "1000", "value": 1.0}
                     ],
                     "exemplars": []
                 }]
@@ -1007,8 +1004,7 @@ mod tests {
         assert2::assert!(
             body["series"][0]["samples"]
                 == json!([
-                    {"timestampMs": "0", "value": 2.0},
-                    {"timestampMs": "500", "value": 0.0},
+                    {"timestampMs": "500", "value": 2.0},
                     {"timestampMs": "1000", "value": 0.0}
                 ])
         );
@@ -4387,3 +4383,10 @@ use typed_traceql_value::typed_traceql_value;
 use typed_value_parts::typed_value_parts;
 pub(crate) use wants_json::wants_json;
 use wants_protobuf::wants_protobuf;
+
+mod tempo_metric_bounds;
+use tempo_metric_bounds::tempo_metric_bounds;
+mod metrics_operation_name;
+use metrics_operation_name::metrics_operation_name;
+mod metric_value_json;
+use metric_value_json::metric_value_json;

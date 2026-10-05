@@ -2946,6 +2946,38 @@ fn parses_avg_over_time_unwrap_metric_query_with_range_grouping() {
 }
 
 #[test]
+fn vector_aggregation_preserves_its_inner_range_grouping() {
+    let inner = r#"avg_over_time({app="api"} | logfmt | duration != "" | unwrap duration_seconds(duration) [1m]) without (service_name)"#;
+    let plain = parse_metric_query(inner).unwrap();
+    check!(plain.vector_aggregation.is_none());
+    check!(plain.range_grouping == Some(VectorGrouping::Without(vec!["service_name".to_string()])));
+    for source in [
+        format!("max by (level) ({inner})"),
+        format!("max({inner}) by (level)"),
+    ] {
+        let nested = parse_metric_query(&source).unwrap();
+        check!(nested.aggregation == plain.aggregation);
+        check!(nested.stream == plain.stream);
+        check!(nested.range_ns == plain.range_ns);
+        check!(nested.range_grouping == plain.range_grouping);
+        check!(
+            nested.vector_aggregation
+                == Some(VectorAggregation {
+                    op: VectorAggregationOp::Max,
+                    grouping: Some(VectorGrouping::By(vec!["level".to_string()])),
+                })
+        );
+        check!(parse_logql_expr(&source).is_ok());
+    }
+    for source in [
+        r#"sum_over_time({app="api"} | unwrap cost [1m]) without (service_name)"#,
+        r#"max by (level) (sum_over_time({app="api"} | unwrap cost [1m]) without (service_name))"#,
+    ] {
+        check!(parse_metric_query(source).is_err());
+    }
+}
+
+#[test]
 fn parses_stdvar_over_time_unwrap_metric_query() {
     let query = parse_metric_query(
         r#"stdvar_over_time({app="api"} | logfmt | unwrap cost | __error__ = "" [30s])"#,
@@ -3458,4 +3490,36 @@ fn current_unix_epoch_nanos() -> u128 {
         .duration_since(UNIX_EPOCH)
         .expect("system clock after unix epoch")
         .as_nanos()
+}
+
+#[test]
+fn nested_vector_aggregations_preserve_metric_children_and_grouping() {
+    use krabka_logql::{LogqlExpr, VectorAggregationOp, VectorGrouping, parse_logql_expr};
+    let query = "max(avg by (level) (avg_over_time({app=\"checkout\"} | logfmt | unwrap duration(duration) [1m])))";
+    let parsed = parse_logql_expr(query).unwrap();
+    let LogqlExpr::Aggregation {
+        expr, aggregation, ..
+    } = &parsed
+    else {
+        panic!("expected nested aggregation");
+    };
+    assert2::assert!(aggregation.op == VectorAggregationOp::Max);
+    let LogqlExpr::Metric { query, .. } = expr.as_ref() else {
+        panic!("expected metric child");
+    };
+    assert2::assert!(query.vector_aggregation.as_ref().unwrap().op == VectorAggregationOp::Avg);
+    assert2::assert!(
+        query.vector_aggregation.as_ref().unwrap().grouping
+            == Some(VectorGrouping::By(vec!["level".to_owned()]))
+    );
+    assert2::assert!(parse_logql_expr(&parsed.to_string()).unwrap() == parsed);
+    for query in ["max(1)", "avg({app=\"checkout\"})", "sum by (app) (1)"] {
+        assert2::assert!(parse_logql_expr(query).is_err());
+    }
+    assert2::assert!(
+        parse_logql_expr(
+            "sum by (app) (max(avg_over_time({app=\"checkout\"} | unwrap size [1m])))"
+        )
+        .is_ok()
+    );
 }

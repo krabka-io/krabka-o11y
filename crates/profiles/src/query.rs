@@ -977,7 +977,7 @@ overrides:
                 "profileTypeID": PT,
                 "labelSelector": "{}",
                 "start": 0,
-                "end": 100,
+                "end": 1_000,
                 "groupBy": ["service_name"],
                 "step": 1.0,
                 "limit": 1,
@@ -991,14 +991,26 @@ overrides:
             .await
             .unwrap();
 
+        let actual: pb::querier::v1::SelectSeriesResponse =
+            serde_json::from_value(response.clone()).unwrap();
         check!(
-            response
-                .pointer("/series/0/labels/0/value")
-                .and_then(serde_json::Value::as_str)
-                == Some("large"),
+            actual
+                == pb::querier::v1::SelectSeriesResponse {
+                    series: vec![pb::querier::v1::ProfileSeries {
+                        labels: vec![pb::querier::v1::LabelPair {
+                            name: "service_name".to_string(),
+                            value: "large".to_string(),
+                        }],
+                        points: vec![pb::querier::v1::Point {
+                            timestamp: 1_000,
+                            value: 10.0,
+                            annotations: Vec::new(),
+                            exemplars: Vec::new(),
+                        }],
+                    }],
+                },
             "{response}"
         );
-        check!(response.pointer("/series/1").is_none(), "{response}");
     }
 
     #[tokio::test]
@@ -2598,7 +2610,7 @@ overrides:
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
-                "end": 100,
+                "end": 60_000,
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "stackTraceSelector": {
@@ -2614,13 +2626,16 @@ overrides:
             .await
             .unwrap();
 
-        let points = response
-            .pointer("/series/0/points")
-            .and_then(serde_json::Value::as_array)
-            .unwrap();
-        assert!(points.len() == 1, "{response}");
+        let points: Vec<pb::querier::v1::Point> =
+            serde_json::from_value(response["series"][0]["points"].clone()).unwrap();
         assert!(
-            points[0].get("value").and_then(serde_json::Value::as_f64) == Some(7.0),
+            points
+                == vec![pb::querier::v1::Point {
+                    timestamp: 60_000,
+                    value: 7.0,
+                    annotations: Vec::new(),
+                    exemplars: Vec::new(),
+                }],
             "{response}"
         );
     }
@@ -2754,7 +2769,7 @@ overrides:
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
-                "end": 100,
+                "end": 60_000,
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "exemplarType": "EXEMPLAR_TYPE_SPAN"
@@ -2767,6 +2782,14 @@ overrides:
             .json()
             .await
             .unwrap();
+
+        check!(
+            response
+                .pointer("/series/0/points/0/timestamp")
+                .and_then(json_i64)
+                == Some(60_000),
+            "{response}"
+        );
 
         let exemplar = response
             .pointer("/series/0/points/0/exemplars/0")
@@ -2811,7 +2834,7 @@ overrides:
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
-                "end": 100,
+                "end": 60_000,
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "stackTraceSelector": {
@@ -2827,6 +2850,14 @@ overrides:
             .json()
             .await
             .unwrap();
+
+        check!(
+            response
+                .pointer("/series/0/points/0/timestamp")
+                .and_then(json_i64)
+                == Some(60_000),
+            "{response}"
+        );
 
         let exemplars = response
             .pointer("/series/0/points/0/exemplars")
@@ -2863,7 +2894,7 @@ overrides:
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
-                "end": 100,
+                "end": 60_000,
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "exemplarType": "EXEMPLAR_TYPE_INDIVIDUAL"
@@ -2876,6 +2907,14 @@ overrides:
             .json()
             .await
             .unwrap();
+
+        check!(
+            response
+                .pointer("/series/0/points/0/timestamp")
+                .and_then(json_i64)
+                == Some(60_000),
+            "{response}"
+        );
 
         let exemplars = response
             .pointer("/series/0/points/0/exemplars")
@@ -2922,7 +2961,7 @@ overrides:
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
-                "end": 100,
+                "end": 60_000,
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "stackTraceSelector": {
@@ -2939,6 +2978,14 @@ overrides:
             .await
             .unwrap();
 
+        check!(
+            response
+                .pointer("/series/0/points/0/timestamp")
+                .and_then(json_i64)
+                == Some(60_000),
+            "{response}"
+        );
+
         let exemplars = response
             .pointer("/series/0/points/0/exemplars")
             .and_then(serde_json::Value::as_array)
@@ -2953,6 +3000,116 @@ overrides:
             .collect();
 
         assert!(profile_ids == vec!["profile-a"], "{response}");
+    }
+
+    #[tokio::test]
+    async fn select_series_exemplars_follow_fractional_start_and_complete_endpoints() {
+        let mut store = InMemoryProfileStore::new();
+        // The request includes the first step's lookback. The timestamps at
+        // 2012 and 2500 are in range but belong to the omitted 3011 endpoint.
+        for (timestamp, value) in [
+            (10, 100),
+            (11, 1),
+            (12, 2),
+            (1_011, 3),
+            (1_012, 5),
+            (2_011, 7),
+            (2_012, 200),
+            (2_500, 300),
+            (2_501, 400),
+        ] {
+            store.push_sample_with_total_and_associations(
+                ("tenant-a", PT),
+                vec![
+                    ("__profile_id__".to_string(), "profile-a".to_string()),
+                    ("service_name".to_string(), "api".to_string()),
+                ],
+                (0, 1),
+                (value, value),
+                timestamp,
+                (Some(0x2a), Some(vec![0xab; 16])),
+            );
+        }
+        let state = Arc::new(QuerierState::new(Arc::new(store)));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+        .unwrap();
+        let client = reqwest::Client::new();
+        let labels = vec![pb::querier::v1::LabelPair {
+            name: "service_name".to_string(),
+            value: "api".to_string(),
+        }];
+        for exemplar_type in ["EXEMPLAR_TYPE_SPAN", "EXEMPLAR_TYPE_INDIVIDUAL"] {
+            let actual: pb::querier::v1::SelectSeriesResponse = client
+                .post(format!(
+                    "http://{bound}/querier.v1.QuerierService/SelectSeries"
+                ))
+                .header("x-scope-orgid", "tenant-a")
+                .json(&json!({
+                    "profileTypeID": PT,
+                    "labelSelector": r#"{service_name="api"}"#,
+                    "start": 1_011,
+                    "end": 2_500,
+                    "groupBy": ["service_name"],
+                    "step": 1.0,
+                    "exemplarType": exemplar_type,
+                }))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let exemplar = |timestamp, value| {
+                let span = exemplar_type == "EXEMPLAR_TYPE_SPAN";
+                pb::types::v1::Exemplar {
+                    timestamp,
+                    value,
+                    labels: vec![pb::types::v1::LabelPair {
+                        name: "service_name".to_string(),
+                        value: "api".to_string(),
+                    }],
+                    span_id: if span { "000000000000002a" } else { "" }.to_string(),
+                    trace_id: if span {
+                        "abababababababababababababababab"
+                    } else {
+                        ""
+                    }
+                    .to_string(),
+                    profile_id: if span { "" } else { "profile-a" }.to_string(),
+                }
+            };
+            let expected = pb::querier::v1::SelectSeriesResponse {
+                series: vec![pb::querier::v1::ProfileSeries {
+                    labels: labels.clone(),
+                    points: vec![
+                        pb::querier::v1::Point {
+                            timestamp: 1_011,
+                            value: 6.0,
+                            annotations: Vec::new(),
+                            exemplars: vec![exemplar(11, 1), exemplar(12, 2), exemplar(1_011, 3)],
+                        },
+                        pb::querier::v1::Point {
+                            timestamp: 2_011,
+                            value: 12.0,
+                            annotations: Vec::new(),
+                            exemplars: vec![exemplar(1_012, 5), exemplar(2_011, 7)],
+                        },
+                    ],
+                }],
+            };
+            assert!(actual == expected, "{exemplar_type}");
+        }
     }
 
     #[tokio::test]

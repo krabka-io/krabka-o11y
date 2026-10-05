@@ -29,9 +29,16 @@
 
 mod support;
 
+#[path = "support/loki_remote_fixture.rs"]
+mod loki_remote_fixture;
+
+#[path = "../../metrics-service/tests/support/generated_differential.rs"]
+mod generated_differential;
+
 use std::{
     fmt::Write as _,
     io::Write as _,
+    sync::Mutex,
     time::{Duration, Instant},
 };
 
@@ -197,6 +204,11 @@ compactor:
   retention_enabled: true
   delete_request_store: filesystem
 
+# Historical fixture records are still in the freshly started ingester.
+# Query all of them rather than applying Loki's default three-hour cutoff.
+querier:
+  query_ingesters_within: 0s
+
 pattern_ingester:
   enabled: true
 
@@ -294,6 +306,380 @@ async fn loki_corpus_matches_krabka() -> TestResult {
 // ---------------------------------------------------------------------------
 // The seeded data.
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+#[ignore = "requires Docker and the pinned Loki remote correctness executable"]
+async fn upstream_loki_remote_correctness_matches_krabka() -> TestResult {
+    let binary = std::fs::canonicalize(
+        std::env::var_os("KRABKA_LOKI_CORRECTNESS_BIN")
+            .ok_or("KRABKA_LOKI_CORRECTNESS_BIN is required")?,
+    )?;
+    let source = std::fs::canonicalize(
+        std::env::var_os("KRABKA_LOKI_CORRECTNESS_SOURCE")
+            .ok_or("KRABKA_LOKI_CORRECTNESS_SOURCE is required")?,
+    )?;
+    let working_dir = source.join("pkg/logql/bench");
+    std::fs::metadata(working_dir.join("queries"))?;
+    std::fs::metadata(working_dir.join("remote_test.go"))?;
+    let seconds = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs(),
+    )?;
+    let end_seconds = (seconds - 60) / 10 * 10;
+    let fixture = loki_remote_fixture::fixture(end_seconds)?;
+    let metadata_dir = tempfile::tempdir()?;
+    std::fs::write(
+        metadata_dir.path().join("dataset_metadata.json"),
+        serde_json::to_vec_pretty(&fixture.metadata)?,
+    )?;
+    let client = reqwest::Client::new();
+    let loki = start_loki().await?;
+    let loki_base = mapped_base_url(&loki, LOKI_PORT).await?;
+    wait_for_ready(&client, &loki_base).await?;
+    let krabka = start_krabka().await?;
+    for batch in &fixture.batches {
+        for base in [&loki_base, &krabka.push_url] {
+            push_json(&client, base, TENANT, batch).await?;
+        }
+    }
+    wait_for_remote_fixture(&client, &[&loki_base, &krabka.query_url], &fixture).await?;
+    let report_dir = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
+        || std::path::PathBuf::from("../../target"),
+        std::path::PathBuf::from,
+    );
+    std::fs::create_dir_all(&report_dir)?;
+    std::fs::write(
+        report_dir.join("loki-remote-dataset-metadata.json"),
+        serde_json::to_vec_pretty(&fixture.metadata)?,
+    )?;
+    let mut failures = Vec::new();
+    for mode in ["range", "instant"] {
+        if let Some(failure) = collect_loki_remote_report(
+            &binary,
+            &working_dir,
+            metadata_dir.path(),
+            &loki_base,
+            &krabka.query_url,
+            mode,
+            &report_dir,
+        )
+        .await?
+        {
+            failures.push(failure);
+        }
+    }
+    if let Err(error) = run_generated_logql(
+        &client,
+        &loki_base,
+        &krabka.query_url,
+        fixture.end_ns,
+        &report_dir,
+    )
+    .await
+    {
+        failures.push(format!("generated LogQL: {error}"));
+    }
+    krabka.shutdown();
+    if !failures.is_empty() {
+        return Err(format!("Loki remote correctness failed: {}", failures.join("; ")).into());
+    }
+    Ok(())
+}
+
+async fn run_generated_logql(
+    client: &reqwest::Client,
+    reference: &str,
+    candidate: &str,
+    end_ns: i64,
+    report_dir: &std::path::Path,
+) -> TestResult {
+    let end = (end_ns / 1_000_000_000).to_string();
+    generated_differential::run(
+        "logql",
+        &[
+            r#"sum(count_over_time({service_name="fixture-json"}[1m]))"#,
+            r#"sum(count_over_time({service_name="fixture-logfmt"}[1m]))"#,
+        ],
+        &["sum({expr})", "max({expr})", "avg({expr})", "({expr})+1"],
+        report_dir,
+        |expression| {
+            let end = &end;
+            async move {
+                let mut responses = Vec::with_capacity(2);
+                let mut valid = true;
+                for base in [candidate, reference] {
+                    let response = client
+                        .get(format!(
+                            "{base}/loki/api/v1/query?{}",
+                            url::form_urlencoded::Serializer::new(String::new())
+                                .append_pair("query", &expression)
+                                .append_pair("time", end)
+                                .finish()
+                        ))
+                        .header("X-Scope-OrgID", TENANT)
+                        .send()
+                        .await?;
+                    let status = response.status().as_u16();
+                    let text = response.text().await?;
+                    let body = json_or_text(&text);
+                    valid &= status == 200
+                        && body["status"] == "success"
+                        && body["data"]["resultType"] == "vector"
+                        && body["data"]["result"].as_array().is_some_and(|result| {
+                            !result.is_empty()
+                                && result.iter().all(|series| {
+                                    series["metric"].is_object()
+                                        && series["value"].as_array().is_some_and(|sample| {
+                                            sample.len() == 2
+                                                && sample[0].as_f64().is_some()
+                                                && sample[1].as_str().is_some_and(|value| {
+                                                    value.parse::<f64>().is_ok_and(f64::is_finite)
+                                                })
+                                        })
+                                })
+                        });
+                    responses.push(reduce(Shape::Api, status, "application/json", &text));
+                }
+                Ok((!valid || responses[0] != responses[1]).then(|| format!(
+                    "composition `{expression}` disagreed or was rejected: krabka={}; upstream={}",
+                    responses[0], responses[1]
+                )))
+            }
+        },
+    )
+    .await?;
+
+    let observations = Mutex::new(Vec::new());
+    generated_differential::run(
+        "logql-rejections",
+        &[
+            "sum()",
+            r#"count_over_time({service_name="fixture-json"}[1m], 1)"#,
+            r#"rate({service_name="fixture-json"}[)"#,
+        ],
+        &["sum({expr})", "max({expr})", "({expr})+1"],
+        report_dir,
+        |expression| {
+            let end = &end;
+            let observations = &observations;
+            async move {
+                let mut responses = Vec::with_capacity(2);
+                let mut rejected = true;
+                for (implementation, base) in [("upstream", reference), ("krabka", candidate)] {
+                    let encoded = url::form_urlencoded::Serializer::new(String::new())
+                        .append_pair("query", &expression)
+                        .append_pair("time", end)
+                        .finish();
+                    let response = client
+                        .get(format!("{base}/loki/api/v1/query?{encoded}"))
+                        .header("X-Scope-OrgID", TENANT)
+                        .send()
+                        .await?;
+                    let status = response.status().as_u16();
+                    let body = response.text().await?;
+                    let classification = logql_query_rejection_kind(status, &body);
+                    rejected &= classification.is_some();
+                    responses.push(
+                        json!({"implementation": implementation, "http_status": status,
+                        "classification": classification, "body": body}),
+                    );
+                }
+                let mut observations = observations
+                    .lock()
+                    .map_err(|_| "rejection ledger poisoned")?;
+                observations.push(
+                    json!({"expression": expression, "expected_outcome": "query-rejection",
+                    "matched": rejected, "responses": responses}),
+                );
+                std::fs::write(
+                    report_dir.join("logql-rejection-responses.json"),
+                    serde_json::to_vec_pretty(&*observations)?,
+                )?;
+                Ok((!rejected).then(|| {
+                    format!("expected parser/type rejection for {expression}: {responses:?}")
+                }))
+            }
+        },
+    )
+    .await
+}
+
+fn logql_query_rejection_kind(status: u16, text: &str) -> Option<&'static str> {
+    if status != 400 {
+        return None;
+    }
+    let body = json_or_text(text);
+    if body.get("data").is_some() || body["status"] == "success" {
+        return None;
+    }
+    let message = body["error"].as_str().unwrap_or(text).to_ascii_lowercase();
+    if message.contains("parse error") || message.contains("syntax error") {
+        Some("parser-error")
+    } else if message.contains("type mismatch") || message.contains("invalid type") {
+        Some("type-error")
+    } else {
+        None
+    }
+}
+
+#[test]
+fn logql_rejection_comparator_rejects_success_and_unrelated_failures() {
+    assert!(logql_query_rejection_kind(400, "parse error: unexpected )") == Some("parser-error"));
+    assert!(
+        logql_query_rejection_kind(
+            400,
+            r#"{"status":"error","error":"parse error: unexpected )"}"#
+        ) == Some("parser-error")
+    );
+    assert!(logql_query_rejection_kind(200, "parse error: unexpected )").is_none());
+    assert!(logql_query_rejection_kind(500, "parse error: unexpected )").is_none());
+    assert!(logql_query_rejection_kind(400, "missing tenant").is_none());
+    assert!(
+        logql_query_rejection_kind(
+            400,
+            r#"{"status":"success","data":{},"error":"parse error"}"#
+        )
+        .is_none()
+    );
+}
+
+async fn wait_for_remote_fixture(
+    client: &reqwest::Client,
+    bases: &[&str],
+    fixture: &loki_remote_fixture::Fixture,
+) -> TestResult {
+    let selectors = fixture.metadata["all_selectors"]
+        .as_array()
+        .ok_or("missing fixture selectors")?
+        .iter()
+        .map(|selector| selector.as_str().ok_or("invalid fixture selector"))
+        .collect::<Result<Vec<_>, _>>()?;
+    if bases.is_empty() || selectors.is_empty() {
+        return Err("remote fixture readiness requires endpoints and selectors".into());
+    }
+    let end = (fixture.end_ns / 1_000_000_000).to_string();
+    let deadline = Instant::now() + READY_TIMEOUT;
+    let mut missing = Vec::new();
+    while Instant::now() < deadline {
+        missing.clear();
+        for base in bases {
+            for selector in &selectors {
+                let query = format!("sum(count_over_time({selector}[24h1s]))");
+                let body = client
+                    .get(format!(
+                        "{base}/loki/api/v1/query?{}",
+                        url::form_urlencoded::Serializer::new(String::new())
+                            .append_pair("query", &query)
+                            .append_pair("time", &end)
+                            .finish()
+                    ))
+                    .header("X-Scope-OrgID", TENANT)
+                    .timeout(
+                        deadline
+                            .saturating_duration_since(Instant::now())
+                            .min(Duration::from_secs(10)),
+                    )
+                    .send()
+                    .await?
+                    .json::<Value>()
+                    .await;
+                let complete = body.as_ref().is_ok_and(|body| {
+                    body["status"] == "success"
+                        && body["data"]["resultType"] == "vector"
+                        && body["data"]["result"].as_array().is_some_and(|result| {
+                            result.len() == 1
+                                && result[0]["value"][1]
+                                    .as_str()
+                                    .and_then(|value| value.parse::<u64>().ok())
+                                    == Some(8_641)
+                        })
+                });
+                if !complete {
+                    missing.push(format!("{base}: {query}: {body:?}"));
+                }
+            }
+        }
+        if missing.is_empty() {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    Err(format!(
+        "remote fixture never returned exactly 8641 rows per selector: {}",
+        missing.join("; ")
+    )
+    .into())
+}
+
+async fn collect_loki_remote_report(
+    binary: &std::path::Path,
+    source: &std::path::Path,
+    metadata: &std::path::Path,
+    reference: &str,
+    candidate: &str,
+    mode: &str,
+    report_dir: &std::path::Path,
+) -> TestResult<Option<String>> {
+    let output = run_loki_remote_binary(binary, source, metadata, reference, candidate, mode).await;
+    let (stdout, stderr, exited_successfully) = match output {
+        Ok(output) => (output.stdout, output.stderr, output.status.success()),
+        Err(error) => (Vec::new(), error.to_string().into_bytes(), false),
+    };
+    std::fs::write(
+        report_dir.join(format!("loki-remote-{mode}.stdout.txt")),
+        &stdout,
+    )?;
+    std::fs::write(
+        report_dir.join(format!("loki-remote-{mode}.stderr.txt")),
+        &stderr,
+    )?;
+    let parsed = std::str::from_utf8(&stdout)
+        .map_err(Box::<dyn std::error::Error + Send + Sync>::from)
+        .and_then(|output| loki_remote_fixture::execution_report(output, mode));
+    let report = match parsed {
+        Ok(report) => report,
+        Err(error) => json!({"mode": mode, "success": false, "harness_error": error.to_string()}),
+    };
+    std::fs::write(
+        report_dir.join(format!("loki-remote-{mode}.json")),
+        serde_json::to_vec_pretty(&report)?,
+    )?;
+    println!("Loki upstream remote correctness: {report}");
+    Ok(
+        (!exited_successfully || report["success"] != true).then(|| {
+            format!(
+                "{mode}: report={report}; stderr={}",
+                String::from_utf8_lossy(&stderr)
+            )
+        }),
+    )
+}
+
+async fn run_loki_remote_binary(
+    binary: &std::path::Path,
+    source: &std::path::Path,
+    metadata: &std::path::Path,
+    reference: &str,
+    candidate: &str,
+    mode: &str,
+) -> TestResult<std::process::Output> {
+    let mut command = std::process::Command::new(binary);
+    command
+        .current_dir(source)
+        .arg("-test.run=^TestRemoteStorageEquality$")
+        .arg("-test.v=true")
+        .arg("-test.timeout=20m")
+        .arg(format!("-addr-1={reference}"))
+        .arg(format!("-addr-2={candidate}"))
+        .arg(format!("-org-id={TENANT}"))
+        .arg("-metadata-dir")
+        .arg(metadata)
+        .arg("-seed=42")
+        .arg("-remote-include-skipped=true")
+        .arg(format!("-remote-range-type={mode}"));
+    Ok(tokio::task::spawn_blocking(move || command.output()).await??)
+}
 
 /// A seeded stream: its labels, and the entries pushed into it.
 struct SeedStream {

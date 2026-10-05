@@ -528,7 +528,11 @@ fn compare_entry_timestamps(left: &Value, right: &Value) -> std::cmp::Ordering {
     }
 }
 
-fn apply_global_stream_limit(value: &mut Value, direction: LokiDirection, limit: Option<usize>) {
+pub(crate) fn apply_global_stream_limit(
+    value: &mut Value,
+    direction: LokiDirection,
+    limit: Option<usize>,
+) {
     let Some(limit) = limit else {
         return;
     };
@@ -551,10 +555,15 @@ fn apply_global_stream_limit(value: &mut Value, direction: LokiDirection, limit:
             );
         }
     }
-    entries.sort_by_key(|(timestamp, stream, entry)| (*timestamp, *stream, *entry));
-    if matches!(direction, LokiDirection::Backward) {
-        entries.reverse();
-    }
+    entries.sort_by(|left, right| {
+        let time_order = match direction {
+            LokiDirection::Forward => left.0.cmp(&right.0),
+            LokiDirection::Backward => right.0.cmp(&left.0),
+        };
+        time_order
+            .then_with(|| left.1.cmp(&right.1))
+            .then_with(|| left.2.cmp(&right.2))
+    });
     let selected = entries
         .into_iter()
         .take(limit)

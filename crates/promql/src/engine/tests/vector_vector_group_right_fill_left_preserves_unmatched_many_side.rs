@@ -31,10 +31,11 @@ pub(crate) async fn vector_vector_group_right_fill_left_preserves_unmatched_many
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+    // Prometheus swaps the operand sides for group_right before applying fill flags.
     let result = engine
         .query_instant(
             &tenant_id("tenant-a"),
-            "job_quota + on (job) group_right(region) fill_left(0) http_requests_total",
+            "job_quota + on (job) group_right(region) fill_right(0) http_requests_total",
             10_000,
         )
         .await

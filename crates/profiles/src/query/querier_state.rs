@@ -1,3 +1,5 @@
+use krabka_units::convert::TimeExt as _;
+
 use super::{
     Arc, BTreeMap, DEFAULT_HEATMAP_TIME_BUCKETS_MAX, DEFAULT_HEATMAP_VALUE_BUCKETS, DefaultStore,
     EndMs, EngineOpts, FlameEngine, FlameGraph, FrontendConfig, HeatmapSpanExemplarsBySeries,
@@ -356,12 +358,19 @@ impl<S: ProfileStore> QuerierState<S> {
         let (tenant, profile_type, label_selector) = target;
         let (start_ms, end_ms) = range;
         self.validate_query_range(tenant, start_ms, end_ms)?;
+        let scan_start = start_ms.saturating_sub(step.millis_i64());
         let base_matchers = parse_label_selector(label_selector)?;
         let groups = if group_by.is_empty() {
             vec![Vec::new()]
         } else {
             self.store
-                .series(tenant.as_str(), &base_matchers, group_by, start_ms, end_ms)
+                .series(
+                    tenant.as_str(),
+                    &base_matchers,
+                    group_by,
+                    scan_start,
+                    end_ms,
+                )
                 .await?
         };
         let mut out = BTreeMap::new();
@@ -374,11 +383,19 @@ impl<S: ProfileStore> QuerierState<S> {
             );
             let scan = self
                 .store
-                .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
+                .select(tenant.as_str(), profile_type, &matchers, scan_start, end_ms)
                 .await?;
-            let exemplars = span_exemplars_from_scan(&scan, step, &labels, call_sites).await?;
-            if !exemplars.is_empty() {
-                out.insert(labels, exemplars);
+            let exemplars =
+                span_exemplars_from_scan(&scan, krabka_units::millis(1), &labels, call_sites)
+                    .await?;
+            let mut buckets = BTreeMap::<i64, Vec<_>>::new();
+            for (timestamp, mut exemplars) in exemplars {
+                if let Some(endpoint) = krabka_pprof::series_bucket_ms(timestamp, step, range) {
+                    buckets.entry(endpoint).or_default().append(&mut exemplars);
+                }
+            }
+            if !buckets.is_empty() {
+                out.insert(labels, buckets);
             }
         }
         Ok(out)
@@ -395,6 +412,7 @@ impl<S: ProfileStore> QuerierState<S> {
         let (tenant, profile_type, label_selector) = target;
         let (start_ms, end_ms) = range;
         self.validate_query_range(tenant, start_ms, end_ms)?;
+        let scan_start = start_ms.saturating_sub(step.millis_i64());
         let base_matchers = parse_label_selector(label_selector)?;
         let mut profile_group_by = group_by.to_vec();
         if !profile_group_by.iter().any(|name| name == PROFILE_ID_LABEL) {
@@ -406,7 +424,7 @@ impl<S: ProfileStore> QuerierState<S> {
                 tenant.as_str(),
                 &base_matchers,
                 &profile_group_by,
-                start_ms,
+                scan_start,
                 end_ms,
             )
             .await?;
@@ -432,11 +450,11 @@ impl<S: ProfileStore> QuerierState<S> {
             );
             let scan = self
                 .store
-                .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
+                .select(tenant.as_str(), profile_type, &matchers, scan_start, end_ms)
                 .await?;
             let exemplars = individual_exemplars_from_scan(
                 &scan,
-                step,
+                krabka_units::millis(1),
                 &series_labels,
                 &profile_id,
                 call_sites,
@@ -444,7 +462,9 @@ impl<S: ProfileStore> QuerierState<S> {
             .await?;
             let points = out.entry(series_labels).or_default();
             for (timestamp, mut exemplars) in exemplars {
-                points.entry(timestamp).or_default().append(&mut exemplars);
+                if let Some(endpoint) = krabka_pprof::series_bucket_ms(timestamp, step, range) {
+                    points.entry(endpoint).or_default().append(&mut exemplars);
+                }
             }
         }
         Ok(out)

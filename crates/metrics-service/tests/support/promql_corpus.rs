@@ -213,7 +213,9 @@ fn eval_lines(source: &str) -> Vec<usize> {
     source
         .lines()
         .enumerate()
-        .filter(|(_, line)| line.starts_with("eval ") || line.starts_with("eval_fail "))
+        .filter(|(_, line)| {
+            line.trim_start().starts_with("eval ") || line.trim_start().starts_with("eval_fail ")
+        })
         .map(|(index, _)| index + 1)
         .collect()
 }
@@ -1132,5 +1134,19 @@ pub fn write_report(
         std::fs::create_dir_all(parent).expect("create the differential report directory");
     }
     std::fs::write(&path, report).expect("write the differential report");
+    let listed = claimed_cases(&[UPSTREAM_DIVERGENCES, extra]);
+    let cases = corpus.cases.iter().map(|case| serde_json::json!({
+        "id":case.name, "query":case.promql, "expected_rejection":case.expects_failure,
+        "status": if disagreed.contains(case.name.as_str()) {
+            if listed.contains(case.name.as_str()) { "expected_divergence" } else { "mismatch" }
+        } else { "matched" },
+        "detail":mismatches.iter().find(|(name, _)| name == &case.name).map(|(_, detail)| detail),
+    })).chain(corpus.skipped.iter().map(|case| serde_json::json!({
+        "id":case.name, "query":case.promql, "status":"skipped", "detail":case.reason,
+    }))).collect::<Vec<_>>();
+    std::fs::write(path.with_extension("json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "suite":suite, "corpus_version":"3.8.1", "adapter":"time-separated remote_write v1 segments; not original upstream fixture semantics",
+        "cases":cases, "run":corpus.cases.len(), "skipped":corpus.skipped.len(),
+    })).expect("serialize differential case report")).expect("write differential JSON report");
     println!("{suite}: report written to {}", path.display());
 }

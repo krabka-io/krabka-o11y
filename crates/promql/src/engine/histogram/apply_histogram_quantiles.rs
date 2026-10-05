@@ -1,7 +1,8 @@
 #[cfg(feature = "experimental-functions")]
 use super::{
     BTreeMap, BTreeSet, ClassicBucket, InstantSample, Labels, Result, SampleValue,
-    classic_bucket_bound, classic_histogram_quantile, float_sample_value, labels_key,
+    classic_bucket_bound, classic_histogram_quantile, emit_warning, float_sample_value,
+    format_quantile_label, invalid_quantile_warning, is_valid_quantile, labels_key,
     labels_without_label, labels_without_metric_name, native_histogram_quantile,
 };
 
@@ -33,6 +34,11 @@ pub(crate) fn apply_histogram_quantiles(
     quantiles: &[f64],
     time_ms: i64,
 ) -> Result<Vec<InstantSample>> {
+    for quantile in quantiles {
+        if !is_valid_quantile(*quantile) {
+            emit_warning(invalid_quantile_warning(*quantile));
+        }
+    }
     let mut groups: BTreeMap<String, (Labels, Vec<ClassicBucket>)> = BTreeMap::new();
     let mut native_samples = BTreeMap::new();
     for sample in samples {
@@ -69,7 +75,7 @@ pub(crate) fn apply_histogram_quantiles(
         let metric = labels.get("__name__").unwrap_or("").to_string();
         out.extend(quantiles.iter().map(|quantile| {
             let mut labels = labels.clone();
-            labels.insert(label_name, quantile.to_string());
+            labels.insert(label_name, format_quantile_label(*quantile));
             InstantSample {
                 labels,
                 ts_ms,
@@ -87,7 +93,7 @@ pub(crate) fn apply_histogram_quantiles(
         out.extend(quantiles.iter().map(|quantile| {
             let mut labels = labels.clone();
             let mut buckets = buckets.clone();
-            labels.insert(label_name, quantile.to_string());
+            labels.insert(label_name, format_quantile_label(*quantile));
             InstantSample {
                 labels,
                 ts_ms: time_ms,

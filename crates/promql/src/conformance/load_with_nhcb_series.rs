@@ -83,6 +83,7 @@ pub(crate) fn load_with_nhcb_series(
         out.push(LoadSeries {
             metric: labels_to_metric(&group.labels),
             values,
+            start_offsets_ms: Vec::new(),
         });
     }
     Ok(out)

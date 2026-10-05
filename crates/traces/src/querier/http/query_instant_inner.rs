@@ -42,10 +42,10 @@ where
         )
         .await
     {
-        Ok(resp) => Json(trace_metrics_json(&filter_metrics_exemplars(
-            instant_metrics_response(resp, point_ns),
-            exemplar_selection,
-        )))
+        Ok(resp) => Json(trace_metrics_json(
+            &filter_metrics_exemplars(instant_metrics_response(resp, point_ns), exemplar_selection),
+            &query,
+        ))
         .into_response(),
         Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
     }

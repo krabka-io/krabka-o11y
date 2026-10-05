@@ -1,0 +1,205 @@
+name: query conformance
+
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: Fail the aggregate report for any mismatch, gap or missing suite
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: query-conformance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  suites:
+    name: ${{ matrix.suite }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      # Each Docker suite receives its own runner, image loads and test outputs.
+      matrix:
+        include:
+          - suite: promql-full-default
+            target: //crates/promql:upstream_qualification_test
+            docker: false
+            upstream_runner: false
+          - suite: promql-full-experimental
+            target: //crates/promql:upstream_qualification_experimental_test
+            docker: false
+            upstream_runner: false
+          - suite: prometheus-http
+            target: //crates/metrics-service:diff_prometheus_docker_test
+            docker: true
+            upstream_runner: true
+          - suite: mimir-http
+            target: //crates/metrics-service:diff_mimir_docker_test
+            docker: true
+            upstream_runner: false
+          - suite: loki-http
+            target: //crates/observability:loki_differential_docker_test
+            docker: true
+            upstream_runner: true
+          - suite: tempo-http
+            target: //crates/traces:tempo_differential_docker_test
+            docker: true
+            upstream_runner: false
+          - suite: pyroscope-http
+            target: //crates/profiles:pyroscope_differential_docker_test
+            docker: true
+            upstream_runner: false
+          - suite: metrics-transitions
+            target: //crates/metrics-service:metrics_deployment_docker_test
+            docker: true
+            upstream_runner: false
+          - suite: tempo-transitions
+            target: //crates/traces:tempo_deployment_docker_test
+            docker: true
+            upstream_runner: false
+          - suite: backup-restore
+            target: //crates/integration:backup_restore_test
+            docker: false
+            upstream_runner: false
+    env:
+      TARGET: ${{ matrix.target }}
+      SUITE: ${{ matrix.suite }}
+      DOCKER_SUITE: ${{ matrix.docker }}
+      UPSTREAM_RUNNER: ${{ matrix.upstream_runner }}
+      KRABKA_GENERATED_CASES: '512'
+      KRABKA_GENERATED_NIGHTLY: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        with:
+          bazelisk-cache: true
+          disk-cache: false
+          repository-cache: true
+      - uses: ./.github/actions/remote-cache
+        with:
+          api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+          client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
+          client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
+          upload: true
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/share/swift /usr/share/miniconda \
+            /usr/local/lib/android /usr/local/.ghcup /opt/ghc \
+            /usr/local/share/powershell /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+      - name: host container callback
+        if: matrix.docker
+        run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
+      - name: run suite
+        id: run
+        run: |
+          set -euo pipefail
+          flags=(--nocache_test_results --flaky_test_attempts=1 --test_timeout=7200
+            --nozip_undeclared_test_outputs --test_output=all
+            --test_env=KRABKA_GENERATED_CASES --test_env=KRABKA_GENERATED_NIGHTLY)
+          if [[ "${DOCKER_SUITE}" == true ]]; then
+            flags+=(--config=docker)
+          fi
+          if [[ "${UPSTREAM_RUNNER}" == true ]]; then
+            python3 tools/build-query-runners.py --bazel test "${flags[@]}" "${TARGET}"
+          else
+            bazel test "${flags[@]}" "${TARGET}"
+          fi
+      - name: collect evidence and provenance
+        if: always()
+        run: |
+          set -euo pipefail
+          evidence="${RUNNER_TEMP}/query-evidence/${SUITE}"
+          mkdir -p "${evidence}"
+          git rev-parse HEAD > "${evidence}/commit"
+          printf '%s\n' '${{ steps.run.outcome }}' > "${evidence}/run-result"
+          printf '%s\n' "${TARGET}" > "${evidence}/target"
+          printf '%s\n' "generated_cases=${KRABKA_GENERATED_CASES}" \
+            "generated_nightly=${KRABKA_GENERATED_NIGHTLY}" \
+            "docker=${DOCKER_SUITE}" "upstream_runner=${UPSTREAM_RUNNER}" \
+            "cache_test_results=false" "flaky_test_attempts=1" \
+            "run_id=${GITHUB_RUN_ID}" "run_attempt=${GITHUB_RUN_ATTEMPT}" \
+            "runner=${RUNNER_NAME}" "runner_os=${RUNNER_OS}" \
+            > "${evidence}/run-profile.txt"
+          uname -a > "${evidence}/kernel.txt"
+          lscpu > "${evidence}/cpu.txt"
+          docker info > "${evidence}/docker.txt" 2>&1 || true
+          sha256sum MODULE.bazel bazel/images/images.bzl rust-toolchain.toml \
+            tools/build-query-runners.py > "${evidence}/source-sha256.txt"
+          cp bazel/images/images.bzl "${evidence}/oracle-images.bzl"
+          logs="bazel-testlogs/${TARGET#//}"
+          logs="${logs/:/\/}"
+          if [[ -f "${logs}/test.log" ]]; then
+            cp "${logs}/test.log" "${evidence}/test.log"
+          fi
+          if [[ -d "${logs}/test.outputs" ]]; then
+            cp -rL "${logs}/test.outputs" "${evidence}/raw"
+          fi
+          for provenance in "${RUNNER_TEMP}"/query-runners/*runner*.json; do
+            if [[ -f "${provenance}" ]]; then
+              cp "${provenance}" "${evidence}/"
+            fi
+          done
+          (cd "${evidence}" && find . -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > SHA256SUMS)
+      - name: upload raw evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: query-raw-${{ matrix.suite }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/query-evidence/${{ matrix.suite }}/
+          if-no-files-found: error
+
+  report:
+    name: aggregate query qualification
+    needs: suites
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: query-raw-*-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/query-evidence
+      - name: verify raw artifact hashes
+        run: |
+          set -euo pipefail
+          suites=(promql-full-default promql-full-experimental prometheus-http mimir-http
+            loki-http tempo-http pyroscope-http metrics-transitions tempo-transitions backup-restore)
+          for suite in "${suites[@]}"; do
+            manifest="${RUNNER_TEMP}/query-evidence/query-raw-${suite}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}/SHA256SUMS"
+            test -s "${manifest}"
+          done
+          for suite in "${suites[@]}"; do
+            evidence="${RUNNER_TEMP}/query-evidence/query-raw-${suite}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}"
+            (cd "${evidence}" && sha256sum -c SHA256SUMS)
+          done
+      - name: aggregate all verdicts
+        if: always()
+        env:
+          STRICT: ${{ inputs.strict || false }}
+        run: |
+          set -euo pipefail
+          flags=()
+          if [[ "${STRICT}" == true ]]; then
+            flags+=(--strict)
+          fi
+          python3 tools/query-language-inventory.py --check
+          python3 tools/query-language-report.py \
+            --evidence "${RUNNER_TEMP}/query-evidence" \
+            --output "${RUNNER_TEMP}/query-language-qualification.json" "${flags[@]}"
+      - name: upload aggregate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: query-language-qualification-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/query-language-qualification.json
+          if-no-files-found: error

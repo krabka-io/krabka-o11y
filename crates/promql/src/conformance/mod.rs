@@ -26,8 +26,9 @@ pub mod testkit {
         Annotations, EngineOpts, InMemoryMetricStore, PromqlEngine, PromqlError, QueryResult,
         SampleValue,
         conformance::{
-            AnnotationExpect, ChunkResetHints, ExpectLine, RangeExpect, SampleSpec, Statement,
-            TestFile, compacted_native_histogram, parse_test_file,
+            AnnotationExpect, CaseOutcome, ChunkResetHints, ExpectLine, ExpectedFailure,
+            RangeExpect, SampleSpec, Statement, TestFile, compacted_native_histogram,
+            parse_test_file,
         },
     };
 
@@ -37,7 +38,7 @@ pub mod testkit {
     const STALE_NAN_BITS: u64 = 0x7ff0_0000_0000_0002;
 
     /// Per-file result for a Prometheus `.test` corpus run.
-    #[derive(Clone, Debug, PartialEq, Eq)]
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
     pub struct FileResult {
         pub name: String,
         pub passed: bool,
@@ -46,10 +47,12 @@ pub mod testkit {
         pub error: Option<String>,
         /// Cases annotated `# krabka:divergence`, which are expected to fail.
         pub divergences: Vec<String>,
+        /// Every declared evaluation, including exclusions and expected rejections.
+        pub cases: Vec<CaseOutcome>,
     }
 
     /// Per-file coverage report for a Prometheus `.test` corpus run.
-    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
     pub struct Report {
         pub files: Vec<FileResult>,
     }
@@ -62,11 +65,41 @@ pub mod testkit {
         /// Returns any filesystem error raised when this method creates the parent
         /// directory or the file.
         pub fn write_to(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
+            self.write_to_with_upstream(path, "3.8.1", "ed753444ffec98097399d0cfa9073c70a840b812")
+        }
+
+        /// Writes the report with the exact source corpus pin.
+        ///
+        /// # Errors
+        /// Returns filesystem or serialization errors.
+        pub fn write_to_with_upstream(
+            &self,
+            path: impl AsRef<Path>,
+            version: &str,
+            revision: &str,
+        ) -> std::io::Result<()> {
             let path = path.as_ref();
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::write(path, self.to_string())
+            std::fs::write(path, self.to_string())?;
+            let complete_corpus = !self.files.is_empty()
+                && self.files.iter().all(|file| {
+                    file.error.is_none()
+                        && !file.cases.is_empty()
+                        && file.cases.iter().all(|case| case.status == "matched")
+                });
+            let json = serde_json::json!({
+                "schema_version": 1,
+                "language": "PromQL",
+                "upstream_version": version,
+                "upstream_revision": revision,
+                "experimental_functions": cfg!(feature = "experimental-functions"),
+                "complete_corpus": complete_corpus,
+                "files": self.files,
+            });
+            let encoded = serde_json::to_vec_pretty(&json).map_err(std::io::Error::other)?;
+            std::fs::write(path.with_extension("json"), encoded)
         }
     }
 
@@ -103,6 +136,8 @@ pub mod testkit {
         pub failures: Vec<PromqlError>,
         /// Reasons of the annotated divergences that diverged as annotated.
         pub divergences: Vec<String>,
+        /// Every declared evaluation, including exclusions and expected rejections.
+        pub cases: Vec<CaseOutcome>,
     }
 
     /// Runs a parsed Prometheus `.test` file through an [`InMemoryMetricStore`].
@@ -158,19 +193,31 @@ pub mod testkit {
                         let labels = metric_to_labels(&load_series.metric);
                         let hints = hints.entry(load_series.metric.clone()).or_default();
                         for (index, sample) in load_series.values.iter().enumerate() {
+                            let timestamp_ms = index_to_timestamp(index, *step)?;
+                            let start_timestamp_ms =
+                                match load_series.start_offsets_ms.get(index).copied().flatten() {
+                                    Some(offset) => {
+                                        Some(timestamp_ms.checked_add(offset).ok_or_else(|| {
+                                            PromqlError::Parse("start timestamp overflow".into())
+                                        })?)
+                                    }
+                                    None => None,
+                                };
                             match sample {
                                 SampleSpec::Value(value) => {
                                     hints.push_float();
-                                    store.push_float(
+                                    store.push_float_with_start_timestamp(
                                         TENANT,
                                         labels.clone(),
-                                        index_to_timestamp(index, *step)?,
+                                        timestamp_ms,
                                         *value,
+                                        start_timestamp_ms,
                                     );
                                 }
                                 SampleSpec::Histogram(histogram) => {
                                     let mut histogram = histogram.clone();
                                     histogram.reset_hint = hints.push_histogram(&histogram);
+                                    histogram.start_timestamp_ms = start_timestamp_ms;
                                     store.push_histogram(
                                         TENANT,
                                         labels.clone(),
@@ -218,10 +265,17 @@ pub mod testkit {
                         annotations,
                         *ordered,
                         range_expect.as_ref(),
-                        fail_message.as_deref(),
+                        fail_message.as_ref(),
                     )
                     .map_err(|error| add_eval_context(error, "instant", expr));
-                    record_case(&mut outcome, divergence.as_deref(), expr, case);
+                    record_case(
+                        &mut outcome,
+                        divergence.as_deref(),
+                        expr,
+                        "instant",
+                        fail_message.is_some(),
+                        case,
+                    );
                 }
                 Statement::EvalRange {
                     start_ms,
@@ -241,12 +295,19 @@ pub mod testkit {
                         result,
                         expect,
                         annotations,
-                        fail_message.as_deref(),
+                        fail_message.as_ref(),
                         *start_ms,
                         *step,
                     )
                     .map_err(|error| add_eval_context(error, "range", expr));
-                    record_case(&mut outcome, divergence.as_deref(), expr, case);
+                    record_case(
+                        &mut outcome,
+                        divergence.as_deref(),
+                        expr,
+                        "range",
+                        fail_message.is_some(),
+                        case,
+                    );
                 }
                 Statement::Clear => {
                     store = InMemoryMetricStore::new();
@@ -267,9 +328,28 @@ pub mod testkit {
         outcome: &mut FileOutcome,
         divergence: Option<&str>,
         expr: &str,
+        kind: &str,
+        expected_rejection: bool,
         case: Result<()>,
     ) {
         outcome.total_cases += 1;
+        outcome.cases.push(CaseOutcome {
+            ordinal: outcome.total_cases,
+            query: expr.to_owned(),
+            kind: kind.to_owned(),
+            expected_rejection,
+            status: match (divergence, &case) {
+                (None, Ok(())) => "matched",
+                (Some(_), Err(_)) => "expected_divergence",
+                _ => "mismatch",
+            }
+            .to_owned(),
+            detail: case
+                .as_ref()
+                .err()
+                .map(ToString::to_string)
+                .or_else(|| divergence.map(str::to_owned)),
+        });
         match (divergence, case) {
             (None, Ok(())) => outcome.passed_cases += 1,
             (None, Err(error)) => outcome.failures.push(error),
@@ -352,6 +432,7 @@ pub mod testkit {
                         total_cases: 0,
                         error: Some(error.to_string()),
                         divergences: Vec::new(),
+                        cases: Vec::new(),
                     }],
                 };
             }
@@ -369,12 +450,7 @@ pub mod testkit {
         std::fs::read_dir(dir)?
             .map(|entry| entry.map(|entry| entry.path()))
             .filter_map(|path| match path {
-                Ok(path)
-                    if path.extension().is_some_and(|ext| ext == "test")
-                        && corpus_path_enabled(&path) =>
-                {
-                    Some(Ok(path))
-                }
+                Ok(path) if path.extension().is_some_and(|ext| ext == "test") => Some(Ok(path)),
                 Ok(_) => None,
                 Err(error) => Some(Err(error)),
             })
@@ -410,9 +486,48 @@ pub mod testkit {
                     total_cases: 0,
                     error: Some(format!("read `{}`: {error}", path.display())),
                     divergences: Vec::new(),
+                    cases: Vec::new(),
                 };
             }
         };
+        let declared = src
+            .lines()
+            .filter_map(|line| {
+                let header = line.trim_start().strip_prefix("eval ")?;
+                Some(CaseOutcome {
+                    ordinal: 0,
+                    query: header.to_owned(),
+                    kind: "unparsed".to_owned(),
+                    expected_rejection: header.contains(" fail "),
+                    status: "uncovered".to_owned(),
+                    detail: None,
+                })
+            })
+            .enumerate()
+            .map(|(index, mut case)| {
+                case.ordinal = index + 1;
+                case
+            })
+            .collect::<Vec<_>>();
+        if !corpus_path_enabled(path) {
+            let cases = declared
+                .into_iter()
+                .map(|mut case| {
+                    "feature_disabled".clone_into(&mut case.status);
+                    case.detail = Some("experimental-functions is disabled".to_owned());
+                    case
+                })
+                .collect::<Vec<_>>();
+            return FileResult {
+                name,
+                passed: true,
+                passed_cases: 0,
+                total_cases: cases.len(),
+                error: None,
+                divergences: Vec::new(),
+                cases,
+            };
+        }
         let file = match parse_test_file(&src) {
             Ok(file) => file,
             Err(error) => {
@@ -420,9 +535,10 @@ pub mod testkit {
                     name,
                     passed: false,
                     passed_cases: 0,
-                    total_cases: 0,
+                    total_cases: declared.len(),
                     error: Some(error.to_string()),
                     divergences: Vec::new(),
+                    cases: declared.clone(),
                 };
             }
         };
@@ -441,14 +557,16 @@ pub mod testkit {
                         .join("\n  ")
                 }),
                 divergences: outcome.divergences,
+                cases: outcome.cases,
             },
             Err(error) => FileResult {
                 name,
                 passed: false,
                 passed_cases: 0,
-                total_cases: 0,
+                total_cases: declared.len(),
                 error: Some(error.to_string()),
                 divergences: Vec::new(),
+                cases: declared.clone(),
             },
         }
     }
@@ -479,7 +597,7 @@ pub mod testkit {
         annotations: &[AnnotationExpect],
         ordered: bool,
         range_expect: Option<&RangeExpect>,
-        fail_message: Option<&str>,
+        fail_message: Option<&ExpectedFailure>,
     ) -> Result<()> {
         match (result, fail_message) {
             (Ok(_), Some(_)) => Err(PromqlError::Exec(
@@ -506,7 +624,7 @@ pub mod testkit {
         result: Result<(QueryResult, Annotations)>,
         expect: &[ExpectLine],
         annotations: &[AnnotationExpect],
-        fail_message: Option<&str>,
+        fail_message: Option<&ExpectedFailure>,
         start_ms: i64,
         step: Time,
     ) -> Result<()> {
@@ -536,8 +654,14 @@ pub mod testkit {
                 AnnotationExpect::AnyInfo => !raised.infos.is_empty(),
                 AnnotationExpect::NoWarn => raised.warnings.is_empty(),
                 AnnotationExpect::NoInfo => raised.infos.is_empty(),
-                AnnotationExpect::WarnMsg(text) => raised.warnings.iter().any(|w| w == text),
-                AnnotationExpect::InfoMsg(text) => raised.infos.iter().any(|i| i == text),
+                AnnotationExpect::WarnMsg(text) => raised
+                    .warnings
+                    .iter()
+                    .any(|w| w == text || annotation_message(w) == text),
+                AnnotationExpect::InfoMsg(text) => raised
+                    .infos
+                    .iter()
+                    .any(|i| i == text || annotation_message(i) == text),
             };
             if !ok {
                 return Err(PromqlError::Exec(format!(
@@ -551,6 +675,27 @@ pub mod testkit {
         Ok(())
     }
 
+    // Upstream promqltest compares annotation errors without rendered positions.
+    // API responses keep positions; remove only the numeric display suffix here.
+    fn annotation_message(message: &str) -> &str {
+        let Some((text, position)) = message.rsplit_once(" (") else {
+            return message;
+        };
+        let Some((line, column)) = position.strip_suffix(')').and_then(|p| p.split_once(':'))
+        else {
+            return message;
+        };
+        if !line.is_empty()
+            && !column.is_empty()
+            && line.bytes().all(|b| b.is_ascii_digit())
+            && column.bytes().all(|b| b.is_ascii_digit())
+        {
+            text
+        } else {
+            message
+        }
+    }
+
     fn describe_annotation_expect(expect: &AnnotationExpect) -> String {
         match expect {
             AnnotationExpect::AnyWarn => "expect warn".to_string(),
@@ -562,16 +707,21 @@ pub mod testkit {
         }
     }
 
-    fn compare_expected_failure(error: &PromqlError, expected: &str) -> Result<()> {
-        if expected.is_empty() {
-            return Ok(());
-        }
+    fn compare_expected_failure(error: &PromqlError, expected: &ExpectedFailure) -> Result<()> {
         let actual = error.to_string();
-        if actual.contains(expected) {
+        let matches = match expected {
+            ExpectedFailure::Message(message) => message.is_empty() || actual.contains(message),
+            ExpectedFailure::Regex(pattern) => regex::Regex::new(pattern)
+                .map_err(|error| {
+                    PromqlError::Parse(format!("invalid expected failure regex: {error}"))
+                })?
+                .is_match(&actual),
+        };
+        if matches {
             Ok(())
         } else {
             Err(PromqlError::Exec(format!(
-                "expected failure containing `{expected}`, got `{actual}`"
+                "expected failure {expected:?}, got `{actual}`"
             )))
         }
     }
@@ -1144,7 +1294,7 @@ pub mod testkit {
                     Ok((matrix(7.0), raised.clone())),
                     &expect,
                     &[],
-                    Some("boom"),
+                    Some(&ExpectedFailure::Message("boom".into())),
                     0,
                     step
                 )
@@ -1156,7 +1306,7 @@ pub mod testkit {
                     Err(PromqlError::Exec("boom happened".to_owned())),
                     &expect,
                     &[],
-                    Some("boom"),
+                    Some(&ExpectedFailure::Message("boom".into())),
                     0,
                     step
                 )
@@ -1262,6 +1412,7 @@ eval instant at 2m down{job="api"}
                         total_cases: 3,
                         error: None,
                         divergences: vec!["`foo`: not implemented".to_owned()],
+                        cases: Vec::new(),
                     },
                     FileResult {
                         name: "bad.test".to_owned(),
@@ -1270,6 +1421,7 @@ eval instant at 2m down{job="api"}
                         total_cases: 4,
                         error: Some("boom".to_owned()),
                         divergences: Vec::new(),
+                        cases: Vec::new(),
                     },
                 ],
             };
@@ -1284,6 +1436,11 @@ eval instant at 2m down{job="api"}
             report.write_to(&path).expect("the report is written");
             let written = std::fs::read_to_string(&path).expect("the report is readable");
             check!(written == expected);
+            let json: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(path.with_extension("json")).unwrap())
+                    .unwrap();
+            check!(json["complete_corpus"] == false);
+            check!(json["files"].as_array().unwrap().len() == 2);
         }
 
         /// An instant expectation carries exactly one value. Anything else --
@@ -1388,6 +1545,14 @@ eval instant at 2m down{job="api"}
                 warnings: vec!["w one".to_owned()],
                 infos: Vec::new(),
             };
+            let positioned = Annotations {
+                warnings: vec!["w one (1:25)".to_owned()],
+                infos: Vec::new(),
+            };
+            let malformed_position = Annotations {
+                warnings: vec!["w one (x:25)".to_owned()],
+                infos: Vec::new(),
+            };
             let informed = Annotations {
                 warnings: Vec::new(),
                 infos: vec!["i one".to_owned()],
@@ -1403,6 +1568,16 @@ eval instant at 2m down{job="api"}
                 (AnnotationExpect::NoInfo, &none, None),
                 (AnnotationExpect::NoInfo, &informed, Some("expect no_info")),
                 (AnnotationExpect::WarnMsg("w one".to_owned()), &warned, None),
+                (
+                    AnnotationExpect::WarnMsg("w one".to_owned()),
+                    &positioned,
+                    None,
+                ),
+                (
+                    AnnotationExpect::WarnMsg("w one".to_owned()),
+                    &malformed_position,
+                    Some("expect warn msg:w one"),
+                ),
                 (
                     AnnotationExpect::WarnMsg("w two".to_owned()),
                     &warned,
@@ -1439,6 +1614,17 @@ eval instant at 2m down{job="api"}
         #[test]
         fn an_expected_failure_must_appear_in_the_raised_error() {
             let error = PromqlError::Exec("vector cannot contain metrics".to_owned());
+            check!(
+                compare_expected_failure(
+                    &error,
+                    &ExpectedFailure::Regex("vector.*metrics$".into())
+                )
+                .is_ok()
+            );
+            check!(
+                compare_expected_failure(&error, &ExpectedFailure::Regex("^wrong".into())).is_err()
+            );
+            check!(compare_expected_failure(&error, &ExpectedFailure::Regex("[".into())).is_err());
             for (expected, matches) in [
                 ("", true),
                 ("cannot contain", true),
@@ -1446,7 +1632,9 @@ eval instant at 2m down{job="api"}
                 ("some other failure", false),
             ] {
                 check!(
-                    compare_expected_failure(&error, expected).is_ok() == matches,
+                    compare_expected_failure(&error, &ExpectedFailure::Message(expected.into()))
+                        .is_ok()
+                        == matches,
                     "{expected:?}"
                 );
             }
@@ -1648,6 +1836,7 @@ clear
                     step: minutes(1),
                     series: vec![LoadSeries {
                         metric: r#"metric{a="b"}"#.to_string(),
+                        start_offsets_ms: Vec::new(),
                         values: vec![
                             SampleSpec::Value(0.0),
                             SampleSpec::Value(1.0),
@@ -2296,6 +2485,7 @@ eval instant at 0m up{job="api"}
 
 mod add_histogram_step;
 mod annotation_expect;
+mod case_outcome;
 mod chunk_reset_hints;
 mod compact_spanned_histogram_counts;
 mod compacted_native_histogram;
@@ -2305,6 +2495,7 @@ mod escape_label_value;
 mod expect_block;
 mod expect_directive;
 mod expect_line;
+mod expected_failure;
 mod failure_message;
 mod histogram_buckets_shrank;
 mod histogram_chunk_appendable;
@@ -2336,6 +2527,7 @@ mod parse_optional_histogram_i8;
 mod parse_optional_histogram_reset_hint;
 mod parse_range_vector_directive;
 mod parse_sample_token;
+mod parse_start_offset_token;
 mod parse_test_file;
 mod range_expect;
 mod sample_spec;
@@ -2349,6 +2541,7 @@ mod test_parser;
 
 use add_histogram_step::add_histogram_step;
 pub use annotation_expect::AnnotationExpect;
+pub use case_outcome::CaseOutcome;
 use chunk_reset_hints::ChunkResetHints;
 use compact_spanned_histogram_counts::compact_spanned_histogram_counts;
 use compacted_native_histogram::compacted_native_histogram;
@@ -2358,6 +2551,7 @@ use escape_label_value::escape_label_value;
 use expect_block::ExpectBlock;
 use expect_directive::ExpectDirective;
 pub use expect_line::ExpectLine;
+pub use expected_failure::ExpectedFailure;
 use failure_message::failure_message;
 use histogram_buckets_shrank::histogram_buckets_shrank;
 use histogram_chunk_appendable::histogram_chunk_appendable;

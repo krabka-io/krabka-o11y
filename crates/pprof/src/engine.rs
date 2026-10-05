@@ -673,7 +673,7 @@ mod tests {
                 "tenant-a",
                 PT,
                 "{}",
-                &[(0, 0), (30_000, 30_000)],
+                &[(0, 0), (30_000, 60_000)],
                 0,
                 &selector,
             )
@@ -915,7 +915,7 @@ mod tests {
                 &[],
                 secs(60),
                 SeriesAgg::Average,
-                &[(0, 0), (30_000, 30_000)],
+                &[(0, 0), (30_000, 60_000)],
                 &["main".to_string()],
             )
             .await
@@ -924,7 +924,7 @@ mod tests {
         assert!(
             got == vec![Series {
                 labels: Vec::new(),
-                points: vec![(0, 9.5)],
+                points: vec![(0, 15.0), (60_000, 4.0)],
             }]
         );
     }
@@ -1034,7 +1034,7 @@ mod tests {
             got == vec![
                 Series {
                     labels: vec![("service".to_string(), "api".to_string())],
-                    points: vec![(0, 100.0), (15_000, 50.0)],
+                    points: vec![(0, 100.0), (30_000, 50.0)],
                 },
                 Series {
                     labels: vec![("service".to_string(), "web".to_string())],
@@ -1045,7 +1045,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn select_series_floors_timestamps_to_step_buckets() {
+    async fn select_series_uses_query_anchored_right_endpoints() {
         let mut store = InMemoryProfileStore::new();
         store.push_sample_with_total(
             ("tenant-a", PT),
@@ -1084,7 +1084,7 @@ mod tests {
         assert!(
             got == vec![Series {
                 labels: vec![("service".to_string(), "api".to_string())],
-                points: vec![(0, 30.0), (15_000, 5.0)],
+                points: vec![(0, 10.0), (15_000, 20.0), (30_000, 5.0)],
             }]
         );
     }
@@ -1105,7 +1105,7 @@ mod tests {
         assert!(
             got == vec![Series {
                 labels: Vec::new(),
-                points: vec![(0, 75.0)],
+                points: vec![(0, 100.0), (60_000, 50.0)],
             }]
         );
     }
@@ -1128,7 +1128,7 @@ mod tests {
             got == vec![
                 Series {
                     labels: vec![("service".to_string(), "api".to_string())],
-                    points: vec![(0, 100.0), (15_000, 50.0)],
+                    points: vec![(0, 100.0), (30_000, 50.0)],
                 },
                 Series {
                     labels: vec![("service".to_string(), "web".to_string())],
@@ -1136,6 +1136,164 @@ mod tests {
                 },
             ]
         );
+    }
+
+    fn fractional_series_fixture() -> FlameEngine<InMemoryProfileStore> {
+        let mut store = InMemoryProfileStore::new();
+        let (hot, cold) = {
+            let db = store.symbols_mut();
+            let hot = intern_location(db, "hot");
+            let cold = intern_location(db, "cold");
+            (
+                db.intern_stacktrace(0, &[hot]),
+                db.intern_stacktrace(0, &[cold]),
+            )
+        };
+        for (timestamp, value, service, instance) in [
+            (10, 256, "api", "a"), // outside the first lookback
+            (11, 1, "api", "a"),
+            (1_011, 2, "api", "a"),
+            (1_012, 4, "api", "a"),
+            (1_012, 12, "api", "b"), // unequal profile count at the same time
+            (2_011, 8, "api", "a"),
+            (2_012, 16, "api", "a"),
+            (3_011, 32, "api", "a"),
+            (3_012, 64, "api", "a"), // endpoint would be after query end
+            (3_511, 128, "api", "a"),
+            (11, 64, "lookback-only", "a"),
+        ] {
+            let labels = vec![
+                ("service".to_string(), service.to_string()),
+                ("instance".to_string(), instance.to_string()),
+            ];
+            for (stack, self_value) in [(hot, value), (cold, value * 2)] {
+                store.push_sample_with_total(
+                    ("tenant-a", PT),
+                    labels.clone(),
+                    (0, stack),
+                    (self_value, value * 3),
+                    timestamp,
+                );
+            }
+        }
+        FlameEngine::new(Arc::new(store), EngineOpts::default())
+    }
+
+    #[tokio::test]
+    async fn fractional_series_bounds_preserve_profiles_weights_and_global_shard_anchor() {
+        let engine = fractional_series_fixture();
+        let group_by = ["service".to_string()];
+        let shards = [(1_011, 1_600), (1_601, 2_350), (2_351, 3_511)];
+        // These independent expectations include a profile exactly at each
+        // right endpoint and the one-step lookback, exclude the unfinished
+        // final bucket, and weight all three profiles in the middle average.
+        for (agg, call_sites, api_points, lookback) in [
+            (
+                SeriesAgg::Sum,
+                Vec::new(),
+                vec![(1_011, 9.0), (2_011, 72.0), (3_011, 144.0)],
+                192.0,
+            ),
+            (
+                SeriesAgg::Average,
+                Vec::new(),
+                vec![(1_011, 4.5), (2_011, 24.0), (3_011, 72.0)],
+                192.0,
+            ),
+            (
+                SeriesAgg::Sum,
+                vec!["hot".to_string()],
+                vec![(1_011, 3.0), (2_011, 24.0), (3_011, 48.0)],
+                64.0,
+            ),
+            (
+                SeriesAgg::Average,
+                vec!["hot".to_string()],
+                vec![(1_011, 1.5), (2_011, 8.0), (3_011, 24.0)],
+                64.0,
+            ),
+        ] {
+            let expected = vec![
+                Series {
+                    labels: vec![("service".to_string(), "api".to_string())],
+                    points: api_points,
+                },
+                Series {
+                    labels: vec![("service".to_string(), "lookback-only".to_string())],
+                    points: vec![(1_011, lookback)],
+                },
+            ];
+            let mut direct = engine
+                .select_series_with_stack_trace_selector(
+                    ("tenant-a", PT, "{}"),
+                    &group_by,
+                    secs(1),
+                    agg,
+                    (1_011, 3_511),
+                    &call_sites,
+                )
+                .await
+                .unwrap();
+            direct.sort_by(|left, right| left.labels.cmp(&right.labels));
+            assert!(
+                direct == expected,
+                "direct {agg:?}, {call_sites:?}: {direct:?}"
+            );
+            let mut sharded = engine
+                .select_series_with_stack_trace_selector_sharded(
+                    ("tenant-a", PT, "{}"),
+                    &group_by,
+                    secs(1),
+                    agg,
+                    &shards,
+                    &call_sites,
+                )
+                .await
+                .unwrap();
+            sharded.sort_by(|left, right| left.labels.cmp(&right.labels));
+            assert!(
+                sharded == expected,
+                "sharded {agg:?}, {call_sites:?}: {sharded:?}"
+            );
+        }
+
+        // Reuse two exact shard ranges with a different global start. Cached
+        // partial answers must retain the new anchor rather than old endpoints.
+        let shifted = engine
+            .select_series_with_stack_trace_selector_sharded(
+                ("tenant-a", PT, "{}"),
+                &group_by,
+                secs(1),
+                SeriesAgg::Sum,
+                &[(1_012, 1_600), (1_601, 2_350), (2_351, 3_511)],
+                &["hot".to_string()],
+            )
+            .await
+            .unwrap();
+        assert!(
+            shifted
+                == vec![Series {
+                    labels: vec![("service".to_string(), "api".to_string())],
+                    points: vec![(1_012, 18.0), (2_012, 24.0), (3_012, 96.0)],
+                }]
+        );
+        for (selector, call_sites) in [
+            (r#"{service="missing"}"#, Vec::new()),
+            ("{}", vec!["missing".to_string()]),
+        ] {
+            let empty = engine
+                .select_series_with_stack_trace_selector(
+                    ("tenant-a", PT, selector),
+                    &group_by,
+                    secs(1),
+                    SeriesAgg::Sum,
+                    (1_011, 3_511),
+                    &call_sites,
+                )
+                .await
+                .unwrap();
+            assert!(empty.is_empty());
+        }
     }
 }
 

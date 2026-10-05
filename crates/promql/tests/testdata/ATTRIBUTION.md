@@ -54,3 +54,5 @@ The divergences, by file:
 
 Each annotation in the file states its own reason; the list above only groups
 them.
+
+The separate `upstream-3.14.0/` qualification directory contains every upstream file at commit `d7598b7141418fa35be2b5ec5d0fefb634199610`, with no Krabka divergence annotations. Its machine report records all mismatches. It does not replace the existing regression gate.

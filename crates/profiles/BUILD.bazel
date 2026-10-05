@@ -50,6 +50,7 @@ crate_tests(
     extra_srcs = {
         "lifecycle": ["//crates/blockstore:tests/support/lifecycle_store.rs"],
         "pyroscope_deployment": ["//crates/metrics-service:tests/support/container_deployment.rs"],
+        "pyroscope_differential": ["//crates/metrics-service:tests/support/generated_differential.rs"],
     },
     lib = "profiles",
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is

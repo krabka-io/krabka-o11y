@@ -1,6 +1,7 @@
 use super::{
-    LogqlExpr, ParseError, function_args, outer_metric_parentheses_inner, parse_expr,
-    parse_metric_query, parse_scalar_text, parse_string_arg, syntax_error,
+    LogqlExpr, ParseError, Parser, VectorAggregationOp, function_args,
+    outer_metric_parentheses_inner, parse_expr, parse_metric_query, parse_scalar_text,
+    parse_string_arg, syntax_error,
 };
 
 pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
@@ -84,8 +85,40 @@ pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
     if parse_scalar_text(input) {
         return Ok(LogqlExpr::Scalar(input.to_string()));
     }
-    Ok(LogqlExpr::Metric {
-        query: parse_metric_query(input)?,
-        source: input.to_string(),
-    })
+    let original_error = match parse_metric_query(input) {
+        Ok(query) => {
+            return Ok(LogqlExpr::Metric {
+                query,
+                source: input.to_string(),
+            });
+        }
+        Err(error) => error,
+    };
+    let mut parser = Parser::new(input);
+    if let Some(aggregation) = parser.try_parse_vector_aggregation()?
+        && matches!(
+            aggregation.op,
+            VectorAggregationOp::Sum
+                | VectorAggregationOp::Count
+                | VectorAggregationOp::Min
+                | VectorAggregationOp::Max
+                | VectorAggregationOp::Avg
+                | VectorAggregationOp::Stddev
+                | VectorAggregationOp::Stdvar
+        )
+        && let Some(inner) = outer_metric_parentheses_inner(input[parser.pos..].trim())
+    {
+        let expr = parse_expr(inner)?;
+        if expr.is_scalar() || matches!(expr, LogqlExpr::Stream { .. }) {
+            return Err(syntax_error(
+                "vector aggregation argument must be a metric vector",
+            ));
+        }
+        return Ok(LogqlExpr::Aggregation {
+            expr: Box::new(expr),
+            aggregation,
+            source: input.to_owned(),
+        });
+    }
+    Err(original_error)
 }

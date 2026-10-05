@@ -6,6 +6,8 @@
 | **Signals** | metrics, logs, traces, profiles |
 | **Date** | 2026-09-13 |
 
+These counts describe the dated snapshot. The newer [query-language qualification](query_language_conformance_proposal.md) includes the full Prometheus 3.14 corpus, pinned HTTP runners and individual semantic verdicts; a passing regression target does not certify every upstream feature.
+
 ## Crate Reports
 
 | Crate | Signal | Representative status | Report |

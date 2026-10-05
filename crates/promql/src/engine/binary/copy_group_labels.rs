@@ -7,6 +7,8 @@ pub(crate) fn copy_group_labels(labels: &mut Labels, one_side: &Labels, group_la
         }
         if let Some(value) = one_side.get(name) {
             labels.insert(name, value);
+        } else {
+            *labels = super::super::labels::labels_without_label(labels, name);
         }
     }
 }

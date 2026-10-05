@@ -1,4 +1,4 @@
-use super::{AnnotationExpect, ExpectLine, LoadSeries, RangeExpect, Time};
+use super::{AnnotationExpect, ExpectLine, ExpectedFailure, LoadSeries, RangeExpect, Time};
 
 /// A top-level Prometheus `.test` statement.
 #[derive(Clone, Debug, PartialEq)]
@@ -25,7 +25,7 @@ pub enum Statement {
         /// Optional matrix expectation metadata for instant range-vector results.
         range_expect: Option<RangeExpect>,
         /// Expected failure message. An empty message matches any failure.
-        fail_message: Option<String>,
+        fail_message: Option<ExpectedFailure>,
         /// Reason this case is a known divergence from Prometheus, when it is
         /// one. A case marked this way is required to fail.
         divergence: Option<String>,
@@ -45,7 +45,7 @@ pub enum Statement {
         /// Expected annotation directives: `warn`, `info`, `no_warn`, and `no_info`.
         annotations: Vec<AnnotationExpect>,
         /// Expected failure message. An empty message matches any failure.
-        fail_message: Option<String>,
+        fail_message: Option<ExpectedFailure>,
         /// Reason this case is a known divergence from Prometheus, when it is
         /// one. A case marked this way is required to fail.
         divergence: Option<String>,

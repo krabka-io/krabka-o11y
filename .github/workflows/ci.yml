@@ -317,6 +317,10 @@ jobs:
       - run: tools/route-inventory.py --check
       - run: tools/upstream-surface.py --self-test
       - run: tools/upstream-surface.py --check
+      - run: python3 tools/query-language-inventory.py --check
+      - run: python3 tools/query-language-inventory.py --self-check
+      - run: python3 tools/query-language-report.py --self-check
+      - run: python3 tools/build-query-runners.py --self-test
       - run: tools/upstream-drift.py --self-test
       - run: tools/upstream-drift.py --check
       - run: tools/otlp-contracts.py --self-test
@@ -674,7 +678,15 @@ jobs:
       # `--add-host=host.docker.internal:host-gateway`; the host has to resolve
       # it too, because the same address is what the test asserts against.
       - run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
-      - run: bazel test --config=docker ${{ matrix.suite.target }}
+      - run: python3 tools/build-query-runners.py --bazel test --config=docker ${{ matrix.suite.target }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: query-conformance-${{ matrix.suite.name }}-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/query-runners/*runner*.json
+            bazel-testlogs/**/test.outputs/**
+          if-no-files-found: ignore
   # The fuzz targets, run. Scheduled rather than a gate on a pull request,
   # because the work is unbounded, and what a pull request can afford is the
   # compile check the `fuzz-build` job does.

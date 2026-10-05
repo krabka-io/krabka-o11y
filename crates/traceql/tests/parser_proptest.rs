@@ -321,8 +321,6 @@ fn arb_comparison() -> impl Strategy<Value = FieldExpr> {
         ComparisonOp::Lte,
         ComparisonOp::Gt,
         ComparisonOp::Gte,
-        ComparisonOp::Re,
-        ComparisonOp::Nre,
     ]);
     prop_oneof![
         // A duration literal only keeps its type on a duration field.
@@ -333,6 +331,11 @@ fn arb_comparison() -> impl Strategy<Value = FieldExpr> {
                 lhs,
                 op,
                 rhs: Value::Duration(nanos),
+            }),
+        1 => (arb_field(), prop::sample::select(&[ComparisonOp::Re, ComparisonOp::Nre]),
+              prop::sample::select(&["a", "", "known.*", "a\\b", "a\"b"]))
+            .prop_map(|(lhs, op, pattern)| FieldExpr::Comparison {
+                lhs, op, rhs: Value::Str(pattern.to_owned()),
             }),
     ]
 }
