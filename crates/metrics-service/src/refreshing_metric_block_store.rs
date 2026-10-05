@@ -174,6 +174,28 @@ impl RefreshingMetricBlockStore {
 
 #[async_trait::async_trait]
 impl MetricStore for RefreshingMetricBlockStore {
+    async fn try_latest_float_scan(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        label_start_ms: i64,
+        sample_start_ms: i64,
+        end_ms: i64,
+        max_samples: usize,
+    ) -> Result<Option<krabka_promql::LatestFloatScan>, krabka_promql::PromqlError> {
+        self.current_store_for_tenant(tenant, label_start_ms, end_ms)
+            .await?
+            .try_latest_float_scan(
+                tenant,
+                matchers,
+                label_start_ms,
+                sample_start_ms,
+                end_ms,
+                max_samples,
+            )
+            .await
+    }
+
     async fn try_latest_float_samples(
         &self,
         tenant: &str,

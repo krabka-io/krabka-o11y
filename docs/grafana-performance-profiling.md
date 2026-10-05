@@ -230,11 +230,24 @@ but neither is a gain. The hash lookup was reverted; a changed flat-sample
 percentage alone is insufficient evidence of an optimization.
 
 The [experiment record](../qualification/grafana-series-discovery-experiment-gcp.json)
-preserves its actual source, measurements, image and checksums. The next
-target is the instant selector's separate hot-head walks for latest samples
-and labels. Combining those reads must preserve cold-first label precedence,
-the distinct sample and label window boundaries, series and sample limits,
-out-of-order arrivals, equal-time ties, stale samples and captured snapshots.
+preserves its actual source, measurements, image and checksums.
+
+The next experiment combines the instant selector's separate hot-head walks
+for latest samples and labels. It captures one hot snapshot and refreshes the
+cold store for the complete label window. Matching repeated samples can reuse
+an accepted immutable label pointer; fingerprint equality alone cannot skip
+matching. This adds no persistent query cache and keeps existing refresh TTLs.
+
+The production regression compares complete independent results and the full
+scan, including cold-first labels, float and histogram series at the excluded
+lookback boundary, sample and series limits, tenant deletion and held labels.
+A forced fingerprint collision checks differing label pointers. The first
+aggregate query lists manifests once rather than twice; removing only the
+production forwarding method fails that guard while the other 64 service
+unit cases pass. All 35 scoped targets, including the real Mimir and
+Prometheus differential suites, pass. Paired GCP comparison and CPU/allocation
+follow-ups are required before retaining this experiment as a performance
+improvement.
 
 The prune follow-up in
 [run 37264751159](https://github.com/krabka-io/krabka-o11y/actions/runs/37264751159)

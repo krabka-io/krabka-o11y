@@ -79,6 +79,7 @@ pub use ruler::{
     filter_ruler_rule_set_for_shard, filter_ruler_rule_set_for_shard_due_for_eval,
 };
 pub use store::{
-    ExemplarRecord, ExemplarScan, LabelNameCardinality, LabelValueCardinality, MetadataRecord,
-    MetadataScan, MetricStore, NamedTsdbStat, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
+    ExemplarRecord, ExemplarScan, LabelNameCardinality, LabelValueCardinality, LatestFloatScan,
+    MetadataRecord, MetadataScan, MetricStore, NamedTsdbStat, ScanResult, TsdbBlock, TsdbHeadStats,
+    TsdbStats,
 };
