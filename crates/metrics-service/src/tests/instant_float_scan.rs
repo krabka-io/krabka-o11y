@@ -20,6 +20,7 @@ struct Fixture {
     head: WalHead,
     reads: Arc<AtomicUsize>,
     objects: Arc<dyn ObjectStore>,
+    parquet_keys: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
 }
 
 fn labels() -> Labels {
@@ -32,6 +33,7 @@ async fn fixture(cold: &[(&str, i64)]) -> Fixture {
         Time::ZERO,
     ));
     let reads = Arc::clone(&objects.parquet_reads);
+    let parquet_keys = Arc::clone(&objects.parquet_keys);
     let objects: Arc<dyn ObjectStore> = objects;
     let base = url::Url::parse("memory:///").unwrap();
     let writer = BlockStore::new(Arc::clone(&objects), base.clone());
@@ -71,6 +73,7 @@ async fn fixture(cold: &[(&str, i64)]) -> Fixture {
         head,
         reads,
         objects,
+        parquet_keys,
     }
 }
 
@@ -177,7 +180,7 @@ async fn dominated_cold_blocks_are_not_read_and_limits_still_count_the_full_wind
 }
 
 #[tokio::test]
-async fn cold_newer_or_missing_series_fall_back_and_stale_hot_markers_stay_selected() {
+async fn cold_newer_or_missing_series_are_read_and_stale_hot_markers_stay_selected() {
     let tenant = TenantId::new("tenant-a").unwrap();
     let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
     for cold in [vec![("api", 12_000)], vec![("api", 10_000), ("db", 10_000)]] {
@@ -188,23 +191,26 @@ async fn cold_newer_or_missing_series_fall_back_and_stale_hot_markers_stay_selec
                 .try_latest_float_samples("tenant-a", &matchers, 5_000, 14_000, 100)
                 .await
                 .unwrap()
-                .is_none()
+                .is_some()
         );
         let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
         let control = PromqlEngine::new(
             Arc::new(fixture.store.current_store(5_000, 14_000).await.unwrap()),
             EngineOpts::default(),
         );
-        assert!(
-            engine
-                .query_instant(&tenant, "sum(up)", 14_000)
-                .await
-                .unwrap()
-                == control
-                    .query_instant(&tenant, "sum(up)", 14_000)
-                    .await
-                    .unwrap()
-        );
+        for query in [
+            "up",
+            "sum(up)",
+            "avg(up)",
+            "up offset 3s",
+            "up @ 11",
+            "up @ 12",
+        ] {
+            assert!(
+                engine.query_instant(&tenant, query, 14_000).await.unwrap()
+                    == control.query_instant(&tenant, query, 14_000).await.unwrap()
+            );
+        }
     }
     let fixture = fixture(&[("api", 10_000)]).await;
     fixture.head.update(|hot| {
@@ -293,4 +299,130 @@ async fn latest_aggregate_preserves_compensated_sums_across_series() {
                 == control.query_instant(&tenant, query, 14_000).await.unwrap()
         );
     }
+}
+
+#[tokio::test]
+async fn newer_cold_block_does_not_force_reads_of_dominated_history() {
+    let mut blocks = vec![("api", 10_000); 9];
+    blocks.push(("api", 12_000));
+    let fixture = fixture(&blocks).await;
+    let tenant = TenantId::new("tenant-a").unwrap();
+    let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
+    let expected: QueryResult = serde_json::from_value(serde_json::json!({
+        "InstantVector": [{"labels": {}, "ts_ms": 14_000, "value": {"Float": 1.0}}]
+    }))
+    .unwrap();
+    assert!(
+        engine
+            .query_instant(&tenant, "sum(up)", 14_000)
+            .await
+            .unwrap()
+            == expected
+    );
+    assert!(
+        fixture
+            .parquet_keys
+            .lock()
+            .unwrap()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            == vec!["metrics/tenant-a/float/9.parquet".to_string()]
+    );
+    let control = PromqlEngine::new(
+        Arc::new(fixture.store.current_store(5_000, 14_000).await.unwrap()),
+        EngineOpts::default(),
+    );
+    assert!(
+        control
+            .query_instant(&tenant, "sum(up)", 14_000)
+            .await
+            .unwrap()
+            == expected
+    );
+    assert!(fixture.parquet_keys.lock().unwrap().len() == 10);
+    // A retirement race must retain the ordinary path's warning and hot value.
+    fixture
+        .objects
+        .delete(&Path::from("metrics/tenant-a/float/9.parquet"))
+        .await
+        .unwrap();
+    let candidate = engine
+        .query_instant_with_annotations(&tenant, "sum(up)", 15_000)
+        .await
+        .unwrap();
+    let reference = control
+        .query_instant_with_annotations(&tenant, "sum(up)", 15_000)
+        .await
+        .unwrap();
+    assert!(candidate == reference);
+}
+
+#[tokio::test]
+async fn conflicting_cold_ties_keep_the_full_scan() {
+    let fixture = fixture(&[("api", 12_000)]).await;
+    let writer = BlockStore::new(
+        Arc::clone(&fixture.objects),
+        url::Url::parse("memory:///").unwrap(),
+    );
+    let batch =
+        krabka_metrics::encode_float_samples(&[(labels().fingerprint(), 12_000, 2.0, None)])
+            .unwrap();
+    let block = writer
+        .writer()
+        .write_block(
+            "tenant-a",
+            "metrics/tenant-a/float/tie.parquet",
+            krabka_metrics::float_sample_schema(),
+            &[batch],
+        )
+        .await
+        .unwrap();
+    let plan = krabka_metrics::CompactionObjectPlan {
+        block_key: block.object_key.clone(),
+        index_key: "metrics/tenant-a/float/tie.parquet.index".into(),
+        first_offset: 1,
+        last_offset: 1,
+        row_count: block.row_count,
+    };
+    let manifest = krabka_metrics::CompactionIndexManifest::from_block_meta(
+        krabka_metrics::MetricBlockKind::Float,
+        &plan,
+        &block,
+        vec![krabka_metrics::CompactionSeriesLabels {
+            fingerprint: labels().fingerprint(),
+            labels: labels(),
+        }],
+    );
+    krabka_metrics::CompactionIndexSink::write_manifest(
+        &ObjectStoreCompactionIndexSink::new(Arc::clone(&fixture.objects)),
+        &manifest,
+    )
+    .await
+    .unwrap();
+    let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
+    assert!(
+        fixture
+            .store
+            .try_latest_float_samples("tenant-a", &matchers, 5_000, 14_000, 100)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let tenant = TenantId::new("tenant-a").unwrap();
+    let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
+    let control = PromqlEngine::new(
+        Arc::new(fixture.store.current_store(5_000, 14_000).await.unwrap()),
+        EngineOpts::default(),
+    );
+    assert!(
+        engine
+            .query_instant(&tenant, "sum(up)", 14_000)
+            .await
+            .unwrap()
+            == control
+                .query_instant(&tenant, "sum(up)", 14_000)
+                .await
+                .unwrap()
+    );
 }
