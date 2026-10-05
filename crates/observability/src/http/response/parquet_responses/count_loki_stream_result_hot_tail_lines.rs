@@ -79,6 +79,7 @@ pub(crate) fn count_loki_stream_result_hot_tail_lines<R: Borrow<WalLogRecord> + 
                         &record.line,
                         &record.structured_metadata,
                         record.timestamp_ns,
+                        false,
                     )
                     .map(|(labels, _)| labels)
                 });
@@ -93,6 +94,7 @@ pub(crate) fn count_loki_stream_result_hot_tail_lines<R: Borrow<WalLogRecord> + 
                     &record.line,
                     &record.structured_metadata,
                     record.timestamp_ns,
+                    false,
                 );
                 let Some((labels, entry)) = evaluated.as_ref() else {
                     continue;

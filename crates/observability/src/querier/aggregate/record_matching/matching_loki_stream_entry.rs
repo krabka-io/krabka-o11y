@@ -29,6 +29,7 @@ pub(crate) fn matching_loki_stream_entry(
     line: &str,
     structured_metadata: &Labels,
     timestamp_ns: i64,
+    preserve_source_labels: bool,
 ) -> Option<(Labels, LokiStreamEntry)> {
     let evaluation =
         query.evaluate_with_fields_at(labels, line, structured_metadata, timestamp_ns)?;
@@ -67,6 +68,15 @@ pub(crate) fn matching_loki_stream_entry(
     }
 
     let mut entry = LokiStreamEntry::new(timestamp_ns, evaluation.line, entry_metadata, parsed);
-    entry.source_labels = labels.clone();
+    // Distinct uses the original source even when the pipeline changes labels.
+    // Tail callers also need the source for live-frame grouping.
+    if preserve_source_labels
+        || query
+            .pipeline
+            .iter()
+            .any(|stage| matches!(stage, krabka_logql::PipelineStage::Distinct(_)))
+    {
+        entry.source_labels = labels.clone();
+    }
     Some((stream_labels, entry))
 }

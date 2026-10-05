@@ -30,6 +30,7 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
                 record,
                 hot_tail.frontier,
                 hot_tail.delete_filters,
+                false,
             );
         }
         sort_loki_stream_values(&mut streams);
@@ -59,6 +60,7 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
                 record,
                 hot_tail.frontier,
                 hot_tail.delete_filters,
+                false,
             );
         }
     }
@@ -109,6 +111,7 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
                 record,
                 hot_tail.frontier,
                 hot_tail.delete_filters,
+                false,
             );
         }
     }
