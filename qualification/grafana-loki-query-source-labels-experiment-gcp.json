@@ -3,7 +3,7 @@
   "experiment": "Omit per-entry source label copies for ordinary Loki queries; retain original labels for distinct and tail frames.",
   "source_commit": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
   "retained_in_branch": true,
-  "retention_decision": "All 120 scoped targets and five actual Loki/Grafana Docker wrappers pass. Exact baseline CPU/allocation captures verified. Candidate image build, exact-image captures and same-VM revision control remain pending. No measured efficiency gain qualified.",
+  "retention_decision": "All 120 scoped targets and five actual Loki/Grafana Docker wrappers pass. Exact-image baseline CPU/allocation and candidate CPU captures verified. Candidate allocation and same-VM revision control remain live; no measured efficiency gain qualified.",
   "baseline_source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
   "baseline_harness_commit": "aeb67637f680bf67f006d343b811f019662bad87",
   "diagnostic_selection": {
@@ -173,7 +173,8 @@
     "run_id": 37330880469,
     "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37330880469",
     "head_sha": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
-    "status_at_recording": "in_progress"
+    "status_at_recording": "completed",
+    "conclusion": "success"
   },
   "baseline_profile_details_record": "qualification/grafana-profiling-gcp.json",
   "baseline_profile_details_key": "loki_query_source_labels_baseline_captures",
@@ -206,5 +207,54 @@
     ],
     "unchanged_binaries": [],
     "filesystem_entries_verified": 380
+  },
+  "candidate_cpu_provenance": {
+    "run_id": 37330880469,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37330880469",
+    "head_sha": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
+    "run_conclusion": "success",
+    "jobs": [
+      {
+        "id": 111833346471,
+        "name": "compare (logs)",
+        "conclusion": "success",
+        "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37330880469/job/111833346471",
+        "runner_name": "gcp-runner-764c6e2377c349fb",
+        "runner_group_name": "default",
+        "labels": [
+          "gcp-ubuntu-24-04-16core"
+        ],
+        "started_at": "2026-10-05T15:13:11Z",
+        "completed_at": "2026-10-05T15:27:43Z"
+      }
+    ],
+    "artifacts": [
+      {
+        "id": 11354827694,
+        "name": "grafana-comparison-logs-bc7e65436eb12247ccf413b66bb0db3549d8faed-1",
+        "digest": "sha256:b4595a050162661ee5504082b7db12226627af8c07c000cd961b6de7996e3679",
+        "size_in_bytes": 11430141,
+        "expires_at": "2027-01-03T15:12:07Z",
+        "signal": "logs",
+        "verified_raw_files": 162,
+        "diagnostic_only": true
+      }
+    ]
+  },
+  "candidate_profile_details_record": "qualification/grafana-profiling-gcp.json",
+  "candidate_profile_details_key": "loki_query_source_labels_candidate_captures",
+  "pending_controls": {
+    "allocations": {
+      "run_id": 37333046600,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37333046600",
+      "head_sha": "176085eab891bc0861bd7a99139f94ec80354f24",
+      "status_at_recording": "in_progress"
+    },
+    "comparison": {
+      "run_id": 37333051991,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37333051991",
+      "head_sha": "176085eab891bc0861bd7a99139f94ec80354f24",
+      "status_at_recording": "in_progress"
+    }
   }
 }
