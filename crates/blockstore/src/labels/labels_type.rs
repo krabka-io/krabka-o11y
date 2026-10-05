@@ -67,16 +67,17 @@ impl Labels {
 
         let mut hash = OFFSET;
         for (name, value) in &self.0 {
-            hash = (name.len() as u64)
+            for byte in (name.len() as u64)
                 .to_le_bytes()
                 .iter()
                 .copied()
                 .chain(name.as_bytes().iter().copied())
                 .chain((value.len() as u64).to_le_bytes().iter().copied())
                 .chain(value.as_bytes().iter().copied())
-                .fold(hash, |hash, byte| {
-                    (hash ^ u64::from(byte)).wrapping_mul(PRIME)
-                });
+            {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(PRIME);
+            }
         }
         hash
     }
