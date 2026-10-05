@@ -68,9 +68,12 @@ def summarize(profile, sample_index=None):
 def capture(deployment, output, seconds, windows, cpu=True, cpu_profiler='perf'):
     def memory_snapshot(name):
         records = {}
+        mappings = {}
         for role, pid in deployment.pids.items():
             records[role] = env.command('sudo', '-n', 'cat', f'/proc/{pid}/smaps_rollup')
+            mappings[role] = env.command('sudo', '-n', 'cat', f'/proc/{pid}/smaps')
         (output / ('memory-' + name + '.json')).write_text(json.dumps(records, indent=2))
+        (output / ('memory-' + name + '-smaps.json')).write_text(json.dumps(mappings, indent=2))
 
     memory_snapshot('start')
     def role(name, port):
