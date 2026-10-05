@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Fold canonical label fingerprint bytes without per-byte chain state",
-  "status": "correctness_qualified_comparisons_pending",
+  "status": "correctness_qualified_all_signal_comparison_running",
   "baseline_source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
   "source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649",
   "performance_qualified": false,
@@ -1624,5 +1624,33 @@
       }
     ],
     "interpretation": "The candidate fingerprint work is split between the fingerprint and its out-of-line iterator fold. Their sampled shares must be considered together. These sparse diagnostic windows on different hosts do not establish a normalized gain; baseline completes 719 queries and candidate 720."
+  },
+  "gcp_comparison": {
+    "run_id": 37357671713,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37357671713",
+    "head_sha": "9019af3f5ae539a6cd11c231ca4619f7ba707f78",
+    "status": "queued",
+    "performance_qualified": false,
+    "inputs": {
+      "signal": "all",
+      "profiling": "none",
+      "phases": "steady",
+      "phase_seconds": "60",
+      "repetitions": "3",
+      "deployment_target": "all",
+      "profiles_target": "all",
+      "image_artifact_run": "37354008253",
+      "image_artifact_name": "comparison-image-metrics-7ea9840085ab587b5491c3d47a17388b749a9649",
+      "baseline_image_artifact_run": "37351427961",
+      "baseline_image_artifact_name": "comparison-image-metrics-63bf9c519032bb6d4736b1ad9c064f879b90082c"
+    },
+    "registered_image_producers": {
+      "baseline_run": 37351427961,
+      "baseline_source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
+      "candidate_run": 37354008253,
+      "candidate_source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649"
+    },
+    "collector_sha256": "a0f0dadb907899ef76ccf4fafd681a094099e6d5916ed1d9f72368c017a3684d",
+    "scope": "All four signals. Three native Krabka/upstream repetitions plus three alternating baseline/candidate pairs per signal. Exact preserved images, matched workload and aggregate resource budgets. CPU and RSS include broker and MinIO."
   }
 }
