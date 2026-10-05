@@ -12,12 +12,15 @@ async fn cold_label_values_survive_the_merged_instant_scan() {
     let up = labels(&[("__name__", "up"), ("job", "api"), ("region", "東京")]);
     let down = labels(&[("__name__", "down"), ("job", "worker")]);
     let fp = up.fingerprint();
-    floats.index_mut().add_series("t", fp, &up);
+    // Index identities can differ from the canonical label fingerprint. The
+    // returned labels still deduplicate and resolve by their canonical hash.
+    floats.index_mut().add_series("t", fp ^ 1, &up);
+    floats.index_mut().add_series("t", fp ^ 2, &up);
     floats
         .index_mut()
         .add_series("t", down.fingerprint(), &down);
     floats.index_mut().add_series("other", fp, &up);
-    histograms.index_mut().add_series("t", fp, &up);
+    histograms.index_mut().add_series("t", fp ^ 3, &up);
     let cold = MetricBlockStore::with_histograms(floats, histograms);
     let matcher = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
     let first = cold.series_shared("t", &matcher, 0, 100).await.unwrap();
