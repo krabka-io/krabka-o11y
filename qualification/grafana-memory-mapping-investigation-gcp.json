@@ -2114,5 +2114,18 @@
     },
     "mapping_summary_sha256": "48ca245ccd949d34dd7ca9b29af4544b55ab4ccf69a8a7b1546b18a8a9c91b17"
   },
-  "finding": "The executable code mapping is the largest resident region: 69200 KiB at start and 69772 KiB at end. It is not anonymous heap memory. Anonymous memory rises from 10400 to 30732 KiB; the large code mapping already exists after warmup."
+  "finding": "The executable code mapping is the largest resident region: 69200 KiB at start and 69772 KiB at end. It is not anonymous heap memory. Anonymous memory rises from 10400 to 30732 KiB; the large code mapping already exists after warmup.",
+  "static_code_analysis": {
+    "binary_path": "usr/local/bin/krabka-metrics-service",
+    "source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
+    "binary_sha256": "2847a667a6a666f5be183ab2565ccc23ec56e7cbd884cbe2ab26a025769f4dbb",
+    "binary_size_in_bytes": 236267608,
+    "text_section_bytes": 127229696,
+    "defined_text_symbol_bytes": 125101672,
+    "sqlparser_text_symbol_bytes": 21840938,
+    "summary_path": "qualification/evidence/profiling/gcp-37361260446/code-symbol-summary.json",
+    "summary_sha256": "3a487f91e6b61a7d64bc78d956d9b2e2d0770a2690743f4c4da86a292b50bf92",
+    "method": "Defined demangled text symbols de-duplicated by address, grouped by the first recognized Rust crate. Generic ownership/inlining prevent complete attribution. Symbol sizes do not identify resident pages.",
+    "limitation": "Static symbol sizes do not identify resident pages or establish a performance gain. Core/alloc symbols can own code specialized for another crate."
+  }
 }
