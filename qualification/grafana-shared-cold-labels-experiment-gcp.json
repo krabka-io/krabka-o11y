@@ -7802,7 +7802,7 @@
         "matches_source": "ca99cacd35074c404e0e57500eb10d4767d95bc5"
       }
     ],
-    "validation_status": "running",
+    "validation_status": "passed",
     "initial_validation_targets": 6,
     "full_validation_targets": 368,
     "full_validation_target_list": [
@@ -8200,6 +8200,244 @@
         "ignored": 0,
         "log_sha256": "3e13f11340a6e179249091eab3eea3d6eb1f90a8f06475526193b30630aa3713"
       }
-    ]
+    ],
+    "full_validation_flaky_targets": [
+      {
+        "target": "//crates/traces:grafana_e2e_docker_test",
+        "failed_attempts": 2,
+        "successful_attempts": 1,
+        "failure": "Grafana proxy returned 404 Unable to find datasource plugin before the Prometheus plugin was ready."
+      }
+    ],
+    "flaky_follow_up_status": "passed",
+    "full_validation_source_commit": "b71970568e2d7ced87d43078c83acad15dd0190f",
+    "full_validation_targets_passed": 368,
+    "full_validation_log_sha256": "e1b93243ec9f46b53446a988a43c2ad4d3449916bb7ab531e89796c15326138a",
+    "full_validation_target_list_sha256": "e8afecd4c13081a931283e60e893da50a3e4fa8aa31337e4b59a2a392ead7281",
+    "native_docker_wrappers": [
+      {
+        "target": "//crates/metrics-service:diff_mimir_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "cb905e78975a950e8adc5221f97ba797e0a154a5c8179228d1b80e36e31ce65e"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "83ac6e308a1379adbfc564d6dc933053701de894a2de9c784e7a91b5dab1bd26"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "b7da865408ce4707f163a8f46ed18bb89cad1b222eef3c812cfb85b9ef03fc4a"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "1cbe2b6f8f4cbb00fb3ea9c57e8407d05ace63addbb94183c5b2a6dbb9c1ea78"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "11b20b0e824a2abde287d9613c49dc6f49634930b1dfa4cbed8862f72ca6f5e1"
+      },
+      {
+        "target": "//crates/metrics-service:metrics_deployment_docker_test",
+        "passed": 12,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "db134eaa4059b8b91332b266940fc3c0471c33233552adb83640868b1dea38cf"
+      },
+      {
+        "target": "//crates/metrics-service:tsdb_import_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "bde56024b9d00d26e82f5a13dec57b464a8996bb988ba7734e84e7c3ce979495"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "1228a47f2a38a1cfefb0bec594abc98264ecde0fefb91516daa0e083e69743ed"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "85743bbe48306746769a37fcdd00409b33b99db152e06e028a192b49e9a67fe6"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "f4a11a3d5c109edbb102a0ff92b00c76d702fdba0c892bdaa29b32c6b7876767"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "8c9f9ba692f8af632ff7d1f30dbc6593a946dcde3f069a70819dc52e3ecfa3f7"
+      },
+      {
+        "target": "//crates/observability:loki_differential_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "17f9fafa5f018dd37625d70a4bea8cdf9a41b50608b305c681cdb30c586af7e4"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_docker_test",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "54ccbb0082792e118a0acfbbf105cff084e4d84b3a030b50545715b01d6b12a1"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_previous_docker_test",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "d885b2b4345d49b3b9e730f5370a5860ba8a57b0858b35038fa40cdd829f0ec7"
+      },
+      {
+        "target": "//crates/traces:grafana_e2e_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "91c189e31e56657b395d34f749fe998a2b9f8c37f49b4dc6d05083d1574c6be6"
+      },
+      {
+        "target": "//crates/traces:grafana_e2e_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "6d42d610ed52b1ff132dcf56087f198ddf89e18ef748c821199930dc5dbcbdf0"
+      },
+      {
+        "target": "//crates/traces:tempo_differential_docker_test",
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "544412f8e3c3b1d44bd575b197bd393a9437cb399b9f3e5942bf769168de3f5b"
+      },
+      {
+        "target": "//crates/traces:tempo_differential_previous_docker_test",
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "132974f5a560961df74531c1968dc089f0e23617d55c6071fc09735a72cb1c70"
+      }
+    ],
+    "full_unit_checks": [
+      {
+        "target": "//crates/blockstore:blockstore_test",
+        "passed": 337,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "6b2284a9b476d84b40c99fae1aabd45b03b19d8af3057e94d20a71bebce57b30"
+      },
+      {
+        "target": "//crates/promql:promql_test",
+        "passed": 569,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "a26d01bebd59159e27e2bc081b42708eb11734fe12b442b69ec9579235179e7f"
+      },
+      {
+        "target": "//crates/metrics-service:metrics-service_test",
+        "passed": 66,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "3e13f11340a6e179249091eab3eea3d6eb1f90a8f06475526193b30630aa3713"
+      },
+      {
+        "target": "//crates/pprof:pprof_test",
+        "passed": 123,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "168f738fb7d06409879f48536c3c43d22b7c77f850ac2610dc8025fb5e2931e8"
+      },
+      {
+        "target": "//crates/profiles:profiles_test",
+        "passed": 284,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "ae71a80e9db9290318b4c3f8bf092f6404d067234f2bfbda826cec3c50fcc6c1"
+      }
+    ],
+    "correctness_scope_qualified": true,
+    "flaky_follow_up": {
+      "change": "Wait for the Prometheus datasource plugin through the existing bounded readiness check before the service-graph proxy query. Keep all result assertions.",
+      "source_path": "crates/traces/tests/grafana_e2e.rs",
+      "source_sha256": "9b8ccc0062b7f21149d4297eae5b089b75aa05e3adb61c34cb7227854eccb918",
+      "test_retries": 1,
+      "runs_per_native_wrapper": 3,
+      "native_checks": [
+        {
+          "target": "//crates/traces:grafana_e2e_docker_test",
+          "run": 1,
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "0e8621831328c96a4b7ce1d3240d555cee372d666012281129c90ffda7893e3d"
+        },
+        {
+          "target": "//crates/traces:grafana_e2e_docker_test",
+          "run": 2,
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "6e48ac0fbfa25159e7944dec8d156034e1e626add398f275f6589dcd3ea0930e"
+        },
+        {
+          "target": "//crates/traces:grafana_e2e_docker_test",
+          "run": 3,
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "7b02d0728d360b9df6751ca1e428999c9a351e0155a431bcedf7c1e17a529eab"
+        },
+        {
+          "target": "//crates/traces:grafana_e2e_previous_docker_test",
+          "run": 1,
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "d3c2abe2180b242e83c1cce3944b559961e1433fd038b564fbfe704edf5d44ac"
+        },
+        {
+          "target": "//crates/traces:grafana_e2e_previous_docker_test",
+          "run": 2,
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "35f2a3a8bc7736f8c3db7f34a8ee72d9ee9b0352201715f731cfc34c57a7e64d"
+        },
+        {
+          "target": "//crates/traces:grafana_e2e_previous_docker_test",
+          "run": 3,
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "4c8f718611c70ec11fcbd123e6e201e4df7cda43b9c1bacb98752b6ce51d38f7"
+        }
+      ],
+      "validation_log_sha256": "9b51823f0726b89c61b58a74013d42a99c9f595f2e35c713ca15d9b517836ec7",
+      "clippy_log_sha256": "0c28bbb231f6396a0e81ecad0f8d9e251d629a241ec7be53518af5f8d5c98218"
+    }
   }
 }
