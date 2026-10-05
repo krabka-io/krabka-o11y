@@ -48,7 +48,7 @@
   },
   "schema_version": 1,
   "experiment": "One Rust code generation unit for executable footprint and runtime efficiency",
-  "status": "images_and_cpu_profile_verified_text_reduced_core_correctness_running",
+  "status": "images_cpu_profile_and_core_checks_verified_runtime_comparison_pending",
   "baseline_image_reuse": "The exact restored-source cold fingerprint reuse candidate supplies the baseline image. All source, dependencies and workload harness files match; only .bazelrc differs. Both contain the same dense metadata and cold fingerprint reuse candidates.",
   "candidate_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371662781",
   "baseline_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
@@ -68,14 +68,19 @@
     "provenance_path": "qualification/evidence/correctness/single-cgu-canonical-goldens/provenance.json",
     "provenance_sha256": "392aaff4e15c0bbbe575e2bd11622c2085043288895d40cdcc513af7567d761d",
     "core_scope": {
-      "status": "running",
+      "status": "passed",
       "source_commit": "df216f0730426dad2b978e11ea1d748d82d0796b",
       "targets": 23,
       "explicit_compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
-      "scope": "Ten core unit suites, library Clippy checks, both canonical goldens and the full metadata ledger on the current source with the original metadata implementation restored. This supplements the earlier two goldens on the immutable trial source."
+      "scope": "Ten core unit suites, library Clippy checks, both canonical goldens and the full metadata ledger on the current source with the original metadata implementation restored. This supplements the earlier two goldens on the immutable trial source.",
+      "targets_passed": 23,
+      "rust_cases_passed": 3022,
+      "retries_disabled": true,
+      "provenance_path": "qualification/evidence/correctness/single-cgu-core-df216f07/provenance.json",
+      "provenance_sha256": "f9fd78261d750d4767ede6d103132999bf40bead1334524ebc1c4ec5fef9d08f"
     }
   },
-  "next_action": "Verify exact image source and checksums, compare code sections and runtime filesystem/configuration against the baseline, and complete correctness checks. Static executable size and sampled profiles do not qualify RSS or CPU improvement; matched Mimir and other-signal measurements remain required before retention.",
+  "next_action": "Run a matched Mimir comparison and the native differential and deployment checks with one codegen unit. The static size reduction does not prove CPU or RSS improvement.",
   "baseline_image_verified": {
     "image_provenance": {
       "run_id": 37371016528,
