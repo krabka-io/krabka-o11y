@@ -51,6 +51,7 @@ use url::Url;
 #[cfg(test)]
 mod tests {
     mod instant_float_scan;
+    mod owned_wal_replay;
     mod parallel_manifest_reads;
     use std::{
         sync::{

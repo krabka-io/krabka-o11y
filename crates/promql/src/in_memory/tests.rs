@@ -32,6 +32,7 @@ mod label_values_returns_distinct_for_name;
 mod lbls;
 mod native_histogram;
 mod offsets_track_low_and_high_water;
+mod owned_wal_batch;
 mod prune_counts_partial_histogram_and_exemplar_retention;
 mod prune_drops_old_samples;
 mod prune_removes_emptied_series_from_index;
