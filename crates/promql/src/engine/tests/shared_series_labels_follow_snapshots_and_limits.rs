@@ -35,6 +35,14 @@ async fn shared_series_labels_follow_snapshots_and_limits() {
         (api.fingerprint(), api.clone()),
         (latency.fingerprint(), latency.clone()),
     ]);
+    let hot_series = head
+        .series_shared("t", &matchers, 1_000, 2_000)
+        .await
+        .unwrap();
+    check!(
+        hot_series.iter().map(Arc::as_ref).collect::<Vec<_>>()
+            == expected.values().collect::<Vec<_>>()
+    );
     check!(
         resolved
             .iter()
@@ -65,7 +73,8 @@ async fn shared_series_labels_follow_snapshots_and_limits() {
             .await
             .is_err()
     );
-    head.prune(4_000);
+    let pruned = head.prune(4_000);
+    check!((pruned.samples_dropped, pruned.series_dropped) == (4, 4));
     head.delete_tenant("t");
     let current = engine
         .labels_by_fingerprint_sets("t", &[matchers], 1_000, 2_000)
