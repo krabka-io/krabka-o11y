@@ -67,6 +67,68 @@ mod tests {
     }
 
     #[test]
+    fn series_storage_preserves_json_and_shard_bytes() {
+        let mut index = Index::new();
+        index.add_series("t", 7, &labels(&[("a", "b")]));
+        // Independent v2 ledger: tenant, sorted dictionary, stored fingerprint,
+        // one label pair, no blocks and no block postings.
+        assert2::assert!(
+            index.encode_tenant_as_shard("t")
+                == b"KBIX\x02\x01t\x02\x01a\x01b\x01\x07\0\0\0\0\0\0\0\x01\0\x01\0\0"
+        );
+        let json = serde_json::to_value(&index).unwrap();
+        assert2::assert!(json["tenants"]["t"]["series"] == serde_json::json!({"7": {"a": "b"}}));
+        let restored: Index = serde_json::from_value(json).unwrap();
+        assert2::assert!(restored.series("t", &[]).unwrap() == vec![labels(&[("a", "b")])]);
+        let decoded = decode_index_shard(
+            "golden",
+            b"KBIX\x02\x01t\x02\x01a\x01b\x01\x07\0\0\0\0\0\0\0\x01\0\x01\0\0",
+        )
+        .unwrap();
+        assert2::assert!(decoded.series("t", &[]).unwrap() == vec![labels(&[("a", "b")])]);
+        assert2::assert!(
+            decoded
+                .resolve("t", &[LabelMatcher::new("a", MatchOp::Eq, "b")])
+                .unwrap()
+                == BTreeSet::from([7])
+        );
+    }
+
+    #[test]
+    fn shared_series_keep_tenant_order_first_labels_and_snapshot_lifetimes() {
+        let mut index = Index::new();
+        let api = labels(&[("app", "api"), ("region", "東京")]);
+        let worker = labels(&[("app", "worker"), ("region", "west")]);
+        index.add_series("t", 9, &worker);
+        index.add_series("t", 7, &api);
+        index.add_series("other", 7, &api);
+        let snapshot = index.clone();
+        let held = snapshot.series_shared("t", &[]).unwrap();
+        assert2::assert!(held.iter().map(Arc::as_ref).collect::<Vec<_>>() == vec![&api, &worker]);
+        index.add_series("t", 7, &labels(&[("app", "replacement")]));
+        index.add_series("t", 11, &labels(&[("app", "new")]));
+        let matcher = [LabelMatcher::new("app", MatchOp::Eq, "api")];
+        let current = index.series_shared("t", &matcher).unwrap();
+        let other = index.series_shared("other", &matcher).unwrap();
+        assert2::assert!(current.len() == 1 && current[0].as_ref() == &api);
+        assert2::assert!(Arc::ptr_eq(&current[0], &held[0]));
+        assert2::assert!(!Arc::ptr_eq(&other[0], &held[0]));
+        assert2::assert!(index.series_shared("missing", &[]).unwrap().is_empty());
+        assert2::assert!(snapshot.series("t", &[]).unwrap() == vec![api.clone(), worker]);
+        let mut owned = index.series("t", &matcher).unwrap();
+        owned[0].insert("app", "mutated");
+        assert2::assert!(current[0].as_ref() == &api);
+        let weak = Arc::downgrade(&current[0]);
+        drop(index);
+        drop(snapshot);
+        drop(current);
+        drop(other);
+        assert2::assert!(weak.upgrade().is_some());
+        drop(held);
+        assert2::assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
     fn resolve_matcher_cases() {
         let idx = seed();
         let api_prod = labels(&[("app", "api"), ("env", "prod")]).fingerprint();

@@ -163,6 +163,31 @@ impl Index {
         let Some(tenant_index) = self.tenants.get(tenant) else {
             return Ok(Vec::new());
         };
+        Ok(self
+            .matching_fingerprints(tenant, matchers)?
+            .into_iter()
+            .filter_map(|fp| {
+                tenant_index
+                    .series
+                    .get(&fp)
+                    .map(|labels| labels.as_ref().clone())
+            })
+            .collect())
+    }
+
+    /// Shared immutable labels for matching series, in stored fingerprint order.
+    /// An empty matcher set selects every series of the tenant.
+    ///
+    /// # Errors
+    /// Returns an error when label matchers are invalid.
+    pub fn series_shared(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+    ) -> Result<Vec<Arc<Labels>>> {
+        let Some(tenant_index) = self.tenants.get(tenant) else {
+            return Ok(Vec::new());
+        };
 
         let fingerprints = if matchers.is_empty() {
             tenant_index.all_fingerprints()
@@ -516,7 +541,7 @@ impl Index {
                 tenant_index
                     .series
                     .iter()
-                    .map(|(fingerprint, labels)| (*fingerprint, labels.clone()))
+                    .map(|(fingerprint, labels)| (*fingerprint, labels.as_ref().clone()))
                     .collect()
             })
             .unwrap_or_default()
@@ -524,7 +549,7 @@ impl Index {
 
     /// The labels behind one fingerprint.
     pub(crate) fn series_labels(&self, tenant: &str, fp: SeriesFingerprint) -> Option<&Labels> {
-        self.tenants.get(tenant)?.series.get(&fp)
+        self.tenants.get(tenant)?.series.get(&fp).map(Arc::as_ref)
     }
 
     /// Series of `tenant` that no live block carries.
@@ -540,7 +565,7 @@ impl Index {
             .series
             .iter()
             .filter(|(fingerprint, _)| !bound.contains(*fingerprint))
-            .map(|(fingerprint, labels)| (*fingerprint, labels.clone()))
+            .map(|(fingerprint, labels)| (*fingerprint, labels.as_ref().clone()))
             .collect()
     }
 
