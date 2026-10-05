@@ -360,7 +360,77 @@
       "log_sha256": "10b7439a190ade437898871dedabda06081d90e4da1598b22da213dcd6c74ddd"
     },
     "final_scoped_targets": 39,
-    "final_scope_status": "running"
+    "final_scope_status": "passed",
+    "final_scope_log_sha256": "1f5f070547c87f73c1749f3a9c004ea7141818c3d3f1dd61fca12caa62e326fe",
+    "final_scope_targets_list": [
+      "//crates/integration:traces_to_profiles_span_profiles_test",
+      "//crates/integration:traces_to_profiles_span_profiles_test_clippy",
+      "//crates/pprof:golden_merge_test",
+      "//crates/pprof:golden_merge_test_clippy",
+      "//crates/pprof:merge_associativity_test",
+      "//crates/pprof:merge_associativity_test_clippy",
+      "//crates/pprof:pprof_clippy",
+      "//crates/pprof:pprof_doc_test",
+      "//crates/pprof:pprof_no_harness_check",
+      "//crates/pprof:pprof_test",
+      "//crates/pprof:pprof_test_clippy",
+      "//crates/profiles:all_drain_order_test",
+      "//crates/profiles:all_drain_order_test_clippy",
+      "//crates/profiles:block_builder_drain_test",
+      "//crates/profiles:block_builder_drain_test_clippy",
+      "//crates/profiles:block_builder_object_store_retry_test",
+      "//crates/profiles:block_builder_object_store_retry_test_clippy",
+      "//crates/profiles:ingest_query_proptest_test",
+      "//crates/profiles:ingest_query_proptest_test_clippy",
+      "//crates/profiles:ingest_roundtrip_test",
+      "//crates/profiles:ingest_roundtrip_test_clippy",
+      "//crates/profiles:krabka-profiles_clippy",
+      "//crates/profiles:krabka-profiles_test",
+      "//crates/profiles:krabka-profiles_test_clippy",
+      "//crates/profiles:label_fingerprint_test",
+      "//crates/profiles:label_fingerprint_test_clippy",
+      "//crates/profiles:lifecycle_test",
+      "//crates/profiles:lifecycle_test_clippy",
+      "//crates/profiles:profiles_clippy",
+      "//crates/profiles:profiles_doc_test",
+      "//crates/profiles:profiles_no_harness_check",
+      "//crates/profiles:profiles_test",
+      "//crates/profiles:profiles_test_clippy",
+      "//crates/profiles:pyroscope_differential_docker_test",
+      "//crates/profiles:pyroscope_differential_previous_docker_test",
+      "//crates/profiles:pyroscope_differential_test",
+      "//crates/profiles:pyroscope_differential_test_clippy",
+      "//crates/profiles:tenant_resolution_test",
+      "//crates/profiles:tenant_resolution_test_clippy"
+    ],
+    "pprof_unit": {
+      "passed": 123,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "5245b472614fd7e6a9387cf0048a2c038132de7a5cfba13ce69ed11e12704a0d"
+    },
+    "profiles_unit": {
+      "passed": 284,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "bc8d2a159c914d3113ef7ce99b8ef61d193730222430c2848afd52571fb9d6eb"
+    },
+    "native_docker_wrappers": [
+      {
+        "target": "//crates/profiles:pyroscope_differential_docker_test",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "78793b0f5c91bb4a4c93b8e1c943c871fd847eadc4b658b0afd02ce26ee80ece"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_previous_docker_test",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "650d63a97f9857a01256cbfc2517cca9cbcb7d476af668662471aa36c4f76e26"
+      }
+    ]
   },
   "gcp_runs": {
     "baseline_source_commit": "f4c5a6034678dbde565d59dca71350146f21ddb0",
