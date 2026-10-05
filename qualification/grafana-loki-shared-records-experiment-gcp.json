@@ -1,0 +1,1230 @@
+{
+  "schema_version": 1,
+  "source_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+  "measurement_qualified": true,
+  "retained_in_branch": true,
+  "rebase_equivalent_commit": "60559280",
+  "image_producer": {
+    "run_id": 37286691135,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37286691135",
+    "source_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+    "artifact": {
+      "id": 11335716451,
+      "name": "comparison-image-logs-84351e6940b96e6b920ca53639447266a5a6dc4d",
+      "digest": "sha256:ba55ade869727f94e6dbc5602aecab5e7c7b1eefe0656e8b3f40f51913b72434",
+      "size_in_bytes": 308310498,
+      "expires_at": "2027-01-03T08:55:36Z"
+    },
+    "archive_digest_verified": true,
+    "all_image_file_checksums_verified": true,
+    "image_tag": "localhost/krabka-o11y:sha-84351e6940b9",
+    "manifest_digest": "sha256:8a6116ca8531f9ad4d49de010d1e4f83227c7084b012bef49918bf4e9a78680b",
+    "config_digest": "sha256:8a6116ca8531f9ad4d49de010d1e4f83227c7084b012bef49918bf4e9a78680b",
+    "docker_image_id": "sha256:8a6116ca8531f9ad4d49de010d1e4f83227c7084b012bef49918bf4e9a78680b",
+    "oci_config_digest": "sha256:c7edb866683b68ab93d2e1278b33b4c1b3cdb34db8e2a03acebeab3f1d8dfb57",
+    "identity_note": "The archived config-digest field is Docker inspect Id; this containerd store reports OCI manifest identity. The OCI config digest is taken from the independently verified archive."
+  },
+  "binary_sha256": {
+    "krabka-metrics": {
+      "path": "usr/local/bin/krabka-metrics",
+      "sha256": "433897cf8d9d07b85a92ae27ccf23e450e1223a16f5acf305e9fb27922a5e0f5",
+      "size_in_bytes": 72322888
+    },
+    "krabka-metrics-service": {
+      "path": "usr/local/bin/krabka-metrics-service",
+      "sha256": "637554eeb409f9e299b7107160e97a395806dc392b573c51a311fbf295be6391",
+      "size_in_bytes": 236265312
+    },
+    "krabka-o11y-bootstrap": {
+      "path": "usr/local/bin/krabka-o11y-bootstrap",
+      "sha256": "3f21b08affb06c3c7c703fa3b2bff0a1215610b516cde6b95e39b987178d8ec9",
+      "size_in_bytes": 26755024
+    },
+    "krabka-o11y-recovery": {
+      "path": "usr/local/bin/krabka-o11y-recovery",
+      "sha256": "11d55653ba224a20a00209dcd20529b914afe76ab55cdb23d23e885f14171ef5",
+      "size_in_bytes": 36712848
+    },
+    "krabka-observability": {
+      "path": "usr/local/bin/krabka-observability",
+      "sha256": "721f108379d44c80db18598833cb4665c2ff783aab19ac96c09ed42fe15d59df",
+      "size_in_bytes": 222384288
+    },
+    "krabka-profiles": {
+      "path": "usr/local/bin/krabka-profiles",
+      "sha256": "3b4bfbecf433404becd086eb9c87d2784ff15a208143604ecb199ad262d188ed",
+      "size_in_bytes": 219811904
+    },
+    "krabka-traces": {
+      "path": "usr/local/bin/krabka-traces",
+      "sha256": "f6ca74aac777796c4c7e3c14546188c2349cb7e839e71caf06db7f6d3afec6dd",
+      "size_in_bytes": 223526648
+    }
+  },
+  "image_equivalence": {
+    "changed_paths": [
+      "usr/local/bin/krabka-metrics",
+      "usr/local/bin/krabka-metrics-service",
+      "usr/local/bin/krabka-o11y-bootstrap",
+      "usr/local/bin/krabka-o11y-recovery",
+      "usr/local/bin/krabka-observability",
+      "usr/local/bin/krabka-profiles",
+      "usr/local/bin/krabka-traces"
+    ],
+    "unchanged_binaries": [],
+    "filesystem_entries_verified": 380
+  },
+  "provenance": {
+    "run_id": 37286691135,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37286691135",
+    "head_sha": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+    "jobs": [
+      {
+        "id": 111687157659,
+        "name": "compare (logs)",
+        "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37286691135/job/111687157659",
+        "conclusion": "success",
+        "runner_name": "gcp-runner-62aaed6bce2a401b",
+        "runner_group_name": "default",
+        "labels": [
+          "gcp-ubuntu-24-04-16core"
+        ],
+        "started_at": "2026-10-05T08:56:26Z",
+        "completed_at": "2026-10-05T09:26:21Z"
+      }
+    ],
+    "artifacts": [
+      {
+        "id": 11335703903,
+        "name": "grafana-comparison-logs-84351e6940b96e6b920ca53639447266a5a6dc4d-1",
+        "digest": "sha256:946421880c23fbec65d6f89277cd375e1f072c16513330cbbf315990925d3906",
+        "size_in_bytes": 4843804,
+        "expires_at": "2027-01-03T08:55:36Z",
+        "signal": "logs",
+        "verified_raw_files": 239,
+        "reports": [
+          "qualification/evidence/performance/gcp-37286691135/logs/comparison-report.json"
+        ]
+      }
+    ]
+  },
+  "host": {
+    "cpu_count": 16,
+    "kernel": "7.0.0-1011-gcp",
+    "cpu_models": [
+      "AMD EPYC 7B12"
+    ]
+  },
+  "scope": "Single-node API-accepted steady load; matched aggregate budgets; CPU and RSS include broker and MinIO; different durability contracts.",
+  "summary": {
+    "host": {
+      "cpu_count": 16,
+      "kernel": "7.0.0-1011-gcp",
+      "lscpu": {
+        "lscpu": [
+          {
+            "field": "Architecture:",
+            "data": "x86_64"
+          },
+          {
+            "field": "CPU op-mode(s):",
+            "data": "32-bit, 64-bit"
+          },
+          {
+            "field": "Address sizes:",
+            "data": "48 bits physical, 48 bits virtual"
+          },
+          {
+            "field": "Byte Order:",
+            "data": "Little Endian"
+          },
+          {
+            "field": "CPU(s):",
+            "data": "16"
+          },
+          {
+            "field": "On-line CPU(s) list:",
+            "data": "0-15"
+          },
+          {
+            "field": "Vendor ID:",
+            "data": "AuthenticAMD"
+          },
+          {
+            "field": "Model name:",
+            "data": "AMD EPYC 7B12"
+          },
+          {
+            "field": "CPU family:",
+            "data": "23"
+          },
+          {
+            "field": "Model:",
+            "data": "49"
+          },
+          {
+            "field": "Thread(s) per core:",
+            "data": "2"
+          },
+          {
+            "field": "Core(s) per socket:",
+            "data": "8"
+          },
+          {
+            "field": "Socket(s):",
+            "data": "1"
+          },
+          {
+            "field": "Stepping:",
+            "data": "0"
+          },
+          {
+            "field": "BogoMIPS:",
+            "data": "4499.99"
+          },
+          {
+            "field": "Flags:",
+            "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+          },
+          {
+            "field": "Hypervisor vendor:",
+            "data": "KVM"
+          },
+          {
+            "field": "Virtualization type:",
+            "data": "full"
+          },
+          {
+            "field": "L1d cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L1i cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L2 cache:",
+            "data": "4 MiB (8 instances)"
+          },
+          {
+            "field": "L3 cache:",
+            "data": "32 MiB (2 instances)"
+          },
+          {
+            "field": "NUMA node(s):",
+            "data": "1"
+          },
+          {
+            "field": "NUMA node0 CPU(s):",
+            "data": "0-15"
+          },
+          {
+            "field": "Vulnerability Gather data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Ghostwrite:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Indirect target selection:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Itlb multihit:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability L1tf:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Meltdown:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mmio stale data:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Old microcode:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Reg file data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Retbleed:",
+            "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+          },
+          {
+            "field": "Vulnerability Spec rstack overflow:",
+            "data": "Mitigation; Safe RET"
+          },
+          {
+            "field": "Vulnerability Spec store bypass:",
+            "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+          },
+          {
+            "field": "Vulnerability Spectre v1:",
+            "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+          },
+          {
+            "field": "Vulnerability Spectre v2:",
+            "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+          },
+          {
+            "field": "Vulnerability Srbds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsa:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsx async abort:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Vmscape:",
+            "data": "Not affected"
+          }
+        ]
+      }
+    },
+    "harness_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+    "resource_coverage": [
+      {
+        "repetition": 1,
+        "backend": "krabka",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 61,
+        "sampled_seconds": 60.59575891494751,
+        "coverage_fraction": 0.9996370325195092,
+        "valid": true
+      },
+      {
+        "repetition": 1,
+        "backend": "loki",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 61,
+        "sampled_seconds": 60.73259472846985,
+        "coverage_fraction": 0.9995359091279414,
+        "valid": true
+      },
+      {
+        "repetition": 2,
+        "backend": "loki",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 61,
+        "sampled_seconds": 60.76908898353577,
+        "coverage_fraction": 0.9995222014308035,
+        "valid": true
+      },
+      {
+        "repetition": 2,
+        "backend": "krabka",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 61,
+        "sampled_seconds": 60.573310136795044,
+        "coverage_fraction": 0.9996084866474373,
+        "valid": true
+      },
+      {
+        "repetition": 3,
+        "backend": "krabka",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 61,
+        "sampled_seconds": 60.57157754898071,
+        "coverage_fraction": 0.9996003573460189,
+        "valid": true
+      },
+      {
+        "repetition": 3,
+        "backend": "loki",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 61,
+        "sampled_seconds": 60.73405122756958,
+        "coverage_fraction": 0.9995889088098858,
+        "valid": true
+      }
+    ],
+    "seed_value_mismatches": [],
+    "correctness_disqualified": false,
+    "host_activity_disqualified": false,
+    "host_activity_failures": [],
+    "backends": {
+      "krabka": {
+        "steady_objectives_met": true,
+        "steady": {
+          "rows_per_second": {
+            "median": 1980.2949207629226,
+            "min": 1979.6178156744027,
+            "max": 1980.3354598866774,
+            "values": [
+              1979.6178156744027,
+              1980.2949207629226,
+              1980.3354598866774
+            ]
+          },
+          "accepted_rows": {
+            "median": 120000,
+            "min": 120000,
+            "max": 120000,
+            "values": [
+              120000,
+              120000,
+              120000
+            ]
+          },
+          "ingest_p99_seconds": {
+            "median": 0.06507047600007354,
+            "min": 0.06013545799987696,
+            "max": 0.06845973700001196,
+            "values": [
+              0.06013545799987696,
+              0.06507047600007354,
+              0.06845973700001196
+            ]
+          },
+          "query_p99_seconds": {
+            "median": 0.05443626900000709,
+            "min": 0.05384324800002105,
+            "max": 0.057714916999884736,
+            "values": [
+              0.057714916999884736,
+              0.05443626900000709,
+              0.05384324800002105
+            ]
+          },
+          "query_attempts": {
+            "median": 240,
+            "min": 240,
+            "max": 240,
+            "values": [
+              240,
+              240,
+              240
+            ]
+          },
+          "cpu_seconds": {
+            "median": 17.424595,
+            "min": 17.040831,
+            "max": 17.542803,
+            "values": [
+              17.424595,
+              17.542803,
+              17.040831
+            ]
+          },
+          "rss_kib": {
+            "median": 379040,
+            "min": 370000,
+            "max": 381400,
+            "values": [
+              379040,
+              381400,
+              370000
+            ]
+          },
+          "cpu_seconds_per_million_rows": {
+            "median": 145.20495833333334,
+            "min": 142.006925,
+            "max": 146.190025,
+            "values": [
+              145.20495833333334,
+              146.190025,
+              142.006925
+            ]
+          },
+          "generator_cpu_seconds": {
+            "median": 0.9568156889999999,
+            "min": 0.9550266039999995,
+            "max": 0.976511736,
+            "values": [
+              0.976511736,
+              0.9568156889999999,
+              0.9550266039999995
+            ]
+          },
+          "s3_requests": {
+            "median": 258.0,
+            "min": 258.0,
+            "max": 265.0,
+            "values": [
+              258.0,
+              265.0,
+              258.0
+            ]
+          },
+          "s3_read_bytes": {
+            "median": 1385519.0,
+            "min": 1385519.0,
+            "max": 1526613.0,
+            "values": [
+              1385519.0,
+              1526613.0,
+              1385519.0
+            ]
+          },
+          "s3_write_bytes": {
+            "median": 1713629.0,
+            "min": 1713629.0,
+            "max": 1713629.0,
+            "values": [
+              1713629.0,
+              1713629.0,
+              1713629.0
+            ]
+          },
+          "duration_seconds": {
+            "median": 60.597034684999926,
+            "min": 60.59579421300009,
+            "max": 60.617761191,
+            "values": [
+              60.617761191,
+              60.597034684999926,
+              60.59579421300009
+            ]
+          },
+          "query_attempts_per_second": {
+            "median": 3.960589841525845,
+            "min": 3.9592356313488053,
+            "max": 3.9606709197733547,
+            "values": [
+              3.9592356313488053,
+              3.960589841525845,
+              3.9606709197733547
+            ]
+          },
+          "average_cpu_cores": {
+            "median": 0.287450322440926,
+            "min": 0.28122134912696795,
+            "max": 0.2894993639737047,
+            "values": [
+              0.287450322440926,
+              0.2894993639737047,
+              0.28122134912696795
+            ]
+          },
+          "driver_average_cpu_cores": {
+            "median": 0.015789810408608135,
+            "min": 0.01576060874196959,
+            "max": 0.016109333581672824,
+            "values": [
+              0.016109333581672824,
+              0.015789810408608135,
+              0.01576060874196959
+            ]
+          }
+        },
+        "service_cpu": 5.0,
+        "service_memory_gib": 5.0,
+        "burst": {
+          "passing_levels": [],
+          "highest_consistently_passing_tested_level": null,
+          "per_repetition": [
+            {
+              "repetition": 1,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 2,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 3,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            }
+          ],
+          "failed_points": []
+        },
+        "high_cardinality": {
+          "passing_levels": [],
+          "highest_consistently_passing_tested_level": null,
+          "per_repetition": [
+            {
+              "repetition": 1,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 2,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 3,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            }
+          ],
+          "failed_points": []
+        }
+      },
+      "loki": {
+        "steady_objectives_met": true,
+        "steady": {
+          "rows_per_second": {
+            "median": 1974.9577575536425,
+            "min": 1973.7446484378368,
+            "max": 1975.0151131485193,
+            "values": [
+              1974.9577575536425,
+              1973.7446484378368,
+              1975.0151131485193
+            ]
+          },
+          "accepted_rows": {
+            "median": 120000,
+            "min": 120000,
+            "max": 120000,
+            "values": [
+              120000,
+              120000,
+              120000
+            ]
+          },
+          "ingest_p99_seconds": {
+            "median": 0.013634289000037825,
+            "min": 0.012802944999975807,
+            "max": 0.014717388999997638,
+            "values": [
+              0.014717388999997638,
+              0.012802944999975807,
+              0.013634289000037825
+            ]
+          },
+          "query_p99_seconds": {
+            "median": 0.07817385700013801,
+            "min": 0.07793595099997219,
+            "max": 0.08585775399978957,
+            "values": [
+              0.08585775399978957,
+              0.07793595099997219,
+              0.07817385700013801
+            ]
+          },
+          "query_attempts": {
+            "median": 239,
+            "min": 239,
+            "max": 239,
+            "values": [
+              239,
+              239,
+              239
+            ]
+          },
+          "cpu_seconds": {
+            "median": 20.133022,
+            "min": 18.783093,
+            "max": 21.453598,
+            "values": [
+              21.453598,
+              20.133022,
+              18.783093
+            ]
+          },
+          "rss_kib": {
+            "median": 379940,
+            "min": 374176,
+            "max": 391840,
+            "values": [
+              391840,
+              379940,
+              374176
+            ]
+          },
+          "cpu_seconds_per_million_rows": {
+            "median": 167.77518333333333,
+            "min": 156.525775,
+            "max": 178.77998333333332,
+            "values": [
+              178.77998333333332,
+              167.77518333333333,
+              156.525775
+            ]
+          },
+          "generator_cpu_seconds": {
+            "median": 1.11690028,
+            "min": 1.08516644,
+            "max": 1.1241418609999996,
+            "values": [
+              1.11690028,
+              1.1241418609999996,
+              1.08516644
+            ]
+          },
+          "s3_requests": {
+            "median": 201.0,
+            "min": 201.0,
+            "max": 201.0,
+            "values": [
+              201.0,
+              201.0,
+              201.0
+            ]
+          },
+          "s3_read_bytes": {
+            "median": 241.0,
+            "min": 241.0,
+            "max": 241.0,
+            "values": [
+              241.0,
+              241.0,
+              241.0
+            ]
+          },
+          "s3_write_bytes": {
+            "median": 616023.0,
+            "min": 601372.0,
+            "max": 618561.0,
+            "values": [
+              616023.0,
+              618561.0,
+              601372.0
+            ]
+          },
+          "duration_seconds": {
+            "median": 60.76079325799992,
+            "min": 60.759028728999965,
+            "max": 60.798138247,
+            "values": [
+              60.76079325799992,
+              60.798138247,
+              60.759028728999965
+            ]
+          },
+          "query_attempts_per_second": {
+            "median": 3.933457533794338,
+            "min": 3.931041424805358,
+            "max": 3.933571767020801,
+            "values": [
+              3.933457533794338,
+              3.931041424805358,
+              3.933571767020801
+            ]
+          },
+          "average_cpu_cores": {
+            "median": 0.3311453702448436,
+            "min": 0.30914077122228467,
+            "max": 0.3530829149794776,
+            "values": [
+              0.3530829149794776,
+              0.3311453702448436,
+              0.30914077122228467
+            ]
+          },
+          "driver_average_cpu_cores": {
+            "median": 0.018381923936665295,
+            "min": 0.0178601676606798,
+            "max": 0.018489741518614163,
+            "values": [
+              0.018381923936665295,
+              0.018489741518614163,
+              0.0178601676606798
+            ]
+          }
+        },
+        "service_cpu": 5.0,
+        "service_memory_gib": 5.0,
+        "burst": {
+          "passing_levels": [],
+          "highest_consistently_passing_tested_level": null,
+          "per_repetition": [
+            {
+              "repetition": 1,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 2,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 3,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            }
+          ],
+          "failed_points": []
+        },
+        "high_cardinality": {
+          "passing_levels": [],
+          "highest_consistently_passing_tested_level": null,
+          "per_repetition": [
+            {
+              "repetition": 1,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 2,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 3,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            }
+          ],
+          "failed_points": []
+        }
+      }
+    },
+    "deployment_target": "all",
+    "highest_common_burst_writers": null,
+    "steady_krabka_divided_by_native": {
+      "average_cpu_cores": 0.8680487431498434,
+      "rss_kib": 0.9976312049270938,
+      "query_p99_seconds": 0.6963487678484507,
+      "ingest_p99_seconds": 4.772561004089984
+    }
+  },
+  "entries": [
+    {
+      "backend": "krabka",
+      "repetition": 1,
+      "objectives_met": true,
+      "duration_seconds": 60.617761191,
+      "ingest": {
+        "attempts": 120,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 120000,
+        "accepted_rows_per_sec": 1979.6178156744027,
+        "latency_seconds": {
+          "count": 120,
+          "p50": 0.02443660800008729,
+          "p95": 0.0476993570000559,
+          "p99": 0.06013545799987696
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "204": 120
+        }
+      },
+      "query": {
+        "attempts": 240,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 240,
+          "p50": 0.03450828800009731,
+          "p95": 0.04993487800015828,
+          "p99": 0.057714916999884736
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 240
+        }
+      },
+      "resources": {
+        "cpu_seconds_by_role": {
+          "broker": 2.276594,
+          "logs-all": 13.901956,
+          "minio": 1.246045
+        },
+        "cpu_seconds_total": 17.424595,
+        "load_generator_cpu_seconds": 0.976511736,
+        "throttled_seconds_by_role": {
+          "broker": 0.0,
+          "logs-all": 0.0,
+          "minio": 0.0
+        },
+        "rss_kib_simultaneous_peak": 379040,
+        "s3_requests": 258.0,
+        "s3_read_bytes": 1385519.0,
+        "s3_write_bytes": 1713629.0,
+        "external_cpu_cores_mean": 0.1757366101965339,
+        "external_cpu_cores_peak_window": 0.8036772502810301,
+        "host_activity_qualified": true,
+        "sample_count": 61,
+        "sampled_seconds": 60.59575891494751,
+        "coverage_fraction": 0.9996370325195092,
+        "cpu_seconds_per_million_accepted_rows": 145.20495833333334
+      },
+      "service_cpu": 5.0,
+      "service_memory_gib": 5.0,
+      "deployment_target": "all"
+    },
+    {
+      "backend": "loki",
+      "repetition": 1,
+      "objectives_met": true,
+      "duration_seconds": 60.76079325799992,
+      "ingest": {
+        "attempts": 120,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 120000,
+        "accepted_rows_per_sec": 1974.9577575536425,
+        "latency_seconds": {
+          "count": 120,
+          "p50": 0.007681249000142998,
+          "p95": 0.010204108999914752,
+          "p99": 0.014717388999997638
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "204": 120
+        }
+      },
+      "query": {
+        "attempts": 239,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 239,
+          "p50": 0.05130157600001439,
+          "p95": 0.07779649500002961,
+          "p99": 0.08585775399978957
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 239
+        }
+      },
+      "resources": {
+        "cpu_seconds_by_role": {
+          "loki": 20.33907,
+          "minio": 1.114528
+        },
+        "cpu_seconds_total": 21.453598,
+        "load_generator_cpu_seconds": 1.11690028,
+        "throttled_seconds_by_role": {
+          "loki": 0.0,
+          "minio": 0.0
+        },
+        "rss_kib_simultaneous_peak": 391840,
+        "s3_requests": 201.0,
+        "s3_read_bytes": 241.0,
+        "s3_write_bytes": 616023.0,
+        "external_cpu_cores_mean": 0.025184198482492218,
+        "external_cpu_cores_peak_window": 0.03815747057269087,
+        "host_activity_qualified": true,
+        "sample_count": 61,
+        "sampled_seconds": 60.73259472846985,
+        "coverage_fraction": 0.9995359091279414,
+        "cpu_seconds_per_million_accepted_rows": 178.77998333333332
+      },
+      "service_cpu": 5.0,
+      "service_memory_gib": 5.0,
+      "deployment_target": "native"
+    },
+    {
+      "backend": "loki",
+      "repetition": 2,
+      "objectives_met": true,
+      "duration_seconds": 60.798138247,
+      "ingest": {
+        "attempts": 120,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 120000,
+        "accepted_rows_per_sec": 1973.7446484378368,
+        "latency_seconds": {
+          "count": 120,
+          "p50": 0.007998496000027444,
+          "p95": 0.011038535999887245,
+          "p99": 0.012802944999975807
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "204": 120
+        }
+      },
+      "query": {
+        "attempts": 239,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 239,
+          "p50": 0.046381732999861924,
+          "p95": 0.06645093499992072,
+          "p99": 0.07793595099997219
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 239
+        }
+      },
+      "resources": {
+        "cpu_seconds_by_role": {
+          "loki": 18.994421,
+          "minio": 1.138601
+        },
+        "cpu_seconds_total": 20.133022,
+        "load_generator_cpu_seconds": 1.1241418609999996,
+        "throttled_seconds_by_role": {
+          "loki": 0.0,
+          "minio": 0.0
+        },
+        "rss_kib_simultaneous_peak": 379940,
+        "s3_requests": 201.0,
+        "s3_read_bytes": 241.0,
+        "s3_write_bytes": 618561.0,
+        "external_cpu_cores_mean": 0.6653520204977077,
+        "external_cpu_cores_peak_window": 1.05272908362272,
+        "host_activity_qualified": true,
+        "sample_count": 61,
+        "sampled_seconds": 60.76908898353577,
+        "coverage_fraction": 0.9995222014308035,
+        "cpu_seconds_per_million_accepted_rows": 167.77518333333333
+      },
+      "service_cpu": 5.0,
+      "service_memory_gib": 5.0,
+      "deployment_target": "native"
+    },
+    {
+      "backend": "krabka",
+      "repetition": 2,
+      "objectives_met": true,
+      "duration_seconds": 60.597034684999926,
+      "ingest": {
+        "attempts": 120,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 120000,
+        "accepted_rows_per_sec": 1980.2949207629226,
+        "latency_seconds": {
+          "count": 120,
+          "p50": 0.03316418800000065,
+          "p95": 0.05062062699994385,
+          "p99": 0.06507047600007354
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "204": 120
+        }
+      },
+      "query": {
+        "attempts": 240,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 240,
+          "p50": 0.0349187769998025,
+          "p95": 0.049279946999831736,
+          "p99": 0.05443626900000709
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 240
+        }
+      },
+      "resources": {
+        "cpu_seconds_by_role": {
+          "broker": 2.210145,
+          "logs-all": 14.117845,
+          "minio": 1.214813
+        },
+        "cpu_seconds_total": 17.542803,
+        "load_generator_cpu_seconds": 0.9568156889999999,
+        "throttled_seconds_by_role": {
+          "broker": 0.0,
+          "logs-all": 0.0,
+          "minio": 0.0
+        },
+        "rss_kib_simultaneous_peak": 381400,
+        "s3_requests": 265.0,
+        "s3_read_bytes": 1526613.0,
+        "s3_write_bytes": 1713629.0,
+        "external_cpu_cores_mean": 0.05613662689591215,
+        "external_cpu_cores_peak_window": 0.06747247862271755,
+        "host_activity_qualified": true,
+        "sample_count": 61,
+        "sampled_seconds": 60.573310136795044,
+        "coverage_fraction": 0.9996084866474373,
+        "cpu_seconds_per_million_accepted_rows": 146.190025
+      },
+      "service_cpu": 5.0,
+      "service_memory_gib": 5.0,
+      "deployment_target": "all"
+    },
+    {
+      "backend": "krabka",
+      "repetition": 3,
+      "objectives_met": true,
+      "duration_seconds": 60.59579421300009,
+      "ingest": {
+        "attempts": 120,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 120000,
+        "accepted_rows_per_sec": 1980.3354598866774,
+        "latency_seconds": {
+          "count": 120,
+          "p50": 0.023513559000093665,
+          "p95": 0.047643338999932894,
+          "p99": 0.06845973700001196
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "204": 120
+        }
+      },
+      "query": {
+        "attempts": 240,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 240,
+          "p50": 0.03416432800008806,
+          "p95": 0.04926846700004717,
+          "p99": 0.05384324800002105
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 240
+        }
+      },
+      "resources": {
+        "cpu_seconds_by_role": {
+          "broker": 2.1612,
+          "logs-all": 13.695753,
+          "minio": 1.183878
+        },
+        "cpu_seconds_total": 17.040831,
+        "load_generator_cpu_seconds": 0.9550266039999995,
+        "throttled_seconds_by_role": {
+          "broker": 0.0,
+          "logs-all": 0.0,
+          "minio": 0.0
+        },
+        "rss_kib_simultaneous_peak": 370000,
+        "s3_requests": 258.0,
+        "s3_read_bytes": 1385519.0,
+        "s3_write_bytes": 1713629.0,
+        "external_cpu_cores_mean": 0.04084659003639898,
+        "external_cpu_cores_peak_window": 0.05287529158686985,
+        "host_activity_qualified": true,
+        "sample_count": 61,
+        "sampled_seconds": 60.57157754898071,
+        "coverage_fraction": 0.9996003573460189,
+        "cpu_seconds_per_million_accepted_rows": 142.006925
+      },
+      "service_cpu": 5.0,
+      "service_memory_gib": 5.0,
+      "deployment_target": "all"
+    },
+    {
+      "backend": "loki",
+      "repetition": 3,
+      "objectives_met": true,
+      "duration_seconds": 60.759028728999965,
+      "ingest": {
+        "attempts": 120,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 120000,
+        "accepted_rows_per_sec": 1975.0151131485193,
+        "latency_seconds": {
+          "count": 120,
+          "p50": 0.007588619999978619,
+          "p95": 0.009857079000084923,
+          "p99": 0.013634289000037825
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "204": 120
+        }
+      },
+      "query": {
+        "attempts": 239,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 239,
+          "p50": 0.043143568999994386,
+          "p95": 0.06144030699988434,
+          "p99": 0.07817385700013801
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 239
+        }
+      },
+      "resources": {
+        "cpu_seconds_by_role": {
+          "loki": 17.728104,
+          "minio": 1.054989
+        },
+        "cpu_seconds_total": 18.783093,
+        "load_generator_cpu_seconds": 1.08516644,
+        "throttled_seconds_by_role": {
+          "loki": 0.0,
+          "minio": 0.0
+        },
+        "rss_kib_simultaneous_peak": 374176,
+        "s3_requests": 201.0,
+        "s3_read_bytes": 241.0,
+        "s3_write_bytes": 601372.0,
+        "external_cpu_cores_mean": 0.13092722120914765,
+        "external_cpu_cores_peak_window": 0.6507912497150233,
+        "host_activity_qualified": true,
+        "sample_count": 61,
+        "sampled_seconds": 60.73405122756958,
+        "coverage_fraction": 0.9995889088098858,
+        "cpu_seconds_per_million_accepted_rows": 156.525775
+      },
+      "service_cpu": 5.0,
+      "service_memory_gib": 5.0,
+      "deployment_target": "native"
+    }
+  ],
+  "functional_validation": {
+    "scoped_targets_passed": 118,
+    "real_oracles": [
+      "Loki",
+      "Grafana integration",
+      "Grafana end-to-end"
+    ],
+    "negative_control": "Removing only buffered-source forwarding fails the snapshot-sharing regression; the other 379 library cases pass."
+  },
+  "limitations": [
+    "The prior and current comparisons use separate AMD EPYC 7B12 VMs. The allocation traces complete different query counts. Neither is a same-VM source comparison.",
+    "All seven application binaries changed in the new image; measurements for other signals cannot be reused to qualify this image.",
+    "Ingest p99 is preserved alongside query p99."
+  ]
+}
