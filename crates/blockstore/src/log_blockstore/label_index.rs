@@ -89,14 +89,6 @@ impl LabelIndex {
             .unwrap_or_default()
     }
 
-    /// Consumes the index and moves out one tenant's stored series.
-    pub fn into_tenant_series(
-        mut self,
-        tenant: &str,
-    ) -> impl Iterator<Item = (SeriesFingerprint, Labels)> {
-        self.series.remove(tenant).unwrap_or_default().into_iter()
-    }
-
     pub(crate) fn exact_candidates(
         &self,
         tenant: &str,

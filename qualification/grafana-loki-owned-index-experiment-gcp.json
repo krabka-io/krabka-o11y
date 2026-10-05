@@ -3,8 +3,8 @@
   "experiment": "Consume owned Loki shard-index labels and block descriptors when merging, preserving canonical fingerprints and first-block precedence.",
   "source_commit": "45b41ba77d16f017c80c502893cee1157bc30fde",
   "baseline_source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
-  "retained_in_branch": true,
-  "retention_decision": "Both Loki controls verified. Aggregate RSS is higher in every pair in both controls, with median ratios 1.069 and 1.014. CPU improves in all first-control pairs and two confirmation pairs; query p99 and ingestion results are mixed. This does not establish an advantage in both CPU and memory. Retention review and any required reversion remain pending; all results are preserved.",
+  "retained_in_branch": false,
+  "retention_decision": "Reject: aggregate RSS is higher in all six paired deployments across both unchanged-workload controls (median ratios 1.069 and 1.014). First-control CPU improves in every pair; confirmation CPU improves in two pairs. These CPU gains do not justify the consistent RSS regression for the stated CPU-and-memory efficiency objective. Restore original product merger and remove consuming APIs; retain the complete semantic regression and all measured controls.",
   "performance_qualified": false,
   "image_producer": {
     "run_id": 37307305944,
@@ -7602,5 +7602,11 @@
       ]
     }
   },
-  "confirmation_raw_file_checksums": 725
+  "confirmation_raw_file_checksums": 725,
+  "reversion": {
+    "status": "implemented; 366-target validation in progress",
+    "product_reference_source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+    "semantic_regression_retained": true,
+    "removed_consuming_api_test_targets": 2
+  }
 }
