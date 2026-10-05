@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "experiment": "Fold canonical label fingerprint bytes without per-byte chain state",
+  "status": "baseline_image_and_profile_running",
+  "baseline_source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
+  "source_commit": null,
+  "performance_qualified": false,
+  "retention_decision": "Pending a candidate, meaningful correctness checks and exact-image GCP comparisons for all four signals. Static code generation is selection evidence only.",
+  "scope": {
+    "production_paths": [
+      "crates/blockstore/src/labels/labels_type.rs"
+    ],
+    "change": "Use the existing canonical byte iterator through fold. Preserve sorted name/value order, all u64 little-endian byte lengths, FNV-1a offset/prime and wrapping multiplication. Add no cache, stored label field or configuration.",
+    "no_dependency_changes": true,
+    "no_configuration_changes": true,
+    "no_wire_changes": true
+  },
+  "profile_selection": {
+    "diagnostic_only": true,
+    "performance_qualified": false,
+    "source_commit": "ebc1ff330abed44b97bdd3d6a17b3c969cf836ed",
+    "source_path": "crates/blockstore/src/labels/labels_type.rs",
+    "current_source_byte_equal": true,
+    "source_sha256": "21f3cb9e40281627fb7cc71a83bd198e50e36091c604c7311faca524745caecd",
+    "gcp_capture_run": 37343900919,
+    "windows": [
+      {
+        "window": 1,
+        "samples": 208,
+        "fingerprint_self_percent": 10.1,
+        "report_sha256": "271fb8fe0b81ed010cb275b91b6cea5bd616580c90f01dfcc77ee1bf217e4e16"
+      },
+      {
+        "window": 2,
+        "samples": 262,
+        "fingerprint_self_percent": 6.87,
+        "report_sha256": "29aa7a2781ae3b1893d1ee10f2fccb93bc96d03211c5387f5733a4f4e8db5a4e"
+      },
+      {
+        "window": 3,
+        "samples": 307,
+        "fingerprint_self_percent": 6.19,
+        "report_sha256": "62dcf82c196be56b69302472010609edf7b4efce15ffd3d4a08fa52bbabaa5d7"
+      }
+    ],
+    "image_binary": {
+      "path": "usr/local/bin/krabka-metrics-service",
+      "sha256": "b9ea16d3cf9487fce760bc5508bce3b7a30d8a2ba49d17f02083534481aeab1c",
+      "size_in_bytes": 236255680
+    },
+    "assembly_sha256": "f019989e1b42238b35c081aa85d7df125165c35cb235083d8646a1dc5595bdd8",
+    "selection": "The compiled fingerprint loop retains checks for each chained iterator on each byte. Try separate length and text byte loops for name and value, preserving canonical FNV bytes and result. No cache, stored-hash change, or new memory field is needed.",
+    "limitations": [
+      "Offline callgraph reconstruction did not produce caller frames. Use the captured flat reports only.",
+      "Sparse sampled windows support selection, not a normalized performance gain."
+    ],
+    "correctness_oracles": [
+      "crates/blockstore/tests/label_fingerprint.rs",
+      "crates/profiles/tests/label_fingerprint.rs",
+      "crates/metrics-service/src/tests/instant_float_scan.rs",
+      "crates/blockstore/tests/index.rs"
+    ],
+    "proposed_change": "Use the existing chained byte iterator through its specialized fold, preserving its byte order and FNV transition. Add no cache or labels field.",
+    "prototype_compiler": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "prototype_source_sha256": "163f3a057d149a36cb6647bbf7d8cb7a712abca2da2924bfbbef7bb0b054bf20",
+    "prototype_assembly_sha256": "80c5510f462c7acf7ffba22669d39e2927ddcfbf58e0954ab09da986223e14e5",
+    "prototype_fixed_vectors_passed": 6,
+    "prototype_vector_results_sha256": "a46bf295b1414c9b2596ce76ab036a591c2743e3d85e111888e6eb2cb69ef212",
+    "prototype_interpretation": "The original emits iterator-state checks in its per-byte loop. The fold emits separate loops with unrolled length prefixes. Static code generation and fixed vectors guide selection; they do not establish a performance gain."
+  },
+  "validation": {
+    "production_source_unchanged": true,
+    "prototype_only": true,
+    "fixed_independent_vectors_passed": 6,
+    "vector_scope": "Empty set, sorted labels, duplicate names with last-value precedence, UTF-8 byte lengths, NUL, empty names/values and delimiter ambiguities.",
+    "production_oracles": [
+      "//crates/blockstore:label_fingerprint_test",
+      "//crates/profiles:label_fingerprint_test",
+      "//crates/metrics-service:metrics-service_test"
+    ]
+  },
+  "gcp_runs": {
+    "baseline_source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
+    "baseline_image_run": 37351427961,
+    "baseline_cpu": 37351427961
+  },
+  "comparison_plan": "Preserve baseline and candidate release images. Verify image provenance and every runtime path. Compare all four signals against native backends and alternating same-host baseline/candidate deployments under the existing matched workloads and budgets. Confirm mixed controls before retention.",
+  "limitations": [
+    "Prototype checks establish no performance gain.",
+    "The randomized instant-map hasher remains under independent confirmation. Both images of this experiment will use the same hasher.",
+    "The original profile collector is restored; its scoped correctness check is still running.",
+    "Final retained-source qualification remains required."
+  ]
+}
