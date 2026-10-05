@@ -1,4 +1,4 @@
-use super::{Arc, BTreeMap, BTreeSet, BlockEntry, Labels, SeriesFingerprint};
+use super::{BTreeMap, BTreeSet, BlockEntry, Labels, SeriesFingerprint};
 
 /// One shard's worth of a tenant's index, ready to encode.
 ///
@@ -8,7 +8,7 @@ use super::{Arc, BTreeMap, BTreeSet, BlockEntry, Labels, SeriesFingerprint};
 /// own, so its ordinals start at zero.
 pub(crate) struct IndexShardPayload<'index> {
     pub(crate) tenant: &'index str,
-    pub(crate) series: &'index BTreeMap<SeriesFingerprint, Arc<Labels>>,
+    pub(crate) series: &'index BTreeMap<SeriesFingerprint, Labels>,
     pub(crate) selected: BTreeSet<SeriesFingerprint>,
     pub(crate) blocks: Vec<&'index BlockEntry>,
     pub(crate) postings: BTreeMap<SeriesFingerprint, Vec<u32>>,

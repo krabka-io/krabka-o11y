@@ -4,7 +4,7 @@ use super::*;
 use crate::{InMemoryMetricStore, MergedMetricStore, WalHead};
 
 #[tokio::test]
-async fn cold_labels_are_shared_through_the_merged_instant_scan() {
+async fn cold_label_values_survive_the_merged_instant_scan() {
     let backing: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let base = url::Url::parse("memory:///").unwrap();
     let mut floats = BlockStore::new(Arc::clone(&backing), base.clone());
@@ -24,16 +24,15 @@ async fn cold_labels_are_shared_through_the_merged_instant_scan() {
     let second = cold.series_shared("t", &matcher, 0, 100).await.unwrap();
     assert2::assert!(first.len() == 1 && first[0].as_ref() == &up);
     assert2::assert!(second.len() == 1 && second[0].as_ref() == &up);
-    assert2::assert!(Arc::ptr_eq(&first[0], &second[0]));
-    // Histogram labels keep their established precedence over float labels.
+    // The histogram index retains the same complete label set.
     let histogram = cold
         .histograms
         .as_ref()
         .unwrap()
         .index()
-        .series_shared("t", &matcher)
+        .series("t", &matcher)
         .unwrap();
-    assert2::assert!(Arc::ptr_eq(&first[0], &histogram[0]));
+    assert2::assert!(histogram == vec![up.clone()]);
 
     let mut hot = InMemoryMetricStore::new();
     hot.push_float("t", up.clone(), 10, 3.0);
@@ -47,8 +46,7 @@ async fn cold_labels_are_shared_through_the_merged_instant_scan() {
         .unwrap();
     assert2::assert!(scan.samples == vec![(fp, 20, 7.0, None)]);
     assert2::assert!(scan.labels.len() == 1 && scan.labels[&fp].as_ref() == &up);
-    assert2::assert!(Arc::ptr_eq(&scan.labels[&fp], &first[0]));
-    let held = Arc::downgrade(&first[0]);
+    let held = Arc::downgrade(&scan.labels[&fp]);
     drop(merged);
     drop(first);
     drop(second);

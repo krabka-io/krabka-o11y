@@ -4564,7 +4564,7 @@
         "accepted_rows": 140000
       }
     },
-    "retention_decision": "Both Mimir controls and all four original signal controls are verified. Results are mixed; no consistent whole-stack advantage qualified. See cold-label experiment record.",
+    "retention_decision": "Rejected after both Mimir controls and all four original signal controls fail to qualify a repeatable whole-stack advantage. Owned-label production representation restored; complete experiment evidence and semantic ledgers retained. Reversion validation is pending.",
     "limitations": [
       "Instrumented timings and heaptrack totals include startup and seed and do not establish uninstrumented CPU, memory or latency gains.",
       "A clone stack absent from this summarized allocation report is not proof that no such allocations occur.",

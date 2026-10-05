@@ -95,7 +95,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_series_keep_tenant_order_first_labels_and_snapshot_lifetimes() {
+    fn series_keep_tenant_order_first_labels_and_independent_snapshots() {
         let mut index = Index::new();
         let api = labels(&[("app", "api"), ("region", "東京")]);
         let worker = labels(&[("app", "worker"), ("region", "west")]);
@@ -103,29 +103,24 @@ mod tests {
         index.add_series("t", 7, &api);
         index.add_series("other", 7, &api);
         let snapshot = index.clone();
-        let held = snapshot.series_shared("t", &[]).unwrap();
-        assert2::assert!(held.iter().map(Arc::as_ref).collect::<Vec<_>>() == vec![&api, &worker]);
+        let held = snapshot.series("t", &[]).unwrap();
+        assert2::assert!(held == vec![api.clone(), worker.clone()]);
         index.add_series("t", 7, &labels(&[("app", "replacement")]));
         index.add_series("t", 11, &labels(&[("app", "new")]));
         let matcher = [LabelMatcher::new("app", MatchOp::Eq, "api")];
-        let current = index.series_shared("t", &matcher).unwrap();
-        let other = index.series_shared("other", &matcher).unwrap();
-        assert2::assert!(current.len() == 1 && current[0].as_ref() == &api);
-        assert2::assert!(Arc::ptr_eq(&current[0], &held[0]));
-        assert2::assert!(!Arc::ptr_eq(&other[0], &held[0]));
-        assert2::assert!(index.series_shared("missing", &[]).unwrap().is_empty());
-        assert2::assert!(snapshot.series("t", &[]).unwrap() == vec![api.clone(), worker]);
+        let current = index.series("t", &matcher).unwrap();
+        let other = index.series("other", &matcher).unwrap();
+        assert2::assert!(current == vec![api.clone()]);
+        assert2::assert!(other == vec![api.clone()]);
+        assert2::assert!(index.series("missing", &[]).unwrap().is_empty());
+        assert2::assert!(snapshot.series("t", &[]).unwrap() == vec![api.clone(), worker.clone()]);
         let mut owned = index.series("t", &matcher).unwrap();
         owned[0].insert("app", "mutated");
-        assert2::assert!(current[0].as_ref() == &api);
-        let weak = Arc::downgrade(&current[0]);
+        assert2::assert!(current == vec![api.clone()]);
+        assert2::assert!(index.series("t", &matcher).unwrap() == vec![api.clone()]);
         drop(index);
         drop(snapshot);
-        drop(current);
-        drop(other);
-        assert2::assert!(weak.upgrade().is_some());
-        drop(held);
-        assert2::assert!(weak.upgrade().is_none());
+        assert2::assert!(held == vec![api, worker]);
     }
 
     #[test]
