@@ -4,7 +4,7 @@
   "source_commit": "b1c3e788723e0ee5dcaa5b7323aaaefa8db446e1",
   "baseline_source_commit": "f4c5a6034678dbde565d59dca71350146f21ddb0",
   "performance_qualified": false,
-  "retention_decision": "Reject after both exact-image controls. First median CPU/RSS/query p99 ratios are 1.0134/1.0052/0.9639; confirmation ratios are 0.9764/0.9969/0.9885. Confirmation CPU and query p99 are lower in all three pairs with overlapping ranges, but RSS is higher in two pairs. Across both controls, RSS is higher in five of six pairs and CPU/query results do not repeat consistently. Preserve all observations and the complete batch ledger. Product reversion follows completion of the running all-signal correctness check.",
+  "retention_decision": "Reject after both exact-image controls. First median CPU/RSS/query p99 ratios are 1.0134/1.0052/0.9639; confirmation ratios are 0.9764/0.9969/0.9885. Confirmation CPU and query p99 are lower in all three pairs with overlapping ranges, but RSS is higher in two pairs. Across both controls, RSS is higher in five of six pairs and CPU/query results do not repeat consistently. Preserve all observations and the complete batch ledger. The original product collector is restored; scoped reversion validation is running.",
   "scope": {
     "production_path": "crates/pprof/src/union_store/collect_and_remap.rs",
     "change": "Read the registered table through DataFusion table() instead of parsing SELECT *. Keep all columns, row order, partition remapping, source-symbol identity and Plan/Exec error categories.",
@@ -6509,9 +6509,12 @@
   },
   "retained": false,
   "reversion": {
-    "status": "pending",
+    "status": "source_restored_validation_running",
     "production_path": "crates/pprof/src/union_store/collect_and_remap.rs",
     "regression_ledger_retained": true,
-    "reason_for_wait": "Complete the live 368-target source qualification before changing production source."
+    "production_source_matches": "f4c5a6034678dbde565d59dca71350146f21ddb0",
+    "production_source_sha256": "de5a6f54d9c0bec547d702b4df2862062e4a140a9172923f36c20f808ebda6dc",
+    "comparison_ignores_only_the_test_module_separator": true,
+    "scoped_validation_targets": 39
   }
 }
