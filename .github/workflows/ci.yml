@@ -579,10 +579,11 @@ jobs:
           # the `docker` tag, so without this they land in this job -- whose
           # budget is 60 minutes for a differential run, not the ingest of ten
           # thousand series. The `scale` job below is theirs.
+          # Image loaders and tarballs also have Docker tags. Select tests only.
           all() {
             suites='attr(tags, "docker", //crates/...) except attr(tags, "scale", //crates/...)'
             versions='attr(name, ".*_version_test", //bazel/images:*)'
-            bazel query "(${suites}) union ${versions}"
+            bazel query "tests((${suites}) union ${versions})"
           }
 
           event="${{ github.event_name }}"
@@ -623,7 +624,7 @@ jobs:
                 if [ "${#files[@]}" -eq 0 ]; then
                   targets=""
                 else
-                  targets="$(bazel query "attr(tags, 'docker', rdeps(//crates/..., set(${files[*]}))) except attr(tags, 'scale', //crates/...)")"
+                  targets="$(bazel query "tests(attr(tags, 'docker', rdeps(//crates/..., set(${files[*]}))) except attr(tags, 'scale', //crates/...))")"
                 fi
               fi
             fi
