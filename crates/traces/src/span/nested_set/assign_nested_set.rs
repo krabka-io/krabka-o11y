@@ -1,8 +1,10 @@
+use std::borrow::Borrow;
+
 use super::{HashMap, NestedSet, Span};
 
 /// Assign modified pre-order traversal intervals to spans of one trace.
 #[must_use]
-pub fn assign_nested_set(spans: &[Span]) -> Vec<NestedSet> {
+pub fn assign_nested_set(spans: &[impl Borrow<Span>]) -> Vec<NestedSet> {
     enum Frame {
         Enter { idx: usize, parent_left: i32 },
         Exit { idx: usize },
@@ -11,12 +13,13 @@ pub fn assign_nested_set(spans: &[Span]) -> Vec<NestedSet> {
     let pos: HashMap<[u8; 8], usize> = spans
         .iter()
         .enumerate()
-        .map(|(idx, span)| (span.span_id, idx))
+        .map(|(idx, span)| (span.borrow().span_id, idx))
         .collect();
     let mut children = vec![Vec::new(); spans.len()];
     let mut roots = Vec::new();
 
     for (idx, span) in spans.iter().enumerate() {
+        let span = span.borrow();
         match span
             .parent_span_id
             .and_then(|parent| pos.get(&parent).copied())

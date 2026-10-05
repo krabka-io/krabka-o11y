@@ -1715,5 +1715,302 @@
       "The first before/after control is the older fused image; a second comparison uses the shared-records image to isolate the cache change.",
       "Diagnostic profiles do not supply qualified CPU, RSS or latency comparison values."
     ]
+  },
+  "tempo_borrowed_selection_baseline_captures": {
+    "diagnostic_only": true,
+    "comparison_qualified": false,
+    "source_commit": "ade83dfae7fe10bf6dd71c9231454f4d6534ad5b",
+    "image_producer": {
+      "run_id": 37293349017,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37293349017",
+      "source_commit": "ade83dfae7fe10bf6dd71c9231454f4d6534ad5b",
+      "artifact": {
+        "id": 11338540225,
+        "name": "comparison-image-logs-ade83dfae7fe10bf6dd71c9231454f4d6534ad5b",
+        "digest": "sha256:5f27d7720baf207f273b5c4891d92ae4b6d16771d33f4a344a3c98bf896481a5",
+        "size_in_bytes": 308302820,
+        "expires_at": "2027-01-03T09:56:44Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-ade83dfae7fe",
+      "manifest_digest": "sha256:a3c29505c3a3bb79bbf630585da07b069e423db31297ee7ca375f704f82d1ca5",
+      "config_digest": "sha256:a3c29505c3a3bb79bbf630585da07b069e423db31297ee7ca375f704f82d1ca5"
+    },
+    "binary_sha256": {
+      "krabka-metrics": {
+        "path": "usr/local/bin/krabka-metrics",
+        "sha256": "c03fef9335c4e9310773b8b6d4fe34904576f2695cb9faa553757020f7c18a73",
+        "size_in_bytes": 72318632
+      },
+      "krabka-metrics-service": {
+        "path": "usr/local/bin/krabka-metrics-service",
+        "sha256": "54a10878a189de1fe599aa0e9f0169ad2fe2df59fdb48c5b5867ad59d6168c61",
+        "size_in_bytes": 236254392
+      },
+      "krabka-o11y-bootstrap": {
+        "path": "usr/local/bin/krabka-o11y-bootstrap",
+        "sha256": "29f869779f919c5faa83d9335f2a6f10a5382f399c89a29b15564dd186cf6075",
+        "size_in_bytes": 26755432
+      },
+      "krabka-o11y-recovery": {
+        "path": "usr/local/bin/krabka-o11y-recovery",
+        "sha256": "c7768eea122ab6d4e768f2de895ef92ef2215bd7046a68459d5ce3c255014e5d",
+        "size_in_bytes": 36713504
+      },
+      "krabka-observability": {
+        "path": "usr/local/bin/krabka-observability",
+        "sha256": "08c9e1743b3da81b21a44ef264911dc0bf4e106b76af0db349db1dff90df8b78",
+        "size_in_bytes": 222382776
+      },
+      "krabka-profiles": {
+        "path": "usr/local/bin/krabka-profiles",
+        "sha256": "616bee380dd6affee2803d1223ed9a0c6c02cc4448632cd12aa10523b8dbf6b4",
+        "size_in_bytes": 219803192
+      },
+      "krabka-traces": {
+        "path": "usr/local/bin/krabka-traces",
+        "sha256": "fa8f8e927c22410a43c342a0eb08432e7fced9d4b826c501e1811ae1fe5dbefd",
+        "size_in_bytes": 223526800
+      }
+    },
+    "captures": {
+      "cpu": {
+        "source_commit": "ade83dfae7fe10bf6dd71c9231454f4d6534ad5b",
+        "provenance": {
+          "run_id": 37297342809,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37297342809",
+          "head_sha": "c430fd4be918804e644570bd6aaf7ad1951b67bb",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111721593513,
+              "name": "compare (traces)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37297342809/job/111721593513",
+              "runner_name": "gcp-runner-d47162ca08bb4770",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T10:34:33Z",
+              "completed_at": "2026-10-05T10:39:32Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11340092342,
+              "name": "grafana-comparison-traces-c430fd4be918804e644570bd6aaf7ad1951b67bb-1",
+              "digest": "sha256:641e843768399bbeb6a973752916adce02b57cf4566c876ffd0dc698e850d641",
+              "size_in_bytes": 13282339,
+              "expires_at": "2027-01-03T10:33:32Z",
+              "signal": "traces",
+              "verified_raw_files": 162,
+              "diagnostic_only": true
+            }
+          ]
+        },
+        "traces_all_windows": [
+          {
+            "samples": "1K",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 7.38,
+                "symbol": "__memmove_avx_unaligned_erms"
+              },
+              {
+                "self_percent": 6.34,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 4.83,
+                "symbol": "__memcmp_avx2_movbe"
+              },
+              {
+                "self_percent": 2.62,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 2.55,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 2.21,
+                "symbol": "<arrow_schema::schema::Schema>::column_with_name"
+              },
+              {
+                "self_percent": 2.21,
+                "symbol": "unlink_chunk.isra.0"
+              },
+              {
+                "self_percent": 2.07,
+                "symbol": "malloc"
+              },
+              {
+                "self_percent": 1.93,
+                "symbol": "<indexmap::inner::Core<alloc::string::String, serde_json::value::Value>>::insert_full"
+              },
+              {
+                "self_percent": 1.59,
+                "symbol": "__memmove_avx_unaligned"
+              }
+            ],
+            "prune_above_report_threshold": false
+          },
+          {
+            "samples": "1K",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 8.26,
+                "symbol": "__memmove_avx_unaligned_erms"
+              },
+              {
+                "self_percent": 5.76,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 4.29,
+                "symbol": "__memcmp_avx2_movbe"
+              },
+              {
+                "self_percent": 2.5,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 2.43,
+                "symbol": "unlink_chunk.isra.0"
+              },
+              {
+                "self_percent": 2.05,
+                "symbol": "<arrow_schema::schema::Schema>::column_with_name"
+              },
+              {
+                "self_percent": 1.92,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 1.86,
+                "symbol": "<arrow_data::transform::MutableArrayData>::try_extend"
+              },
+              {
+                "self_percent": 1.86,
+                "symbol": "_int_free_chunk"
+              },
+              {
+                "self_percent": 1.79,
+                "symbol": "malloc"
+              }
+            ],
+            "prune_above_report_threshold": false
+          },
+          {
+            "samples": "1K",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 7.91,
+                "symbol": "__memmove_avx_unaligned_erms"
+              },
+              {
+                "self_percent": 5.66,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 4.08,
+                "symbol": "__memcmp_avx2_movbe"
+              },
+              {
+                "self_percent": 3.04,
+                "symbol": "<arrow_schema::schema::Schema>::column_with_name"
+              },
+              {
+                "self_percent": 2.92,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 2.62,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 2.19,
+                "symbol": "unlink_chunk.isra.0"
+              },
+              {
+                "self_percent": 1.89,
+                "symbol": "_int_free_merge_chunk"
+              },
+              {
+                "self_percent": 1.7,
+                "symbol": "<indexmap::inner::Core<alloc::string::String, serde_json::value::Value>>::insert_full"
+              },
+              {
+                "self_percent": 1.64,
+                "symbol": "malloc"
+              }
+            ],
+            "prune_above_report_threshold": false
+          }
+        ],
+        "cpu_models": [
+          "AMD EPYC 7B12"
+        ],
+        "ingest_accepted_rows": 36000,
+        "query_attempts": 704,
+        "errors": 0,
+        "empty_queries": 0
+      },
+      "allocations": {
+        "source_commit": "ade83dfae7fe10bf6dd71c9231454f4d6534ad5b",
+        "provenance": {
+          "run_id": 37297346540,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37297346540",
+          "head_sha": "c430fd4be918804e644570bd6aaf7ad1951b67bb",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111721606318,
+              "name": "compare (traces)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37297346540/job/111721606318",
+              "runner_name": "gcp-runner-f1558e3c91744391",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T10:34:38Z",
+              "completed_at": "2026-10-05T10:42:09Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11339273595,
+              "name": "grafana-comparison-traces-c430fd4be918804e644570bd6aaf7ad1951b67bb-1",
+              "digest": "sha256:8bcf61a17f9184438968b375b7c704a3bc4267e800e6c957e117e4a6e4bf35b0",
+              "size_in_bytes": 312343732,
+              "expires_at": "2027-01-03T10:33:35Z",
+              "signal": "traces",
+              "verified_raw_files": 130,
+              "diagnostic_only": true
+            }
+          ]
+        },
+        "runtime_including_startup_and_seed_seconds": 105.5,
+        "allocation_calls": 75809673,
+        "temporary_allocations": 8531791,
+        "peak_heap_decimal_mb": 35.16,
+        "string_clone_calls": 11347656,
+        "cpu_models": [
+          "AMD EPYC 7B12"
+        ],
+        "ingest_accepted_rows": 14000,
+        "query_attempts": 138,
+        "errors": 0,
+        "empty_queries": 0,
+        "owned_span_clone_from_window_selection_present": true
+      }
+    },
+    "purpose": "Verify the production whole-span clone caller before the borrowed live-window selection experiment. These captures are diagnostics, not measurements of the new code."
   }
 }
