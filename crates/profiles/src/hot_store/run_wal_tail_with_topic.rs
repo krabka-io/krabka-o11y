@@ -104,10 +104,17 @@ pub async fn run_wal_tail_with_topic(
         // a batch pays that once instead of once per record.
         let decoded = records
             .iter()
-            .filter_map(|record| record.value.as_deref())
-            .map(ProfileRecord::decode)
+            .filter_map(|record| record.value.as_deref().map(|value| (record, value)))
+            .map(|(record, value)| {
+                ProfileRecord::decode(value).map(|decoded| {
+                    (
+                        decoded,
+                        Some(crate::wal::WalPosition::from_record(record, value)),
+                    )
+                })
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        store.append_records(decoded)?;
+        store.append_records_with_positions(decoded)?;
         if let Err(error) = consumer.commit_sync().await {
             tracing::warn!(%error, "profiles WAL-tail commit failed; retrying");
             tokio::select! {

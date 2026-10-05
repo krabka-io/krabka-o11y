@@ -31,6 +31,12 @@ The complete list is in `--help` and [`deploy/roles/`](../../deploy/roles).
 
 ## Documentation
 
+Run the [Pyroscope deployment scenarios](tests/pyroscope_deployment.md) against the local application, broker WAL, and MinIO:
+
+```bash
+bazel test --config=docker //crates/profiles:pyroscope_deployment_docker_test
+```
+
 - [Getting started](../../docs/getting_started.md#profiles)
 - [API compatibility](../../docs/api_compatibility.md#profiles)
 - [Test coverage](test_coverage_report.md)

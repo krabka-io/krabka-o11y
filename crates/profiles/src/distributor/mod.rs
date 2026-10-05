@@ -621,6 +621,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_pprof_string_references_never_reach_the_wal() {
+        let sink = Arc::new(RecordingSink::default());
+        let state = state_with(sink.clone());
+        for field in 0..5 {
+            let mut raw = crate::wire::test_fixtures::raw_profile_cpu();
+            let mut profile = raw.profile.inner().clone();
+            match field {
+                0 => profile.sample_type[0].unit = -1,
+                1 => profile.function[0].name = 100_000,
+                2 => profile.keep_frames = 100_000,
+                3 => profile.comment.push(100_000),
+                _ => profile.string_table[0] = "not empty".into(),
+            }
+            raw.profile = PprofProfile::from(profile);
+            let error = process_raw(&state, &tenant("tenant-a"), vec![raw])
+                .await
+                .unwrap_err();
+            assert!(matches!(error, ProfilesError::Decode(_)), "{error}");
+            assert!(sink.0.lock().unwrap().is_empty());
+        }
+        process_raw(
+            &state,
+            &tenant("tenant-a"),
+            vec![crate::wire::test_fixtures::raw_profile_cpu()],
+        )
+        .await
+        .unwrap();
+        assert!(sink.0.lock().unwrap().len() == 1);
+    }
+
+    #[tokio::test]
     async fn push_splits_and_appends_one_record_per_sample_type() {
         let sink = Arc::new(RecordingSink::default());
         let state = state_with(sink.clone());

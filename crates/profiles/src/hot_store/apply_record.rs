@@ -6,18 +6,30 @@ use super::{
 pub(crate) fn apply_record(
     store: &mut InMemoryProfileStore,
     record: &ProfileRecord,
+    position: Option<crate::wal::WalPosition>,
 ) -> Result<(), ProfilesError> {
     let stack_ids = intern_record(store.symbols_mut(), record)?;
     let total_value = record.samples.iter().map(|sample| sample.value).sum();
-    for (sample, stack_id) in record.samples.iter().zip(stack_ids) {
+    for (ordinal, (sample, stack_id)) in record.samples.iter().zip(stack_ids).enumerate() {
         let timestamp_ms = profile_timestamp_ms(sample.timestamp_ns);
-        store.push_sample_with_total_and_associations(
+        store.push_sample_with_provenance(
             (&record.tenant, &record.profile_type),
             record.labels.clone(),
             (crate::blockbuilder::STACKTRACE_PARTITION, stack_id),
             (sample.value, total_value),
             timestamp_ms,
-            (sample.span_id, sample.trace_id.clone()),
+            (
+                sample.span_id,
+                sample.trace_id.clone(),
+                position
+                    .map(|position| {
+                        u64::try_from(ordinal).map(|ordinal| position.sample_identity(ordinal))
+                    })
+                    .transpose()
+                    .map_err(|error| ProfilesError::Decode(error.to_string()))?
+                    .into_iter()
+                    .collect(),
+            ),
         );
     }
     Ok(())

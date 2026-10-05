@@ -10,4 +10,6 @@ pub struct ProfileSampleRow {
     pub total_value: i64,
     pub span_id: Option<u64>,
     pub trace_id: Option<Vec<u8>>,
+    /// WAL identities of the source samples; empty for direct, non-WAL inputs.
+    pub wal_sample_ids: Vec<Vec<u8>>,
 }

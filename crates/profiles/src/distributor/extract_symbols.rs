@@ -4,6 +4,7 @@ use super::{
 };
 
 pub(crate) fn extract_symbols(profile: &PprofProfile) -> Result<WalSymbolSet, ProfilesError> {
+    validate_strings(profile)?;
     let inner = profile.inner();
     let function_refs = inner
         .function
@@ -90,4 +91,49 @@ pub(crate) fn extract_symbols(profile: &PprofProfile) -> Result<WalSymbolSet, Pr
             })
             .collect::<Result<Vec<_>, ProfilesError>>()?,
     })
+}
+
+// Validate before any profile becomes a WAL record, for every ingest transport.
+fn validate_strings(profile: &PprofProfile) -> Result<(), ProfilesError> {
+    let inner = profile.inner();
+    if inner
+        .string_table
+        .first()
+        .is_none_or(|value| !value.is_empty())
+    {
+        return Err(ProfilesError::Decode(
+            "string 0 should be empty string".into(),
+        ));
+    }
+    let check = |index: i64, field: &str| {
+        profile
+            .string(index)
+            .map(|_| ())
+            .ok_or_else(|| ProfilesError::Decode(format!("{field} string index out of range")))
+    };
+    for kind in inner.sample_type.iter().chain(inner.period_type.iter()) {
+        check(kind.r#type, "sample type type")?;
+        check(kind.unit, "sample type unit")?;
+    }
+    for function in &inner.function {
+        check(function.name, "function name")?;
+        check(function.system_name, "function system name")?;
+        check(function.filename, "function file name")?;
+    }
+    for mapping in &inner.mapping {
+        check(mapping.filename, "mapping file name")?;
+        check(mapping.build_id, "mapping build ID")?;
+    }
+    for label in inner.sample.iter().flat_map(|sample| &sample.label) {
+        check(label.key, "sample label key")?;
+        check(label.str, "sample label value")?;
+        check(label.num_unit, "sample label unit")?;
+    }
+    for comment in &inner.comment {
+        check(*comment, "comment")?;
+    }
+    check(inner.drop_frames, "drop frames")?;
+    check(inner.keep_frames, "keep frames")?;
+    check(inner.default_sample_type, "default sample type")?;
+    Ok(())
 }

@@ -99,6 +99,7 @@ mod wal_flag;
 mod wal_function;
 mod wal_location;
 mod wal_mapping;
+mod wal_position;
 mod wal_sample;
 mod wal_symbol_set;
 
@@ -109,5 +110,6 @@ pub use wal_flag::WalFlag;
 pub use wal_function::WalFunction;
 pub use wal_location::WalLocation;
 pub use wal_mapping::WalMapping;
+pub(crate) use wal_position::WalPosition;
 pub use wal_sample::WalSample;
 pub use wal_symbol_set::WalSymbolSet;

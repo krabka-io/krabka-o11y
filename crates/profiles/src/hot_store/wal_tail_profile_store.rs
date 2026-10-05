@@ -62,6 +62,13 @@ impl WalTailProfileStore {
         &self,
         records: impl IntoIterator<Item = ProfileRecord>,
     ) -> Result<(), ProfilesError> {
+        self.append_records_with_positions(records.into_iter().map(|record| (record, None)))
+    }
+
+    pub(crate) fn append_records_with_positions(
+        &self,
+        records: impl IntoIterator<Item = (ProfileRecord, Option<crate::wal::WalPosition>)>,
+    ) -> Result<(), ProfilesError> {
         let mut fresh = Vec::new();
         {
             let mut guard = self
@@ -69,18 +76,22 @@ impl WalTailProfileStore {
                 .write()
                 .map_err(|_| ProfilesError::Wal("hot profile store lock poisoned".to_string()))?;
             let store = Arc::make_mut(&mut guard);
-            for record in records {
+            for (record, position) in records {
                 let max_ts_ms = record
                     .samples
                     .iter()
                     .map(|sample| profile_timestamp_ms(sample.timestamp_ns))
                     .max();
-                apply_record(store, &record)?;
+                apply_record(store, &record, position)?;
                 // A record with no samples carries no timestamp and needs no
                 // retention bookkeeping; it contributed nothing to the store
                 // either.
                 if let Some(max_ts_ms) = max_ts_ms {
-                    fresh.push(Retained { max_ts_ms, record });
+                    fresh.push(Retained {
+                        max_ts_ms,
+                        record,
+                        position,
+                    });
                 }
             }
         }
@@ -141,7 +152,7 @@ impl WalTailProfileStore {
     pub(crate) fn rebuild(&self, retained: &VecDeque<Retained>) -> Result<(), ProfilesError> {
         let mut fresh = InMemoryProfileStore::new();
         for item in retained {
-            apply_record(&mut fresh, &item.record)?;
+            apply_record(&mut fresh, &item.record, item.position)?;
         }
         let mut guard = self
             .inner

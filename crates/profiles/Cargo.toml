@@ -23,6 +23,7 @@ vendored-protoc = ["dep:protoc-bin-vendored"]
 heap-profiling = ["krabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
 
 [dependencies]
+sha2 = { workspace = true }
 arrow = { workspace = true }
 base64 = { workspace = true }
 datafusion = { workspace = true }
@@ -92,7 +93,6 @@ reqwest = { workspace = true, features = ["json"] }
 testcontainers = { workspace = true }
 qubit-clock = "~0.13.0"
 rcgen = { workspace = true }
-sha2 = { workspace = true }
 flate2 = { workspace = true }
 krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "ffdd381433675bdb34d36d4aab1170e53bb4f5a9", version = "0.7.0" }
 krabka-broker = { version = "0.7.0" }

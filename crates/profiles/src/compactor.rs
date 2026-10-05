@@ -305,22 +305,46 @@ mod tests {
         let rec_a = record_at("t", "api", 4, "main", 1_000);
         let rec_b = record_at("t", "api", 6, "main", 1_500);
         let rec_c = record_at("t", "api", 3, "worker", 3_000);
-        let meta_a = build_block(
+        let meta_a = crate::blockbuilder::build_block_with_positions(
             &store,
             "t",
             0,
-            &[rec_a.clone(), rec_b.clone()],
+            &[
+                (
+                    crate::wal::WalPosition {
+                        partition: 0,
+                        offset: 0,
+                        record_hash: [42; 32],
+                    },
+                    rec_a.clone(),
+                ),
+                (
+                    crate::wal::WalPosition {
+                        partition: 0,
+                        offset: 1,
+                        record_hash: [42; 32],
+                    },
+                    rec_b.clone(),
+                ),
+            ],
             (0, 1),
             &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
         .await
         .unwrap()
         .remove(0);
-        let meta_b = build_block(
+        let meta_b = crate::blockbuilder::build_block_with_positions(
             &store,
             "t",
             0,
-            std::slice::from_ref(&rec_c),
+            &[(
+                crate::wal::WalPosition {
+                    partition: 0,
+                    offset: 2,
+                    record_hash: [42; 32],
+                },
+                rec_c.clone(),
+            )],
             (2, 2),
             &krabka_blockstore::ObjectStoreMetrics::unregistered(),
         )
@@ -354,7 +378,36 @@ mod tests {
 
         assert!(meta.row_count == 2);
         let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
-        let engine = FlameEngine::new(cold, EngineOpts::default());
+        let hot = crate::hot_store::WalTailProfileStore::new();
+        hot.append_records_with_positions([
+            (
+                rec_a,
+                Some(crate::wal::WalPosition {
+                    partition: 0,
+                    offset: 0,
+                    record_hash: [42; 32],
+                }),
+            ),
+            (
+                rec_b,
+                Some(crate::wal::WalPosition {
+                    partition: 0,
+                    offset: 1,
+                    record_hash: [42; 32],
+                }),
+            ),
+            (
+                rec_c,
+                Some(crate::wal::WalPosition {
+                    partition: 0,
+                    offset: 2,
+                    record_hash: [42; 32],
+                }),
+            ),
+        ])
+        .unwrap();
+        let union = krabka_pprof::UnionProfileStore::new(Arc::new(hot), cold);
+        let engine = FlameEngine::new(Arc::new(union), EngineOpts::default());
         let fg = engine
             .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
             .await

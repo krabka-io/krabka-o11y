@@ -24,20 +24,49 @@ pub async fn build_block(
     offset_range: (i64, i64),
     metrics: &ObjectStoreMetrics,
 ) -> Result<Vec<BlockMeta>, ProfilesError> {
+    let records = records
+        .iter()
+        .map(|record| (None, record))
+        .collect::<Vec<_>>();
+    write_block(store, tenant, partition, &records, offset_range, metrics).await
+}
+
+pub(crate) async fn build_block_with_positions(
+    store: &Arc<dyn ObjectStore>,
+    tenant: &str,
+    partition: i32,
+    records: &[(crate::wal::WalPosition, ProfileRecord)],
+    offset_range: (i64, i64),
+    metrics: &ObjectStoreMetrics,
+) -> Result<Vec<BlockMeta>, ProfilesError> {
+    let records = records
+        .iter()
+        .map(|(position, record)| (Some(*position), record))
+        .collect::<Vec<_>>();
+    write_block(store, tenant, partition, &records, offset_range, metrics).await
+}
+
+async fn write_block(
+    store: &Arc<dyn ObjectStore>,
+    tenant: &str,
+    partition: i32,
+    records: &[(Option<crate::wal::WalPosition>, &ProfileRecord)],
+    offset_range: (i64, i64),
+    metrics: &ObjectStoreMetrics,
+) -> Result<Vec<BlockMeta>, ProfilesError> {
     if records.is_empty() {
         return Ok(Vec::new());
     }
-
     let mut symdb = SymbolDb::new();
     let mut rows = Vec::new();
     let mut min_ts = i64::MAX;
     let mut max_ts = i64::MIN;
 
-    for rec in records {
+    for &(position, rec) in records {
         let stack_ids = intern_record(&mut symdb, rec)?;
         let fp = rec.series_fingerprint();
         let total_value = rec.samples.iter().map(|sample| sample.value).sum();
-        for (sample, stack_id) in rec.samples.iter().zip(stack_ids) {
+        for (ordinal, (sample, stack_id)) in rec.samples.iter().zip(stack_ids).enumerate() {
             let timestamp_ms = profile_timestamp_ms(sample.timestamp_ns);
             min_ts = min_ts.min(timestamp_ms);
             max_ts = max_ts.max(timestamp_ms);
@@ -51,6 +80,14 @@ pub async fn build_block(
                 total_value,
                 span_id: sample.span_id,
                 trace_id: sample.trace_id.clone(),
+                wal_sample_ids: position
+                    .map(|position| {
+                        u64::try_from(ordinal).map(|ordinal| position.sample_identity(ordinal))
+                    })
+                    .transpose()
+                    .map_err(|error| ProfilesError::Decode(error.to_string()))?
+                    .into_iter()
+                    .collect(),
             });
         }
     }

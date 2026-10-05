@@ -81,10 +81,30 @@ impl InMemoryProfileStore {
         timestamp_ms: i64,
         associations: (Option<u64>, Option<Vec<u8>>),
     ) {
+        self.push_sample_with_provenance(
+            profile,
+            labels,
+            stack,
+            values,
+            timestamp_ms,
+            (associations.0, associations.1, Vec::new()),
+        );
+    }
+
+    /// Appends a sample with the WAL identities of its source samples.
+    pub fn push_sample_with_provenance(
+        &mut self,
+        profile: (&str, &str),
+        labels: Vec<(String, String)>,
+        stack: (u64, u32),
+        values: (i64, i64),
+        timestamp_ms: i64,
+        associations: (Option<u64>, Option<Vec<u8>>, Vec<Vec<u8>>),
+    ) {
         let (tenant, profile_type) = profile;
         let (partition, stacktrace_id) = stack;
         let (value, total_value) = values;
-        let (span_id, trace_id) = associations;
+        let (span_id, trace_id, wal_sample_ids) = associations;
         let fingerprint = fingerprint_labels(&labels);
         self.samples
             .entry(tenant.to_string())
@@ -99,6 +119,7 @@ impl InMemoryProfileStore {
                 total_value,
                 span_id,
                 trace_id,
+                wal_sample_ids,
                 timestamp_ms,
             });
     }
