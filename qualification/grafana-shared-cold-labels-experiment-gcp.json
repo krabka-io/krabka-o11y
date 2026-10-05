@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "experiment": "Share immutable cold metric series labels from Index through MetricBlockStore and the existing merged instant-scan caller.",
+  "source_commit": "8d3b9510458fa2249b817157b7f9446733525711",
+  "baseline_source_commit": "45b41ba77d16f017c80c502893cee1157bc30fde",
+  "performance_qualified": false,
+  "retention_decision": "Pending exact-image same-VM measurements and profiles. Baseline contains the separately reviewed Loki owned-index candidate; final retained-branch qualification must reflect its retention decision.",
+  "validation": {
+    "combined_scoped_targets_passed": 368,
+    "target_list_sha256": "b6e1cfba61e758b0ccd3b05f9eace89ae0975948e34f36f57f08048f8c96245e",
+    "bazel_log_sha256": "3d589a661b2c13b4916c0dfcf4a79703e476d0bc8fc5df53461fb2d357443e14",
+    "command": "TMPDIR=/home/matt/.cache/o11y-performance/tmp bazel test --bes_backend= -c opt --jobs=6 --local_test_jobs=3 --test_tag_filters= --target_pattern_file=/home/matt/.cache/o11y-performance/shared-cold-labels-combined-validation-targets.txt",
+    "packages": [
+      "crates/blockstore",
+      "crates/logql",
+      "crates/metrics",
+      "crates/metrics-service",
+      "crates/observability",
+      "crates/pprof",
+      "crates/profiles",
+      "crates/promql",
+      "crates/traceql",
+      "crates/traces"
+    ],
+    "native_docker_wrappers": [
+      {
+        "target": "//crates/metrics-service:diff_mimir_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "a32d2a5a595a0dc3756b492e1d25e90e79aca701a3c60632f48fb6c13a7eff86"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "66991e4d630cd82e8fe67a1a6c6fd12bd27df85402560b1028f296163db2c42f"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "bc410adbb3e3209ac486cc5306efc98fb0ad8cc2f7419e932b8d72a0db9d6ff1"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "90c04e346f47d5190c9f1eafacbf02b1d4aa0a64afdc5433e48f0ebd3a42b324"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "d796da7be7eb54c0b2a4d4565a38e4281764feb18ba9ccce3ceecf795f7e2447"
+      },
+      {
+        "target": "//crates/metrics-service:tsdb_import_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "baf11a5121944b6a364c4e7fd924827c6dedd96080f29361af6dcb628bb49309"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "eda4fbca929c592fa16583e9dfdaff703037db38f11367682845da648d6f6dc3"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "fec22ca4f01b483fe83281cfd8624087149fca8e79e0b19fe8bbc20f94c4ed19"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "f67629dea56219a76053a6eee11faa83c0de68a6949c5643cfc7af8449e8cf93"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "f60651a58029e226e3876b066ee301429726995ed6db9c2121e5459efbe3be36"
+      },
+      {
+        "target": "//crates/observability:loki_differential_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "193e7d1b36278c8a2f9a5c7cf627c3f1c8a4c0d92746f65cc0dbbdc743cbeb3d"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_docker_test",
+        "passed_cases": 8,
+        "test_log_sha256": "03099955bb8600c4c3083f593324f535a17eee94078ee1bd9223af6179946cf7"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_previous_docker_test",
+        "passed_cases": 8,
+        "test_log_sha256": "07c90ab8c287b48771d7299ea355530e29a27a79bfce081b482c92504de72013"
+      },
+      {
+        "target": "//crates/traces:grafana_e2e_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "ee33ce2d9a71d9f131487adee27d57ba3c61bfedd52674428a393955b2681d4a"
+      },
+      {
+        "target": "//crates/traces:grafana_e2e_previous_docker_test",
+        "passed_cases": 1,
+        "test_log_sha256": "17de5e1f03bee72ee378336088d0ab5a780e30f7f53c7169f4fa19993b4e1697"
+      },
+      {
+        "target": "//crates/traces:tempo_differential_docker_test",
+        "passed_cases": 6,
+        "test_log_sha256": "fd7473fe30f796ee23dc77a40fc02df24e4990edc866e4768c96206ac570a2d3"
+      },
+      {
+        "target": "//crates/traces:tempo_differential_previous_docker_test",
+        "passed_cases": 6,
+        "test_log_sha256": "645cb01763dc131f35ae68168989895b4ebfec14b00d4fc1f97e5bf8b8c001e9"
+      }
+    ],
+    "affected_unit_cases_passed": 969,
+    "negative_control": "Removing only MetricBlockStore shared-series forwarding fails both production ownership regressions; other 630 PromQL and metrics-service unit cases pass. Actual source restored before qualification.",
+    "wire_golden": "Fixed JSON and binary v2 shard ledger passes on both original index and candidate."
+  },
+  "gcp_comparison": {
+    "run_id": 37313303710,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37313303710",
+    "head_sha": "8d3b9510458fa2249b817157b7f9446733525711",
+    "status_at_recording": "in_progress"
+  },
+  "scope": "No measured performance gain claimed. Local correctness checks are distinct from pending private-GCP performance qualification."
+}
