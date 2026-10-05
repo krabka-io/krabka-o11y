@@ -126,6 +126,16 @@ impl MetricStore for InMemoryMetricStore {
         self.matched_series(tenant, matchers, start_ms, end_ms)
     }
 
+    async fn series_shared(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<Vec<Arc<Labels>>> {
+        self.matched_series_shared(tenant, matchers, start_ms, end_ms)
+    }
+
     async fn exemplars(
         &self,
         tenant: &str,
