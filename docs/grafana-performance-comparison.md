@@ -112,6 +112,10 @@ Docker configuration digest, skipping the build. The report records its source
 commit independently of the harness commit.
 Use run `37183330836` to reproduce the historical measurements above.
 
+The Loki comparator uses Grafana's original registry with the same pinned
+manifest digest; Google's mirror returned a missing configuration descriptor
+in a later run. The native version and configuration did not change.
+
 The workflow is registered on the default branch. Dispatch the branch you want
 to measure:
 

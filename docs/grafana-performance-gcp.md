@@ -24,11 +24,18 @@ contracts. Writer and cardinality ramps are outside this qualification.
 ## Verified measurement checkpoint
 
 All four comparisons below passed three paired 60-second repetitions on
-2026-10-05 using the same `dd67ca1eeaafbd062c655eb55609969af547bbd9`
-release image. Artifact verification checked every archive digest and all
-962 evidence-file checksums. The subsequent shared-label source change
-`50f03683` has passed correctness checks; its performance comparison is
-still pending and is not included in this table.
+2026-10-05. Metrics uses the corrected production-wrapper release image
+`7184a4c9a4a11c95a3605be42d5074560dc5d77e`; the pooled services retain their
+measured `50f03683` image. Independent archive and filesystem verification
+checks all 380 filesystem entries and finds only the metrics query binary
+changed: the other six application binaries, base layer and runtime
+configuration are identical. This permits reuse of the pooled measurements.
+Artifact verification checked every archive digest and all 962 evidence-file
+checksums. This table records the retained implementation. The subsequent
+hash-based series-discovery experiment `fd1ded9b` passed correctness checks
+but did not establish an end-to-end gain and was reverted. Its actual
+measurements are preserved in the
+[separate experiment record](../qualification/grafana-series-discovery-experiment-gcp.json).
 
 CPU and peak RSS are Krabka divided by the native backend. p99 shows
 Krabka/native medians. Values below 1 favor Krabka. These describe the
@@ -36,14 +43,17 @@ steady workload and deployment contract above.
 
 | Upstream | Layout | CPU | Peak RSS | Query p99 |
 | --- | --- | ---: | ---: | ---: |
-| Mimir | split | 0.78× | 1.62× | 40.81 / 23.32ms |
-| Loki | all | 0.94× | 1.05× | 57.72 / 81.99ms |
-| Tempo | all | 0.70× | 0.92× | 88.91 / 101.32ms |
-| Pyroscope | all | 0.39× | 0.90× | 17.95 / 21.79ms |
+| Mimir | split | 0.73× | 1.68× | 33.33 / 22.39ms |
+| Loki | all | 0.91× | 1.07× | 58.37 / 83.36ms |
+| Tempo | all | 0.82× | 0.88× | 145.37 / 138.52ms |
+| Pyroscope | all | 0.42× | 0.89× | 21.51 / 23.67ms |
 
 The Mimir latency and RSS gap remains material. Loki's RSS is slightly higher
-in this deployment. CPU is lower in all four comparisons; all three pooled
-services have lower median p99 in these runs. This is a narrow steady-load
+in this deployment. CPU is lower in all four comparisons. Tempo's latest
+median p99 is about 5% higher; its three Krabka values (136.41–152.81ms)
+overlap the native values (134.21–140.98ms). The earlier comparison of the
+byte-identical Tempo binary measured 88.91/101.32ms, so this workload does not
+establish a consistent tail-latency advantage. This is a narrow steady-load
 qualification, not a long-running production or durability qualification.
 
 Exact sources, image identities, native image pins, each repetition, gates,
@@ -91,7 +101,17 @@ preserve cold-first fingerprint precedence and deterministic ordering. Other
 stores use a default adapter with their existing owned-series behavior. The
 owned series API still returns the same label values. This removes hot-label
 string copies without extending query windows or retaining a global result
-cache.
+cache. A follow-up allocation capture found that the production refresh
+wrapper still used the default owned adapter. The subsequent wrapper
+correction forwards shared discovery through its tenant-aware current store;
+the current metrics measurement includes that correction. Its separate
+allocation follow-up reduces string-clone allocations from 6.12 million to
+4.78 million over startup-inclusive captures. The subsequent CPU capture
+still attributes 24–37% of querier self samples to series discovery's
+ordered-map lookup on repeated row fingerprints. A hash lookup followed by
+sorting distinct series reduced this function's self-sample percentage but
+did not demonstrate an end-to-end CPU or latency gain. The ordered lookup
+is retained; the experiment remains available for analysis.
 
 The Loki response statistics rebuilt an ordered multiset of hot records,
 copying each record's labels, timestamp and line after already evaluating the
@@ -165,6 +185,20 @@ independent complete labels, cold/hot precedence, time and tenant filtering,
 series limits, and held labels across pruning and deletion. Restoring owned
 label resolution fails its pointer-sharing checks, with all other 563 unit
 cases passing.
+
+The production-wrapper correction passed all 35 scoped targets, including
+the real Mimir/Prometheus differential suites. Its regression verifies hot
+label identity, complete independent engine output, tenant and time filtering,
+cold-first precedence after publication, deletion markers and held labels,
+with zero Parquet reads. Removing just the wrapper delegation fails the new
+regression while the other 62 service unit cases pass.
+
+The subsequent series-discovery change passed the same 35 targets, including
+both real Mimir/Prometheus suites. The direct WAL-head check verifies the
+complete ordered labels for mixed float and histogram samples against an
+independent expected map, including time and tenant filtering. Its ordinary
+and experimental unit suites and test Clippy target pass, and the held-label
+regression now verifies the expected retention counts as well.
 
 The additional Loki change passed all 115 scoped LogQL and observability test
 and Clippy targets, plus the real Loki differential suite. Its regression
