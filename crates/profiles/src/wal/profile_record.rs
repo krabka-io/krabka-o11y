@@ -35,10 +35,10 @@ impl ProfileRecord {
     /// Series fingerprint from blockstore `Labels`, independent of label order.
     #[must_use]
     pub fn series_fingerprint(&self) -> u64 {
-        let mut labels = Labels::new();
-        for (name, value) in &self.labels {
-            labels.insert(name.clone(), value.clone());
-        }
-        labels.fingerprint()
+        Labels::fingerprint_pairs(
+            self.labels
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+        )
     }
 }
