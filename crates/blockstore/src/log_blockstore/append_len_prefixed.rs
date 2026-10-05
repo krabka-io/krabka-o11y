@@ -1,7 +1,6 @@
-use std::io::Write as _;
-
 pub(crate) fn append_len_prefixed(bytes: &mut Vec<u8>, value: &str) {
-    write!(bytes, "{}:", value.len()).expect("writing to a Vec cannot fail");
+    bytes.extend_from_slice(value.len().to_string().as_bytes());
+    bytes.push(b':');
     bytes.extend_from_slice(value.as_bytes());
     bytes.push(0);
 }
