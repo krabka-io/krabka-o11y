@@ -212,23 +212,29 @@ impl BlockList {
             })
     }
 
-    /// Every live block as a [`BlockMeta`], in time order.
-    pub(crate) fn metas(&self, tenant: &str) -> Vec<BlockMeta> {
-        // Invert the postings once, using the live time-order positions.
-        // Retired ordinals have no position and need no output allocation.
-        let mut fingerprints = vec![Vec::new(); self.order.len()];
+    /// The fingerprints of each live block, keyed by ordinal.
+    ///
+    /// One pass over the postings rebuilds every block's set, so a caller that
+    /// needs them all pays for the inversion once rather than once per block.
+    /// A merge and a full block listing are both such callers.
+    pub(crate) fn fingerprints_by_ordinal(&self) -> BTreeMap<u32, Vec<SeriesFingerprint>> {
+        let mut by_ordinal: BTreeMap<u32, Vec<SeriesFingerprint>> = BTreeMap::new();
         for (fingerprint, ordinals) in &self.postings {
             for ordinal in ordinals {
-                let position = self.position[*ordinal as usize];
-                if position != NO_POSITION {
-                    fingerprints[position as usize].push(*fingerprint);
+                if self.live[*ordinal as usize] {
+                    by_ordinal.entry(*ordinal).or_default().push(*fingerprint);
                 }
             }
         }
+        by_ordinal
+    }
+
+    /// Every live block as a [`BlockMeta`], in time order.
+    pub(crate) fn metas(&self, tenant: &str) -> Vec<BlockMeta> {
+        let mut fingerprints = self.fingerprints_by_ordinal();
         self.order
             .iter()
-            .enumerate()
-            .map(|(position, ordinal)| {
+            .map(|ordinal| {
                 let entry = &self.entries[*ordinal as usize];
                 BlockMeta {
                     tenant: tenant.to_string(),
@@ -236,7 +242,7 @@ impl BlockList {
                     min_ts: entry.min_ts,
                     max_ts: entry.max_ts,
                     row_count: entry.row_count,
-                    fingerprints: std::mem::take(&mut fingerprints[position]),
+                    fingerprints: fingerprints.remove(ordinal).unwrap_or_default(),
                     level: entry.level,
                 }
             })
