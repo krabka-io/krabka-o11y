@@ -1,3 +1,4 @@
+use futures::StreamExt;
 use krabka_metrics::CompactionIndexListing;
 
 use super::{
@@ -16,8 +17,8 @@ pub(crate) async fn load_compaction_manifests_filtered_with_cache(
     store: Arc<dyn ObjectStore>,
     manifest_prefix: &str,
     time_range: Option<(i64, i64)>,
-    cache: Option<&tokio::sync::RwLock<BTreeMap<String, CompactionIndexManifest>>>,
-) -> Result<Vec<CompactionIndexManifest>, MetricsServiceError> {
+    cache: Option<&tokio::sync::RwLock<BTreeMap<String, Arc<CompactionIndexManifest>>>>,
+) -> Result<Vec<Arc<CompactionIndexManifest>>, MetricsServiceError> {
     let prefix = (!manifest_prefix.is_empty()).then(|| Path::from(manifest_prefix));
     let mut retired_missing: Option<(String, object_store::Error)> = None;
     let mut retries = 2;
@@ -37,15 +38,32 @@ pub(crate) async fn load_compaction_manifests_filtered_with_cache(
             return Err(error.into());
         }
         let mut manifests = Vec::new();
-        let mut fetched = Vec::<(String, CompactionIndexManifest)>::new();
-        for object in objects {
+        let mut fetched = Vec::new();
+        // Keep listing order and retirement retries while overlapping bounded I/O.
+        let mut loads = futures::stream::iter(objects)
+            .map(|object| {
+                let store = &store;
+                async move {
+                    let cached = if let Some(cache) = cache {
+                        cache.read().await.get(object.location.as_ref()).cloned()
+                    } else {
+                        None
+                    };
+                    let bytes = if cached.is_none() {
+                        Some(async { store.get(&object.location).await?.bytes().await }.await)
+                    } else {
+                        None
+                    };
+                    (object, cached, bytes)
+                }
+            })
+            .buffered(4);
+        while let Some((object, cached, bytes)) = loads.next().await {
             let key = object.location.as_ref();
-            let manifest = if let Some(cache) = cache
-                && let Some(manifest) = cache.read().await.get(key).cloned()
-            {
+            let manifest = if let Some(manifest) = cached {
                 manifest
             } else {
-                let bytes = match async { store.get(&object.location).await?.bytes().await }.await {
+                let bytes = match bytes.expect("uncached manifest was read") {
                     Ok(bytes) => bytes,
                     Err(error @ object_store::Error::NotFound { .. }) if retries > 0 => {
                         retired_missing = Some((key.to_string(), error));
@@ -53,8 +71,8 @@ pub(crate) async fn load_compaction_manifests_filtered_with_cache(
                     }
                     Err(error) => return Err(error.into()),
                 };
-                let manifest = CompactionIndexManifest::decode(&bytes)?;
-                fetched.push((key.to_string(), manifest.clone()));
+                let manifest = Arc::new(CompactionIndexManifest::decode(&bytes)?);
+                fetched.push((key.to_string(), Arc::clone(&manifest)));
                 manifest
             };
             // Metadata has no event timestamp, so its zero bounds are timeless.
