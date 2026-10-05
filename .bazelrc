@@ -6,6 +6,9 @@
 # Keep the action environment hermetic so build-script outputs are reproducible.
 build --incompatible_strict_action_env
 
+# Compile each crate with a single code generation unit.
+build --@rules_rust//rust/settings:codegen_units=1
+
 # The @llvm toolchain passes `--unwindlib=none` on link actions deliberately, to
 # stop clang picking a libunwind for itself. clang then reports the argument as
 # unused, and rustc's `linker_messages` lint surfaces that on stderr -- one
