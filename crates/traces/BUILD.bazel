@@ -30,6 +30,11 @@ crate_tests(
             "grafana",
             "prometheus",
         ],
+        "tempo_deployment": [
+            "krabka",
+            "broker",
+            "minio",
+        ],
         "tempo_differential": [
             "grafana",
             "tempo",
@@ -52,6 +57,7 @@ crate_tests(
     # The shared lifecycle store, reached with `#[path]` from //crates/blockstore.
     extra_srcs = {
         "block_lifecycle": ["//crates/blockstore:tests/support/lifecycle_store.rs"],
+        "tempo_deployment": ["//crates/metrics-service:tests/support/container_deployment.rs"],
     },
     lib = "traces",
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is
