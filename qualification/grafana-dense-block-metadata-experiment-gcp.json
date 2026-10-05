@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Rebuild block fingerprints by live time-order position",
-  "status": "candidate_restored_full_validation_pending",
+  "status": "candidate_restored_full_validation_running",
   "performance_qualified": false,
   "retained": false,
   "production_paths": [
@@ -88,7 +88,7 @@
     "initial_scoped_targets": 8,
     "initial_scope_status": "passed",
     "negative_control_status": "passed",
-    "final_scope_status": "pending",
+    "final_scope_status": "running",
     "initial_scope_log_sha256": "8c1217d2f56f8380edd6388d5687928e9939b98082e17062964bd2d333b31c82",
     "negative_control": {
       "mutation": "Use persistent ordinals as vector positions instead of live time-order positions.",
@@ -477,8 +477,10 @@
       "//crates/traces:wal_group_scale_out_test",
       "//crates/traces:wal_group_scale_out_test_clippy"
     ],
-    "final_scope_target_list_sha256": "515f423297bb26f6f2f44b7ade20c354e4146f194ab153da3156732c5ca18fa7"
+    "final_scope_target_list_sha256": "515f423297bb26f6f2f44b7ade20c354e4146f194ab153da3156732c5ca18fa7",
+    "final_validation_source_commit": "e2fa65371cf99eaa7f439dcce86191a1177c9e1c"
   },
   "retention_decision": "Pending meaningful correctness checks and exact-image controls. Do not infer a gain from sparse profiles or static allocation differences. The preceding fingerprint fold comparison remains live.",
-  "comparison_plan": "Select the retained fingerprint source after its four-signal control. Preserve exact baseline and candidate release images, verify complete runtime provenance and compare all four signals against native backends and alternating same-host revisions under the existing matched workloads and budgets."
+  "comparison_plan": "Select the retained fingerprint source after its four-signal control. Preserve exact baseline and candidate release images, verify complete runtime provenance and compare all four signals against native backends and alternating same-host revisions under the existing matched workloads and budgets.",
+  "source_commit": "e2fa65371cf99eaa7f439dcce86191a1177c9e1c"
 }
