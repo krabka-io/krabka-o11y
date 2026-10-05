@@ -90,6 +90,22 @@
       ],
       "retries_disabled": true,
       "scope": "Current source with original metadata restored. This differs from both immutable matched images, which contain the same dense metadata implementation."
+    },
+    "other_native_scope": {
+      "status": "queued_behind_metrics_native_checks",
+      "source_commit": "116f67626ea8c242549b283c0ca85dcedc03f3e9",
+      "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
+      "targets": [
+        "//crates/observability:loki_differential_docker_test",
+        "//crates/observability:loki_deployment_docker_test",
+        "//crates/traces:tempo_differential_docker_test",
+        "//crates/traces:tempo_differential_previous_docker_test",
+        "//crates/traces:tempo_deployment_docker_test",
+        "//crates/profiles:pyroscope_differential_docker_test",
+        "//crates/profiles:pyroscope_differential_previous_docker_test"
+      ],
+      "retries_disabled": true,
+      "scope": "Native compatibility and deployment checks on current source with original metadata restored. They supplement core checks and do not qualify the historical image source globally."
     }
   },
   "next_action": "Run a matched Mimir comparison and the native differential and deployment checks with one codegen unit. The static size reduction does not prove CPU or RSS improvement.",
