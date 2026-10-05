@@ -394,6 +394,43 @@ async fn latest_aggregate_preserves_compensated_sums_across_series() {
             );
         }
     });
+    let captured = fixture
+        .store
+        .try_latest_float_scan(
+            "tenant-a",
+            &[LabelMatcher::new("__name__", MatchOp::Eq, "up")],
+            5_000,
+            5_001,
+            14_000,
+            8,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    // Fixed canonical fingerprints keep the ledger independent of the scan's
+    // grouping and traversal. Arrival order differs from fingerprint order.
+    assert!(
+        captured.samples
+            == vec![
+                (0x01b8_550f_8631_0fb1, 13_000, -1e16, None),
+                (0x54b3_866d_77d1_1fda, 13_000, 1e16, None),
+                (0x7115_4d29_6d09_a369, 13_000, 1.0, None),
+            ]
+    );
+    assert!(
+        captured
+            .labels
+            .into_iter()
+            .map(|(fp, labels)| (fp, labels.as_ref().clone()))
+            .collect::<Vec<_>>()
+            == [
+                (0x01b8_550f_8631_0fb1, "worker"),
+                (0x54b3_866d_77d1_1fda, "api"),
+                (0x7115_4d29_6d09_a369, "db"),
+            ]
+            .map(|(fp, job)| (fp, Labels::from_pairs([("__name__", "up"), ("job", job)])))
+            .to_vec()
+    );
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
     let expected: QueryResult = serde_json::from_value(serde_json::json!({
         "InstantVector": [{"labels": {}, "ts_ms": 14_000, "value": {"Float": 1.0}}]
