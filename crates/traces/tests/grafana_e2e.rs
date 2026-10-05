@@ -1821,9 +1821,10 @@ async fn grafana_e2e_service_graph(
     wait_for_http_ok(
         &client,
         &grafana_base,
-        &[&format!(
-            "/api/datasources/uid/{GRAFANA_PROM_DATASOURCE_UID}"
-        )],
+        &[
+            "/api/plugins/prometheus/settings",
+            &format!("/api/datasources/uid/{GRAFANA_PROM_DATASOURCE_UID}"),
+        ],
     )
     .await?;
     let fetched = get_json(
