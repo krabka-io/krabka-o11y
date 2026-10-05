@@ -229,6 +229,7 @@ mod tests {
             total_value: 5,
             span_id: None,
             trace_id: None,
+            wal_sample_ids: Vec::new(),
         }])
         .unwrap();
 
@@ -381,6 +382,7 @@ mod symbol_refs;
 pub use block_builder_config::BlockBuilderConfig;
 pub use block_object_prefix::BLOCK_OBJECT_PREFIX;
 pub use build_block::build_block;
+pub(crate) use build_block::build_block_with_positions;
 pub use built_sample::BuiltSample;
 use consumer_record_accumulator::ConsumerRecordAccumulator;
 pub use default_flush_max_age::DEFAULT_FLUSH_MAX_AGE;

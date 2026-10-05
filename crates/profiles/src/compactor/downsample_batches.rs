@@ -26,7 +26,7 @@ pub(crate) fn downsample_batches(
         ));
     }
 
-    let mut values: BTreeMap<DownsampleKey, (i64, i64)> = BTreeMap::new();
+    let mut values: BTreeMap<DownsampleKey, (i64, i64, Vec<Vec<u8>>)> = BTreeMap::new();
     for batch in batches {
         let fp_idx = batch.schema().column_with_name(COL_FINGERPRINT).unwrap().0;
         let ts_idx = batch.schema().column_with_name(COL_TIMESTAMP).unwrap().0;
@@ -65,6 +65,11 @@ pub(crate) fn downsample_batches(
             .downcast_ref::<BinaryArray>()
             .ok_or_else(|| ProfilesError::Block(format!("`{PCOL_TRACE_ID}` must be Binary")))?;
 
+        let identities = batch
+            .column_by_name(krabka_blockstore::PCOL_WAL_SAMPLE_IDS)
+            .ok_or_else(|| ProfilesError::Block("missing WAL sample identities".into()))?
+            .as_list::<i32>();
+
         for row in 0..batch.num_rows() {
             let profile_key = profile_types.keys().value(row);
             let profile_pos = usize::try_from(profile_key).map_err(|err| {
@@ -84,25 +89,31 @@ pub(crate) fn downsample_batches(
                 trace_id: (!trace_identifiers.is_null(row))
                     .then(|| trace_identifiers.value(row).to_vec()),
             };
-            let entry = values.entry(key).or_insert((0, 0));
+            let entry = values.entry(key).or_default();
             entry.0 += sample_values.value(row);
             entry.1 += total_values.value(row);
+            let ids = identities.value(row);
+            let ids = ids.as_binary::<i32>();
+            entry.2.extend(ids.iter().flatten().map(<[u8]>::to_vec));
         }
     }
 
     let rows = values
         .into_iter()
-        .map(|(key, (value, total_value))| ProfileSampleRow {
-            series_fingerprint: key.series_fingerprint,
-            timestamp: key.timestamp,
-            profile_type: key.profile_type,
-            stacktrace_id: key.stacktrace_id,
-            value,
-            stacktrace_partition: key.stacktrace_partition,
-            total_value,
-            span_id: key.span_id,
-            trace_id: key.trace_id,
-        })
+        .map(
+            |(key, (value, total_value, wal_sample_ids))| ProfileSampleRow {
+                series_fingerprint: key.series_fingerprint,
+                timestamp: key.timestamp,
+                profile_type: key.profile_type,
+                stacktrace_id: key.stacktrace_id,
+                value,
+                stacktrace_partition: key.stacktrace_partition,
+                total_value,
+                span_id: key.span_id,
+                trace_id: key.trace_id,
+                wal_sample_ids,
+            },
+        )
         .collect::<Vec<_>>();
     encode_profile_samples(&rows)
         .map(|batch| vec![batch])

@@ -41,7 +41,8 @@ pub use profile_type::ProfileType;
 pub use raw_profile::{tree_to_pprof, tree_to_pprof_with_max_nodes};
 pub use samples::{
     COL_FINGERPRINT, COL_TIMESTAMP, PCOL_PROFILE_TYPE, PCOL_SPAN_ID, PCOL_STACKTRACE_ID,
-    PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, profile_samples_schema,
+    PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, PCOL_WAL_SAMPLE_IDS,
+    profile_samples_schema,
 };
 pub use series::{Series, SeriesAgg, fold_bucket, step_bucket_ms, step_from_secs};
 pub use store::{ProfileQueryStats, ProfileScan, ProfileStats, ProfileStore};

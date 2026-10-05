@@ -9,5 +9,6 @@ pub(crate) struct SampleRow {
     pub(crate) total_value: i64,
     pub(crate) span_id: Option<u64>,
     pub(crate) trace_id: Option<Vec<u8>>,
+    pub(crate) wal_sample_ids: Vec<Vec<u8>>,
     pub(crate) timestamp_ms: i64,
 }

@@ -40,19 +40,33 @@ where
             .select(tenant, profile_type, matchers, start_ms, end_ms)
             .await?;
 
-        let mut batches = Vec::new();
         let mut symbols = UnionSymbols::default();
-        batches.extend(collect_and_remap(hot, 1, &mut symbols).await?);
-        batches.extend(collect_and_remap(cold, 2, &mut symbols).await?);
-        if batches.is_empty() {
-            batches.push(RecordBatch::new_empty(profile_samples_schema()));
-        }
-
-        let table = MemTable::try_new(profile_samples_schema(), vec![batches])
-            .map_err(|err| ProfileError::Store(err.to_string()))?;
+        let hot = collect_and_remap(hot, 1, &mut symbols).await?;
+        let cold = collect_and_remap(cold, 2, &mut symbols).await?;
         let ctx = SessionContext::new();
+        for (name, mut batches) in [("hot_samples", hot), ("cold_samples", cold)] {
+            if batches.is_empty() {
+                batches.push(RecordBatch::new_empty(profile_samples_schema()));
+            }
+            let table = MemTable::try_new(profile_samples_schema(), vec![batches])
+                .map_err(|err| ProfileError::Store(err.to_string()))?;
+            ctx.register_table(name, Arc::new(table))
+                .map_err(|err| ProfileError::Store(err.to_string()))?;
+        }
+        // A persisted WAL sample replaces its hot copy. Distinct WAL records
+        // remain distinct even when their timestamps, labels and values match.
+        // Downsampled rows retain every contributing identity.
+        let samples = ctx
+            .sql(
+                "SELECT hot.* FROM hot_samples hot WHERE NOT EXISTS (
+            SELECT 1 FROM (SELECT UNNEST(wal_sample_ids) AS id FROM cold_samples) cold_ids
+            WHERE array_element(hot.wal_sample_ids, 1) = cold_ids.id
+        ) UNION ALL SELECT * FROM cold_samples",
+            )
+            .await
+            .map_err(|err| ProfileError::Store(err.to_string()))?;
         let samples_table = "samples".to_string();
-        ctx.register_table(&samples_table, Arc::new(table))
+        ctx.register_table(&samples_table, samples.into_view())
             .map_err(|err| ProfileError::Store(err.to_string()))?;
         Ok(ProfileScan {
             ctx,

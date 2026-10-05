@@ -806,6 +806,7 @@ mod tests {
                 total_value: 10,
                 span_id: None,
                 trace_id: None,
+                wal_sample_ids: Vec::new(),
             },
             // drop: wrong fingerprint
             ProfileSampleRow {
@@ -818,6 +819,7 @@ mod tests {
                 total_value: 5,
                 span_id: None,
                 trace_id: None,
+                wal_sample_ids: Vec::new(),
             },
             // drop: out of time range
             ProfileSampleRow {
@@ -830,6 +832,7 @@ mod tests {
                 total_value: 5,
                 span_id: None,
                 trace_id: None,
+                wal_sample_ids: Vec::new(),
             },
             // keep: matching, distinct partition 1 to verify per-row remap
             ProfileSampleRow {
@@ -842,6 +845,7 @@ mod tests {
                 total_value: 20,
                 span_id: None,
                 trace_id: None,
+                wal_sample_ids: Vec::new(),
             },
         ];
         let batch = encode_profile_samples(&rows).unwrap();

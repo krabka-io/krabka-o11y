@@ -17,6 +17,7 @@ pub fn encode_profile_samples(rows: &[ProfileSampleRow]) -> Result<RecordBatch> 
     let mut total_value = Int64Builder::new();
     let mut span_id = UInt64Builder::new();
     let mut trace_id = BinaryBuilder::new();
+    let mut wal_sample_ids = arrow::array::ListBuilder::new(BinaryBuilder::new());
 
     for row in rows {
         fp.append_value(row.series_fingerprint);
@@ -32,6 +33,10 @@ pub fn encode_profile_samples(rows: &[ProfileSampleRow]) -> Result<RecordBatch> 
             Some(value) => span_id.append_value(value),
             None => span_id.append_null(),
         }
+        for id in &row.wal_sample_ids {
+            wal_sample_ids.values().append_value(id);
+        }
+        wal_sample_ids.append(true);
         match &row.trace_id {
             Some(value) => trace_id.append_value(value),
             None => trace_id.append_null(),
@@ -48,6 +53,7 @@ pub fn encode_profile_samples(rows: &[ProfileSampleRow]) -> Result<RecordBatch> 
         Arc::new(total_value.finish()),
         Arc::new(span_id.finish()),
         Arc::new(trace_id.finish()),
+        Arc::new(wal_sample_ids.finish()),
     ];
 
     RecordBatch::try_new(profile_samples_schema(), columns)

@@ -1,7 +1,7 @@
 use parquet::file::{metadata::ParquetMetaData, properties::WriterProperties};
 
 pub const PERSISTED_BLOCK_FORMAT_KEY: &str = "krabka.format.version";
-pub const PERSISTED_BLOCK_FORMAT_VERSION: &str = "1";
+pub const PERSISTED_BLOCK_FORMAT_VERSION: &str = "2";
 
 #[must_use]
 pub(crate) fn persisted_block_writer_properties() -> WriterProperties {

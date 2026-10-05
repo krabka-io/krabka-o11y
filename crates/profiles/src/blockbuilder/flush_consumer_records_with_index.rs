@@ -2,7 +2,7 @@ use krabka_observability::persisted_format::validate_persisted_format;
 
 use super::{
     Arc, BTreeMap, BlockIndex, BlockMeta, ConsumerRecord, Labels, ObjectStore, ObjectStoreMetrics,
-    ProfileIndex, ProfileRecord, ProfilesError, STACKTRACE_PARTITION, build_block,
+    ProfileIndex, ProfileRecord, ProfilesError, STACKTRACE_PARTITION, build_block_with_positions,
 };
 
 ///
@@ -52,15 +52,11 @@ pub async fn flush_consumer_records_with_index(
         for chunk in records.chunks(flush_records.max(1)) {
             let min_offset = chunk.first().map(|(offset, _)| *offset).unwrap_or_default();
             let max_offset = chunk.last().map(|(offset, _)| *offset).unwrap_or_default();
-            let profile_records = chunk
-                .iter()
-                .map(|(_, record)| record.clone())
-                .collect::<Vec<_>>();
-            let built = build_block(
+            let built = build_block_with_positions(
                 store,
                 &tenant,
                 partition,
-                &profile_records,
+                chunk,
                 (min_offset, max_offset),
                 metrics,
             )

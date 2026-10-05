@@ -34,6 +34,7 @@ mod tests {
             total_value: 1_000,
             span_id: None,
             trace_id: trace,
+            wal_sample_ids: Vec::new(),
         }
     }
 

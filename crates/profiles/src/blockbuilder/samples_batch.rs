@@ -16,6 +16,7 @@ pub fn samples_batch(rows: &[BuiltSample]) -> Result<RecordBatch, ProfilesError>
             total_value: row.total_value,
             span_id: row.span_id,
             trace_id: row.trace_id.clone(),
+            wal_sample_ids: row.wal_sample_ids.clone(),
         })
         .collect::<Vec<_>>();
     encode_profile_samples(&rows).map_err(|err| ProfilesError::Block(err.to_string()))

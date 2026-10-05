@@ -32,7 +32,8 @@ where
         // `ConnectContext`); plain `.build()` omits it, which makes every Connect response
         // fall back to `application/json` regardless of the request's content-type and breaks
         // proto clients like Grafana's built-in Pyroscope datasource (a connect-go client).
-        .build_connect();
+        .build_connect()
+        .route_layer(axum::middleware::from_fn(super::post_only_querier));
 
     // Pyroscope `settings.v1.SettingsService`. The Grafana Profiles Drilldown
     // app calls `Get` during init; a 404 aborts its init chain so it never

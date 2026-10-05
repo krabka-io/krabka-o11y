@@ -87,6 +87,7 @@ mod tests {
             records: std::iter::repeat_with(|| super::Retained {
                 max_ts_ms: 0,
                 record: record(),
+                position: None,
             })
             .take(retained)
             .collect(),
@@ -332,11 +333,23 @@ mod tests {
             max_age: unlimited_max_age(),
             max_records: 2,
         });
-        store.append_record(record_at(1, 1_000_000)).unwrap();
-        store.append_record(record_at(2, 2_000_000)).unwrap();
-        store.append_record(record_at(4, 3_000_000)).unwrap();
-
-        let engine = FlameEngine::new(Arc::new(store), EngineOpts::default());
+        store
+            .append_records_with_positions([
+                (record_at(1, 1_000_000), Some((0, 0))),
+                (record_at(2, 2_000_000), Some((0, 1))),
+                (record_at(4, 3_000_000), Some((0, 2))),
+            ])
+            .unwrap();
+        // A rebuild must keep the source positions, otherwise the persisted
+        // copies of surviving records are counted again during handoff.
+        let cold = super::WalTailProfileStore::new();
+        cold.append_records_with_positions([
+            (record_at(2, 2_000_000), Some((0, 1))),
+            (record_at(4, 3_000_000), Some((0, 2))),
+        ])
+        .unwrap();
+        let union = krabka_pprof::UnionProfileStore::new(Arc::new(store), Arc::new(cold));
+        let engine = FlameEngine::new(Arc::new(union), EngineOpts::default());
         let fg = engine
             .select_merge_stacktraces("tenant-a", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
             .await

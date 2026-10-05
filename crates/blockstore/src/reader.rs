@@ -116,9 +116,14 @@ mod tests {
                 message: "unsupported persisted block format version: the marker is missing",
             },
             Case {
+                name: "a block of a previous version",
+                marker: Some("1"),
+                message: "unsupported persisted block format version `1`",
+            },
+            Case {
                 name: "a block of a future version",
-                marker: Some("2"),
-                message: "unsupported persisted block format version `2`",
+                marker: Some("3"),
+                message: "unsupported persisted block format version `3`",
             },
         ];
         for case in cases {

@@ -42,6 +42,16 @@ mod tests {
         timestamp_ms: i64,
         partition: u64,
     ) -> InMemoryProfileStore {
+        store_with_provenance(frame, value, timestamp_ms, partition, Vec::new())
+    }
+
+    fn store_with_provenance(
+        frame: &str,
+        value: i64,
+        timestamp_ms: i64,
+        partition: u64,
+        ids: Vec<Vec<u8>>,
+    ) -> InMemoryProfileStore {
         let mut store = InMemoryProfileStore::new();
         let name = store.symbols_mut().intern_string(frame);
         let function_id = store.symbols_mut().intern_function(FunctionRec {
@@ -59,14 +69,36 @@ mod tests {
             }],
         });
         let stacktrace = store.symbols_mut().intern_stacktrace(0, &[location]);
-        store.push_sample(
+        store.push_sample_with_provenance(
             ("tenant-a", PT),
             vec![("service_name".to_string(), "api".to_string())],
             (partition, stacktrace),
-            value,
+            (value, value),
             timestamp_ms,
+            (None, None, ids),
         );
         store
+    }
+
+    #[tokio::test]
+    async fn wal_handoff_deduplicates_copies_but_keeps_identical_independent_samples() {
+        for (hot_ids, cold_ids, expected) in [
+            (vec![vec![1]], vec![vec![1]], 7),
+            (vec![vec![1]], vec![vec![2]], 14),
+            (Vec::new(), Vec::new(), 14),
+            (vec![vec![1]], vec![vec![1], vec![2]], 7),
+            (vec![vec![3]], vec![vec![1], vec![2]], 14),
+        ] {
+            let hot = store_with_provenance("same", 7, 20, 0, hot_ids.clone());
+            let cold = store_with_provenance("same", 7, 20, 0, cold_ids.clone());
+            let union = super::UnionProfileStore::new(Arc::new(hot), Arc::new(cold));
+            let engine = FlameEngine::new(Arc::new(union), EngineOpts::default());
+            let graph = engine
+                .select_merge_stacktraces("tenant-a", PT, r#"{service_name="api"}"#, 0, 100, 0)
+                .await
+                .unwrap();
+            assert!(graph.total == expected, "hot={hot_ids:?} cold={cold_ids:?}");
+        }
     }
 
     #[tokio::test]
@@ -166,9 +198,19 @@ mod tests {
             .await
             .unwrap();
         let out = df.collect().await.unwrap();
-        let partitions = out[0].column(0).as_primitive::<UInt64Type>();
+        let partitions = out
+            .iter()
+            .flat_map(|batch| {
+                batch
+                    .column(0)
+                    .as_primitive::<UInt64Type>()
+                    .values()
+                    .iter()
+                    .copied()
+            })
+            .collect::<Vec<_>>();
 
-        assert!(partitions.value(0) == partition);
+        assert!(partitions == vec![partition]);
     }
 }
 

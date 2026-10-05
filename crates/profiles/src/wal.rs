@@ -94,6 +94,8 @@ mod tests {
 
 mod partition_key;
 mod profile_record;
+mod sample_identity;
+pub(crate) use self::sample_identity::sample_identity;
 mod profiles_wal_topic;
 mod wal_flag;
 mod wal_function;

@@ -28,6 +28,11 @@ crate_tests(
     # it, with the images each one starts. //bazel/images pins those by
     # digest and //bazel/defs.bzl loads them before the suite runs.
     docker = {
+        "pyroscope_deployment": [
+            "broker",
+            "krabka",
+            "minio",
+        ],
         "pyroscope_differential": [
             "grafana",
             "pyroscope",
@@ -44,6 +49,7 @@ crate_tests(
     # The shared lifecycle store, reached with `#[path]` from //crates/blockstore.
     extra_srcs = {
         "lifecycle": ["//crates/blockstore:tests/support/lifecycle_store.rs"],
+        "pyroscope_deployment": ["//crates/metrics-service:tests/support/container_deployment.rs"],
     },
     lib = "profiles",
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is
