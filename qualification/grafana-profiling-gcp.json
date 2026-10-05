@@ -2938,5 +2938,854 @@
     },
     "allocation_comparison_limit": "Baseline and candidate both accept 1400 profiles and complete 280 queries. Baseline runs on AMD EPYC 7B12; candidate runs on Intel Xeon model 79. Startup-inclusive totals and different hosts do not establish an end-to-end gain.",
     "retention_decision": "Rejected after four verified same-VM controls; see qualification/grafana-pyroscope-borrowed-fingerprint-experiment-gcp.json. Product code is reverted; captures remain diagnostic only."
+  },
+  "loki_owned_index_candidate_captures": {
+    "diagnostic_only": true,
+    "comparison_qualified": false,
+    "source_commit": "45b41ba77d16f017c80c502893cee1157bc30fde",
+    "image_producer": {
+      "run_id": 37307305944,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37307305944",
+      "source_commit": "45b41ba77d16f017c80c502893cee1157bc30fde",
+      "artifact": {
+        "id": 11344996950,
+        "name": "comparison-image-logs-45b41ba77d16f017c80c502893cee1157bc30fde",
+        "digest": "sha256:a5900934bad5d4ce388a3fd926280b524bbaadc6af9c3b9b428c91b0e0998555",
+        "size_in_bytes": 308297240,
+        "expires_at": "2027-01-03T12:06:56Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-45b41ba77d16",
+      "manifest_digest": "sha256:1bca6608f9e4841a298f2d8e5fbe1243c3d3bd3cde40c2267c4278bb72afc62c",
+      "config_digest": "sha256:1bca6608f9e4841a298f2d8e5fbe1243c3d3bd3cde40c2267c4278bb72afc62c",
+      "docker_image_id": "sha256:1bca6608f9e4841a298f2d8e5fbe1243c3d3bd3cde40c2267c4278bb72afc62c",
+      "oci_config_digest": "sha256:d62b0dfa3f51ea1dfd29592ae066838b2f20b54441d7d35d32496530711429bc",
+      "identity_note": "The archived config-digest field is Docker inspect Id; this containerd store reports OCI manifest identity. The OCI config digest comes from the independently verified archive."
+    },
+    "binary_sha256": {
+      "krabka-metrics": {
+        "path": "usr/local/bin/krabka-metrics",
+        "sha256": "94c08aa9ecf02158af412e12eb23e75c31ea6a0ce234f43e310721e44fd17a10",
+        "size_in_bytes": 72315904
+      },
+      "krabka-metrics-service": {
+        "path": "usr/local/bin/krabka-metrics-service",
+        "sha256": "385b6ce8e90b1757958523d6852fe211107138497968980b3d1a43a4b5166451",
+        "size_in_bytes": 236249744
+      },
+      "krabka-o11y-bootstrap": {
+        "path": "usr/local/bin/krabka-o11y-bootstrap",
+        "sha256": "96dd7919d967ef32a74ef4d85e1bcb8b9059b67c7a9a8ee71a4737d0c91020d7",
+        "size_in_bytes": 26754480
+      },
+      "krabka-o11y-recovery": {
+        "path": "usr/local/bin/krabka-o11y-recovery",
+        "sha256": "352a9136529f3f14ab805c608b50b8cfacbc2dee32e6f09d9dba0ceff541f058",
+        "size_in_bytes": 36707848
+      },
+      "krabka-observability": {
+        "path": "usr/local/bin/krabka-observability",
+        "sha256": "e2f965a3f07fbf3fe316545bc842470e1ea068d861ec3f3fb4eb6f3d9d31fd72",
+        "size_in_bytes": 222385696
+      },
+      "krabka-profiles": {
+        "path": "usr/local/bin/krabka-profiles",
+        "sha256": "05e9998fdef1b45dc7f3e10a0859a7b46a96aeac414e57e877a9c9a443c50ae4",
+        "size_in_bytes": 219804888
+      },
+      "krabka-traces": {
+        "path": "usr/local/bin/krabka-traces",
+        "sha256": "fec6a3a879aba076870b0486583366add34be5ca11ce11124c57352d6e1a5a26",
+        "size_in_bytes": 223524536
+      }
+    },
+    "runtime_equivalence": {
+      "changed_paths": [
+        "usr/local/bin/krabka-metrics",
+        "usr/local/bin/krabka-metrics-service",
+        "usr/local/bin/krabka-o11y-bootstrap",
+        "usr/local/bin/krabka-o11y-recovery",
+        "usr/local/bin/krabka-observability",
+        "usr/local/bin/krabka-profiles",
+        "usr/local/bin/krabka-traces"
+      ],
+      "unchanged_binaries": [],
+      "filesystem_entries_verified": 380
+    },
+    "captures": {
+      "cpu": {
+        "source_commit": "45b41ba77d16f017c80c502893cee1157bc30fde",
+        "provenance": {
+          "run_id": 37309119439,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37309119439",
+          "head_sha": "45b41ba77d16f017c80c502893cee1157bc30fde",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111759915918,
+              "name": "compare (logs)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37309119439/job/111759915918",
+              "runner_name": "gcp-runner-aa711f0f88b64e28",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T12:24:15Z",
+              "completed_at": "2026-10-05T12:29:11Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11345342482,
+              "name": "grafana-comparison-logs-45b41ba77d16f017c80c502893cee1157bc30fde-1",
+              "digest": "sha256:1311c15a6ee7d5ec5d73320e8e97077794d117cb902748bf75e7dbc820472861",
+              "size_in_bytes": 10886646,
+              "expires_at": "2027-01-03T12:22:49Z",
+              "signal": "logs",
+              "verified_raw_files": 162,
+              "diagnostic_only": true
+            }
+          ]
+        },
+        "host": {
+          "cpu_count": 16,
+          "kernel": "7.0.0-1011-gcp",
+          "lscpu": {
+            "lscpu": [
+              {
+                "field": "Architecture:",
+                "data": "x86_64"
+              },
+              {
+                "field": "CPU op-mode(s):",
+                "data": "32-bit, 64-bit"
+              },
+              {
+                "field": "Address sizes:",
+                "data": "48 bits physical, 48 bits virtual"
+              },
+              {
+                "field": "Byte Order:",
+                "data": "Little Endian"
+              },
+              {
+                "field": "CPU(s):",
+                "data": "16"
+              },
+              {
+                "field": "On-line CPU(s) list:",
+                "data": "0-15"
+              },
+              {
+                "field": "Vendor ID:",
+                "data": "AuthenticAMD"
+              },
+              {
+                "field": "Model name:",
+                "data": "AMD EPYC 7B12"
+              },
+              {
+                "field": "CPU family:",
+                "data": "23"
+              },
+              {
+                "field": "Model:",
+                "data": "49"
+              },
+              {
+                "field": "Thread(s) per core:",
+                "data": "2"
+              },
+              {
+                "field": "Core(s) per socket:",
+                "data": "8"
+              },
+              {
+                "field": "Socket(s):",
+                "data": "1"
+              },
+              {
+                "field": "Stepping:",
+                "data": "0"
+              },
+              {
+                "field": "BogoMIPS:",
+                "data": "4499.99"
+              },
+              {
+                "field": "Flags:",
+                "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+              },
+              {
+                "field": "Hypervisor vendor:",
+                "data": "KVM"
+              },
+              {
+                "field": "Virtualization type:",
+                "data": "full"
+              },
+              {
+                "field": "L1d cache:",
+                "data": "256 KiB (8 instances)"
+              },
+              {
+                "field": "L1i cache:",
+                "data": "256 KiB (8 instances)"
+              },
+              {
+                "field": "L2 cache:",
+                "data": "4 MiB (8 instances)"
+              },
+              {
+                "field": "L3 cache:",
+                "data": "32 MiB (2 instances)"
+              },
+              {
+                "field": "NUMA node(s):",
+                "data": "1"
+              },
+              {
+                "field": "NUMA node0 CPU(s):",
+                "data": "0-15"
+              },
+              {
+                "field": "Vulnerability Gather data sampling:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Ghostwrite:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Indirect target selection:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Itlb multihit:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability L1tf:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Mds:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Meltdown:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Mmio stale data:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Old microcode:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Reg file data sampling:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Retbleed:",
+                "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+              },
+              {
+                "field": "Vulnerability Spec rstack overflow:",
+                "data": "Mitigation; Safe RET"
+              },
+              {
+                "field": "Vulnerability Spec store bypass:",
+                "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+              },
+              {
+                "field": "Vulnerability Spectre v1:",
+                "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+              },
+              {
+                "field": "Vulnerability Spectre v2:",
+                "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+              },
+              {
+                "field": "Vulnerability Srbds:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Tsa:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Tsx async abort:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Vmscape:",
+                "data": "Not affected"
+              }
+            ]
+          }
+        },
+        "workload": {
+          "signal": "logs",
+          "writers": 2,
+          "cardinality": 100,
+          "warmup_seconds": 15,
+          "duration_seconds": 180.91964741500001,
+          "write_interval_seconds": 1,
+          "ingest": {
+            "attempts": 360,
+            "errors": 0,
+            "error_rate": 0.0,
+            "accepted_rows": 360000,
+            "accepted_rows_per_sec": 1989.8336368864295,
+            "latency_seconds": {
+              "count": 360,
+              "p50": 0.026453043000003618,
+              "p95": 0.06726550900000916,
+              "p99": 0.08184318700000404
+            },
+            "empty_queries": 0,
+            "status_counts": {
+              "204": 360
+            }
+          },
+          "query": {
+            "attempts": 718,
+            "errors": 0,
+            "error_rate": 0.0,
+            "accepted_rows": 0,
+            "accepted_rows_per_sec": 0.0,
+            "latency_seconds": {
+              "count": 718,
+              "p50": 0.038053445999992164,
+              "p95": 0.057215554999999085,
+              "p99": 0.10278617900002018
+            },
+            "empty_queries": 0,
+            "status_counts": {
+              "200": 718
+            }
+          },
+          "telemetry": {
+            "wal_lag_records_max": 2000.0,
+            "wal_lag_records_last": [
+              2000.0
+            ],
+            "rss_kib_peak_by_role": {
+              "logs-all": 185256,
+              "broker": 37360,
+              "minio": 253896
+            },
+            "object_requests": 1491.0,
+            "object_bytes": 12120265.0,
+            "maintenance": {
+              "krabka_logs_compaction_runs_total{status=\"ok\"}": 180.0,
+              "krabka_logs_compaction_blocks_total": 180.0,
+              "krabka_logs_compaction_deletion_sweeps_total": 0.0,
+              "krabka_logs_compaction_deleted_blocks_total": 0.0,
+              "krabka_logs_compaction_deleted_sidecars_total": 0.0,
+              "krabka_logs_compaction_deletion_failures_total": 0.0,
+              "krabka_logs_compaction_orphan_sweeps_total": 0.0,
+              "krabka_logs_compaction_orphans_deleted_total": 0.0,
+              "krabka_logs_compaction_orphan_failures_total": 0.0
+            },
+            "cpu_seconds_by_role": {},
+            "expected_restart_gaps": 0,
+            "scrape_errors": 0
+          },
+          "tenant": "soak",
+          "tenants": {
+            "soak": {
+              "attempts": 360,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 360000,
+              "accepted_rows_per_sec": 1989.8336368864295,
+              "latency_seconds": {
+                "count": 360,
+                "p50": 0.026453043000003618,
+                "p95": 0.06726550900000916,
+                "p99": 0.08184318700000404
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "204": 360
+              }
+            }
+          },
+          "objectives_met": true
+        },
+        "logs_all_windows": [
+          {
+            "samples": 1224,
+            "perf_top_rounded_samples": "1K",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 7.52,
+                "symbol": "__memcmp_avx2_movbe"
+              },
+              {
+                "self_percent": 6.62,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 6.05,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 5.64,
+                "symbol": "__memmove_avx_unaligned_erms"
+              },
+              {
+                "self_percent": 4.82,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 4.33,
+                "symbol": "unlink_chunk.isra.0"
+              },
+              {
+                "self_percent": 2.86,
+                "symbol": "<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write"
+              },
+              {
+                "self_percent": 2.61,
+                "symbol": "<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String> as core::ops::drop::Drop>::drop"
+              },
+              {
+                "self_percent": 2.61,
+                "symbol": "alloc::vec::in_place_collect::from_iter_in_place::<core::iter::adapters::filter::Filter<alloc::vec::into_iter::IntoIter<alloc::sync::Arc<krabka_observability::compactor::frontier::wal_log_record::WalLogRecord>>, <krabka_observability::wal::hot_tail::hot_tail_buffer::HotTailBuffer>::prune_compacted::{closure#0}>, alloc::sync::Arc<krabka_observability::compactor::frontier::wal_log_record::WalLogRecord>>"
+              },
+              {
+                "self_percent": 2.45,
+                "symbol": "krabka_observability::querier::aggregate::record_matching::append_matching_hot_log_record::append_matching_hot_log_record"
+              }
+            ],
+            "prune_above_report_threshold": true
+          },
+          {
+            "samples": 1194,
+            "perf_top_rounded_samples": "1K",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 9.21,
+                "symbol": "__memcmp_avx2_movbe"
+              },
+              {
+                "self_percent": 6.53,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 5.95,
+                "symbol": "__memmove_avx_unaligned_erms"
+              },
+              {
+                "self_percent": 5.44,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 4.77,
+                "symbol": "unlink_chunk.isra.0"
+              },
+              {
+                "self_percent": 4.19,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 3.6,
+                "symbol": "<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write"
+              },
+              {
+                "self_percent": 2.6,
+                "symbol": "<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String> as core::hash::Hash>::hash::<std::hash::random::DefaultHasher>"
+              },
+              {
+                "self_percent": 2.6,
+                "symbol": "<krabka_observability::http::response::loki_responses::loki_stream_entry::LokiStreamEntry>::parsed_timestamp_ns"
+              },
+              {
+                "self_percent": 2.51,
+                "symbol": "<alloc::collections::btree::map::Iter<alloc::string::String, alloc::string::String> as core::iter::traits::iterator::Iterator>::partial_cmp_by::<alloc::collections::btree::map::Iter<alloc::string::String, alloc::string::String>, <alloc::collections::btree::map::Iter<alloc::string::String, alloc::string::String> as core::iter::traits::iterator::Iterator>::partial_cmp<alloc::collections::btree::map::Iter<alloc::string::String, alloc::string::String>>::{closure#0}>"
+              }
+            ],
+            "prune_above_report_threshold": true
+          },
+          {
+            "samples": 1193,
+            "perf_top_rounded_samples": "1K",
+            "lost_samples": 0,
+            "top_self_symbols": [
+              {
+                "self_percent": 7.71,
+                "symbol": "_int_malloc"
+              },
+              {
+                "self_percent": 7.12,
+                "symbol": "__memcmp_avx2_movbe"
+              },
+              {
+                "self_percent": 5.95,
+                "symbol": "unlink_chunk.isra.0"
+              },
+              {
+                "self_percent": 4.78,
+                "symbol": "__memmove_avx_unaligned_erms"
+              },
+              {
+                "self_percent": 4.78,
+                "symbol": "_int_free_create_chunk"
+              },
+              {
+                "self_percent": 3.35,
+                "symbol": "<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write"
+              },
+              {
+                "self_percent": 3.19,
+                "symbol": "cfree@GLIBC_2.2.5"
+              },
+              {
+                "self_percent": 2.35,
+                "symbol": "<krabka_observability::http::response::loki_responses::loki_stream_entry::LokiStreamEntry>::parsed_timestamp_ns"
+              },
+              {
+                "self_percent": 2.26,
+                "symbol": "<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String> as core::hash::Hash>::hash::<std::hash::random::DefaultHasher>"
+              },
+              {
+                "self_percent": 1.84,
+                "symbol": "<alloc::collections::btree::map::BTreeMap<_, _, _> as core::clone::Clone>::clone::clone_subtree::<alloc::string::String, alloc::string::String, alloc::alloc::Global>"
+              }
+            ],
+            "prune_above_report_threshold": true
+          }
+        ]
+      },
+      "allocations": {
+        "source_commit": "45b41ba77d16f017c80c502893cee1157bc30fde",
+        "provenance": {
+          "run_id": 37309122926,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37309122926",
+          "head_sha": "45b41ba77d16f017c80c502893cee1157bc30fde",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111759927886,
+              "name": "compare (logs)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37309122926/job/111759927886",
+              "runner_name": "gcp-runner-ef3f0592fb014672",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T12:24:17Z",
+              "completed_at": "2026-10-05T12:31:05Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11344784429,
+              "name": "grafana-comparison-logs-45b41ba77d16f017c80c502893cee1157bc30fde-1",
+              "digest": "sha256:97b7368f447e03fd1aa1528a6f372b1e0f1fab6401e09dabf4321e346190cf49",
+              "size_in_bytes": 343750631,
+              "expires_at": "2027-01-03T12:22:51Z",
+              "signal": "logs",
+              "verified_raw_files": 130,
+              "diagnostic_only": true
+            }
+          ]
+        },
+        "host": {
+          "cpu_count": 16,
+          "kernel": "7.0.0-1011-gcp",
+          "lscpu": {
+            "lscpu": [
+              {
+                "field": "Architecture:",
+                "data": "x86_64"
+              },
+              {
+                "field": "CPU op-mode(s):",
+                "data": "32-bit, 64-bit"
+              },
+              {
+                "field": "Address sizes:",
+                "data": "48 bits physical, 48 bits virtual"
+              },
+              {
+                "field": "Byte Order:",
+                "data": "Little Endian"
+              },
+              {
+                "field": "CPU(s):",
+                "data": "16"
+              },
+              {
+                "field": "On-line CPU(s) list:",
+                "data": "0-15"
+              },
+              {
+                "field": "Vendor ID:",
+                "data": "AuthenticAMD"
+              },
+              {
+                "field": "Model name:",
+                "data": "AMD EPYC 7B12"
+              },
+              {
+                "field": "CPU family:",
+                "data": "23"
+              },
+              {
+                "field": "Model:",
+                "data": "49"
+              },
+              {
+                "field": "Thread(s) per core:",
+                "data": "2"
+              },
+              {
+                "field": "Core(s) per socket:",
+                "data": "8"
+              },
+              {
+                "field": "Socket(s):",
+                "data": "1"
+              },
+              {
+                "field": "Stepping:",
+                "data": "0"
+              },
+              {
+                "field": "BogoMIPS:",
+                "data": "4499.99"
+              },
+              {
+                "field": "Flags:",
+                "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+              },
+              {
+                "field": "Hypervisor vendor:",
+                "data": "KVM"
+              },
+              {
+                "field": "Virtualization type:",
+                "data": "full"
+              },
+              {
+                "field": "L1d cache:",
+                "data": "256 KiB (8 instances)"
+              },
+              {
+                "field": "L1i cache:",
+                "data": "256 KiB (8 instances)"
+              },
+              {
+                "field": "L2 cache:",
+                "data": "4 MiB (8 instances)"
+              },
+              {
+                "field": "L3 cache:",
+                "data": "32 MiB (2 instances)"
+              },
+              {
+                "field": "NUMA node(s):",
+                "data": "1"
+              },
+              {
+                "field": "NUMA node0 CPU(s):",
+                "data": "0-15"
+              },
+              {
+                "field": "Vulnerability Gather data sampling:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Ghostwrite:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Indirect target selection:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Itlb multihit:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability L1tf:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Mds:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Meltdown:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Mmio stale data:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Old microcode:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Reg file data sampling:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Retbleed:",
+                "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+              },
+              {
+                "field": "Vulnerability Spec rstack overflow:",
+                "data": "Mitigation; Safe RET"
+              },
+              {
+                "field": "Vulnerability Spec store bypass:",
+                "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+              },
+              {
+                "field": "Vulnerability Spectre v1:",
+                "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+              },
+              {
+                "field": "Vulnerability Spectre v2:",
+                "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+              },
+              {
+                "field": "Vulnerability Srbds:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Tsa:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Tsx async abort:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Vmscape:",
+                "data": "Not affected"
+              }
+            ]
+          }
+        },
+        "workload": {
+          "signal": "logs",
+          "writers": 2,
+          "cardinality": 100,
+          "warmup_seconds": 15,
+          "duration_seconds": 70.49811835600002,
+          "write_interval_seconds": 1,
+          "ingest": {
+            "attempts": 140,
+            "errors": 0,
+            "error_rate": 0.0,
+            "accepted_rows": 140000,
+            "accepted_rows_per_sec": 1985.868605641795,
+            "latency_seconds": {
+              "count": 140,
+              "p50": 0.5264931810000064,
+              "p95": 0.8989100940000014,
+              "p99": 1.0433531209999956
+            },
+            "empty_queries": 0,
+            "status_counts": {
+              "204": 140
+            }
+          },
+          "query": {
+            "attempts": 123,
+            "errors": 0,
+            "error_rate": 0.0,
+            "accepted_rows": 0,
+            "accepted_rows_per_sec": 0.0,
+            "latency_seconds": {
+              "count": 123,
+              "p50": 0.49125683299999423,
+              "p95": 1.1125891570000022,
+              "p99": 1.3556267080000168
+            },
+            "empty_queries": 0,
+            "status_counts": {
+              "200": 123
+            }
+          },
+          "telemetry": {
+            "wal_lag_records_max": 2000.0,
+            "wal_lag_records_last": [
+              0.0
+            ],
+            "rss_kib_peak_by_role": {
+              "minio": 168160,
+              "logs-all": 191128,
+              "broker": 37112
+            },
+            "object_requests": 273.0,
+            "object_bytes": 3198834.0,
+            "maintenance": {
+              "krabka_logs_compaction_runs_total{status=\"ok\"}": 61.0,
+              "krabka_logs_compaction_blocks_total": 61.0,
+              "krabka_logs_compaction_deletion_sweeps_total": 0.0,
+              "krabka_logs_compaction_deleted_blocks_total": 0.0,
+              "krabka_logs_compaction_deleted_sidecars_total": 0.0,
+              "krabka_logs_compaction_deletion_failures_total": 0.0,
+              "krabka_logs_compaction_orphan_sweeps_total": 0.0,
+              "krabka_logs_compaction_orphans_deleted_total": 0.0,
+              "krabka_logs_compaction_orphan_failures_total": 0.0
+            },
+            "cpu_seconds_by_role": {},
+            "expected_restart_gaps": 0,
+            "scrape_errors": 0
+          },
+          "tenant": "soak",
+          "tenants": {
+            "soak": {
+              "attempts": 140,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 140000,
+              "accepted_rows_per_sec": 1985.868605641795,
+              "latency_seconds": {
+                "count": 140,
+                "p50": 0.5264931810000064,
+                "p95": 0.8989100940000014,
+                "p99": 1.0433531209999956
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "204": 140
+              }
+            }
+          },
+          "objectives_met": true
+        },
+        "runtime_including_startup_and_seed_seconds": 105.43,
+        "allocation_calls": 62879271,
+        "temporary_allocations": 6535574,
+        "peak_heap_decimal_mb": 40.97,
+        "string_clone_calls": 28960597,
+        "merger_present_in_summary": true,
+        "copying_tenant_series_present_in_summary": false,
+        "query_attempts": 123,
+        "accepted_rows": 140000
+      }
+    },
+    "retention_decision": "Pending the fresh same-VM uninstrumented controls for all four signals. No efficiency gain claimed.",
+    "limitations": [
+      "Heaptrack includes startup and seed; current and preceding Loki captures complete 123 and 151 queries respectively, so allocation totals are not normalized performance comparisons.",
+      "All seven application binaries differ from the ca99 baseline; runtime configuration, base layer and other filesystem entries match across all 380 entries."
+    ]
   }
 }
