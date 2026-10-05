@@ -528,16 +528,16 @@ async fn grafana_accepts_tempo_datasource_pointing_at_krabka() -> TestResult {
         fetched.get("url").and_then(JsonValue::as_str) == Some(krabka.container_base_url.as_str())
     );
 
-    let echo = client
+    let echo_response = client
         .get(format!(
             "{grafana_base}/api/datasources/proxy/uid/{GRAFANA_TEMPO_DATASOURCE_UID}/api/echo"
         ))
         .basic_auth("admin", Some("admin"))
         .send()
-        .await?
-        .error_for_status()?
-        .text()
         .await?;
+    let echo_status = echo_response.status();
+    let echo = echo_response.text().await?;
+    assert2::assert!(echo_status.is_success(), "Grafana echo response: {echo}");
     assert2::assert!(echo == "echo");
 
     let trace: JsonValue = client

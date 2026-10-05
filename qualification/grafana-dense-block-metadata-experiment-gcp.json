@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Rebuild block fingerprints by live time-order position",
-  "status": "full_validation_passed_tempo_grafana_setup_failure_under_investigation",
+  "status": "correctness_scope_qualified_with_grafana_flake_limitation_image_builds_running",
   "performance_qualified": false,
   "retained": false,
   "production_paths": [
@@ -703,8 +703,8 @@
         "log_sha256": "adbc64aa23e4793bec59051e018714206f0f11da2c3ad61fac3e840d3f0e4868"
       }
     ],
-    "correctness_scope_qualified": false,
-    "flaky_follow_up_status": "current_tempo_wrapper_failed_two_of_three_previous_passed_three_of_three",
+    "correctness_scope_qualified": true,
+    "flaky_follow_up_status": "six_fresh_full_wrappers_and_clippy_passed_with_unresolved_original_flake",
     "raw_evidence": "qualification/evidence/correctness/dense-block-metadata/full376-e2fa6537",
     "full_validation_flaky_targets": [
       {
@@ -763,9 +763,70 @@
       "bazel_log_sha256": "332a86dfdceffec2f5becf5ca5df358d6510639e6ae214cee44ec1e1e2d746e2",
       "raw_evidence": "qualification/evidence/correctness/dense-block-metadata/rebased-main-deployments",
       "scope": "Changed upstream deployment tests, new Loki deployment suite, compactor deletion behavior, and their Clippy gates. This supplements the 376-target pre-rebase run; Tempo/Grafana readiness qualification remains pending."
+    },
+    "response_capture_follow_up": {
+      "status": "six_fresh_full_wrappers_and_clippy_passed",
+      "runs_per_target": 3,
+      "flaky_test_attempts": 1,
+      "runs": [
+        {
+          "target": "//crates/traces:tempo_differential_docker_test",
+          "run": 1,
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "0b3b10af5ef0747c400208f358089fc47d8429a5963d1c753e341676688e8d34"
+        },
+        {
+          "target": "//crates/traces:tempo_differential_docker_test",
+          "run": 2,
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "ef63eacb6afbeaa695d5ad943c90ccf62481d4f0dd29bcf0978be99d0a6aebab"
+        },
+        {
+          "target": "//crates/traces:tempo_differential_docker_test",
+          "run": 3,
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "c8868c66058703483a65e3b18d2930741430cfd88386990fd321c975cd47dcbd"
+        },
+        {
+          "target": "//crates/traces:tempo_differential_previous_docker_test",
+          "run": 1,
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "db4acf9e1fb0f4986c3a792132ede460083937a3f19bbd65f6206dccc167ebec"
+        },
+        {
+          "target": "//crates/traces:tempo_differential_previous_docker_test",
+          "run": 2,
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "42816320c6bad9822a77c2d2b214d02306f9e51d90ea6efa62b242d2aacc8687"
+        },
+        {
+          "target": "//crates/traces:tempo_differential_previous_docker_test",
+          "run": 3,
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "db4acf9e1fb0f4986c3a792132ede460083937a3f19bbd65f6206dccc167ebec"
+        }
+      ],
+      "clippy_target": "//crates/traces:tempo_differential_test_clippy",
+      "clippy_log_sha256": "c8e138186f806efaadab1f3f216fd3a68e0b015ee77c60c0b7a8ea418392fc8b",
+      "test_source_sha256": "4925065f80e0de328c5c7d014b7f3c5d19376d7cd46fc95f1321a91b0ffb8356",
+      "raw_evidence": "qualification/evidence/correctness/dense-block-metadata/tempo-response-diagnostics",
+      "diagnostic_negative": "Removing the fixed Grafana startup delay in a temporary diagnostic also passed three filtered runs. This did not reproduce the failure or establish a cause. The test source is byte-restored.",
+      "limitation": "Original proxy 404 and two failed unmodified follow-up attempts remain preserved. Fresh runs pass, but the response body and cause remain unverified. The assertion only improves future failure reporting; no setup fix is claimed."
     }
   },
-  "retention_decision": "Correctness qualification remains pending. The original 376-target scope passes with one retry, but fresh current Tempo wrappers reproduce the Grafana proxy 404 twice. Preserve the failures and identify the response before any setup repair. Exact-image performance controls remain required.",
+  "retention_decision": "The 376-target original scope, seven post-rebase bridge targets, six fresh full Tempo wrappers and response-capture Clippy gate pass. Historical Grafana proxy failures remain unresolved and preserved. No setup fix is claimed. Performance retention still needs the exact-image controls and fingerprint decision.",
   "comparison_plan": "Preserve and verify rebased baseline/candidate release images while the independent fingerprint confirmation finishes. Both sources have the same main revision and fingerprint implementation; their sole production difference is dense block metadata. Retention and qualified performance comparisons remain gated on correctness and the fingerprint decision. If that source decision changes, qualify the final combined source separately.",
   "source_commit": "e2fa65371cf99eaa7f439dcce86191a1177c9e1c",
   "rebase_note": "The 376-target run qualified the original e2fa6537 source before rebase. Upstream main 664e6987 adds Loki deployment coverage and changes compactor deletion handling; these changes need separate validation. Historical source references remain immutable.",
