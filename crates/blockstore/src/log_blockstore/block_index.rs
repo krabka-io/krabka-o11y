@@ -20,6 +20,12 @@ impl BlockIndex {
         &self.blocks
     }
 
+    /// Consumes the index and moves out its ordered block descriptors.
+    #[must_use]
+    pub fn into_blocks(self) -> Vec<BlockDescriptor> {
+        self.blocks
+    }
+
     #[must_use]
     pub fn match_blocks(
         &self,
