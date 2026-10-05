@@ -3,7 +3,7 @@
   "experiment": "Omit per-entry source label copies for ordinary Loki queries; retain original labels for distinct and tail frames.",
   "source_commit": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
   "retained_in_branch": true,
-  "retention_decision": "All 120 scoped targets and five actual Loki/Grafana Docker wrappers pass. Baseline CPU capture is verified; baseline allocation and candidate exact-image captures and paired comparison remain pending. No measured efficiency gain qualified.",
+  "retention_decision": "All 120 scoped targets and five actual Loki/Grafana Docker wrappers pass. Exact baseline CPU/allocation captures verified. Candidate image build, exact-image captures and same-VM revision control remain pending. No measured efficiency gain qualified.",
   "baseline_source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
   "baseline_harness_commit": "aeb67637f680bf67f006d343b811f019662bad87",
   "diagnostic_selection": {
@@ -96,6 +96,39 @@
           "diagnostic_only": true
         }
       ]
+    },
+    "allocations_provenance": {
+      "run_id": 37329590449,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37329590449",
+      "head_sha": "aeb67637f680bf67f006d343b811f019662bad87",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111829007182,
+          "name": "compare (logs)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37329590449/job/111829007182",
+          "runner_name": "gcp-runner-9206178ad1424d5e",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T15:03:57Z",
+          "completed_at": "2026-10-05T15:11:06Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11354072203,
+          "name": "grafana-comparison-logs-aeb67637f680bf67f006d343b811f019662bad87-1",
+          "digest": "sha256:195059d86b519108ae4796e4980135cd79c4f18ff66ea60fb6d578a524f20c54",
+          "size_in_bytes": 386613210,
+          "expires_at": "2027-01-03T15:02:40Z",
+          "signal": "logs",
+          "verified_raw_files": 130,
+          "diagnostic_only": true
+        }
+      ]
     }
   },
   "performance_qualified": false,
@@ -141,5 +174,7 @@
     "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37330880469",
     "head_sha": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
     "status_at_recording": "in_progress"
-  }
+  },
+  "baseline_profile_details_record": "qualification/grafana-profiling-gcp.json",
+  "baseline_profile_details_key": "loki_query_source_labels_baseline_captures"
 }
