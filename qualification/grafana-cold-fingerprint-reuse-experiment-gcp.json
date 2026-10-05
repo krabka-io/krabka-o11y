@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Reuse canonical cold-series keys in instant labels and cardinality",
-  "status": "restored_source_correctness_scope_qualified_both_images_verified",
+  "status": "scoped_correctness_qualified_mimir_matched_comparison_dispatched",
   "baseline_source_commit": "d4125ea317b203173f80e5feba1991b0b942c469",
   "source_commit": "1dbd10da44b6b319efea54de61dfdddb40f70c7d",
   "performance_qualified": false,
@@ -74,7 +74,7 @@
       "scope": "The full metadata ledger, blockstore/PromQL/metrics-service unit and library Clippy checks pass with the original metadata and fingerprint implementations restored. Prior native checks remain pinned to their earlier source."
     }
   },
-  "next_action": "Dispatch the matched Mimir comparison using these exact images. Both retain equal subsequently rejected dense metadata; this isolates cold fingerprint reuse and does not qualify the final restored source.",
+  "next_action": "Collect and strictly verify this registered Mimir comparison before deciding on reuse retention. Resume the same run after an observation timeout.",
   "correctness_scope_qualified": true,
   "restored_image_builds": {
     "baseline_source_commit": "8718820c9d8f287292445ace014e67587dc80713",
@@ -195,5 +195,33 @@
     "changed_application_binary_paths": [
       "usr/local/bin/krabka-metrics-service"
     ]
+  },
+  "gcp_comparison": {
+    "run_id": 37374650578,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37374650578",
+    "harness_head_sha": "eedb57d0984b1084daff674e055fd7c67a433097",
+    "inputs": {
+      "signal": "metrics",
+      "profiling": "none",
+      "phases": "steady",
+      "phase_seconds": "60",
+      "repetitions": "3",
+      "deployment_target": "all",
+      "profiles_target": "all",
+      "image_artifact_run": "37371016528",
+      "image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+      "baseline_image_artifact_run": "37370655001",
+      "baseline_image_artifact_name": "comparison-image-metrics-8718820c9d8f287292445ace014e67587dc80713"
+    },
+    "status": "dispatched",
+    "live_instances_at_dispatch": [
+      {
+        "name": "gcp-runner-8a38ed2c76424626",
+        "status": "RUNNING"
+      }
+    ],
+    "image_runtime_control_verified": true,
+    "performance_qualified": false,
+    "limitations": "Both immutable source images contain equal subsequently rejected dense metadata. The original fingerprint function and engine fixes are present in both. This control isolates cold fingerprint reuse and does not qualify final HEAD."
   }
 }
