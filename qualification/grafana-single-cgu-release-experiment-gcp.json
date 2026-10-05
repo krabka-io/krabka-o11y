@@ -110,6 +110,15 @@
       ],
       "retries_disabled": true,
       "scope": "Native compatibility and deployment checks on current source with original metadata restored. They supplement core checks and do not qualify the historical image source globally."
+    },
+    "full_ordinary_scope": {
+      "status": "queued_behind_native_checks",
+      "source_commit": "45d9c94b273b6cf0781249a9c71002ca46afac07",
+      "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
+      "target_pattern": "//...",
+      "docker_and_scale_excluded_by_repository_defaults": true,
+      "retries_disabled": true,
+      "scope": "Full ordinary Bazel suite on current source, including integration tests and Clippy, with one codegen unit. Native compatibility checks remain a separate scope."
     }
   },
   "next_action": "Run a matched Mimir comparison and the native differential and deployment checks with one codegen unit. The static size reduction does not prove CPU or RSS improvement.",
