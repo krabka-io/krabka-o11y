@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "experiment": "Fold canonical label fingerprint bytes without per-byte chain state",
-  "status": "correctness_qualified_all_signal_comparison_running",
+  "status": "all_signal_measurements_verified_mimir_confirmation_running",
   "baseline_source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
   "source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649",
   "performance_qualified": false,
-  "retention_decision": "Pending confirmation and remaining signals. Mimir CPU median improves but only one pair has lower total CPU; query and ingest improve in two pairs. Peak RSS is higher in all three pairs with overlapping ranges. Loki CPU improves in two pairs and RSS/query in all three, with overlapping ranges. No global retention is qualified.",
+  "retention_decision": "Pending Mimir confirmation. First control has mixed total CPU/RSS for Mimir and mixed latency for Pyroscope. Tempo CPU and query improve in all three pairs; query ranges are disjoint. Loki RSS and query improve in all three pairs, with overlapping ranges. No global retention is qualified.",
   "scope": {
     "production_paths": [
       "crates/blockstore/src/labels/labels_type.rs"
@@ -1629,7 +1629,7 @@
     "run_id": 37357671713,
     "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37357671713",
     "head_sha": "9019af3f5ae539a6cd11c231ca4619f7ba707f78",
-    "status": "metrics_and_logs_verified_other_signals_running",
+    "status": "all_four_signal_artifacts_verified",
     "performance_qualified": false,
     "inputs": {
       "signal": "all",
@@ -1654,12 +1654,12 @@
     "scope": "All four signals. Three native Krabka/upstream repetitions plus three alternating baseline/candidate pairs per signal. Exact preserved images, matched workload and aggregate resource budgets. CPU and RSS include broker and MinIO.",
     "completed_signal_results": {
       "metrics": {
-        "qualification_scope": "Completed signal job only; parent workflow remains in progress.",
+        "qualification_scope": "Completed signal job within successful parent workflow.",
         "provenance": {
           "run_id": 37357671713,
           "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37357671713",
           "head_sha": "9019af3f5ae539a6cd11c231ca4619f7ba707f78",
-          "run_conclusion": null,
+          "run_conclusion": "success",
           "jobs": [
             {
               "id": 111924109299,
@@ -1924,136 +1924,46 @@
           "query_p99_seconds": 0.9385108179988458,
           "ingest_p99_seconds": 0.8616841760223758
         },
-        "full_revision_pairs_path": "qualification/evidence/performance/gcp-37357671713/metrics/verified-revision-pairs.json",
-        "full_revision_pairs_sha256": "bafaf9dc60ca970fd9de610ffb8c8db69a2f14bbd3b9462243d96a5032252c8d",
+        "pair_checks": {
+          "average_cpu_cores": {
+            "candidate_lower_pairs": 1,
+            "ranges_overlap": true
+          },
+          "rss_kib": {
+            "candidate_lower_pairs": 0,
+            "ranges_overlap": true
+          },
+          "query_p99_seconds": {
+            "candidate_lower_pairs": 2,
+            "ranges_overlap": true
+          },
+          "ingest_p99_seconds": {
+            "candidate_lower_pairs": 2,
+            "ranges_overlap": true
+          }
+        },
+        "verified_revision_pairs_path": "qualification/evidence/performance/gcp-37357671713/metrics/verified-revision-pairs.json",
+        "verified_revision_pairs_sha256": "f380f77a51c47da30a8427c3f2bbbe2ebbf0575f38d1b764e39482d2b9a3eab0",
         "native_summary_path": "qualification/evidence/performance/gcp-37357671713/metrics/verified-summary.json",
         "native_summary_sha256": "ee69df7186f0d2e2a6f03cbc47e2c875b5c3516dac8b01e0ca71278bae0ca9ec",
-        "native_ratios": {
+        "native_krabka_divided_by_upstream": {
           "average_cpu_cores": 0.605993802585007,
           "rss_kib": 1.5982442075935392,
           "query_p99_seconds": 1.0665903605282152,
           "ingest_p99_seconds": 3.0529045126007786
         },
-        "native_backends": {
-          "krabka": {
-            "query_p99_seconds": {
-              "median": 0.028837090000024546,
-              "min": 0.028030604000008452,
-              "max": 0.03123208399995292,
-              "values": [
-                0.028030604000008452,
-                0.03123208399995292,
-                0.028837090000024546
-              ]
-            },
-            "query_attempts": {
-              "median": 240,
-              "min": 240,
-              "max": 240,
-              "values": [
-                240,
-                240,
-                240
-              ]
-            },
-            "accepted_rows": {
-              "median": 120000,
-              "min": 120000,
-              "max": 120000,
-              "values": [
-                120000,
-                120000,
-                120000
-              ]
-            },
-            "average_cpu_cores": {
-              "median": 0.21817175301421043,
-              "min": 0.2142109920203464,
-              "max": 0.218821054849359,
-              "values": [
-                0.2142109920203464,
-                0.218821054849359,
-                0.21817175301421043
-              ]
-            },
-            "rss_kib": {
-              "median": 486448,
-              "min": 484404,
-              "max": 495664,
-              "values": [
-                484404,
-                495664,
-                486448
-              ]
-            }
-          },
-          "mimir": {
-            "query_p99_seconds": {
-              "median": 0.027036705999989863,
-              "min": 0.02510164199998144,
-              "max": 0.027394419999950514,
-              "values": [
-                0.02510164199998144,
-                0.027036705999989863,
-                0.027394419999950514
-              ]
-            },
-            "query_attempts": {
-              "median": 240,
-              "min": 240,
-              "max": 240,
-              "values": [
-                240,
-                240,
-                240
-              ]
-            },
-            "accepted_rows": {
-              "median": 120000,
-              "min": 120000,
-              "max": 120000,
-              "values": [
-                120000,
-                120000,
-                120000
-              ]
-            },
-            "average_cpu_cores": {
-              "median": 0.3600230762815531,
-              "min": 0.34619689756054794,
-              "max": 0.3618330618065325,
-              "values": [
-                0.3600230762815531,
-                0.3618330618065325,
-                0.34619689756054794
-              ]
-            },
-            "rss_kib": {
-              "median": 304364,
-              "min": 302852,
-              "max": 308824,
-              "values": [
-                302852,
-                304364,
-                308824
-              ]
-            }
-          }
-        },
-        "lower_pairs": {
-          "average_cpu_cores": 1,
-          "rss_kib": 0,
-          "query_p99_seconds": 2,
-          "ingest_p99_seconds": 2
+        "native_query_p99_ms": {
+          "krabka": 28.837090000024546,
+          "mimir": 27.036705999989863
         }
       },
       "logs": {
-        "qualification_scope": "Completed signal job only; parent workflow remains in progress.",
+        "qualification_scope": "Completed signal job within successful parent workflow.",
         "provenance": {
           "run_id": 37357671713,
           "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37357671713",
           "head_sha": "9019af3f5ae539a6cd11c231ca4619f7ba707f78",
-          "run_conclusion": null,
+          "run_conclusion": "success",
           "jobs": [
             {
               "id": 111924108861,
@@ -2258,130 +2168,529 @@
           "query_p99_seconds": 0.9532856930497006,
           "ingest_p99_seconds": 1.0137639470208482
         },
-        "full_revision_pairs_path": "qualification/evidence/performance/gcp-37357671713/logs/verified-revision-pairs.json",
-        "full_revision_pairs_sha256": "0445cd740bcc2474dc51aea7babf70e4b5e28e1163df6f02733814ed45cfb843",
+        "pair_checks": {
+          "average_cpu_cores": {
+            "candidate_lower_pairs": 2,
+            "ranges_overlap": true
+          },
+          "rss_kib": {
+            "candidate_lower_pairs": 3,
+            "ranges_overlap": true
+          },
+          "query_p99_seconds": {
+            "candidate_lower_pairs": 3,
+            "ranges_overlap": true
+          },
+          "ingest_p99_seconds": {
+            "candidate_lower_pairs": 1,
+            "ranges_overlap": true
+          }
+        },
+        "verified_revision_pairs_path": "qualification/evidence/performance/gcp-37357671713/logs/verified-revision-pairs.json",
+        "verified_revision_pairs_sha256": "5707e1c0f1438fd2e547e3df3d24556591736d58b1891600b081b736006f492a",
         "native_summary_path": "qualification/evidence/performance/gcp-37357671713/logs/verified-summary.json",
         "native_summary_sha256": "5de54d6e5d15d226eb144923248b5ea12a316e6c252f7f943b55c24d40c02f99",
-        "native_ratios": {
+        "native_krabka_divided_by_upstream": {
           "average_cpu_cores": 0.7872124418415778,
           "rss_kib": 0.90337687690806,
           "query_p99_seconds": 0.638400824243503,
           "ingest_p99_seconds": 3.7516142920491586
         },
-        "native_backends": {
-          "krabka": {
-            "query_p99_seconds": {
-              "median": 0.07652844499997968,
-              "min": 0.0738144290000946,
-              "max": 0.07900151800004096,
-              "values": [
-                0.07652844499997968,
-                0.0738144290000946,
-                0.07900151800004096
-              ]
-            },
+        "native_query_p99_ms": {
+          "krabka": 76.52844499997968,
+          "loki": 119.87522900000158
+        }
+      },
+      "traces": {
+        "qualification_scope": "Completed signal job within successful parent workflow.",
+        "provenance": {
+          "run_id": 37357671713,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37357671713",
+          "head_sha": "9019af3f5ae539a6cd11c231ca4619f7ba707f78",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111934514058,
+              "name": "compare (traces)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37357671713/job/111934514058",
+              "runner_name": "gcp-runner-7de1098e7fa84700",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T19:06:20Z",
+              "completed_at": "2026-10-05T19:29:19Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11367623030,
+              "name": "grafana-comparison-traces-9019af3f5ae539a6cd11c231ca4619f7ba707f78-1",
+              "digest": "sha256:7470f78c087b6c45734a0381f7eab1639463738d66f5e5a2743ba8eeacea1fad",
+              "size_in_bytes": 5887911,
+              "expires_at": "2027-01-03T18:40:06Z",
+              "signal": "traces",
+              "verified_raw_files": 725
+            }
+          ]
+        },
+        "summary": {
+          "baseline": {
             "query_attempts": {
-              "median": 239,
-              "min": 239,
-              "max": 239,
+              "median": 235,
+              "min": 235,
+              "max": 235,
               "values": [
-                239,
-                239,
-                239
-              ]
-            },
-            "accepted_rows": {
-              "median": 120000,
-              "min": 120000,
-              "max": 120000,
-              "values": [
-                120000,
-                120000,
-                120000
+                235,
+                235,
+                235
               ]
             },
             "average_cpu_cores": {
-              "median": 0.3875692347460862,
-              "min": 0.3864727147482467,
-              "max": 0.39758277788532315,
+              "median": 0.4437732514081647,
+              "min": 0.4223695368821516,
+              "max": 0.4504381859370831,
               "values": [
-                0.3875692347460862,
-                0.3864727147482467,
-                0.39758277788532315
+                0.4223695368821516,
+                0.4437732514081647,
+                0.4504381859370831
               ]
             },
             "rss_kib": {
-              "median": 347988,
-              "min": 343712,
-              "max": 363232,
+              "median": 524300,
+              "min": 495300,
+              "max": 524944,
               "values": [
-                343712,
-                363232,
-                347988
+                524300,
+                524944,
+                495300
               ]
+            },
+            "query_p99_seconds": {
+              "median": 0.11700474799999938,
+              "min": 0.10712904100000742,
+              "max": 0.11958783399995809,
+              "values": [
+                0.10712904100000742,
+                0.11700474799999938,
+                0.11958783399995809
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.02179529599993657,
+              "min": 0.020207067999990613,
+              "max": 0.021798359000058554,
+              "values": [
+                0.020207067999990613,
+                0.02179529599993657,
+                0.021798359000058554
+              ]
+            },
+            "average_cpu_cores_by_role": {
+              "broker": {
+                "median": 0.021765258790746287,
+                "min": 0.01996320149709859,
+                "max": 0.022283663919814383,
+                "values": [
+                  0.01996320149709859,
+                  0.021765258790746287,
+                  0.022283663919814383
+                ]
+              },
+              "traces-all": {
+                "median": 0.3305192460937911,
+                "min": 0.316961849737216,
+                "max": 0.33736476836379065,
+                "values": [
+                  0.316961849737216,
+                  0.3305192460937911,
+                  0.33736476836379065
+                ]
+              },
+              "minio": {
+                "median": 0.09078975365347806,
+                "min": 0.08544448564783708,
+                "max": 0.09148874652362737,
+                "values": [
+                  0.08544448564783708,
+                  0.09148874652362737,
+                  0.09078975365347806
+                ]
+              }
             }
           },
-          "loki": {
-            "query_p99_seconds": {
-              "median": 0.11987522900000158,
-              "min": 0.11788081399993189,
-              "max": 0.1340575460000082,
-              "values": [
-                0.11987522900000158,
-                0.1340575460000082,
-                0.11788081399993189
-              ]
-            },
+          "candidate": {
             "query_attempts": {
-              "median": 239,
-              "min": 239,
-              "max": 239,
+              "median": 235,
+              "min": 235,
+              "max": 235,
               "values": [
-                239,
-                239,
-                239
-              ]
-            },
-            "accepted_rows": {
-              "median": 120000,
-              "min": 120000,
-              "max": 120000,
-              "values": [
-                120000,
-                120000,
-                120000
+                235,
+                235,
+                235
               ]
             },
             "average_cpu_cores": {
-              "median": 0.49233118551762217,
-              "min": 0.46446161424652144,
-              "max": 0.5259138087162404,
+              "median": 0.415806300190768,
+              "min": 0.41266084749576243,
+              "max": 0.4241755852017101,
               "values": [
-                0.46446161424652144,
-                0.5259138087162404,
-                0.49233118551762217
+                0.415806300190768,
+                0.41266084749576243,
+                0.4241755852017101
               ]
             },
             "rss_kib": {
-              "median": 385208,
-              "min": 383656,
-              "max": 395408,
+              "median": 521856,
+              "min": 508800,
+              "max": 528560,
               "values": [
-                395408,
-                385208,
-                383656
+                508800,
+                521856,
+                528560
               ]
+            },
+            "query_p99_seconds": {
+              "median": 0.09648765900010403,
+              "min": 0.09626056900015101,
+              "max": 0.10193638800001281,
+              "values": [
+                0.10193638800001281,
+                0.09626056900015101,
+                0.09648765900010403
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.016172559999859004,
+              "min": 0.012813568999945346,
+              "max": 0.020335878999958368,
+              "values": [
+                0.020335878999958368,
+                0.012813568999945346,
+                0.016172559999859004
+              ]
+            },
+            "average_cpu_cores_by_role": {
+              "broker": {
+                "median": 0.020906355057556544,
+                "min": 0.01949301230203015,
+                "max": 0.020956903024756113,
+                "values": [
+                  0.01949301230203015,
+                  0.020906355057556544,
+                  0.020956903024756113
+                ]
+              },
+              "traces-all": {
+                "median": 0.31131603936936225,
+                "min": 0.3081560583601324,
+                "max": 0.3168129814630592,
+                "values": [
+                  0.31131603936936225,
+                  0.3081560583601324,
+                  0.3168129814630592
+                ]
+              },
+              "minio": {
+                "median": 0.08499724851937554,
+                "min": 0.08359843407807355,
+                "max": 0.08640570071389475,
+                "values": [
+                  0.08499724851937554,
+                  0.08359843407807355,
+                  0.08640570071389475
+                ]
+              }
             }
           }
         },
-        "lower_pairs": {
-          "average_cpu_cores": 2,
-          "rss_kib": 3,
-          "query_p99_seconds": 3,
-          "ingest_p99_seconds": 1
+        "candidate_divided_by_baseline": {
+          "query_attempts": 1.0,
+          "average_cpu_cores": 0.9369791867160694,
+          "rss_kib": 0.9953385466336068,
+          "query_p99_seconds": 0.8246473809772621,
+          "ingest_p99_seconds": 0.7420206635370343
+        },
+        "pair_checks": {
+          "average_cpu_cores": {
+            "candidate_lower_pairs": 3,
+            "ranges_overlap": true
+          },
+          "rss_kib": {
+            "candidate_lower_pairs": 2,
+            "ranges_overlap": true
+          },
+          "query_p99_seconds": {
+            "candidate_lower_pairs": 3,
+            "ranges_overlap": false
+          },
+          "ingest_p99_seconds": {
+            "candidate_lower_pairs": 2,
+            "ranges_overlap": true
+          }
+        },
+        "verified_revision_pairs_path": "qualification/evidence/performance/gcp-37357671713/traces/verified-revision-pairs.json",
+        "verified_revision_pairs_sha256": "6a8dc3891475ba16328246700d643ff0ea1da38d283a0e0cdf28a57d02d4ca7f",
+        "native_summary_path": "qualification/evidence/performance/gcp-37357671713/traces/verified-summary.json",
+        "native_summary_sha256": "496641c546d326958ba81e5fc717d808bb38b75cfb7f079fb5939af4c5f525d5",
+        "native_krabka_divided_by_upstream": {
+          "average_cpu_cores": 0.7120703721254921,
+          "rss_kib": 0.9455836882328919,
+          "query_p99_seconds": 0.9083735142040978,
+          "ingest_p99_seconds": 5.654405255495897
+        },
+        "native_query_p99_ms": {
+          "krabka": 104.66491100009989,
+          "tempo": 115.2223279999589
+        }
+      },
+      "profiles": {
+        "qualification_scope": "Completed signal job within successful parent workflow.",
+        "provenance": {
+          "run_id": 37357671713,
+          "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37357671713",
+          "head_sha": "9019af3f5ae539a6cd11c231ca4619f7ba707f78",
+          "run_conclusion": "success",
+          "jobs": [
+            {
+              "id": 111934685252,
+              "name": "compare (profiles)",
+              "conclusion": "success",
+              "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37357671713/job/111934685252",
+              "runner_name": "gcp-runner-2fb4babd1f254b63",
+              "runner_group_name": "default",
+              "labels": [
+                "gcp-ubuntu-24-04-16core"
+              ],
+              "started_at": "2026-10-05T19:06:33Z",
+              "completed_at": "2026-10-05T19:35:01Z"
+            }
+          ],
+          "artifacts": [
+            {
+              "id": 11366909560,
+              "name": "grafana-comparison-profiles-9019af3f5ae539a6cd11c231ca4619f7ba707f78-1",
+              "digest": "sha256:672a9a5a0c60223b1580ee2e7a214598d80f4f849c05f297118998d96dd14b7b",
+              "size_in_bytes": 8836267,
+              "expires_at": "2027-01-03T18:40:06Z",
+              "signal": "profiles",
+              "verified_raw_files": 743
+            }
+          ]
+        },
+        "summary": {
+          "baseline": {
+            "query_attempts": {
+              "median": 240,
+              "min": 240,
+              "max": 240,
+              "values": [
+                240,
+                240,
+                240
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.1310833684086242,
+              "min": 0.1287362463674971,
+              "max": 0.13332050211774493,
+              "values": [
+                0.1287362463674971,
+                0.1310833684086242,
+                0.13332050211774493
+              ]
+            },
+            "rss_kib": {
+              "median": 368636,
+              "min": 368136,
+              "max": 370432,
+              "values": [
+                370432,
+                368636,
+                368136
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.020612417999927857,
+              "min": 0.01998845100001745,
+              "max": 0.02104251000014301,
+              "values": [
+                0.01998845100001745,
+                0.020612417999927857,
+                0.02104251000014301
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.017552260000002207,
+              "min": 0.01667445900011444,
+              "max": 0.01892594899982214,
+              "values": [
+                0.017552260000002207,
+                0.01667445900011444,
+                0.01892594899982214
+              ]
+            },
+            "average_cpu_cores_by_role": {
+              "broker": {
+                "median": 0.020153167269698975,
+                "min": 0.019727031979940416,
+                "max": 0.020349979508221528,
+                "values": [
+                  0.019727031979940416,
+                  0.020349979508221528,
+                  0.020153167269698975
+                ]
+              },
+              "profiles-all": {
+                "median": 0.057639823789252906,
+                "min": 0.05677052452327061,
+                "max": 0.058127145236773044,
+                "values": [
+                  0.05677052452327061,
+                  0.057639823789252906,
+                  0.058127145236773044
+                ]
+              },
+              "minio": {
+                "median": 0.05309356511114977,
+                "min": 0.05223868986428605,
+                "max": 0.05504018961127291,
+                "values": [
+                  0.05223868986428605,
+                  0.05309356511114977,
+                  0.05504018961127291
+                ]
+              }
+            }
+          },
+          "candidate": {
+            "query_attempts": {
+              "median": 240,
+              "min": 240,
+              "max": 240,
+              "values": [
+                240,
+                240,
+                240
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.1307847858064273,
+              "min": 0.1297070408408667,
+              "max": 0.13124907294933164,
+              "values": [
+                0.13124907294933164,
+                0.1307847858064273,
+                0.1297070408408667
+              ]
+            },
+            "rss_kib": {
+              "median": 367468,
+              "min": 364444,
+              "max": 369796,
+              "values": [
+                369796,
+                367468,
+                364444
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.021142010999938066,
+              "min": 0.020338088000016796,
+              "max": 0.02220883099994353,
+              "values": [
+                0.02220883099994353,
+                0.021142010999938066,
+                0.020338088000016796
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.017804720999947676,
+              "min": 0.016629549000072075,
+              "max": 0.018185280999887254,
+              "values": [
+                0.017804720999947676,
+                0.018185280999887254,
+                0.016629549000072075
+              ]
+            },
+            "average_cpu_cores_by_role": {
+              "broker": {
+                "median": 0.01995495474649511,
+                "min": 0.019910253050922123,
+                "max": 0.020296005794879685,
+                "values": [
+                  0.020296005794879685,
+                  0.019910253050922123,
+                  0.01995495474649511
+                ]
+              },
+              "profiles-all": {
+                "median": 0.05793392562788788,
+                "min": 0.05759234440770338,
+                "max": 0.05798333990253141,
+                "values": [
+                  0.05793392562788788,
+                  0.05798333990253141,
+                  0.05759234440770338
+                ]
+              },
+              "minio": {
+                "median": 0.052891192852973765,
+                "min": 0.05215974168666822,
+                "max": 0.053019141526564076,
+                "values": [
+                  0.053019141526564076,
+                  0.052891192852973765,
+                  0.05215974168666822
+                ]
+              }
+            }
+          }
+        },
+        "candidate_divided_by_baseline": {
+          "query_attempts": 1.0,
+          "average_cpu_cores": 0.997722193091147,
+          "rss_kib": 0.9968315628424788,
+          "query_p99_seconds": 1.0256929099735927,
+          "ingest_p99_seconds": 1.014383389942118
+        },
+        "pair_checks": {
+          "average_cpu_cores": {
+            "candidate_lower_pairs": 2,
+            "ranges_overlap": true
+          },
+          "rss_kib": {
+            "candidate_lower_pairs": 3,
+            "ranges_overlap": true
+          },
+          "query_p99_seconds": {
+            "candidate_lower_pairs": 1,
+            "ranges_overlap": true
+          },
+          "ingest_p99_seconds": {
+            "candidate_lower_pairs": 1,
+            "ranges_overlap": true
+          }
+        },
+        "verified_revision_pairs_path": "qualification/evidence/performance/gcp-37357671713/profiles/verified-revision-pairs.json",
+        "verified_revision_pairs_sha256": "1710a4c4806a1645f57d2e690885eb85ef95e12762d736cdcd83bad7e50ceb7c",
+        "native_summary_path": "qualification/evidence/performance/gcp-37357671713/profiles/verified-summary.json",
+        "native_summary_sha256": "e4eb501c75cf2beb85a9aa6ecece5c072822066c6eb9cf79e135c28c32c9d928",
+        "native_krabka_divided_by_upstream": {
+          "average_cpu_cores": 0.40930977917092903,
+          "rss_kib": 0.8884797627929962,
+          "query_p99_seconds": 0.8716396133682112,
+          "ingest_p99_seconds": 0.04995954937916314
+        },
+        "native_query_p99_ms": {
+          "krabka": 20.334490999971422,
+          "pyroscope": 23.329012000033345
         }
       }
-    }
+    },
+    "measurement_qualified": true
   },
   "confirmation": {
     "run_id": 37363580969,
