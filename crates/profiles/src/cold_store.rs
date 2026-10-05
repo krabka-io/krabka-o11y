@@ -28,6 +28,7 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+    mod parallel_reads;
     mod wal_handoff;
     use std::sync::Arc;
 
