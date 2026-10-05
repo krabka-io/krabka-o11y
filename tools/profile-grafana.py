@@ -2,7 +2,7 @@
 """Diagnostic profiles of the exact comparison image and steady workload.
 
 Instrumentation affects timing and RSS. These results do not qualify a
-performance comparison. MinIO profiles stay local (--airgap).
+performance comparison. MinIO profiles use only the local admin API.
 """
 import argparse
 import concurrent.futures
