@@ -118,19 +118,25 @@
       "native_wrappers_passed": 7
     },
     "full_ordinary_scope": {
-      "status": "running",
+      "status": "build_failed",
       "source_commit": "45d9c94b273b6cf0781249a9c71002ca46afac07",
       "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
       "target_pattern": "//...",
       "docker_and_scale_excluded_by_repository_defaults": true,
       "retries_disabled": true,
       "scope": "Full ordinary Bazel suite on current source, including integration tests and Clippy, with one codegen unit. Native compatibility checks remain a separate scope.",
-      "targets": 385
+      "targets": 385,
+      "targets_passed_before_abort": 80,
+      "targets_skipped_after_abort": 304,
+      "failed_target": "//crates/integration:backup_restore_test",
+      "failure": "Rust E0275: sqlparser AST Sync trait recursion overflow in the test crate. Default compiler configuration is being checked to classify the cause.",
+      "failure_log_path": "qualification/evidence/correctness/single-cgu-full-ordinary-45d9c94b-failed/validation.log",
+      "failure_log_sha256": "b6f6c60b489da4e50493679a539b31c5b0287ce21c08a3005179c4445419a9d2"
     },
     "native_wrappers_passed": 10,
     "native_cases_passed": 67
   },
-  "next_action": "Measure Loki, Tempo and Pyroscope with the same exact images. Finish native and ordinary correctness checks. Validate final combined source before retention.",
+  "next_action": "Finish Tempo and Pyroscope controls and ordinary build checks. Loki query regression prevents global retention on this evidence; investigate a scoped metrics setting and validate final source.",
   "baseline_image_verified": {
     "image_provenance": {
       "run_id": 37371016528,
@@ -314,7 +320,7 @@
         "baseline_image_artifact_run": "37371016528",
         "baseline_image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6"
       },
-      "status": "dispatched",
+      "status": "success_verified",
       "live_instances_at_dispatch": [
         {
           "name": "gcp-runner-4aa75c0c7e6e4406",
@@ -322,7 +328,41 @@
         }
       ],
       "image_runtime_control_verified": true,
-      "performance_qualified": false
+      "performance_qualified": false,
+      "measurement_qualified": true,
+      "verified_raw_files": 725,
+      "proof_path": "qualification/evidence/performance/gcp-37380543910/logs/verified-revision-pairs.json",
+      "proof_sha256": "b3afa8a9cfff3aa4abb16b177805292c979c2e1ecd14663a2f236d17a70f2ead",
+      "candidate_divided_by_baseline": {
+        "query_attempts": 1.0,
+        "average_cpu_cores": 0.9926776594782724,
+        "rss_kib": 0.9268961718534839,
+        "query_p99_seconds": 1.1082326961242484,
+        "ingest_p99_seconds": 1.145543246641662
+      },
+      "pair_directions": {
+        "query_attempts": {
+          "candidate_lower_pairs": 0,
+          "ranges_overlap": true
+        },
+        "average_cpu_cores": {
+          "candidate_lower_pairs": 2,
+          "ranges_overlap": true
+        },
+        "rss_kib": {
+          "candidate_lower_pairs": 3,
+          "ranges_overlap": false
+        },
+        "query_p99_seconds": {
+          "candidate_lower_pairs": 0,
+          "ranges_overlap": false
+        },
+        "ingest_p99_seconds": {
+          "candidate_lower_pairs": 1,
+          "ranges_overlap": true
+        }
+      },
+      "decision": "Loki RSS is lower in all three pairs with disjoint ranges, but query p99 is higher in all three pairs with disjoint ranges (median +10.8%). Global retention is not justified. CPU and ingest results are mixed. Assess a metrics-specific setting after remaining signal measurements."
     },
     "traces": {
       "run_id": 37380619358,
@@ -341,7 +381,7 @@
         "baseline_image_artifact_run": "37371016528",
         "baseline_image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6"
       },
-      "status": "dispatched",
+      "status": "success_verified",
       "live_instances_at_dispatch": [
         {
           "name": "gcp-runner-10bca65550514f20",
@@ -353,7 +393,41 @@
         }
       ],
       "image_runtime_control_verified": true,
-      "performance_qualified": false
+      "performance_qualified": false,
+      "measurement_qualified": true,
+      "verified_raw_files": 725,
+      "proof_path": "qualification/evidence/performance/gcp-37380619358/traces/verified-revision-pairs.json",
+      "proof_sha256": "d0a29750acfe45c319295626aa9dd199e58d1c1f0f3bec8ad54b3cb3d9e91b09",
+      "candidate_divided_by_baseline": {
+        "query_attempts": 1.0,
+        "average_cpu_cores": 0.9916426239886301,
+        "rss_kib": 0.9510206013187368,
+        "query_p99_seconds": 0.9847806960239596,
+        "ingest_p99_seconds": 0.9806693245860278
+      },
+      "pair_directions": {
+        "query_attempts": {
+          "candidate_lower_pairs": 0,
+          "ranges_overlap": true
+        },
+        "average_cpu_cores": {
+          "candidate_lower_pairs": 2,
+          "ranges_overlap": true
+        },
+        "rss_kib": {
+          "candidate_lower_pairs": 3,
+          "ranges_overlap": false
+        },
+        "query_p99_seconds": {
+          "candidate_lower_pairs": 2,
+          "ranges_overlap": true
+        },
+        "ingest_p99_seconds": {
+          "candidate_lower_pairs": 2,
+          "ranges_overlap": true
+        }
+      },
+      "decision": "Preserved-image measurement only. See pair directions for reproducibility; does not reverse Loki query regression or qualify final source."
     },
     "profiles": {
       "run_id": 37380853989,

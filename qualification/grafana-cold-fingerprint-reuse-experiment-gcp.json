@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Reuse canonical cold-series keys in instant labels and cardinality",
-  "status": "first_matched_mimir_verified_confirmation_dispatched",
+  "status": "two_matched_comparisons_verified_final_source_pending",
   "baseline_source_commit": "d4125ea317b203173f80e5feba1991b0b942c469",
   "source_commit": "1dbd10da44b6b319efea54de61dfdddb40f70c7d",
   "performance_qualified": false,
@@ -74,7 +74,7 @@
       "scope": "The full metadata ledger, blockstore/PromQL/metrics-service unit and library Clippy checks pass with the original metadata and fingerprint implementations restored. Prior native checks remain pinned to their earlier source."
     }
   },
-  "next_action": "Collect and strictly verify this registered Mimir comparison before deciding on reuse retention. Resume the same run after an observation timeout.",
+  "next_action": "Compare upstream source for larger memory and query opportunities; qualify reuse on final source before retention.",
   "correctness_scope_qualified": true,
   "restored_image_builds": {
     "baseline_source_commit": "8718820c9d8f287292445ace014e67587dc80713",
@@ -289,7 +289,7 @@
       }
     }
   },
-  "decision": "Do not retain yet. RSS is lower in all three pairs, but ranges overlap. CPU is lower in one of three pairs and query p99 in two. Repeat the matched Mimir comparison before deciding. Both exact images contain the same subsequently rejected dense metadata; this isolates reuse and does not qualify final HEAD.",
+  "decision": "Median query p99 is 4.5% and 5.6% lower in the two matched runs, with lower p99 in five of six pairs. All ranges overlap. Aggregate CPU is lower in only two of six pairs; the initial RSS median gain does not repeat. Do not claim CPU or RSS improvement. Keep this as an unqualified query candidate pending a control on final source with original metadata restored.",
   "gcp_confirmation": {
     "run_id": 37377663184,
     "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37377663184",
@@ -307,7 +307,7 @@
       "baseline_image_artifact_run": "37370655001",
       "baseline_image_artifact_name": "comparison-image-metrics-8718820c9d8f287292445ace014e67587dc80713"
     },
-    "status": "dispatched",
+    "status": "success_verified",
     "live_instances_at_dispatch": [
       {
         "name": "gcp-runner-1e7bb8c674dc406c",
@@ -316,6 +316,71 @@
     ],
     "image_runtime_control_verified": true,
     "performance_qualified": false,
-    "scope": "Both immutable source images contain equal subsequently rejected dense metadata. The original fingerprint function and engine fixes are present in both. This control isolates cold fingerprint reuse and does not qualify final HEAD."
+    "scope": "Both immutable source images contain equal subsequently rejected dense metadata. The original fingerprint function and engine fixes are present in both. This control isolates cold fingerprint reuse and does not qualify final HEAD.",
+    "measurement_qualified": true,
+    "verified_raw_files": 725,
+    "proof_path": "qualification/evidence/performance/gcp-37377663184/metrics/verified-revision-pairs.json",
+    "proof_sha256": "2974e6770dcf51836177277cf8d412936e0f11ce6ec4881aa12db09b7235c938",
+    "candidate_divided_by_baseline": {
+      "query_attempts": 1.0,
+      "average_cpu_cores": 0.9862285633690633,
+      "rss_kib": 1.0018962153726103,
+      "query_p99_seconds": 0.9437091909014462,
+      "ingest_p99_seconds": 0.9860180914798411
+    },
+    "pair_directions": {
+      "query_attempts": {
+        "candidate_lower_pairs": 0,
+        "ranges_overlap": true
+      },
+      "average_cpu_cores": {
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      },
+      "rss_kib": {
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      },
+      "query_p99_seconds": {
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": true
+      },
+      "ingest_p99_seconds": {
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      }
+    },
+    "role_cpu": {
+      "broker": {
+        "candidate_divided_by_baseline": 0.9814398013092074,
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      },
+      "metrics-block-builder": {
+        "candidate_divided_by_baseline": 0.9832197756141414,
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      },
+      "metrics-compactor": {
+        "candidate_divided_by_baseline": 0.9633680971018187,
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      },
+      "metrics-distributor": {
+        "candidate_divided_by_baseline": 1.0005870668399623,
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      },
+      "metrics-querier": {
+        "candidate_divided_by_baseline": 0.9744876264322467,
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      },
+      "minio": {
+        "candidate_divided_by_baseline": 1.0151090610651854,
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      }
+    }
   }
 }
