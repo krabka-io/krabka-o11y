@@ -111,3 +111,5 @@ crate_tests(
         "timing-sensitive",
     ],
 )
+
+exports_files(["tests/support/container_deployment.rs"])

@@ -824,6 +824,15 @@ async fn compactor_runtime_materializes_active_delete_requests_in_existing_local
 
 #[tokio::test]
 async fn compactor_runtime_materializes_active_delete_requests_in_existing_shard_blocks() {
+    delete_existing_shard(true).await;
+}
+
+#[tokio::test]
+async fn compactor_runtime_deletes_existing_shard_rows_without_a_catalog() {
+    delete_existing_shard(false).await;
+}
+
+async fn delete_existing_shard(catalog_exists: bool) {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let mut config = compactor_config("observability/logs");
@@ -863,6 +872,16 @@ async fn compactor_runtime_materializes_active_delete_requests_in_existing_shard
     )
     .await
     .unwrap();
+
+    if !catalog_exists {
+        // Service compaction writes the shard manifest without a catalog.
+        store
+            .delete(
+                &krabka_blockstore::log_tenant_index_shard_catalog_object_path(&prefix, "tenant-a"),
+            )
+            .await
+            .unwrap();
+    }
 
     let app = build_service_router(&config, ServiceDependencies::default(), Some(&store))
         .await

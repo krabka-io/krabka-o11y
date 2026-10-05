@@ -29,6 +29,16 @@ The complete list is in `--help` and [`deploy/roles/`](../../deploy/roles).
 | `--object-store-url` | `KRABKA_OBSERVABILITY_OBJECT_STORE_URL` | none | Sets the log block store |
 | `--config.file` | `KRABKA_CONFIG_FILE` | none | Loads role configuration from YAML |
 
+## Deployment Tests
+
+Run the [Loki deployment scenarios](tests/loki_deployment.md):
+
+```bash
+bazel test --config=docker //crates/observability:loki_deployment_docker_test
+```
+
+The suite runs the locally built log roles with a real broker and `MinIO`, then verifies persisted answers with a querier whose WAL is empty.
+
 ## Documentation
 
 - [Getting started](../../docs/getting_started.md#logs)
