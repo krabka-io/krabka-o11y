@@ -198,14 +198,7 @@ impl InMemoryMetricStore {
         // One shared label set for the sample and every exemplar the record
         // carries, so a record costs one label-set allocation rather than one
         // per row, and every row that shares it clones by refcount afterwards.
-        self.apply_wal_record_with_labels(record, Arc::new(record.labels()));
-    }
-
-    pub(crate) fn apply_wal_record_with_labels(
-        &mut self,
-        record: &WalRecord,
-        series_labels: Arc<Labels>,
-    ) {
+        let series_labels = Arc::new(record.labels());
         match &record.payload {
             SamplePayload::Float {
                 timestamp_ms,
