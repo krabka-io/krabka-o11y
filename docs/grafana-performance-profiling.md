@@ -424,3 +424,19 @@ The [experiment record](../qualification/grafana-loki-shared-records-experiment-
 retains the source actually built, its equivalent rebased commit and all
 checks. All seven application binaries differ in this image; earlier metrics,
 Tempo and Pyroscope runs cannot qualify those binaries by equivalence.
+
+The decimal-prefix experiment on `ade83dfa` was rejected after
+[three same-VM revision pairs](https://github.com/krabka-io/krabka-o11y/actions/runs/37293349017).
+Its median CPU ratio to baseline was 1.024 and query p99 ratio 1.023; both
+ranges overlap. RSS rose in all three pairs (median ratio 1.010). Ingest p99
+fell at the median but not in every pair. All 725 raw checksums and the
+workload, source, image, budget and host gates passed. The formatter was
+reverted, retaining its independent canonical-byte regression.
+
+Its verified [CPU capture](https://github.com/krabka-io/krabka-o11y/actions/runs/37295933064)
+and [allocation capture](https://github.com/krabka-io/krabka-o11y/actions/runs/37296285016)
+remain diagnostic evidence. The allocation pass ran 95 queries on Intel
+model 79, versus 151 on AMD EPYC 7B12 in the preceding shared-record pass;
+its lower startup-inclusive totals do not establish a per-operation gain.
+The [experiment record](../qualification/grafana-loki-decimal-prefix-experiment-gcp.json)
+preserves both comparisons and exact image provenance.
