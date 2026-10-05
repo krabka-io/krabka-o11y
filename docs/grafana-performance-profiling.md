@@ -300,8 +300,7 @@ use the existing mutation and cleanup path. The snapshot regression checks
 float, histogram and exemplar hits, unchanged held rows and dead-entry
 cleanup. Removing only the fast path fails that regression while the other
 565 unit cases pass. All 35 scoped checks, including real Mimir and
-Prometheus differential suites, pass. The release-image comparison must
-establish the effect before claiming a performance gain.
+Prometheus differential suites, pass. The isolated release-image comparison below establishes the query effect.
 
 The cache-hit image `8541b68f` has verified
 [CPU](https://github.com/krabka-io/krabka-o11y/actions/runs/37293278069) and
@@ -311,9 +310,9 @@ windows contain 173, 253 and 298 samples with zero lost samples; weak-label
 cache cloning is below the flat-report threshold in every window. It is also
 absent from the allocation summary, which records 11,168,385 allocations,
 4,737,242 string clones and a 16.94MB peak heap over 106.05 seconds.
-These diagnostics confirm removal of the repeated cache copy. Retention
-still awaits the uninstrumented same-VM control using the shared-records
-image, rather than attributing cross-host profile totals to the cache change.
+These diagnostics confirm removal of the repeated cache copy. The isolated
+comparison below uses the shared-records image as its control; cross-host
+profile totals are not attribution of the cache change.
 
 The prune follow-up in
 [run 37264751159](https://github.com/krabka-io/krabka-o11y/actions/runs/37264751159)
@@ -411,14 +410,14 @@ Decimal length-prefix construction still accounts for 4,513,200 allocation
 calls, and pipeline evaluation still clones label maps repeatedly. These are
 the next concrete targets.
 
-The decimal length prefix now writes directly into the canonical byte buffer
+The rejected decimal-prefix experiment wrote directly into the canonical byte buffer
 with the standard I/O formatter, avoiding the temporary decimal `String`.
 The encoding and XXH3 input remain identical. An independent byte ledger
 covers empty strings, multi-digit lengths, Unicode byte lengths, delimiters
 and existing buffer contents. All 120 scoped checks pass, including
 block-store unit tests, the observability/LogQL scope and real Loki and
 Grafana integration and end-to-end suites. Allocation and uninstrumented
-release-image checks are still required before claiming its performance effect.
+release-image checks below did not establish a gain, and the change was reverted.
 
 The [experiment record](../qualification/grafana-loki-shared-records-experiment-gcp.json)
 retains the source actually built, its equivalent rebased commit and all
@@ -470,3 +469,15 @@ source, image, workload, host and resource gates passed. The
 [experiment record](../qualification/grafana-live-label-hit-experiment-gcp.json)
 also preserves the earlier combined control, which spans the shared Loki
 change and cannot isolate this optimization.
+
+Fresh Pyroscope [CPU](https://github.com/krabka-io/krabka-o11y/actions/runs/37298005269)
+and [allocation](https://github.com/krabka-io/krabka-o11y/actions/runs/37298189841)
+captures on `ade83dfa` passed, with 164 and 132 raw checksums verified. All
+CPU windows have zero lost samples (200, 196 and 207 samples). The
+allocation pass records 11,347,172 allocations, 5,641,591 string clones and
+a 5.92MB peak heap over 124.98 seconds including startup and seed. It
+accepts 1,400 profiles and completes 280 queries without errors or empty
+results on AMD EPYC 7B12. `fingerprint_labels` still clones names and
+values into a temporary canonical label map before hashing, reached through
+the production hot-store caller. Flame-tree construction also copies strings.
+These stacks select the next investigation; no new Pyroscope gain is claimed.
