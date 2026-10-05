@@ -48,7 +48,8 @@ def report_perf(pid, output):
                              '--call-graph', 'none',
                              '--children' if kind == 'cum' else '--no-children')
         output.with_name(output.name + '.' + kind + '.txt').write_text(report)
-        if re.search(r'Samples:\s+0\b', report) or 'Samples:' not in report:
+        samples = re.search(r'^# Samples:\s+([0-9.]+[KMG]?)\b', report, re.M)
+        if samples is None or float(samples[1].rstrip('KMG')) == 0:
             raise RuntimeError(f'empty CPU profile: {output}')
 
 
