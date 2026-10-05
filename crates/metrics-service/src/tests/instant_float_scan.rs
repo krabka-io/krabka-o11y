@@ -5,7 +5,9 @@ use std::sync::{
 
 use assert2::assert;
 use krabka_blockstore::{BlockStore, LabelMatcher, Labels, MatchOp, TenantId};
-use krabka_metrics::{LimitError, ObjectStoreCompactionIndexSink};
+use krabka_metrics::{
+    BucketSpan, LimitError, NativeHistogram, ObjectStoreCompactionIndexSink, ResetHint,
+};
 use krabka_promql::{
     EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine, PromqlError, QueryResult, WalHead,
 };
@@ -19,6 +21,7 @@ struct Fixture {
     store: Arc<RefreshingMetricBlockStore>,
     head: WalHead,
     reads: Arc<AtomicUsize>,
+    list_calls: Arc<AtomicUsize>,
     objects: Arc<dyn ObjectStore>,
     parquet_keys: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
 }
@@ -28,8 +31,9 @@ fn labels() -> Labels {
 }
 
 async fn fixture(cold: &[(&str, i64)]) -> Fixture {
+    let list_calls = Arc::new(AtomicUsize::new(0));
     let objects = Arc::new(CountingObjectStore::new(
-        Arc::new(AtomicUsize::new(0)),
+        Arc::clone(&list_calls),
         Time::ZERO,
     ));
     let reads = Arc::clone(&objects.parquet_reads);
@@ -72,6 +76,7 @@ async fn fixture(cold: &[(&str, i64)]) -> Fixture {
         store,
         head,
         reads,
+        list_calls,
         objects,
         parquet_keys,
     }
@@ -518,5 +523,184 @@ async fn conflicting_cold_ties_keep_the_full_scan() {
                 .query_instant(&tenant, "sum(up)", 14_000)
                 .await
                 .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn latest_aggregate_refreshes_one_window_for_samples_and_labels() {
+    let fixture = fixture(&[("api", 10_000)]).await;
+    let tenant = TenantId::new("tenant-a").unwrap();
+    let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
+    let expected: QueryResult = serde_json::from_value(serde_json::json!({
+        "InstantVector": [{"labels": {}, "ts_ms": 12_000, "value": {"Float": 7.0}}]
+    }))
+    .unwrap();
+    assert!(
+        engine
+            .query_instant(&tenant, "sum(up)", 12_000)
+            .await
+            .unwrap()
+            == expected
+    );
+    // The first request starts with no cached manifest window. Separate sample
+    // and label operations would list twice for their different lower bounds.
+    assert!(fixture.list_calls.load(Ordering::SeqCst) == 1);
+    assert!(fixture.reads.load(Ordering::SeqCst) == 0);
+}
+
+#[tokio::test]
+async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
+    let fixture = fixture(&[("api", 10_000), ("cold-boundary", 9_000)]).await;
+    let tenant = TenantId::new("tenant-a").unwrap();
+    let job_labels = |job| Labels::from_pairs([("__name__", "up"), ("job", job)]);
+    fixture.head.update(|hot| {
+        for (job, stamp) in [
+            ("float-boundary", 9_000),
+            ("outside", 8_000),
+            ("future", 13_000),
+        ] {
+            hot.push_float("tenant-a", job_labels(job), stamp, 42.0);
+        }
+        hot.push_float("tenant-b", labels(), 11_000, 42.0);
+        hot.push_histogram(
+            "tenant-a",
+            job_labels("hist-boundary"),
+            9_000,
+            NativeHistogram {
+                schema: 0,
+                is_float: false,
+                reset_hint: ResetHint::No,
+                zero_threshold: 1e-128,
+                zero_count: 0.0,
+                count: 2.0,
+                sum: 3.0,
+                positive_spans: vec![BucketSpan {
+                    offset: 0,
+                    length: 1,
+                }],
+                positive_counts: vec![2.0],
+                negative_spans: Vec::new(),
+                negative_counts: Vec::new(),
+                custom_values: None,
+                start_timestamp_ms: None,
+            },
+        );
+    });
+    let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
+    let captured = fixture
+        .store
+        .try_latest_float_scan("tenant-a", &matchers, 9_000, 9_001, 12_000, 4)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(captured.samples == vec![(labels().fingerprint(), 11_000, 7.0, Some(5_000))]);
+    let mut expected_labels = ["api", "cold-boundary", "float-boundary", "hist-boundary"]
+        .map(job_labels)
+        .to_vec();
+    expected_labels.sort_by_key(Labels::fingerprint);
+    assert!(
+        captured
+            .labels
+            .values()
+            .map(|labels| labels.as_ref())
+            .collect::<Vec<_>>()
+            == expected_labels.iter().collect::<Vec<_>>()
+    );
+    let hot_labels = fixture
+        .head
+        .series_shared("tenant-a", &matchers, 9_000, 12_000)
+        .await
+        .unwrap();
+    for hot in &hot_labels {
+        let resolved = &captured.labels[&hot.fingerprint()];
+        assert!(Arc::ptr_eq(resolved, hot) == (hot.as_ref() != &labels()));
+    }
+    assert!(fixture.reads.load(Ordering::SeqCst) == 0);
+    assert!(
+        fixture
+            .store
+            .try_latest_float_scan("tenant-a", &matchers, 9_000, 9_001, 12_000, 3)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let opts = EngineOpts {
+        lookback_delta: secs(3),
+        ..EngineOpts::default()
+    };
+    let engine = PromqlEngine::new(Arc::clone(&fixture.store), opts.clone());
+    let expected: QueryResult = serde_json::from_value(serde_json::json!({
+        "InstantVector": [{"labels": {"__name__": "up", "job": "api"},
+            "ts_ms": 12_000, "value": {"Float": 7.0}}]
+    }))
+    .unwrap();
+    assert!(engine.query_instant(&tenant, "up", 12_000).await.unwrap() == expected);
+    let control = PromqlEngine::new(
+        Arc::new(fixture.store.current_store(5_000, 12_000).await.unwrap()),
+        opts.clone(),
+    );
+    for query in [
+        "up",
+        "sum(up)",
+        "avg(up)",
+        "timestamp(up)",
+        "up offset 2s",
+        "up @ 10",
+    ] {
+        assert!(
+            engine.query_instant(&tenant, query, 12_000).await.unwrap()
+                == control.query_instant(&tenant, query, 12_000).await.unwrap()
+        );
+    }
+    for (max_samples, max_fetched_series) in [(3, 4), (4, 3), (1, 4)] {
+        let limited = PromqlEngine::new(
+            Arc::clone(&fixture.store),
+            EngineOpts {
+                max_samples,
+                max_fetched_series,
+                ..opts.clone()
+            },
+        );
+        let result = limited.query_instant(&tenant, "up", 12_000).await;
+        match (max_samples, max_fetched_series) {
+            (3, 4) => assert!(result.unwrap() == expected),
+            (4, 3) => assert!(matches!(
+                result,
+                Err(PromqlError::Limit(
+                    LimitError::SeriesPerQueryExceeded { .. }
+                ))
+            )),
+            (1, 4) => assert!(matches!(
+                result,
+                Err(PromqlError::Limit(LimitError::SamplesPerQueryExceeded {
+                    limit: 1,
+                    ..
+                }))
+            )),
+            _ => unreachable!(),
+        }
+    }
+    fixture
+        .objects
+        .put(
+            &Path::from("mimir-tenant-deletions/tenant-a.json"),
+            PutPayload::from_static(b"{}"),
+        )
+        .await
+        .unwrap();
+    assert!(
+        engine.query_instant(&tenant, "up", 12_000).await.unwrap()
+            == QueryResult::InstantVector(Vec::new())
+    );
+    fixture.head.delete_tenant("tenant-a");
+    assert!(captured.samples == vec![(labels().fingerprint(), 11_000, 7.0, Some(5_000))]);
+    assert!(
+        captured
+            .labels
+            .values()
+            .map(|labels| labels.as_ref())
+            .collect::<Vec<_>>()
+            == expected_labels.iter().collect::<Vec<_>>()
     );
 }

@@ -58,11 +58,12 @@ impl<S: MetricStore> PromqlEngine<S> {
         let [matchers] = matcher_sets else {
             return Ok(None);
         };
-        let Some(rows) = self
+        let Some(scan) = self
             .store
-            .try_latest_float_samples(
+            .try_latest_float_scan(
                 tenant,
                 matchers,
+                after_ms,
                 after_ms.saturating_add(1),
                 through_ms,
                 self.opts.max_samples,
@@ -71,15 +72,18 @@ impl<S: MetricStore> PromqlEngine<S> {
         else {
             return Ok(None);
         };
+        let rows = scan.samples;
         if rows.len() > self.opts.max_samples {
             return Err(samples_per_query_exceeded(
                 self.opts.max_samples,
                 rows.len(),
             ));
         }
-        let labels = self
-            .labels_by_fingerprint_sets(tenant, matcher_sets, after_ms, through_ms)
-            .await?;
+        let labels = scan.labels;
+        let max_fetched_series = self.opts.max_fetched_series;
+        if max_fetched_series != 0 && labels.len() > max_fetched_series {
+            return Err(series_per_query_exceeded(max_fetched_series, labels.len()));
+        }
         record_queryable_samples(rows.len());
         Ok(Some(
             rows.into_iter()

@@ -1,6 +1,11 @@
 use std::sync::Arc;
 
+use assert2::assert;
+use krabka_blockstore::BlockStore;
+use object_store::memory::InMemory;
+
 use super::*;
+use crate::{MergedMetricStore, MetricBlockStore};
 
 #[test]
 fn labels_are_shared_across_records_and_sample_types_within_one_tenant() {
@@ -60,4 +65,51 @@ fn a_fingerprint_collision_does_not_intern_different_labels_together() {
     let row = store.floats["t"].iter().next().unwrap();
     check!(row.labels.as_ref() == &wanted);
     check!(!Arc::ptr_eq(&row.labels, &other));
+}
+
+#[tokio::test]
+async fn equal_fingerprints_do_not_reuse_matchers_for_different_labels() {
+    let wanted = Arc::new(Labels::from_pairs([("__name__", "up"), ("job", "api")]));
+    let other = Arc::new(Labels::from_pairs([("__name__", "down"), ("job", "api")]));
+    let fp = wanted.fingerprint();
+    let mut hot = InMemoryMetricStore::new();
+    // Force collisions at the row seam. Reusing the last successful matcher
+    // by fingerprint alone would incorrectly select the newer down sample.
+    for (labels, stamp, value) in [
+        (Arc::clone(&wanted), 10_000, 3.0),
+        (Arc::new(wanted.as_ref().clone()), 11_000, 7.0),
+        (other, 12_000, 99.0),
+    ] {
+        hot.floats
+            .entry("tenant-a".into())
+            .or_default()
+            .push(FloatRow {
+                fp,
+                labels,
+                ts_ms: stamp,
+                value,
+                start_timestamp_ms: None,
+            });
+    }
+    let blocks = BlockStore::new(
+        Arc::new(InMemory::new()),
+        url::Url::parse("memory:///").unwrap(),
+    );
+    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), WalHead::from_store(hot));
+    let scan = store
+        .try_latest_float_scan(
+            "tenant-a",
+            &[LabelMatcher::new("__name__", MatchOp::Eq, "up")],
+            9_000,
+            9_001,
+            12_000,
+            2,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(scan.samples == vec![(fp, 11_000, 7.0, None)]);
+    assert!(scan.labels.len() == 1);
+    assert!(scan.labels[&fp].as_ref() == wanted.as_ref());
+    assert!(Arc::ptr_eq(&scan.labels[&fp], &wanted));
 }
