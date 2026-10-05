@@ -248,12 +248,14 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
         }
         let mut series = latest.into_iter().collect::<Vec<_>>();
         series.sort_unstable_by_key(|(fp, _)| *fp);
-        let mut labels = self
+        let mut labels = BTreeMap::new();
+        for cold in self
             .cold
-            .matching_series_by_fp(tenant, matchers)?
-            .into_iter()
-            .map(|(fp, labels)| (fp, Arc::new(labels)))
-            .collect::<BTreeMap<_, _>>();
+            .series_shared(tenant, matchers, label_start_ms, end_ms)
+            .await?
+        {
+            labels.entry(cold.fingerprint()).or_insert(cold);
+        }
         let mut samples = Vec::new();
         for (_, entry) in series {
             if let Some(hot) = entry.labels {

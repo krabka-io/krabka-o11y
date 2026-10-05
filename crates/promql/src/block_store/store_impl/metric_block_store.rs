@@ -14,17 +14,6 @@ impl MetricBlockStore {
         tenant: &str,
         matchers: &[LabelMatcher],
     ) -> Result<Vec<Labels>> {
-        Ok(self
-            .matching_series_by_fp(tenant, matchers)?
-            .into_values()
-            .collect())
-    }
-
-    pub(crate) fn matching_series_by_fp(
-        &self,
-        tenant: &str,
-        matchers: &[LabelMatcher],
-    ) -> Result<BTreeMap<SeriesFingerprint, Labels>> {
         let mut by_fp = BTreeMap::<SeriesFingerprint, Labels>::new();
         for labels in self
             .floats
@@ -43,7 +32,7 @@ impl MetricBlockStore {
                 by_fp.insert(labels.fingerprint(), labels);
             }
         }
-        Ok(by_fp)
+        Ok(by_fp.into_values().collect())
     }
 }
 
@@ -330,7 +319,8 @@ impl MetricStore for MetricBlockStore {
 
     async fn cardinality_label_names(&self, tenant: &str) -> Result<Vec<LabelNameCardinality>> {
         let mut by_name = BTreeMap::<String, BTreeSet<SeriesFingerprint>>::new();
-        for (fp, labels) in self.matching_series_by_fp(tenant, &[])? {
+        for labels in self.matching_series(tenant, &[])? {
+            let fp = labels.fingerprint();
             for (name, _) in labels.iter() {
                 by_name.entry(name.clone()).or_default().insert(fp);
             }
@@ -353,7 +343,8 @@ impl MetricStore for MetricBlockStore {
 
     async fn cardinality_label_values(&self, tenant: &str) -> Result<Vec<LabelValueCardinality>> {
         let mut by_value = BTreeMap::<(String, String), BTreeSet<SeriesFingerprint>>::new();
-        for (fp, labels) in self.matching_series_by_fp(tenant, &[])? {
+        for labels in self.matching_series(tenant, &[])? {
+            let fp = labels.fingerprint();
             for (name, value) in labels.iter() {
                 by_value
                     .entry((name.clone(), value.clone()))
