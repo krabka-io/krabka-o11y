@@ -1,0 +1,69 @@
+{
+  "baseline_source_commit": "7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+  "candidate_source_commit": "8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+  "baseline_image_run": 37371016528,
+  "baseline_cpu": 37371016528,
+  "baseline_artifact_signal": "metrics",
+  "candidate_artifact_signal": "logs",
+  "candidate_ref": "codex/grafana-single-cgu",
+  "base_main": "92989bb29d44c629fa4ac88147a3fce8b1604776",
+  "source_code_equal": true,
+  "dependency_versions_equal": true,
+  "changed_configuration_path": ".bazelrc",
+  "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
+  "baseline_bazelrc_sha256": "4890c4a703f638f304c88dd013469e6936f226c92d2067e91b83fb148021e7f9",
+  "candidate_bazelrc_sha256": "b3995facba2df63a796eef11d3d511863ead53c113e483c1137143a1e35438b0",
+  "selection_capture": 37361260446,
+  "selection": "The exact metrics querier executable mapping holds about 68 MiB RSS. Try one codegen unit before adding memory caches. Static code-size and diagnostic profiles cannot qualify RSS or CPU advantage.",
+  "compiler_reference": "https://doc.rust-lang.org/rustc/codegen-options/index.html#codegen-units",
+  "performance_qualified": false,
+  "correctness_qualified": false,
+  "retained": false,
+  "candidate_cpu": 37371662781,
+  "candidate_image_run": 37371662781,
+  "candidate_inputs": {
+    "signal": "logs",
+    "profiling": "cpu",
+    "deployment_target": "all",
+    "profiles_target": "all"
+  },
+  "candidate_dispatch_live_instances": [
+    {
+      "name": "gcp-runner-3040588ffed24118",
+      "status": "RUNNING"
+    },
+    {
+      "name": "gcp-runner-6fe9ac82325b445a",
+      "status": "RUNNING"
+    }
+  ],
+  "setting_analysis": {
+    "analysis_succeeded": true,
+    "setting": "--@rules_rust//rust/settings:codegen_units=1",
+    "analyzed_target": "//crates/blockstore:blockstore",
+    "rustc_actions": 1,
+    "all_rustc_actions_contain_codegen_units_1": true,
+    "analysis_log_sha256": "2283691c75c198ae4c19f2fa9c5c19f38797c5af5940fab5844a672f06714e8f",
+    "runtime_or_correctness_qualification": false
+  },
+  "schema_version": 1,
+  "experiment": "One Rust code generation unit for executable footprint and runtime efficiency",
+  "status": "setting_analysis_verified_image_build_queued_canonical_goldens_running",
+  "baseline_image_reuse": "The exact restored-source cold fingerprint reuse candidate supplies the baseline image. All source, dependencies and workload harness files match; only .bazelrc differs. Both contain the same dense metadata and cold fingerprint reuse candidates.",
+  "candidate_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371662781",
+  "baseline_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
+  "setting_analysis_provenance_path": "qualification/evidence/profiling/single-cgu-setting-analysis/single-cgu-setting-analysis.json",
+  "setting_analysis_provenance_sha256": "0ba966d16e8a5bc5a92917b405014e06ef39931af775e52deb1c79f2b2452d7c",
+  "validation": {
+    "canonical_goldens_status": "running",
+    "source_commit": "7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+    "configuration_equivalent_to_candidate_ref": "codex/grafana-single-cgu",
+    "explicit_compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
+    "targets": [
+      "//crates/blockstore:label_fingerprint_test",
+      "//crates/profiles:label_fingerprint_test"
+    ],
+    "retries_disabled": true
+  },
+  "next_action": "Verify exact image source and checksums, compare code sections and runtime filesystem/configuration against the baseline, and complete correctness checks. Static executable size and sampled profiles do not qualify RSS or CPU improvement; matched Mimir and other-signal measurements remain required before retention."
+}

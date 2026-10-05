@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Reuse canonical cold-series keys in instant labels and cardinality",
-  "status": "scoped_correctness_qualified_performance_pending",
+  "status": "restored_source_correctness_scope_qualified_image_builds_running",
   "baseline_source_commit": "d4125ea317b203173f80e5feba1991b0b942c469",
   "source_commit": "1dbd10da44b6b319efea54de61dfdddb40f70c7d",
   "performance_qualified": false,
@@ -52,8 +52,70 @@
       "provenance_path": "qualification/evidence/correctness/canonical-fingerprint-restoration/core-92d353cb/provenance.json",
       "provenance_sha256": "3490357fbf95a1eb319eb45767c7602bb618b219b4357884fda8d8340e5717f4",
       "scope": "Ten core unit suites, their library Clippy targets and both canonical fingerprint golden targets pass with the original fingerprint loop restored. The preceding 56 ordinary checks and three native wrappers remain pinned to their earlier source."
+    },
+    "restored_combined_native_scope": {
+      "source_commit": "7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+      "native_wrappers_passed": 3,
+      "native_cases": {
+        "diff_mimir_docker_test": 1,
+        "diff_prometheus_docker_test": 1,
+        "metrics_deployment_docker_test": 12
+      },
+      "native_cases_ignored": 0,
+      "retries_disabled": true,
+      "provenance_path": "qualification/evidence/correctness/cold-canonical-fingerprint-reuse/restored-native-7fbd49b6/provenance.json",
+      "provenance_sha256": "e232981fe88f28d175e16cbf58c588852c95154497abf86e70d1b8940f0a4f76"
     }
   },
-  "next_action": "Choose exact matched GCP image sources on the restored original fingerprint implementation. Native and revision comparisons for this reuse candidate are not yet dispatched.",
-  "correctness_scope_qualified": true
+  "next_action": "Collect both exact restored-source images and profiles, compare all runtime settings and nonbinary filesystem entries, then dispatch matched Mimir pairs. These image-producing captures are diagnostic only.",
+  "correctness_scope_qualified": true,
+  "restored_image_builds": {
+    "baseline_source_commit": "8718820c9d8f287292445ace014e67587dc80713",
+    "candidate_source_commit": "7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+    "baseline_ref": "codex/grafana-cold-fingerprint-baseline",
+    "candidate_ref": "codex/grafana-performance",
+    "base_main": "92989bb29d44c629fa4ac88147a3fce8b1604776",
+    "production_diff_paths": [
+      "crates/promql/src/block_store/store_impl/metric_block_store.rs",
+      "crates/promql/src/merged_store/instant_scan.rs"
+    ],
+    "all_other_tree_entries_equal": true,
+    "regression_equal": true,
+    "fingerprint_source_equal": true,
+    "fingerprint_source_sha256": "21f3cb9e40281627fb7cc71a83bd198e50e36091c604c7311faca524745caecd",
+    "shared_dense_metadata_candidate": true,
+    "performance_qualified": false,
+    "baseline_cpu": 37370655001,
+    "baseline_image_run": 37370655001,
+    "baseline_inputs": {
+      "signal": "metrics",
+      "profiling": "cpu",
+      "deployment_target": "split",
+      "profiles_target": "all"
+    },
+    "baseline_dispatch_live_instances": [
+      {
+        "name": "gcp-runner-3040588ffed24118",
+        "status": "RUNNING"
+      }
+    ],
+    "candidate_cpu": 37371016528,
+    "candidate_image_run": 37371016528,
+    "candidate_inputs": {
+      "signal": "metrics",
+      "profiling": "cpu",
+      "deployment_target": "split",
+      "profiles_target": "all"
+    },
+    "candidate_dispatch_live_instances": [
+      {
+        "name": "gcp-runner-3040588ffed24118",
+        "status": "RUNNING"
+      },
+      {
+        "name": "gcp-runner-6fe9ac82325b445a",
+        "status": "RUNNING"
+      }
+    ]
+  }
 }
