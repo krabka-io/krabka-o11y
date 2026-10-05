@@ -1,0 +1,373 @@
+{
+  "schema_version": 1,
+  "diagnostic_only": true,
+  "comparison_qualified": false,
+  "runner_pool": "gcp-ubuntu-24-04-16core",
+  "cpu_capture": {
+    "run_id": 37263608464,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37263608464",
+    "head_sha": "c851bd1324293d7430875c99eafa0ff3f6fe341a",
+    "run_conclusion": "success",
+    "jobs": [
+      {
+        "id": 111615713906,
+        "name": "compare (metrics)",
+        "conclusion": "success",
+        "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37263608464/job/111615713906",
+        "runner_name": "gcp-runner-40b95f6763ee4ecb",
+        "runner_group_name": "default",
+        "labels": [
+          "gcp-ubuntu-24-04-16core"
+        ],
+        "started_at": "2026-10-05T04:29:03Z",
+        "completed_at": "2026-10-05T04:34:05Z"
+      },
+      {
+        "id": 111615714039,
+        "name": "compare (logs)",
+        "conclusion": "success",
+        "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37263608464/job/111615714039",
+        "runner_name": "gcp-runner-c70c417e658c428d",
+        "runner_group_name": "default",
+        "labels": [
+          "gcp-ubuntu-24-04-16core"
+        ],
+        "started_at": "2026-10-05T04:30:17Z",
+        "completed_at": "2026-10-05T04:35:15Z"
+      },
+      {
+        "id": 111617111622,
+        "name": "compare (traces)",
+        "conclusion": "success",
+        "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37263608464/job/111617111622",
+        "runner_name": "gcp-runner-9b98c72f15d642df",
+        "runner_group_name": "default",
+        "labels": [
+          "gcp-ubuntu-24-04-16core"
+        ],
+        "started_at": "2026-10-05T04:34:54Z",
+        "completed_at": "2026-10-05T04:39:43Z"
+      },
+      {
+        "id": 111617362714,
+        "name": "compare (profiles)",
+        "conclusion": "success",
+        "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37263608464/job/111617362714",
+        "runner_name": "gcp-runner-4cf728c9085042d2",
+        "runner_group_name": "default",
+        "labels": [
+          "gcp-ubuntu-24-04-16core"
+        ],
+        "started_at": "2026-10-05T04:36:32Z",
+        "completed_at": "2026-10-05T04:41:41Z"
+      }
+    ],
+    "artifacts": [
+      {
+        "id": 11326145054,
+        "name": "grafana-comparison-metrics-c851bd1324293d7430875c99eafa0ff3f6fe341a-1",
+        "digest": "sha256:aa175bca058945abbd53acba8b3c8a6a4a63fb2b264721b8d4bd3d9661abed09",
+        "size_in_bytes": 7140844,
+        "expires_at": "2027-01-03T04:27:39Z",
+        "signal": "metrics",
+        "verified_raw_files": 234,
+        "diagnostic_only": true
+      },
+      {
+        "id": 11325797160,
+        "name": "grafana-comparison-profiles-c851bd1324293d7430875c99eafa0ff3f6fe341a-1",
+        "digest": "sha256:4d79257f4ad57479fa889513e8c9295b4f0d9cacf8f1a48221fcf96fcd000e71",
+        "size_in_bytes": 3467254,
+        "expires_at": "2027-01-03T04:27:39Z",
+        "signal": "profiles",
+        "verified_raw_files": 164,
+        "diagnostic_only": true
+      },
+      {
+        "id": 11325612614,
+        "name": "grafana-comparison-traces-c851bd1324293d7430875c99eafa0ff3f6fe341a-1",
+        "digest": "sha256:b3665de3d7c10e502cf84c639cbfca9677c43d3f56ef446854035f5297a4111f",
+        "size_in_bytes": 12811360,
+        "expires_at": "2027-01-03T04:27:39Z",
+        "signal": "traces",
+        "verified_raw_files": 162,
+        "diagnostic_only": true
+      },
+      {
+        "id": 11324814546,
+        "name": "grafana-comparison-logs-c851bd1324293d7430875c99eafa0ff3f6fe341a-1",
+        "digest": "sha256:d1375967cee0caacd44ab693cf6f34495d1a6d7d306976508b2f6762422c5184",
+        "size_in_bytes": 11623803,
+        "expires_at": "2027-01-03T04:27:39Z",
+        "signal": "logs",
+        "verified_raw_files": 162,
+        "diagnostic_only": true
+      }
+    ]
+  },
+  "allocation_capture": {
+    "run_id": 37261831936,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37261831936",
+    "head_sha": "9e86db550f89bac3bb5c51d90110961b2f70be6a",
+    "run_conclusion": "success",
+    "jobs": [
+      {
+        "id": 111610484689,
+        "name": "compare (metrics)",
+        "conclusion": "success",
+        "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37261831936/job/111610484689",
+        "runner_name": "gcp-runner-9aa9afadd2f140b2",
+        "runner_group_name": "default",
+        "labels": [
+          "gcp-ubuntu-24-04-16core"
+        ],
+        "started_at": "2026-10-05T04:05:07Z",
+        "completed_at": "2026-10-05T04:08:35Z"
+      }
+    ],
+    "artifacts": [
+      {
+        "id": 11324948091,
+        "name": "grafana-comparison-metrics-9e86db550f89bac3bb5c51d90110961b2f70be6a-1",
+        "digest": "sha256:5d4f935d48d0cca57d46d60975738f6cf6c4efeae71239607c3cc70238a26416",
+        "size_in_bytes": 84773654,
+        "expires_at": "2027-01-03T04:02:48Z",
+        "signal": "metrics",
+        "verified_raw_files": 130,
+        "diagnostic_only": true
+      }
+    ]
+  },
+  "findings": {
+    "metrics_prune_self_percent": [
+      21.47,
+      28.41,
+      30.87
+    ],
+    "metrics_querier_samples": [
+      382,
+      609,
+      839
+    ],
+    "rust_allocation_calls": 14261468,
+    "rust_temporary_allocations": 1584222,
+    "rust_peak_heap_decimal_mb": 16.85,
+    "string_clone_calls": 6131850,
+    "minio_final_inuse_heap_mib": 191.47,
+    "prune_followup_querier_samples": [
+      303,
+      447,
+      614
+    ],
+    "prune_followup_attribution": "No prune entry exceeds the 0.5 percent flat-report threshold in any of the three windows."
+  },
+  "limitations": [
+    "Instrumentation changes CPU, latency and RSS; these are not comparison results.",
+    "Rust allocation totals include startup and seeding.",
+    "Perf DWARF unwinding failed for some mappings; flat samples remain resolved, but caller attribution is incomplete.",
+    "Pyroscope has sparse CPU samples under this steady workload.",
+    "Remaining allocations at exit are not proof of a leak."
+  ],
+  "prune_followup_cpu_capture": {
+    "source_commit": "dd67ca1eeaafbd062c655eb55609969af547bbd9",
+    "image_producer": {
+      "run_id": 37262286601,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37262286601",
+      "source_commit": "dd67ca1eeaafbd062c655eb55609969af547bbd9",
+      "artifact": {
+        "id": 11326315508,
+        "name": "comparison-image-metrics-dd67ca1eeaafbd062c655eb55609969af547bbd9",
+        "digest": "sha256:9a9a253f4126405ac749e7e78b55ed02a37115d52cf2d9a921a1acdc0c129af1",
+        "size_in_bytes": 308197033,
+        "expires_at": "2027-01-03T04:09:34Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-dd67ca1eeaaf",
+      "manifest_digest": "sha256:c6c88c1ec3b62fa47f4c79696ecc69130cdcd03204245049b0650817b526227f",
+      "config_digest": "sha256:c6c88c1ec3b62fa47f4c79696ecc69130cdcd03204245049b0650817b526227f"
+    },
+    "provenance": {
+      "run_id": 37264751159,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37264751159",
+      "head_sha": "c851bd1324293d7430875c99eafa0ff3f6fe341a",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111619078577,
+          "name": "compare (metrics)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37264751159/job/111619078577",
+          "runner_name": "gcp-runner-54292b1bd23546b6",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T05:07:33Z",
+          "completed_at": "2026-10-05T05:12:36Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11327215092,
+          "name": "grafana-comparison-metrics-c851bd1324293d7430875c99eafa0ff3f6fe341a-1",
+          "digest": "sha256:1de50704d1cc4a10ef411fb0655b14718bbfa12576d10339cff012ccb56ada49",
+          "size_in_bytes": 6596238,
+          "expires_at": "2027-01-03T04:43:25Z",
+          "signal": "metrics",
+          "verified_raw_files": 234,
+          "diagnostic_only": true
+        }
+      ]
+    }
+  },
+  "baseline_source_commit": "1c31b6830961637b98f2918f8b3dd5ee7ecc1b3a",
+  "pooled_allocation_captures": [
+    {
+      "signal": "logs",
+      "source_commit": "dd67ca1eeaafbd062c655eb55609969af547bbd9",
+      "deployment_target": "all",
+      "runtime_including_startup_and_seed_seconds": 105.34,
+      "allocation_calls": 75988258,
+      "temporary_allocations": 6801137,
+      "string_clone_calls": 39998496,
+      "peak_heap_decimal_mb": 50.59,
+      "provenance": {
+        "run_id": 37266699448,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37266699448",
+        "head_sha": "50f03683f5b7dc2a19bb55b00172f99bad6b24f5",
+        "run_conclusion": "success",
+        "jobs": [
+          {
+            "id": 111624945369,
+            "name": "compare (logs)",
+            "conclusion": "success",
+            "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37266699448/job/111624945369",
+            "runner_name": "gcp-runner-b542741d793e4d03",
+            "runner_group_name": "default",
+            "labels": [
+              "gcp-ubuntu-24-04-16core"
+            ],
+            "started_at": "2026-10-05T05:12:44Z",
+            "completed_at": "2026-10-05T05:18:28Z"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": 11327121129,
+            "name": "grafana-comparison-logs-50f03683f5b7dc2a19bb55b00172f99bad6b24f5-1",
+            "digest": "sha256:2ef296a368961377b9c1db10336a17483ecdddb15621cf43b7bd2ec1c94fdb99",
+            "size_in_bytes": 409276325,
+            "expires_at": "2027-01-03T05:11:55Z",
+            "signal": "logs",
+            "verified_raw_files": 130,
+            "diagnostic_only": true
+          }
+        ]
+      }
+    },
+    {
+      "signal": "traces",
+      "source_commit": "dd67ca1eeaafbd062c655eb55609969af547bbd9",
+      "deployment_target": "all",
+      "runtime_including_startup_and_seed_seconds": 105.88,
+      "allocation_calls": 75300558,
+      "temporary_allocations": 8473938,
+      "string_clone_calls": 11291035,
+      "peak_heap_decimal_mb": 39.52,
+      "provenance": {
+        "run_id": 37266701064,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37266701064",
+        "head_sha": "50f03683f5b7dc2a19bb55b00172f99bad6b24f5",
+        "run_conclusion": "success",
+        "jobs": [
+          {
+            "id": 111624951780,
+            "name": "compare (traces)",
+            "conclusion": "success",
+            "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37266701064/job/111624951780",
+            "runner_name": "gcp-runner-be65a6c949434058",
+            "runner_group_name": "default",
+            "labels": [
+              "gcp-ubuntu-24-04-16core"
+            ],
+            "started_at": "2026-10-05T05:13:05Z",
+            "completed_at": "2026-10-05T05:19:11Z"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": 11327365168,
+            "name": "grafana-comparison-traces-50f03683f5b7dc2a19bb55b00172f99bad6b24f5-1",
+            "digest": "sha256:48efd8d2db7313adb9539ce0a6d163757b08cdb7db8994cc178577377a61e15a",
+            "size_in_bytes": 309742117,
+            "expires_at": "2027-01-03T05:11:56Z",
+            "signal": "traces",
+            "verified_raw_files": 130,
+            "diagnostic_only": true
+          }
+        ]
+      }
+    },
+    {
+      "signal": "profiles",
+      "source_commit": "dd67ca1eeaafbd062c655eb55609969af547bbd9",
+      "deployment_target": "all",
+      "runtime_including_startup_and_seed_seconds": 124.88,
+      "allocation_calls": 11299844,
+      "temporary_allocations": 2318668,
+      "string_clone_calls": 5551323,
+      "peak_heap_decimal_mb": 5.22,
+      "provenance": {
+        "run_id": 37266914575,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37266914575",
+        "head_sha": "50f03683f5b7dc2a19bb55b00172f99bad6b24f5",
+        "run_conclusion": "success",
+        "jobs": [
+          {
+            "id": 111625572328,
+            "name": "compare (profiles)",
+            "conclusion": "success",
+            "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37266914575/job/111625572328",
+            "runner_name": "gcp-runner-340033d1a4594df8",
+            "runner_group_name": "default",
+            "labels": [
+              "gcp-ubuntu-24-04-16core"
+            ],
+            "started_at": "2026-10-05T05:15:38Z",
+            "completed_at": "2026-10-05T05:19:38Z"
+          }
+        ],
+        "artifacts": [
+          {
+            "id": 11327240939,
+            "name": "grafana-comparison-profiles-50f03683f5b7dc2a19bb55b00172f99bad6b24f5-1",
+            "digest": "sha256:31b40f65422bac72db4f8362601f686235cb21d5c44d13f4f3ff4be2b231def3",
+            "size_in_bytes": 101210663,
+            "expires_at": "2027-01-03T05:14:49Z",
+            "signal": "profiles",
+            "verified_raw_files": 132,
+            "diagnostic_only": true
+          }
+        ]
+      }
+    }
+  ],
+  "baseline_image_producer": {
+    "run_id": 37258326193,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37258326193",
+    "source_commit": "1c31b6830961637b98f2918f8b3dd5ee7ecc1b3a",
+    "artifact": {
+      "id": 11324053232,
+      "name": "comparison-image-logs-1c31b6830961637b98f2918f8b3dd5ee7ecc1b3a",
+      "digest": "sha256:cd80494554efbec4e7fdfe2d499593262bff806448761629c01a8dd265012517",
+      "size_in_bytes": 308212268,
+      "expires_at": "2027-01-03T03:10:13Z"
+    },
+    "archive_digest_verified": true,
+    "all_image_file_checksums_verified": true,
+    "image_tag": "localhost/krabka-o11y:sha-1c31b6830961",
+    "manifest_digest": "sha256:f28415b2a823132cafca22522088758f678137b9cab8e63279447700cb58d3b5",
+    "config_digest": "sha256:f28415b2a823132cafca22522088758f678137b9cab8e63279447700cb58d3b5"
+  }
+}

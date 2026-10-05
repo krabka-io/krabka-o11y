@@ -43,6 +43,15 @@ and checks each complete result, including a default SQL function.
 
 ## Measurement contract
 
+Cold queries additionally overlap up to four block reads in deterministic
+order. A nine-block regression compares complete symbols and totals with an
+independent hot-store flamegraph. Removing one block must fail the query. All
+33 scoped pprof/profiles test and Clippy targets and all eight real
+Pyroscope/Grafana differential tests passed with this change.
+
+The [private GCP performance record](grafana-performance-gcp.md) covers the
+latest source and deployment layouts.
+
 Use the [reusable harness](grafana-performance-comparison.md#provenance-and-reproduction)
 with `--signal profiles`. The immutable seed is checked before and after the
 cold handoff. Three fresh deployments per backend alternate order, with 15
@@ -56,7 +65,8 @@ queries/s. The seed stays immutable until both exact checks complete.
 CPU includes all application roles, the broker where present, and MinIO. RSS
 is the sampled peak simultaneous sum across those containers. API write
 acknowledgements have different durability contracts. Local measurements on the shared development host are diagnostic. Qualification
-uses the private Google Cloud workflow with the split and all layouts on one VM.
+uses the private Google Cloud workflow. It can measure the split and all
+layouts sequentially on one VM; the GCP record states the layout of each result.
 These API measurements do not establish equivalent durable throughput.
 
 ## Validation
