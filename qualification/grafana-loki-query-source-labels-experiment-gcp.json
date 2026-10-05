@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Omit per-entry source label copies for ordinary Loki queries; retain original labels for distinct and tail frames.",
-  "source_commit": null,
+  "source_commit": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
   "retained_in_branch": true,
   "retention_decision": "All 120 scoped targets and five actual Loki/Grafana Docker wrappers pass. Baseline CPU capture is verified; baseline allocation and candidate exact-image captures and paired comparison remain pending. No measured efficiency gain qualified.",
   "baseline_source_commit": "02c1cafee97563352e283296e85914cc5de232d3",
@@ -63,6 +63,39 @@
     "head_shas": {
       "cpu": "aeb67637f680bf67f006d343b811f019662bad87",
       "allocations": "aeb67637f680bf67f006d343b811f019662bad87"
+    },
+    "cpu_provenance": {
+      "run_id": 37329585983,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37329585983",
+      "head_sha": "aeb67637f680bf67f006d343b811f019662bad87",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111828988551,
+          "name": "compare (logs)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37329585983/job/111828988551",
+          "runner_name": "gcp-runner-03b17fcdd26b4975",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T15:03:33Z",
+          "completed_at": "2026-10-05T15:08:35Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11353034646,
+          "name": "grafana-comparison-logs-aeb67637f680bf67f006d343b811f019662bad87-1",
+          "digest": "sha256:502900e523898033a9d441f81adf6f98746f0527c9a4b37c5cf2135a0e8a2e9b",
+          "size_in_bytes": 11695319,
+          "expires_at": "2027-01-03T15:02:38Z",
+          "signal": "logs",
+          "verified_raw_files": 162,
+          "diagnostic_only": true
+        }
+      ]
     }
   },
   "performance_qualified": false,
@@ -101,5 +134,12 @@
       }
     ]
   },
-  "scope": "Matched all-role release image and workload with unchanged API, label categorization, publication pacing, budgets and tenant filtering. Instrumented captures remain diagnostics. A same-VM revision control is needed before retention."
+  "scope": "Matched all-role release image and workload with unchanged API, label categorization, publication pacing, budgets and tenant filtering. Instrumented captures remain diagnostics. A same-VM revision control is needed before retention.",
+  "implementation_commit": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
+  "gcp_candidate_cpu_image_build": {
+    "run_id": 37330880469,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37330880469",
+    "head_sha": "bc7e65436eb12247ccf413b66bb0db3549d8faed",
+    "status_at_recording": "in_progress"
+  }
 }
