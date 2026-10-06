@@ -377,7 +377,7 @@ async fn finish_query<S: ProfileStore>(
         {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
-                tracing::warn!(?error, "failed to relinquish unpublished async query")
+                tracing::warn!(?error, "failed to relinquish unpublished async query");
             }
             Err(error) => tracing::warn!(%error, "unpublished async query lease will expire"),
         }
