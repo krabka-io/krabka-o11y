@@ -18,7 +18,7 @@ impl LogHotTail for SharedOnly {
     }
 }
 
-fn expected_response(result: serde_json::Value, lines: u64) -> serde_json::Value {
+fn expected_response(result: &serde_json::Value, lines: u64) -> serde_json::Value {
     json!({
         "status": "success", "data": {"resultType": "streams", "result": result,
         "stats": {
@@ -120,7 +120,7 @@ async fn shared_snapshots_survive_pruning_and_reach_http_queries() {
         {"stream": {"app": "api", "detected_level": "unknown", "request": "b"},
             "values": [["120", "second"]]}
     ]);
-    let expected = expected_response(result.clone(), 4);
+    let expected = expected_response(&result, 4);
     for object_store in [false, true] {
         let state = if object_store {
             state.clone().with_cold_object_store_source(
@@ -187,7 +187,7 @@ async fn shared_snapshots_survive_pruning_and_reach_http_queries() {
     )
     .await
     .unwrap();
-    assert!(fresh == expected_response(fresh_result, 2));
+    assert!(fresh == expected_response(&fresh_result, 2));
     drop(captured);
     assert!(weak.upgrade().is_none());
 }

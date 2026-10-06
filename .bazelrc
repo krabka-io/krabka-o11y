@@ -47,6 +47,9 @@ test --@aspect_rules_lint//lint:fail_on_violation
 # instrumenting the whole dependency closure is most of the run.
 coverage --combined_report=lcov
 coverage --instrumentation_filter=^//crates[:/]
+# Rust coverage is enabled explicitly by rules_rust. Disable the C/C++
+# feature so native third-party build scripts do not embed sandbox .gcda paths.
+coverage --features=-coverage
 # Without this, every suite under `tests/` measures nothing.
 #
 # Bazel excludes test targets from instrumentation by default, and rules_rust

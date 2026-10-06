@@ -61,7 +61,9 @@ pub(crate) async fn querier_state_with_request_tenant_index_reuses_shard_indexes
     // A rolling query never repeats its exact cache key. Expired merged
     // snapshots must disappear when a later request admits a new window.
     for start in 6..10 {
-        let expired = std::time::Instant::now() - secs(6).to_std();
+        let expired = std::time::Instant::now()
+            .checked_sub(secs(6).to_std())
+            .unwrap();
         for entry in state
             .dynamic_index_cache
             .entries

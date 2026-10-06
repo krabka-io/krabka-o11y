@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Bounded compactor manifest contents with fresh object identity",
-  "status": "rejected_production_cache_removed_native_close_check_running",
+  "status": "rejected_production_cache_removed_metrics_restoration_passed",
   "baseline_source_commit": "670cd7d1e4c9c21f3229ededf76f15b4dee53109",
   "base_main": "92989bb29d44c629fa4ac88147a3fce8b1604776",
   "performance_qualified": false,
@@ -81,7 +81,7 @@
       }
     }
   },
-  "next_action": "Finish restoration correctness, commit/push the restored baseline, then measure the separate equal-label key candidate on GCP.",
+  "next_action": "Finish checkpoint CI and Pyroscope validation, then publish and measure the separate equal-label key candidate on GCP.",
   "candidate_design": {
     "contents_byte_budget": 1048576,
     "entry_limit": 128,
@@ -702,11 +702,11 @@
     }
   },
   "retention_decision": "Reject: after excluding MinIO, candidate/baseline median application CPU and RSS ratios are 0.968280 and 1.004972. Neither improves consistently. Query p99 is 1.068998 and ingest p99 1.081894; ingest is higher in all three pairs with disjoint ranges. Avoided object reads alone do not justify production cache complexity.",
-  "source_removal_status": "Production cache and API plumbing removed; publication and compaction ledgers retained. All387 ordinary targets pass after explicit-close repair; final nine native wrappers are running.",
+  "source_removal_status": "Production cache removed; publication and compaction ledgers retained. Ordinary checks and all three metrics native wrappers pass after the explicit-close repair. The separate Pyroscope failure is recorded in the PR validation scope.",
   "restoration": {
     "parent_commit": "7a8de487de51e704dfe84eae08690b78350e45ca",
     "patch_sha256": "235f4585f9c98bffd37a25240ce897a99517bc656052a04b13427c618ed4918d",
-    "validation": "failed_native_metrics",
+    "validation": "passed",
     "source_files_sha256": {
       "crates/integration/tests/support/metrics.rs": "9e056f4eed1185527f33a07f7602c862c2c4a595dc88b97fd38e7910f78eeac4",
       "crates/metrics/src/bin/krabka-metrics/compactor_loop.rs": "025c0d9e657a95a86add2eda9441c775ea88f2cd240e5e712da68f7018bd9b21",
@@ -742,17 +742,43 @@
       "proof_sha256": "9ca023029265333bc9161f3a76fa4675301b09cfe3496ec0c727cd3b3e401bdf"
     },
     "native_metrics_scope": {
-      "status": "failed",
-      "proof_path": "qualification/evidence/correctness/manifest-cache-restoration-native-metrics-failure-7a8de487/provenance.json",
-      "proof_sha256": "d8f3d28e0bdcb4c4eadf100e930baa8e0a8551d18e47e8d4c0905069d052c9f4",
-      "wrappers_passed": 2,
-      "wrappers_failed": 1
+      "status": "passed",
+      "source_commit": "c7ed6004226c8de0afc4767736a8d2dad5daf47d",
+      "targets": [
+        "//crates/metrics-service:diff_mimir_docker_test",
+        "//crates/metrics-service:diff_prometheus_docker_test",
+        "//crates/metrics-service:metrics_deployment_docker_test"
+      ],
+      "wrappers_passed": 3,
+      "rust_cases_passed": 14,
+      "ignored_cases": 0,
+      "proof_path": "qualification/evidence/correctness/retained-gains-pr-native-failure-c7ed6004/provenance.json",
+      "proof_sha256": "b787ab9322671cf5539857dcdc0df9a9e53ee139378d0444fa0cd865076d21b6",
+      "proof_scope": "The three metrics targets passed in a nine-target run whose separate Pyroscope differential target failed."
     },
     "post_restoration_lifecycle_validation": {
-      "status": "ordinary_passed_native_pending",
+      "status": "metrics_native_passed",
       "record": "qualification/grafana-retained-gains-pr-validation.json",
       "consumer_close_repair": "Await underlying coordinator shutdown after durable flush and before replacing failed consumer; restart query timeout unchanged.",
       "diagnostics": "Bounded post-wait restart logs and recovery status preserve original query result."
+    },
+    "previous_failed_validation": {
+      "validation": "failed_native_metrics",
+      "full_ordinary_scope": {
+        "status": "passed",
+        "targets_passed": 387,
+        "rust_cases_passed": 5571,
+        "ignored_cases": 78,
+        "proof_path": "qualification/evidence/correctness/manifest-cache-restoration-ordinary-7a8de487/provenance.json",
+        "proof_sha256": "9ca023029265333bc9161f3a76fa4675301b09cfe3496ec0c727cd3b3e401bdf"
+      },
+      "native_metrics_scope": {
+        "status": "failed",
+        "proof_path": "qualification/evidence/correctness/manifest-cache-restoration-native-metrics-failure-7a8de487/provenance.json",
+        "proof_sha256": "d8f3d28e0bdcb4c4eadf100e930baa8e0a8551d18e47e8d4c0905069d052c9f4",
+        "wrappers_passed": 2,
+        "wrappers_failed": 1
+      }
     }
   },
   "minio_live_heap_diagnostic": {

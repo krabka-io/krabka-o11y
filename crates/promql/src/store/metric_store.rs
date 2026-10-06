@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use super::{
     ExemplarScan, LabelMatcher, LabelNameCardinality, LabelValueCardinality, Labels,
@@ -48,7 +48,7 @@ pub trait MetricStore: Send + Sync {
         };
         // Preserve the engine's sample-limit error before resolving labels.
         let labels = if samples.len() > max_samples {
-            Default::default()
+            BTreeMap::default()
         } else {
             self.series_shared(tenant, matchers, label_start_ms, end_ms)
                 .await?

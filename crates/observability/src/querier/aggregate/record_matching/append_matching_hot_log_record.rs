@@ -43,6 +43,8 @@ pub(crate) fn append_matching_hot_log_record(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use assert2::assert;
 
     use super::*;
@@ -67,7 +69,7 @@ mod tests {
                 tenant: "tenant".into(),
                 time_range: krabka_blockstore::TimeRange::new(0, 100).unwrap(),
                 query: krabka_logql::parse_query(query).unwrap(),
-                fingerprints: Default::default(),
+                fingerprints: BTreeSet::default(),
                 blocks: Vec::new(),
             };
             let mut actual = BTreeMap::new();

@@ -201,7 +201,7 @@ mod tests {
             cache.insert_shard_ranges(range_key(id), 0, vec![range]);
         }
         // Age entries directly: no wall-clock sleeps or requests to old keys.
-        let expired = Instant::now() - minutes(6).to_std();
+        let expired = Instant::now().checked_sub(minutes(6).to_std()).unwrap();
         for (key, entry) in cache.entries.lock().unwrap().iter_mut() {
             if *key != query_key(31) {
                 entry.loaded_at = expired;
