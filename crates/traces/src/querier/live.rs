@@ -506,12 +506,9 @@ mod tests {
         check!(trace.spans.len() == 2, "and both batches contribute spans");
     }
 
-    /// `tag_scope_name` names a scope for the wire. The six names are
-    /// asserted to be pairwise distinct, so an arm returning a neighbour's
-    /// name cannot pass for its own.
     #[test]
     fn every_tag_scope_has_its_own_wire_name() {
-        let name = super::tag_scope_name;
+        let name = TagScope::as_str;
 
         check!(name(TagScope::Resource) == "resource");
         check!(name(TagScope::Span) == "span");
@@ -758,7 +755,6 @@ mod remote_live_source;
 mod result;
 mod scoped_tags_from_json;
 mod tag_scope_from_name;
-mod tag_scope_name;
 mod time_from_nanos_u64;
 mod trace_spans_from_otlp;
 mod typed_values_from_json;
@@ -778,7 +774,6 @@ pub use remote_live_source::RemoteLiveSource;
 pub use result::Result;
 use scoped_tags_from_json::scoped_tags_from_json;
 use tag_scope_from_name::tag_scope_from_name;
-use tag_scope_name::tag_scope_name;
 use time_from_nanos_u64::time_from_nanos_u64;
 use trace_spans_from_otlp::trace_spans_from_otlp;
 use typed_values_from_json::typed_values_from_json;

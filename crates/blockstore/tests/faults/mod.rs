@@ -40,9 +40,8 @@ use krabka_blockstore::{
 };
 use krabka_units::{Time, convert::TimeExt as _};
 use object_store::{
-    CopyOptions, Error as ObjectStoreError, GetOptions, GetResult, GetResultPayload, ListResult,
-    MultipartUpload, ObjectMeta, ObjectStore, ObjectStoreExt as _, PutMultipartOptions, PutOptions,
-    PutPayload, PutResult, path::Path,
+    Error as ObjectStoreError, GetOptions, GetResult, GetResultPayload, ObjectMeta, ObjectStore,
+    ObjectStoreExt as _, PutOptions, PutPayload, PutResult, path::Path,
 };
 
 /// The attempts every case gives the retry layer.
@@ -78,54 +77,6 @@ fn kind(error: &ObjectStoreError) -> &'static str {
     }
 }
 
-/// Delegates every operation to `inner`. Each wrapper below overrides only
-/// the operations its fault touches.
-macro_rules! delegate_object_store {
-    ($wrapper:ident { $($overrides:tt)* }) => {
-        impl std::fmt::Display for $wrapper {
-            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(formatter, "{}({})", stringify!($wrapper), self.inner)
-            }
-        }
-
-        #[async_trait]
-        impl ObjectStore for $wrapper {
-            $($overrides)*
-
-            async fn put_multipart_opts(
-                &self,
-                location: &Path,
-                options: PutMultipartOptions,
-            ) -> object_store::Result<Box<dyn MultipartUpload>> {
-                self.inner.put_multipart_opts(location, options).await
-            }
-
-            async fn list_with_delimiter(
-                &self,
-                prefix: Option<&Path>,
-            ) -> object_store::Result<ListResult> {
-                self.inner.list_with_delimiter(prefix).await
-            }
-
-            async fn copy_opts(
-                &self,
-                from: &Path,
-                to: &Path,
-                options: CopyOptions,
-            ) -> object_store::Result<()> {
-                self.inner.copy_opts(from, to, options).await
-            }
-
-            fn delete_stream(
-                &self,
-                locations: BoxStream<'static, object_store::Result<Path>>,
-            ) -> BoxStream<'static, object_store::Result<Path>> {
-                self.inner.delete_stream(locations)
-            }
-        }
-    };
-}
-
 /// Refuses the first `failures` puts as throttled, then delegates.
 #[derive(Debug)]
 struct ThrottlingStore {
@@ -144,7 +95,15 @@ impl ThrottlingStore {
     }
 }
 
-delegate_object_store!(ThrottlingStore {
+impl std::fmt::Display for ThrottlingStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "ThrottlingStore({})", self.inner)
+    }
+}
+
+#[krabka_domain_macros::delegate_object_store(self.inner)]
+#[async_trait]
+impl ObjectStore for ThrottlingStore {
     async fn put_opts(
         &self,
         location: &Path,
@@ -163,19 +122,7 @@ delegate_object_store!(ThrottlingStore {
         }
         self.inner.put_opts(location, payload, options).await
     }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-});
+}
 
 /// How a [`ChecksumStore`] breaks the bytes it carries.
 #[derive(Clone, Copy, Debug)]
@@ -204,7 +151,15 @@ impl ChecksumStore {
     }
 }
 
-delegate_object_store!(ChecksumStore {
+impl std::fmt::Display for ChecksumStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "ChecksumStore({})", self.inner)
+    }
+}
+
+#[krabka_domain_macros::delegate_object_store(self.inner)]
+#[async_trait]
+impl ObjectStore for ChecksumStore {
     async fn put_opts(
         &self,
         location: &Path,
@@ -244,11 +199,7 @@ delegate_object_store!(ChecksumStore {
             attributes,
         })
     }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-});
+}
 
 /// Omits each put from the next `lag` listings, as an eventually consistent
 /// listing does.
@@ -269,7 +220,15 @@ impl StaleListingStore {
     }
 }
 
-delegate_object_store!(StaleListingStore {
+impl std::fmt::Display for StaleListingStore {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "StaleListingStore({})", self.inner)
+    }
+}
+
+#[krabka_domain_macros::delegate_object_store(self.inner)]
+#[async_trait]
+impl ObjectStore for StaleListingStore {
     async fn put_opts(
         &self,
         location: &Path,
@@ -282,14 +241,6 @@ delegate_object_store!(StaleListingStore {
             .expect("the hidden set is not poisoned")
             .insert(location.clone(), self.lag);
         Ok(result)
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
     }
 
     fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
@@ -307,7 +258,7 @@ delegate_object_store!(StaleListingStore {
             .try_filter(move |meta| futures::future::ready(!omitted.contains(&meta.location)))
             .boxed()
     }
-});
+}
 
 /// What the retry layer made of a throttled put.
 #[derive(Debug, PartialEq, Eq)]

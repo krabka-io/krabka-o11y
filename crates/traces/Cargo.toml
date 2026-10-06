@@ -23,6 +23,7 @@ workspace = true
 heap-profiling = ["krabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
 
 [dependencies]
+krabka-domain-macros.workspace = true
 assert2 = { workspace = true }
 arc-swap = { workspace = true }
 krabka-blockstore = { path = "../blockstore", version = "0.4.0" }

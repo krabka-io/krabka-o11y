@@ -4190,7 +4190,13 @@ name = "krabka-domain-macros"
 version = "0.4.0"
 dependencies = [
  "assert2",
+ "async-trait",
+ "bytes",
+ "clap",
+ "futures",
  "moxy",
+ "object_store 0.13.2",
+ "tokio",
 ]
 
 [[package]]
@@ -4967,6 +4973,7 @@ dependencies = [
  "futures",
  "krabka-blockstore",
  "krabka-column-macros",
+ "krabka-domain-macros",
  "krabka-units",
  "num-traits",
  "proptest",
@@ -5004,6 +5011,7 @@ dependencies = [
  "krabka-client-core",
  "krabka-client-producer",
  "krabka-codegen",
+ "krabka-domain-macros",
  "krabka-metrics",
  "krabka-observability",
  "krabka-protocol",

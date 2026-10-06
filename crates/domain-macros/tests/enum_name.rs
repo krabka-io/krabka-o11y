@@ -1,3 +1,4 @@
+use clap::ValueEnum;
 use krabka_domain_macros::EnumName;
 
 #[derive(Clone, Copy, EnumName)]
@@ -44,4 +45,33 @@ fn display_does_not_consume_non_copy_variants() {
     let value = NonCopy::Second;
     assert2::assert!(value.to_string() == "second");
     assert2::assert!(value.as_str() == "second");
+}
+
+#[derive(Clone, Copy, clap::ValueEnum, EnumName)]
+#[enum_name(clap)]
+enum Protocol {
+    #[value(name = "SASL_SSL")]
+    SaslSsl,
+    #[value(name = "GSSAPI", hide = true)]
+    Gssapi,
+    #[value(name = "PLAIN")]
+    Plain,
+}
+
+const PROTOCOL_NAME: &str = Protocol::SaslSsl.as_str();
+
+#[test]
+fn clap_names_match_parsing_const_access_and_display() {
+    assert2::assert!(PROTOCOL_NAME == "SASL_SSL");
+    for (protocol, expected) in [
+        (Protocol::SaslSsl, "SASL_SSL"),
+        (Protocol::Gssapi, "GSSAPI"),
+        (Protocol::Plain, "PLAIN"),
+    ] {
+        assert2::assert!(protocol.as_str() == expected);
+        assert2::assert!(protocol.to_string() == expected);
+        assert2::assert!(Protocol::from_str(expected, false).unwrap().as_str() == expected);
+    }
+    assert2::assert!(Protocol::Gssapi.to_possible_value().unwrap().is_hide_set());
+    assert2::assert!(Protocol::from_str("sasl_ssl", false).is_err());
 }

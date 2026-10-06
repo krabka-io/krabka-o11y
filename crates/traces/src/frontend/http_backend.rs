@@ -51,13 +51,10 @@ use crate::frontend::{
 #[cfg(test)]
 mod tests {
 
-    /// `scope_param` is the inverse of `parse_scope`: it names a scope for a
-    /// query string. The six names are asserted to be distinct, so a scope
-    /// borrowed from a neighbouring arm cannot pass unnoticed.
     #[test]
     fn every_tag_scope_has_its_own_query_parameter_name() {
         use krabka_traceql::TagScope;
-        let name = super::scope_param;
+        let name = TagScope::as_str;
 
         check!(name(TagScope::Resource) == "resource");
         check!(name(TagScope::Span) == "span");
@@ -141,7 +138,6 @@ mod ns_to_seconds;
 mod parse_scope;
 mod push_shard_params;
 mod run_query_frontend;
-mod scope_param;
 mod scope_tags_json;
 mod tag_values_body;
 mod tags_body;
@@ -154,7 +150,6 @@ use ns_to_seconds::ns_to_seconds;
 use parse_scope::parse_scope;
 use push_shard_params::push_shard_params;
 pub use run_query_frontend::run_query_frontend;
-use scope_param::scope_param;
 use scope_tags_json::ScopeTagsJson;
 use tag_values_body::TagValuesBody;
 use tags_body::TagsBody;

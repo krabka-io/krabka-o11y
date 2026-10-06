@@ -4248,7 +4248,6 @@ mod struct_fixed_field;
 mod struct_int64_field;
 mod struct_list_field;
 mod struct_string_field;
-mod tag_scope_key;
 mod trace_from_batches;
 mod unscoped_attribute_tag;
 
@@ -4356,6 +4355,5 @@ use struct_fixed_field::struct_fixed_field;
 use struct_int64_field::struct_int64_field;
 use struct_list_field::struct_list_field;
 use struct_string_field::struct_string_field;
-use tag_scope_key::tag_scope_key;
 use trace_from_batches::trace_from_batches;
 use unscoped_attribute_tag::unscoped_attribute_tag;

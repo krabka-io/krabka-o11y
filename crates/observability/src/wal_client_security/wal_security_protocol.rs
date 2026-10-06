@@ -1,10 +1,13 @@
-use super::{ListenerProtocol, ValueEnum, fmt};
+use krabka_domain_macros::EnumName;
+
+use super::{ListenerProtocol, ValueEnum};
 
 /// The protocol a write-ahead log connection speaks, as Kafka's
 /// `security.protocol` names it.
 ///
 /// The flag accepts the names in any letter case, as the Kafka clients do.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, ValueEnum)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, ValueEnum, EnumName)]
+#[enum_name(clap)]
 pub enum WalSecurityProtocol {
     /// Plain TCP, with no TLS and no SASL.
     #[default]
@@ -43,15 +46,5 @@ impl From<WalSecurityProtocol> for ListenerProtocol {
             WalSecurityProtocol::SaslPlaintext => Self::SaslPlaintext,
             WalSecurityProtocol::SaslSsl => Self::SaslSsl,
         }
-    }
-}
-
-impl fmt::Display for WalSecurityProtocol {
-    // The flag spelling, so an error names the value the operator typed.
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = self
-            .to_possible_value()
-            .expect("no protocol variant is skipped");
-        formatter.write_str(value.get_name())
     }
 }

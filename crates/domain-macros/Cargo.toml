@@ -6,7 +6,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "Moxy derives for explicit domain names"
+description = "Moxy derives and delegation for domain types"
 
 [lib]
 proc-macro = true
@@ -19,3 +19,9 @@ moxy = { workspace = true, features = ["macros", "template", "diagnostic"] }
 
 [dev-dependencies]
 assert2.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+clap = { workspace = true, features = ["derive"] }
+futures.workspace = true
+object_store.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

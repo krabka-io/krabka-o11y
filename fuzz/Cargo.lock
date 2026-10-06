@@ -3216,6 +3216,8 @@ dependencies = [
  "derive_more",
  "futures",
  "hex",
+ "krabka-column-macros",
+ "krabka-domain-macros",
  "krabka-o11y-verified",
  "krabka-object-store",
  "krabka-units",
@@ -3342,6 +3344,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "krabka-codegen"
+version = "0.4.0"
+dependencies = [
+ "moxy",
+]
+
+[[package]]
+name = "krabka-column-macros"
+version = "0.4.0"
+dependencies = [
+ "moxy",
+]
+
+[[package]]
 name = "krabka-compression"
 version = "0.5.0"
 source = "git+https://github.com/krabka-io/krabka-protocol?rev=e06aa582b1a2cd8d5961e822bc0a9b27d660031d#e06aa582b1a2cd8d5961e822bc0a9b27d660031d"
@@ -3356,6 +3372,13 @@ dependencies = [
  "snap",
  "thiserror",
  "zstd 0.14.0",
+]
+
+[[package]]
+name = "krabka-domain-macros"
+version = "0.4.0"
+dependencies = [
+ "moxy",
 ]
 
 [[package]]
@@ -3418,6 +3441,8 @@ dependencies = [
  "krabka-client-consumer",
  "krabka-client-core",
  "krabka-client-producer",
+ "krabka-codegen",
+ "krabka-column-macros",
  "krabka-ids",
  "krabka-observability",
  "krabka-query-frontend",
@@ -3510,6 +3535,7 @@ dependencies = [
  "krabka-client-consumer",
  "krabka-client-core",
  "krabka-client-producer",
+ "krabka-domain-macros",
  "krabka-ids",
  "krabka-logfmt",
  "krabka-logql",
@@ -3557,6 +3583,7 @@ dependencies = [
  "datafusion",
  "futures-util",
  "krabka-blockstore",
+ "krabka-codegen",
  "krabka-query-frontend",
  "krabka-units",
  "object 0.40.0",
@@ -3736,6 +3763,8 @@ dependencies = [
  "derive_more",
  "futures",
  "krabka-blockstore",
+ "krabka-column-macros",
+ "krabka-domain-macros",
  "krabka-units",
  "regex",
  "serde",
@@ -3767,6 +3796,8 @@ dependencies = [
  "krabka-client-consumer",
  "krabka-client-core",
  "krabka-client-producer",
+ "krabka-codegen",
+ "krabka-domain-macros",
  "krabka-metrics",
  "krabka-observability",
  "krabka-query-frontend",
@@ -4250,6 +4281,81 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "moxy"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-ast",
+ "moxy-diagnostic",
+ "moxy-fmt",
+ "moxy-macros",
+ "moxy-template",
+ "moxy-token",
+]
+
+[[package]]
+name = "moxy-ast"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-token",
+]
+
+[[package]]
+name = "moxy-build"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+
+[[package]]
+name = "moxy-diagnostic"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-ast",
+ "moxy-build",
+ "moxy-token",
+]
+
+[[package]]
+name = "moxy-fmt"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-ast",
+ "moxy-token",
+]
+
+[[package]]
+name = "moxy-macros"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-ast",
+ "moxy-diagnostic",
+ "moxy-fmt",
+ "moxy-template",
+ "moxy-token",
+]
+
+[[package]]
+name = "moxy-template"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-ast",
+ "moxy-token",
+]
+
+[[package]]
+name = "moxy-token"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-build",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -5369,7 +5475,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
 dependencies = [
  "heck",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "log",
  "multimap",
  "petgraph 0.8.3",
@@ -5403,7 +5509,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.119",

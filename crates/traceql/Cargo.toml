@@ -19,6 +19,7 @@ categories = ["database-implementations"]
 workspace = true
 
 [dependencies]
+krabka-domain-macros.workspace = true
 krabka-column-macros.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["float_roundtrip"] }

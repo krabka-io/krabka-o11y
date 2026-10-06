@@ -89,6 +89,7 @@ unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
+    "https://github.com/aacebo/moxy",
     "https://github.com/apache/arrow-rs-object-store",
     "https://github.com/apache/datafusion",
     "https://github.com/krabka-io/connectrpc-axum",

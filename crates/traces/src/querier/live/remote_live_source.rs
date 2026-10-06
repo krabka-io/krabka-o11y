@@ -117,7 +117,7 @@ impl LiveSource for RemoteLiveSource {
                 .append_pair("start", &ns_floor_seconds(start_ns).to_string())
                 .append_pair("end", &ns_ceil_seconds(end_ns).to_string());
             if let Some(scope) = scope {
-                query.append_pair("scope", tag_scope_name(scope));
+                query.append_pair("scope", scope.as_str());
             }
         }
         let json = self.get_json(tenant, url).await?;

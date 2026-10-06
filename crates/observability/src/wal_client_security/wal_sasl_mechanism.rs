@@ -1,10 +1,13 @@
-use super::{SaslMechanism, ValueEnum, fmt};
+use krabka_domain_macros::EnumName;
+
+use super::{SaslMechanism, ValueEnum};
 
 /// The SASL mechanism a write-ahead log connection authenticates with, as
 /// Kafka's `sasl.mechanism` names it.
 ///
 /// The flag accepts the names in upper case only, as the Kafka clients do.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, ValueEnum)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, ValueEnum, EnumName)]
+#[enum_name(clap)]
 pub enum WalSaslMechanism {
     /// SASL/PLAIN, with a user name and a password file.
     #[value(name = "PLAIN")]
@@ -38,15 +41,5 @@ impl From<WalSaslMechanism> for SaslMechanism {
             WalSaslMechanism::OAuthBearer => Self::OAuthBearer,
             WalSaslMechanism::Gssapi => Self::Gssapi,
         }
-    }
-}
-
-impl fmt::Display for WalSaslMechanism {
-    // The flag spelling, which is also the Kafka wire name.
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = self
-            .to_possible_value()
-            .expect("no mechanism variant is skipped");
-        formatter.write_str(value.get_name())
     }
 }
