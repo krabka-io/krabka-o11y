@@ -298,6 +298,18 @@
         "path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/validation-record.json",
         "sha256": "930d2b77dde6362ea2b41b9b8d379849659c28661f3a223f2237adde5a4a55f3"
       }
+    },
+    "query_language_source_binding": {
+      "status": "reviewed_bindings_and_local_checks_passed",
+      "updated_bindings": 20,
+      "source_path": "crates/traces/tests/tempo_differential.rs",
+      "source_sha256": "22accd565b1da756dc120015627ca1a25c69fcfaff9c4fa953b7e63df4773927",
+      "registry_sha256": "a19352327c80b20a7d3093dd2970df6dad8ce917f06d762701d03dc7451f09c5",
+      "review": "Only the seeded Grafana trace failure diagnostics changed. All 20 mapped identities match captured native results. Identities, mappings, reasons and outcomes are unchanged.",
+      "validation_record": {
+        "path": "qualification/evidence/correctness/pr331-query-source-binding-559a0277/validation-record.json",
+        "sha256": "5e0a2bf9da50c43b1f7d860baf403134ea156c246f5fea55eee355af48d4d26f"
+      }
     }
   },
   "qualification_scope": "Local checks qualify the recorded merged code tree. Subsequent validation-record edits change only qualification JSON; final-head CI and fresh performance qualification remain pending.",
