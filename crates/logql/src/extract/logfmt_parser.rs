@@ -1,16 +1,23 @@
 use super::decode_quoted_escape;
 
-pub(crate) struct LogfmtParser<'a> {
+/// Incrementally decodes logfmt fields without sanitizing their names.
+pub struct LogfmtParser<'a> {
     pub(crate) input: &'a str,
     pub(crate) pos: usize,
 }
 
 impl<'a> LogfmtParser<'a> {
-    pub(crate) fn new(input: &'a str) -> Self {
+    /// Creates a decoder positioned at the beginning of the input.
+    #[must_use]
+    pub fn new(input: &'a str) -> Self {
         Self { input, pos: 0 }
     }
 
-    pub(crate) fn next_pair_with_options(
+    /// Reads the next field, optionally retaining standalone keys.
+    ///
+    /// # Errors
+    /// Returns a decoding error for malformed tokens when `strict` is enabled.
+    pub fn next_pair_with_options(
         &mut self,
         keep_standalone: bool,
         strict: bool,

@@ -253,7 +253,57 @@ impl BlockStore {
         ctx: &SessionContext,
         request: ScanTableRequest<'_>,
     ) -> Result<ScanReport> {
-        let (fingerprints, candidates) = self.scan_candidates(&request)?;
+        self.register_selected_scan_table(ctx, request, None).await
+    }
+
+    /// Registers only the requested series, choosing candidate blocks before
+    /// probing them. Matchers, tenant and time bounds still apply.
+    ///
+    /// # Errors
+    /// Returns the same object-store and registration errors as
+    /// [`Self::register_scan_table_skipping_unreadable`].
+    pub async fn register_scan_table_for_fingerprints_skipping_unreadable(
+        &self,
+        ctx: &SessionContext,
+        request: ScanTableRequest<'_>,
+        fingerprints: &std::collections::BTreeSet<SeriesFingerprint>,
+    ) -> Result<ScanReport> {
+        self.register_selected_scan_table(ctx, request, Some(fingerprints))
+            .await
+    }
+
+    async fn register_selected_scan_table(
+        &self,
+        ctx: &SessionContext,
+        request: ScanTableRequest<'_>,
+        selected: Option<&std::collections::BTreeSet<SeriesFingerprint>>,
+    ) -> Result<ScanReport> {
+        let (mut fingerprints, mut candidates) = if request.matchers.is_empty() {
+            if let Some(selected) = selected {
+                (
+                    selected.clone(),
+                    self.index.candidate_blocks(
+                        request.tenant,
+                        selected,
+                        request.min_ts,
+                        request.max_ts,
+                    ),
+                )
+            } else {
+                self.scan_candidates(&request)?
+            }
+        } else {
+            self.scan_candidates(&request)?
+        };
+        if let Some(selected) = selected {
+            fingerprints.retain(|fingerprint| selected.contains(fingerprint));
+            candidates = self.index.candidate_blocks(
+                request.tenant,
+                &fingerprints,
+                request.min_ts,
+                request.max_ts,
+            );
+        }
         let (readable, skipped) = probe_blocks(
             &self.store,
             &candidates,

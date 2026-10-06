@@ -12,12 +12,19 @@ pub(crate) fn a_tenant_override_changes_only_the_limits_it_names() {
     const YAML: &str = r#"
 defaults:
   max_line_size: "1KiB"
+  discover_log_levels: false
+  log_level_fields: [priority, SeverityText]
+  log_level_from_json_max_depth: 4
 overrides:
   tenant-capped:
     max_query_series: 2
     max_line_size: "16B"
+    discover_log_levels: true
+    log_level_fields: []
+    log_level_from_json_max_depth: 0
   tenant-open:
     max_query_length: "0s"
+    log_level_from_json_max_depth: -2
 "#;
 
     let provider = OverridesProvider::from_yaml(YAML).expect("the overrides file parses");
@@ -35,6 +42,18 @@ overrides:
         "and so does an unnamed time cap"
     );
 
+    check!(
+        *capped
+            == Limits {
+                max_query_series: 2,
+                max_line_size: bytes(16),
+                discover_log_levels: true,
+                log_level_fields: Vec::new(),
+                log_level_from_json_max_depth: 0,
+                ..Limits::default()
+            }
+    );
+
     // A tenant with an entry that names something else still gets the
     // `defaults` block, not the built-in default.
     let open = provider.for_tenant(&TenantId::new("tenant-open").expect("a valid tenant id"));
@@ -42,6 +61,18 @@ overrides:
     check!(
         open.max_line_size == bytes(1024),
         "the defaults block applies"
+    );
+
+    check!(
+        *open
+            == Limits {
+                max_line_size: bytes(1024),
+                max_query_length: Time::ZERO,
+                discover_log_levels: false,
+                log_level_fields: vec!["priority".into(), "SeverityText".into()],
+                log_level_from_json_max_depth: -2,
+                ..Limits::default()
+            }
     );
 
     // A tenant with no entry at all gets the `defaults` block too.

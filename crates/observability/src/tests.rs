@@ -195,6 +195,7 @@ mod compaction_and_query_limits;
 mod detected_fields_and_params;
 mod durations_and_tail;
 mod errors_labels_and_operators;
+mod experimental_queries;
 mod formatting_and_errors;
 mod hot_metrics_and_metadata;
 mod hot_tail_frontier;

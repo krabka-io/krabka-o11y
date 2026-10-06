@@ -11,6 +11,7 @@ pub(crate) async fn plan_selector<S: SpanStore>(
     fe: &FieldExpr,
 ) -> Result<PlannedSpanset> {
     if has_nested_scope(fe)
+        && !fe.has_field_comparison()
         && let Some(disjuncts) = field_expr_to_matcher_disjuncts(fe)
         && disjuncts.len() > 1
     {
@@ -35,6 +36,7 @@ pub(crate) async fn plan_selector<S: SpanStore>(
         scan.span_table.clone()
     };
     if !has_nested_scope(fe)
+        && !fe.has_field_comparison()
         && !has_parent_scope(fe)
         && field_expr_to_matcher_disjuncts(fe).is_some_and(|disjuncts| disjuncts.len() == 1)
     {
@@ -47,6 +49,8 @@ pub(crate) async fn plan_selector<S: SpanStore>(
             ctx: scan.ctx,
             plan,
             inspected,
+            sampling_factor: 1.0,
+            spanset_pipeline_had_input: false,
         });
     }
     let table = ident(&scan.span_table);
@@ -57,5 +61,7 @@ pub(crate) async fn plan_selector<S: SpanStore>(
         ctx: scan.ctx,
         plan,
         inspected,
+        sampling_factor: 1.0,
+        spanset_pipeline_had_input: false,
     })
 }

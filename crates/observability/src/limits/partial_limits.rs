@@ -27,6 +27,12 @@ pub(crate) struct PartialLimits {
     #[serde(default)]
     pub(crate) otlp_config: Option<OtlpConfig>,
     #[serde(default)]
+    pub(crate) discover_log_levels: Option<bool>,
+    #[serde(default)]
+    pub(crate) log_level_fields: Option<Vec<String>>,
+    #[serde(default)]
+    pub(crate) log_level_from_json_max_depth: Option<i64>,
+    #[serde(default)]
     pub(crate) max_label_names_per_series: Option<u64>,
     #[serde(
         default,
@@ -67,6 +73,10 @@ pub(crate) struct PartialLimits {
     pub(crate) max_entries_limit_per_query: Option<u64>,
     #[serde(default)]
     pub(crate) max_query_series: Option<u64>,
+    #[serde(default)]
+    pub(crate) enable_multi_variant_queries: Option<bool>,
+    #[serde(default)]
+    pub(crate) shard_aggregations: Option<Vec<String>>,
     #[serde(
         default,
         deserialize_with = "super::option_non_negative_byte_size::deserialize"

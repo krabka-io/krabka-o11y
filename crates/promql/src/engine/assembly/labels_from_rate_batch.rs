@@ -1,4 +1,4 @@
-use super::{Array, Labels, RecordBatch, StringArray, rate_range};
+use super::{Array, BinaryArray, Labels, RecordBatch, StringArray, rate_range};
 
 /// Reconstructs a [`Labels`] set from the string label columns of one row of a
 /// rate-range projection output batch.
@@ -10,6 +10,14 @@ pub(crate) fn labels_from_rate_batch(batch: &RecordBatch, row: usize) -> Labels 
     for (index, field) in batch.schema().fields().iter().enumerate() {
         if field.name() == rate_range::RATE_VALUE_COLUMN {
             continue;
+        }
+        if let Some(column) = batch.column(index).as_any().downcast_ref::<BinaryArray>()
+            && !column.is_null(row)
+        {
+            labels.insert(
+                field.name().clone(),
+                crate::PromqlString::from(column.value(row).to_vec()),
+            );
         }
         if let Some(column) = batch.column(index).as_any().downcast_ref::<StringArray>() {
             // NULL -> absent (skip); any non-null value (including `""`) ->

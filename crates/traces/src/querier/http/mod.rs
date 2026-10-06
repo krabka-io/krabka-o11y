@@ -825,58 +825,85 @@ mod tests {
 
     #[tokio::test]
     async fn metrics_routes_return_traceql_metrics_json() {
-        // The two selected fixture spans occupy one second-long bucket. Tempo's
-        // frontend attaches that bucket's value to the exemplar, with the
-        // canonical trace:id and the selector's projected .svc attribute.
-        let (status, body) = get_json(
-            "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20rate()&start=0&end=1&step=1",
-        )
-        .await;
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
+        // Both spans occupy one bucket and one trace. Reservoir sampling can
+        // choose either span; the frontend attaches the rate/count bucket value.
+        for function in ["rate", "count_over_time"] {
+            let (status, body) = get_json(&format!(
+                "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20{function}()&start=0&end=1&step=1"
+            )).await;
+            assert2::assert!(status == StatusCode::OK);
+            let allowed = ["a", "b"].map(|service| json!({
                 "series": [{
-                    "labels": [{"key": "__name__", "value": {"stringValue": "rate"}}],
-                    "promLabels": "{}",
-                    "samples": [
-                        {"timestampMs": "1000", "value": 2.0}
-                    ],
-                    "exemplars": [{
-                        "labels": [
-                            {"key": "trace:id", "value": {"stringValue": "9090909090909090909090909090909"}},
-                            {"key": ".svc", "value": {"stringValue": "a"}}
+                    "labels": [{"key":"__name__","value":{"stringValue":function}}],
+                    "promLabels":format!("{{__name__=\"{function}\"}}"),
+                    "samples":[{"timestampMs":"1000","value":2.0}],
+                    "exemplars":[{
+                        "labels":[
+                            {"key":"trace:id","value":{"stringValue":"9090909090909090909090909090909"}},
+                            {"key":".svc","value":{"stringValue":service}}
                         ],
-                        "value": 2.0,
-                        "timestampMs": "0"
+                        "value":2.0,"timestampMs":"0"
                     }]
                 }]
-            })
-        );
+            }));
+            assert2::assert!(allowed.contains(&body), "{function}: {body}");
+        }
+    }
 
-        let (status, body) = get_json(
-            "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&start=0&end=1&step=1",
-        )
-        .await;
-        assert2::assert!(status == StatusCode::OK);
-        assert2::assert!(
-            body == json!({
-                "series": [{
-                    "labels": [{"key": "__name__", "value": {"stringValue": "count_over_time"}}],
-                    "promLabels": "{}",
-                    "samples": [
-                        {"timestampMs": "1000", "value": 2.0}
-                    ],
-                    "exemplars": [{
-                        "labels": [
-                            {"key": "trace:id", "value": {"stringValue": "9090909090909090909090909090909"}},
-                            {"key": ".svc", "value": {"stringValue": "a"}}
-                        ],
-                        "value": 2.0,
-                        "timestampMs": "0"
-                    }]
-                }]
+    #[tokio::test]
+    async fn public_metric_routes_decode_array_groups_without_changing_raw_workers() {
+        let spans = [1, 3]
+            .into_iter()
+            .map(|value| {
+                span_at_with_attrs(
+                    9,
+                    value,
+                    None,
+                    "api",
+                    1000 + i64::from(value),
+                    vec![(
+                        "numbers".into(),
+                        AttrValue::Array(vec![
+                            AttrValue::Int(i64::from(value)),
+                            AttrValue::Int(i64::from(value + 1)),
+                        ]),
+                    )],
+                )
             })
-        );
+            .collect();
+        let mut store = InMemorySpanStore::new();
+        store.push_trace("tenant-a", "api", "root", spans);
+        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
+        let query =
+            "{ span.numbers != nil } | count_over_time() by(span.numbers) with(exemplars=false)";
+        let raw = engine
+            .query_range("tenant-a", query, 0, 1_000_000_000, 1_000_000_000)
+            .await
+            .unwrap();
+        let raw_json = trace_metrics_json(&raw, query);
+        assert2::assert!(raw_json["series"].as_array().unwrap().len() == 2);
+        for series in raw_json["series"].as_array().unwrap() {
+            assert2::assert!(series["labels"][0]["value"]["arrayValue"].is_object());
+        }
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        for (path, suffix) in [("query_range", "&step=1"), ("query", "")] {
+            let uri = format!("/api/metrics/{path}?q={encoded}&start=0&end=1{suffix}");
+            let (status, actual) = get_json_with_app(router(engine.clone()), &uri).await;
+            assert2::assert!(status == StatusCode::OK);
+            let expected = if path == "query" {
+                json!({"series":[{
+                    "labels":[{"key":"span.numbers","value":{"stringValue":"nil"}}],
+                    "value":2.0
+                }], "metrics":{"completedJobs":1,"totalJobs":1}})
+            } else {
+                json!({"series":[{
+                    "labels":[{"key":"span.numbers","value":{"stringValue":"nil"}}],
+                    "promLabels":"{\"span.numbers\"=\"<nil>\"}",
+                    "samples":[{"timestampMs":"1000","value":2.0}],"exemplars":[]
+                }]})
+            };
+            assert2::assert!(actual == expected);
+        }
     }
 
     #[tokio::test]
@@ -903,7 +930,7 @@ mod tests {
             body == json!({
                 "series": [{
                     "labels": [{"key": "__name__", "value": {"stringValue": "count_over_time"}}],
-                    "promLabels": "{}",
+                    "promLabels": "{__name__=\"count_over_time\"}",
                     "samples": [
                         {"timestampMs": "1000", "value": 1.0}
                     ],
@@ -1021,19 +1048,128 @@ mod tests {
         .await;
 
         check!(status == StatusCode::OK);
-        check!(body["series"][0]["samples"] == json!([{"timestampMs": "1000", "value": 2.0}]));
-        check!(body["series"][0]["exemplars"] == json!([]));
+        check!(
+            body == json!({"series": [{
+            "labels": [{"key": "__name__", "value": {"stringValue": "count_over_time"}}],
+            "value": 2.0
+        }], "metrics": {"completedJobs": 1, "totalJobs": 1}})
+        );
     }
 
     #[tokio::test]
-    async fn metrics_query_rejects_invalid_time() {
-        let (status, body) = get_text(
-            "/api/metrics/query?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&time=bogus",
+    async fn metrics_query_ignores_time_and_defaults_an_omitted_start() {
+        for bounds in [
+            "end=1&time=bogus",
+            "end=1&time=0",
+            "end=1&since=1h",
+            "start=&end=1&since=",
+        ] {
+            let (status, body) = get_json(&format!(
+                "/api/metrics/query?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20count_over_time()&{bounds}&exemplars=false",
+            )).await;
+            assert2::assert!(status == StatusCode::OK, "{bounds}");
+            assert2::assert!(
+                body == json!({"series": [{
+                    "labels": [{"key": "__name__", "value": {"stringValue": "count_over_time"}}],
+                    "value": 2.0
+                }], "metrics": {"completedJobs": 1, "totalJobs": 1}}),
+                "{bounds}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn metrics_query_default_hour_includes_recent_spans_and_excludes_older_spans() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let now_ns = || {
+            i64::try_from(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+            )
+            .unwrap()
+        };
+        let fixture_time = now_ns();
+        let mut store = InMemorySpanStore::new();
+        store.push_trace(
+            "tenant-a",
+            "svc-a",
+            "root-a",
+            vec![
+                span_at(9, 1, None, "a", fixture_time - 60_000_000_000),
+                span_at(9, 2, Some(1), "a", fixture_time - 30_000_000_000),
+                span_at(9, 3, Some(1), "a", fixture_time - 7_200_000_000_000),
+            ],
+        );
+        let (status, body) = get_json_with_app(
+            router(Arc::new(TraceqlEngine::new(
+                Arc::new(store),
+                EngineOpts::default(),
+            ))),
+            "/api/metrics/query?q=%7B%7D%20%7C%20count_over_time()&time=bogus&exemplars=false",
         )
         .await;
+        assert2::assert!(status == StatusCode::OK);
+        assert2::assert!(
+            body == json!({"series": [{
+                "labels": [{"key": "__name__", "value": {"stringValue": "count_over_time"}}],
+                "value": 2.0
+            }], "metrics": {"completedJobs": 1, "totalJobs": 1}})
+        );
+    }
 
-        assert2::assert!(status == StatusCode::BAD_REQUEST);
-        assert2::assert!(body == "invalid query parameter time");
+    #[tokio::test]
+    async fn metrics_query_rate_pools_endpoints_before_the_metric_filter() {
+        let mut store = InMemorySpanStore::new();
+        store.push_trace(
+            "tenant-a",
+            "svc",
+            "root",
+            vec![
+                span_at(9, 1, None, "a", 0),
+                span_at(9, 2, Some(1), "a", 1_000_000_000),
+                span_at(9, 3, Some(1), "a", 2_000_000_000),
+                span_at(9, 4, Some(1), "a", 3_000_000_000),
+            ],
+        );
+        let engine = Arc::new(TraceqlEngine::new(Arc::new(store), EngineOpts::default()));
+        let (status, body) = get_json_with_app(router(engine),
+            "/api/metrics/query?q=%7B%7D%20%7C%20rate()%20%3E%201.2%20with(exemplars=false)&start=0&end=2"
+        ).await;
+        assert2::assert!(status == StatusCode::OK);
+        assert2::assert!(
+            body == json!({"series":[{
+            "labels":[{"key":"__name__","value":{"stringValue":"rate"}}], "value":1.5
+        }],"metrics":{"completedJobs":1,"totalJobs":1}})
+        );
+    }
+
+    #[tokio::test]
+    async fn metrics_query_empty_count_and_rate_expose_protojson_zero_series() {
+        for (operation, query) in [
+            ("count_over_time", "{} | count_over_time()"),
+            ("rate", "{} | rate()"),
+        ] {
+            let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+            let (status, body) = get_json(&format!(
+                "/api/metrics/query?q={encoded}&start=10&end=19&exemplars=false"
+            ))
+            .await;
+            assert2::assert!(status == StatusCode::OK);
+            assert2::assert!(
+                body == json!({"series":[{
+                "labels":[{"key":"__name__","value":{"stringValue":operation}}]
+            }],"metrics":{"completedJobs":1,"totalJobs":1}})
+            );
+        }
+        let query = "{} | count_over_time() > 0";
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let (status, body) =
+            get_json(&format!("/api/metrics/query?q={encoded}&start=10&end=19")).await;
+        assert2::assert!(status == StatusCode::OK);
+        assert2::assert!(body == json!({"metrics":{"completedJobs":1,"totalJobs":1}}));
     }
 
     #[tokio::test]
@@ -1044,7 +1180,7 @@ mod tests {
         .await;
 
         assert2::assert!(status == StatusCode::BAD_REQUEST);
-        assert2::assert!(body == "end must be >= start");
+        assert2::assert!(body == "end must be > start");
     }
 
     #[tokio::test]
@@ -4279,8 +4415,8 @@ use filter_search_duration::filter_search_duration;
 use filter_tag_values::filter_tag_values;
 use group_attrs::group_attrs;
 pub use http_config::HttpConfig;
-use instant_metric_bounds::instant_metric_bounds;
-use instant_metrics_response::instant_metrics_response;
+pub(crate) use instant_metric_bounds::instant_metric_bounds;
+pub(crate) use instant_metrics_response::instant_metrics_response;
 use instrumentation_attributes::instrumentation_attributes;
 use instrumentation_groups::InstrumentationGroups;
 use instrumentation_key::InstrumentationKey;
@@ -4375,7 +4511,7 @@ use trace_by_id_v1::trace_by_id_v1;
 use trace_by_id_v1_inner::trace_by_id_v1_inner;
 use trace_duration::trace_duration;
 use trace_json::trace_json;
-use trace_metrics_json::trace_metrics_json;
+use trace_metrics_json::{trace_metrics_instant_json, trace_metrics_json};
 use trace_protobuf::trace_protobuf;
 use trace_resource_attributes::trace_resource_attributes;
 use trace_span_json::trace_span_json;

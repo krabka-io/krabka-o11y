@@ -1,14 +1,14 @@
 //! Prometheus-shaped query result model.
 
-use krabka_blockstore::Labels;
 use krabka_metrics::NativeHistogram;
+
+use crate::PromqlLabels as Labels;
 
 #[cfg(test)]
 mod tests {
 
-    use krabka_blockstore::Labels;
-
     use super::*;
+    use crate::PromqlLabels as Labels;
 
     #[test]
     fn result_type_strings_match_prometheus() {

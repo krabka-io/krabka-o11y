@@ -1,5 +1,5 @@
 use super::{
-    Labels, ParseError, PatternPart, insert_extracted_field, insert_pattern_parser_error,
+    Labels, ParseError, PatternPart, insert_pattern_parser_error, insert_raw_parsed_field,
     parse_pattern_parts,
 };
 
@@ -31,7 +31,7 @@ impl PatternParser {
 
         for (name, value) in captures {
             if name != "_" {
-                insert_extracted_field(fields, &name, value);
+                insert_raw_parsed_field(fields, &name, value);
             }
         }
     }

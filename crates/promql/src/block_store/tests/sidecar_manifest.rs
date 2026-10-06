@@ -25,7 +25,7 @@ pub(crate) async fn sidecar_manifest(
         &block_meta,
         vec![CompactionSeriesLabels {
             fingerprint: series_labels.fingerprint(),
-            labels: series_labels.clone(),
+            labels: series_labels.clone().into(),
         }],
     )
 }

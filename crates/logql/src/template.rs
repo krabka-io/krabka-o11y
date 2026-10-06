@@ -1,16 +1,10 @@
 use std::{cmp::Ordering, collections::BTreeMap, fmt::Write as _};
 
 use base64::{Engine as _, prelude::BASE64_STANDARD};
-use chrono::{FixedOffset, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
-use chrono_tz::Tz;
-use krabka_units::convert::ByteSizeExt as _;
 use regex::{NoExpand, Regex};
 use time::OffsetDateTime;
 
-use crate::{
-    Labels, ParseError,
-    util::{format_decimal_ratio, parse_bytes_literal, parse_prometheus_duration_literal},
-};
+use crate::{Labels, ParseError};
 
 #[cfg(test)]
 mod tests {
@@ -77,7 +71,7 @@ mod tests {
         format_template_integer_binary, format_template_ordering, format_template_to_date,
         format_template_to_date_in_zone, is_template_control_assignment_variable_char,
         is_template_variable_name_char_invalid, js_escape_template_string,
-        parse_go_time_layout_value, parse_template_fractional_nanoseconds,
+        parse_go_time_layout_value, parse_template_bytes, parse_template_fractional_nanoseconds,
         parse_template_parenthesized_token, parse_template_parts, parse_template_quoted_token,
         parse_template_timezone_offset, parse_variable_template_digits,
         push_template_unicode_escape, quoted_template_token_value,
@@ -220,17 +214,17 @@ mod tests {
     }
 
     #[test]
-    fn template_helpers_tolerate_missing_arguments() {
+    fn template_helpers_report_wrong_arity_without_rendering_values() {
         for (template, expected) in [
             ("{{ alignLeft 5 }}", ""),
             ("{{ alignRight 5 }}", ""),
             ("{{ replace \"a\" \"b\" }}", ""),
             ("{{ default \"fallback\" }}", "fallback"),
-            ("{{ contains \"needle\" }}", "false"),
-            ("{{ eq \"x\" }}", "false"),
-            ("{{ ne \"x\" }}", "false"),
-            ("{{ hasPrefix \"api\" }}", "false"),
-            ("{{ hasSuffix \"api\" }}", "false"),
+            ("{{ contains \"needle\" }}", ""),
+            ("{{ eq \"x\" }}", ""),
+            ("{{ ne \"x\" }}", ""),
+            ("{{ hasPrefix \"api\" }}", ""),
+            ("{{ hasSuffix \"api\" }}", ""),
             ("{{ indent 2 }}", ""),
             ("{{ nindent 2 }}", ""),
             ("{{ repeat 3 }}", ""),
@@ -244,10 +238,9 @@ mod tests {
             ("{{ trimSuffix \"/\" }}", ""),
         ] {
             let format = LineFormat::new(template).unwrap();
-            assert_eq!(
-                format.render("raw", &BTreeMap::new()),
-                expected,
-                "template should tolerate missing args: {template}"
+            assert2::assert!(
+                format.render("raw", &BTreeMap::new()) == expected,
+                "{template}"
             );
         }
     }
@@ -288,11 +281,11 @@ mod tests {
 
         assert_eq!(
             template_index_value(&plain, "1"),
-            Some(TemplateRuntimeValue::Integer(i64::from(b'b')))
+            Some(TemplateRuntimeValue::Byte(b'b'))
         );
         assert_eq!(
             template_index_value(&json_string, "1"),
-            Some(TemplateRuntimeValue::Integer(i64::from(b'y')))
+            Some(TemplateRuntimeValue::Byte(b'y'))
         );
         assert_eq!(template_index_value(&scalar, "0"), None);
 
@@ -301,22 +294,21 @@ mod tests {
                 plain.clone(),
                 TemplateRuntimeValue::String("2".to_string())
             ]),
-            TemplateRuntimeValue::Integer(i64::from(b'c'))
+            TemplateRuntimeValue::Byte(b'c')
         );
         assert_eq!(
             evaluate_template_index(&[
                 json_string.clone(),
                 TemplateRuntimeValue::String("0".to_string())
             ]),
-            TemplateRuntimeValue::Integer(i64::from(b'x'))
+            TemplateRuntimeValue::Byte(b'x')
         );
-        assert_eq!(
+        assert2::assert!(
             evaluate_template_slice(&[
                 json_string,
                 TemplateRuntimeValue::String("1".to_string()),
                 TemplateRuntimeValue::String("3".to_string()),
-            ]),
-            TemplateRuntimeValue::String("yz".to_string())
+            ]) == TemplateRuntimeValue::Bytes(b"yz".to_vec())
         );
     }
 
@@ -350,7 +342,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        assert_eq!(format_template_float(-0.0), "0");
+        assert2::assert!(format_template_float(-0.0) == "-0");
         assert_eq!(format_template_float_round(&args(&["1"])), "");
         assert_eq!(format_template_float_round(&args(&["-1.6", "0"])), "-2");
         assert_eq!(
@@ -359,16 +351,13 @@ mod tests {
         );
         assert_eq!(
             format_template_float_round(&args(&["1.24", "1", "NaN"])),
-            ""
+            "1.2"
         );
-        assert_eq!(format_template_float_round(&args(&["1.2", "400"])), "");
+        assert2::assert!(format_template_float_round(&args(&["1.2", "400"])) == "NaN");
 
-        assert_eq!(format_template_bytes("1.5"), "1.5");
-        assert_eq!(format_template_bytes("1kB"), "1000");
-        assert_eq!(
-            format_template_bytes("100000000000000000000"),
-            "100000000000000000000"
-        );
+        assert2::assert!(format_template_bytes("1.5") == "1");
+        assert2::assert!(format_template_bytes("1kB") == "1000");
+        assert2::assert!(parse_template_bytes("100000000000000000000").is_none());
     }
 
     #[test]
@@ -514,16 +503,18 @@ mod tests {
     }
 }
 
+#[cfg(test)]
 mod advance_template_pos;
 mod align_left_template_string;
 mod align_right_template_string;
-mod consume_template_printf_number;
 mod current_template_timestamp;
 mod decode_quoted_fragment;
 mod ensure_template_parenthesized_token;
 mod ensure_template_quoted_token;
 mod epoch_template_timestamp;
 mod evaluate_common_string_function;
+mod evaluate_template_byte_function;
+pub use evaluate_template_byte_function::go_string_equal_fold;
 mod evaluate_template_function;
 mod evaluate_template_index;
 mod evaluate_template_slice;
@@ -536,9 +527,7 @@ mod format_template_duration_seconds;
 mod format_template_float;
 mod format_template_float_fold;
 mod format_template_float_min_max;
-mod format_template_float_product;
 mod format_template_float_round;
-mod format_template_float_sum;
 mod format_template_float_unary;
 mod format_template_integer_binary;
 mod format_template_integer_min_max;
@@ -561,9 +550,12 @@ mod is_unexpected_template_control_action;
 mod is_wrapped_template_token;
 mod js_escape_template_string;
 mod line_format;
+#[cfg(test)]
 mod match_template_literal;
+#[cfg(test)]
 mod parse_fixed_template_digits;
 mod parse_go_time_layout_to_unix_nanos;
+#[cfg(test)]
 mod parse_go_time_layout_value;
 mod parse_template_action;
 mod parse_template_assignment;
@@ -571,6 +563,7 @@ mod parse_template_bound;
 mod parse_template_conditional;
 mod parse_template_control_assignment;
 mod parse_template_float;
+#[cfg(test)]
 mod parse_template_fractional_nanoseconds;
 mod parse_template_integer;
 mod parse_template_parenthesized_token;
@@ -578,16 +571,19 @@ mod parse_template_parts;
 mod parse_template_quoted_token;
 mod parse_template_range;
 mod parse_template_range_expression;
+#[cfg(test)]
 mod parse_template_timezone_offset;
 mod parse_template_variable_name;
 mod parse_template_with;
+#[cfg(test)]
 mod parse_variable_template_digits;
 mod parsed_template_action;
+#[cfg(test)]
 mod parsed_template_date;
+pub(super) mod prometheus_functions;
 mod push_template_unicode_escape;
 mod quoted_template_token_value;
 mod render_template_parts;
-mod resolve_template_datetime;
 mod skip_leading_template_whitespace;
 mod split_template_pipeline;
 mod substring_template_string;
@@ -600,7 +596,6 @@ mod template_compare_values;
 mod template_conditional;
 mod template_control_action;
 mod template_control_expression;
-mod template_current_dot_field_value;
 mod template_expression;
 mod template_float_args;
 mod template_index_value;
@@ -612,12 +607,14 @@ mod template_part;
 mod template_range;
 mod template_range_binding;
 mod template_render_context;
+mod template_render_error;
 mod template_root_field_value;
 mod template_runtime_value;
 mod template_slice_array;
 mod template_slice_bounds;
 mod template_slice_string;
 mod template_string_truthy;
+mod template_time;
 mod template_value;
 mod template_value_is_collection;
 mod template_variable_path_value;
@@ -631,39 +628,39 @@ mod urldecode_template_string;
 mod urlencode_template_string;
 mod urlquery_template_string;
 
+#[cfg(test)]
 use advance_template_pos::advance_template_pos;
 use align_left_template_string::align_left_template_string;
 use align_right_template_string::align_right_template_string;
-use consume_template_printf_number::consume_template_printf_number;
 use current_template_timestamp::current_template_timestamp;
-use decode_quoted_fragment::decode_quoted_fragment;
+use decode_quoted_fragment::{decode_quoted_bytes, decode_quoted_fragment};
 use ensure_template_parenthesized_token::ensure_template_parenthesized_token;
 use ensure_template_quoted_token::ensure_template_quoted_token;
 use epoch_template_timestamp::epoch_template_timestamp;
 use evaluate_common_string_function::evaluate_common_string_function;
+use evaluate_template_byte_function::{evaluate_template_byte_function, template_bytes_to_string};
 use evaluate_template_function::evaluate_template_function;
 use evaluate_template_index::evaluate_template_index;
 use evaluate_template_slice::evaluate_template_slice;
 use evaluate_template_value_function::evaluate_template_value_function;
 use find_template_control_action::find_template_control_action;
 use format_go_time_layout::format_go_time_layout;
-use format_template_bytes::format_template_bytes;
+use format_template_bytes::{format_template_bytes, parse_template_bytes};
 use format_template_date::format_template_date;
-use format_template_duration_seconds::format_template_duration_seconds;
+use format_template_duration_seconds::{format_template_duration_seconds, parse_template_duration};
 use format_template_float::format_template_float;
 use format_template_float_fold::format_template_float_fold;
 use format_template_float_min_max::format_template_float_min_max;
-use format_template_float_product::format_template_float_product;
 use format_template_float_round::format_template_float_round;
-use format_template_float_sum::format_template_float_sum;
 use format_template_float_unary::format_template_float_unary;
 use format_template_integer_binary::format_template_integer_binary;
 use format_template_integer_min_max::format_template_integer_min_max;
 use format_template_integer_product::format_template_integer_product;
 use format_template_integer_sum::format_template_integer_sum;
 use format_template_ordering::format_template_ordering;
-use format_template_print::format_template_print;
-use format_template_printf::format_template_printf;
+use format_template_print::{format_template_print, format_template_print_bytes};
+pub use format_template_printf::quote_go_bytes;
+use format_template_printf::{format_template_printf, format_template_printf_bytes};
 use format_template_printf_string::format_template_printf_string;
 use format_template_to_date::format_template_to_date;
 use format_template_to_date_in_zone::format_template_to_date_in_zone;
@@ -678,9 +675,12 @@ use is_unexpected_template_control_action::is_unexpected_template_control_action
 use is_wrapped_template_token::is_wrapped_template_token;
 use js_escape_template_string::js_escape_template_string;
 pub use line_format::LineFormat;
+#[cfg(test)]
 use match_template_literal::match_template_literal;
+#[cfg(test)]
 use parse_fixed_template_digits::parse_fixed_template_digits;
 use parse_go_time_layout_to_unix_nanos::parse_go_time_layout_to_unix_nanos;
+#[cfg(test)]
 use parse_go_time_layout_value::parse_go_time_layout_value;
 use parse_template_action::parse_template_action;
 use parse_template_assignment::parse_template_assignment;
@@ -688,6 +688,7 @@ use parse_template_bound::parse_template_bound;
 use parse_template_conditional::parse_template_conditional;
 use parse_template_control_assignment::parse_template_control_assignment;
 use parse_template_float::parse_template_float;
+#[cfg(test)]
 use parse_template_fractional_nanoseconds::parse_template_fractional_nanoseconds;
 use parse_template_integer::parse_template_integer;
 use parse_template_parenthesized_token::parse_template_parenthesized_token;
@@ -695,16 +696,26 @@ use parse_template_parts::parse_template_parts;
 use parse_template_quoted_token::parse_template_quoted_token;
 use parse_template_range::parse_template_range;
 use parse_template_range_expression::parse_template_range_expression;
+#[cfg(test)]
 use parse_template_timezone_offset::parse_template_timezone_offset;
 use parse_template_variable_name::parse_template_variable_name;
 use parse_template_with::parse_template_with;
+#[cfg(test)]
 use parse_variable_template_digits::parse_variable_template_digits;
 use parsed_template_action::ParsedTemplateAction;
+#[cfg(test)]
 use parsed_template_date::ParsedTemplateDate;
+pub use prometheus_functions::{
+    histogram::{TemplateFloatHistogram, TemplateHistogramBucket, TemplateHistogramSpan},
+    histogram_value::{
+        TemplateBucket, TemplateBucketIterator, TemplateHistogram, TemplateHistogramError,
+        TemplateHistogramReference, TemplateHistogramSlice, TemplateHistogramView,
+    },
+    query_result::TemplateQueryResult,
+};
 use push_template_unicode_escape::push_template_unicode_escape;
 use quoted_template_token_value::quoted_template_token_value;
 use render_template_parts::render_template_parts;
-use resolve_template_datetime::resolve_template_datetime;
 use skip_leading_template_whitespace::skip_leading_template_whitespace;
 use split_template_pipeline::split_template_pipeline;
 use substring_template_string::substring_template_string;
@@ -717,7 +728,6 @@ use template_compare_values::template_compare_values;
 use template_conditional::TemplateConditional;
 use template_control_action::{TemplateControlAction, template_control_action};
 use template_control_expression::TemplateControlExpression;
-use template_current_dot_field_value::template_current_dot_field_value;
 use template_expression::TemplateExpression;
 use template_float_args::template_float_args;
 use template_index_value::template_index_value;
@@ -729,13 +739,16 @@ use template_part::TemplatePart;
 use template_range::TemplateRange;
 use template_range_binding::TemplateRangeBinding;
 use template_render_context::TemplateRenderContext;
+pub use template_render_error::TemplateRenderError;
 use template_root_field_value::template_root_field_value;
-use template_runtime_value::TemplateRuntimeValue;
+pub use template_runtime_value::TemplateRuntimeValue;
 use template_slice_array::template_slice_array;
 use template_slice_bounds::template_slice_bounds;
 use template_slice_string::template_slice_string;
 use template_string_truthy::template_string_truthy;
+pub use template_time::{TemplateTime, TemplateTimeLocation};
 use template_value::TemplateValue;
+pub use template_value::number::parse_float as parse_go_float;
 use template_value_is_collection::template_value_is_collection;
 use template_variable_path_value::template_variable_path_value;
 use template_with::TemplateWith;

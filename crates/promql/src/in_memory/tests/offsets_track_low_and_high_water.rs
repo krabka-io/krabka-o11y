@@ -5,7 +5,7 @@ pub(crate) fn offsets_track_low_and_high_water() {
     let head = WalHead::new();
     let record = |ts: i64| WalRecord {
         tenant: "t".to_string(),
-        labels: vec![("__name__".to_string(), "up".to_string())],
+        labels: vec![("__name__".to_string(), "up".to_string().into())],
         payload: SamplePayload::Float {
             timestamp_ms: ts,
             value: 1.0,

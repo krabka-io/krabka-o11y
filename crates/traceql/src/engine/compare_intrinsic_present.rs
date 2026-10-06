@@ -10,6 +10,13 @@ pub(crate) fn compare_intrinsic_present(row: &CompareRow, intrinsic: &Intrinsic)
             .is_some_and(|msg| !msg.is_empty()),
         Intrinsic::Kind => row.kind.is_some(),
         Intrinsic::Duration => row.duration.is_some(),
-        _ => false,
+        _ => !super::field_comparison::field_values(
+            &super::Field {
+                scope: super::Scope::Intrinsic(intrinsic.clone()),
+                key: String::new(),
+            },
+            row,
+        )
+        .is_empty(),
     }
 }

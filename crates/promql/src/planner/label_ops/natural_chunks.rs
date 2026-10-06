@@ -3,13 +3,14 @@
 ///
 /// This is `natsort`'s `chunkify`, whose `(\d+|\D+)` is ASCII-only in RE2, so a
 /// non-ASCII digit stays in a non-digit run.
-pub(crate) fn natural_chunks(value: &str) -> Vec<&str> {
+pub(crate) fn natural_chunks(value: &[u8]) -> Vec<&[u8]> {
     let mut chunks = Vec::new();
     let mut rest = value;
     while !rest.is_empty() {
-        let digits = rest.starts_with(|ch: char| ch.is_ascii_digit());
+        let digits = rest[0].is_ascii_digit();
         let end = rest
-            .find(|ch: char| ch.is_ascii_digit() != digits)
+            .iter()
+            .position(|byte| byte.is_ascii_digit() != digits)
             .unwrap_or(rest.len());
         let (chunk, tail) = rest.split_at(end);
         chunks.push(chunk);

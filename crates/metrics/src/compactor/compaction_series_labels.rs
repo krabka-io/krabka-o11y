@@ -4,5 +4,5 @@ use super::{Deserialize, Serialize};
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct CompactionSeriesLabels {
     pub fingerprint: u64,
-    pub labels: krabka_blockstore::Labels,
+    pub labels: crate::MetricLabels,
 }

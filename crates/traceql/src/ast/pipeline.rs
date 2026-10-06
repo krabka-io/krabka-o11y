@@ -1,4 +1,4 @@
-use super::{Aggregate, ComparisonOp, Field, SpansetExpr, WithBinding};
+use super::{Aggregate, ComparisonOp, Field, ScalarExpr, SpansetExpr, WithBinding};
 
 #[derive(Clone, Debug, PartialEq)]
 /// A `TraceQL` pipeline operation applied after spanset selection.
@@ -9,6 +9,8 @@ pub enum Pipeline {
         value: f64,
     },
     By(Vec<Field>),
+    /// Divide each current spanset by the original typed expression result.
+    Group(ScalarExpr),
     TopK(usize),
     BottomK(usize),
     /// Tempo attribute-comparison metric: `compare({selection}, topN [, start_ns,

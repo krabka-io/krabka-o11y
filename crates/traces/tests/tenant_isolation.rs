@@ -251,7 +251,26 @@ fn input_span(span: Span) -> InputSpan {
 }
 
 fn traceql_attr(value: AttrValue) -> Option<TraceqlAttrValue> {
+    if let AttrValue::Array(values) = &value
+        && values.iter().any(|element| {
+            matches!(
+                element,
+                AttrValue::Array(_) | AttrValue::Bytes(_) | AttrValue::Unsupported(_)
+            ) || values.first().is_some_and(|first| {
+                std::mem::discriminant(first) != std::mem::discriminant(element)
+            })
+        })
+    {
+        return Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()));
+    }
     match value {
+        AttrValue::Unsupported(value) => Some(TraceqlAttrValue::Unsupported(value)),
+        AttrValue::Array(values) => Some(TraceqlAttrValue::Array(
+            values
+                .into_iter()
+                .map(traceql_attr)
+                .collect::<Option<Vec<_>>>()?,
+        )),
         AttrValue::Str(value) => Some(TraceqlAttrValue::Str(value)),
         AttrValue::Int(value) => Some(TraceqlAttrValue::Int(value)),
         AttrValue::Double(value) => Some(TraceqlAttrValue::Float(value)),

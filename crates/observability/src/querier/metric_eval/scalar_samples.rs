@@ -26,7 +26,9 @@ mod validate_query_entries_limit;
 mod validate_query_range_limit;
 mod validate_query_string_bytes_limit;
 
-pub(crate) use execute_http_metric_query::execute_http_metric_query;
+pub(crate) use execute_http_metric_query::{
+    execute_http_metric_query, execute_http_metric_query_with_scan_range,
+};
 pub(crate) use format_loki_model_duration::format_loki_model_duration;
 pub(crate) use format_loki_query_length::format_loki_query_length;
 pub(crate) use gcd_signed::gcd_signed;

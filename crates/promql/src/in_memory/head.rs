@@ -3,12 +3,12 @@ use std::{
     sync::{Arc, PoisonError, RwLock},
 };
 
-use krabka_blockstore::{LabelMatcher, Labels};
 use krabka_metrics::WalRecord;
 use krabka_units::prelude::*;
 
 use super::{InMemoryMetricStore, PartitionWatermark, PruneStats};
 use crate::{
+    PromqlLabels as Labels, PromqlMatcher as LabelMatcher,
     error::Result,
     ids::{Offset, PartitionIndex},
     store::{
@@ -243,7 +243,7 @@ impl MetricStore for WalHead {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<krabka_metrics::MetricString>> {
         let store = self.snapshot();
         store
             .label_values(tenant, name, matchers, start_ms, end_ms)

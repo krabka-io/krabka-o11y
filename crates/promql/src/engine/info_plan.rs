@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use krabka_blockstore::{LabelMatcher, MatchOp};
+use krabka_blockstore::MatchOp;
 use promql_parser::{
     label::Matcher,
     parser::{Call, Expr, VectorSelector, token::T_EQL_REGEX},
@@ -12,7 +12,7 @@ use super::{
     planned::PlannedInstant,
 };
 use crate::{
-    PromqlError,
+    PromqlError, PromqlMatcher as LabelMatcher,
     error::Result,
     parse_promql,
     result::{InstantSample, QueryResult},
@@ -123,8 +123,20 @@ impl<S: MetricStore> PromqlEngine<S> {
                     .map_err(PromqlError::Parse)?,
             );
         }
+        let mut typed_matchers = data_label_matchers.to_vec();
+        if !typed_matchers
+            .iter()
+            .any(|matcher| matcher.name == "__name__")
+        {
+            typed_matchers = vec![LabelMatcher::new("__name__", MatchOp::Eq, "target_info")];
+        } else if !typed_matchers.iter().any(|matcher| {
+            matcher.name == "__name__" && matches!(matcher.op, MatchOp::Eq | MatchOp::Re)
+        }) {
+            typed_matchers.push(LabelMatcher::new("__name__", MatchOp::Re, ".+_info"));
+        }
+        let matcher_sets = [typed_matchers];
         let QueryResult::InstantVector(info_samples) = self
-            .eval_instant_selector(tenant, &selector, time_ms)
+            .eval_instant_selector_with_matchers(tenant, &selector, time_ms, Some(&matcher_sets))
             .await?
         else {
             return Err(PromqlError::Plan(

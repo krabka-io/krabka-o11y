@@ -30,7 +30,7 @@ pub fn parse_promql_with_duration_context(
     query: &str,
     context: DurationExprContext,
 ) -> Result<Expr> {
-    let query = super::normalize_utf8_strings::normalize_utf8_strings(query)?;
+    let (query, byte_strings) = super::normalize_utf8_strings::normalize_utf8_strings(query)?;
     let (query, selector_modifier) = strip_extended_selector_modifiers(&query)?;
     let normalized = normalize_duration_expressions(&query, context)?;
     let (normalized, mut trim_operators) = normalize_histogram_trim(&normalized);
@@ -44,6 +44,7 @@ pub fn parse_promql_with_duration_context(
     match parse(&normalized) {
         Ok(mut expr) => {
             restore_histogram_trim(&mut expr, &mut trim_operators);
+            super::byte_string_expr::restore_byte_strings(&mut expr, &byte_strings);
             restore_info_selectors(&mut expr, &info_marker, &mut start_functions);
             Ok(selector_modifier.map_or(expr.clone(), |modifier| {
                 wrap_extended_selectors(expr, modifier)

@@ -5,10 +5,9 @@ use crate::{
     HttpQueryError, Labels, QuerierState, QueryError, RequestSecurity, StreamPlan,
     TenantErrorSurface, TimeRange, Value, VolumeAggregateBy, VolumeKind, VolumeParams,
     WalLogRecord, active_log_delete_filters, add_loki_query_stats_for_stream_plan,
-    authorized_tenant, clamp_query_lookback, current_unix_time_ns, detect_log_level,
-    is_deleted_log_entry, json, loki_success_value, parse_query, parse_volume_params,
-    plan_stream_query, read_planned_log_block, should_insert_unknown_detected_level,
-    unix_ns_string_to_loki_seconds, validate_loki_volume_query_range_limit,
+    authorized_tenant, clamp_query_lookback, current_unix_time_ns, is_deleted_log_entry, json,
+    loki_success_value, parse_query, parse_volume_params, plan_stream_query,
+    read_planned_log_block, unix_ns_string_to_loki_seconds, validate_loki_volume_query_range_limit,
     validate_query_bytes_limit, validate_query_range_limit, validate_query_series_limit,
     validate_query_string_bytes_limit,
 };
@@ -16,7 +15,6 @@ use crate::{
 mod add_detected_field;
 mod add_generated_detected_field;
 mod collect_detected_fields;
-mod detect_detected_level_field;
 mod detect_entry_fields;
 mod detect_json_fields;
 mod detect_logfmt_fields;
@@ -42,7 +40,6 @@ mod volume_metrics_for_labels;
 pub(crate) use add_detected_field::add_detected_field;
 pub(crate) use add_generated_detected_field::add_generated_detected_field;
 pub(crate) use collect_detected_fields::collect_detected_fields;
-pub(crate) use detect_detected_level_field::detect_detected_level_field;
 pub(crate) use detect_entry_fields::detect_entry_fields;
 pub(crate) use detect_json_fields::detect_json_fields;
 pub(crate) use detect_logfmt_fields::detect_logfmt_fields;

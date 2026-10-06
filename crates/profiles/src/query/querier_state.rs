@@ -14,6 +14,8 @@ use super::{
 pub struct QuerierState<S: ProfileStore = DefaultStore> {
     pub(crate) query_architecture: super::PyroscopeQueryArchitecture,
     pub(crate) async_queries_enabled: bool,
+    pub(crate) query_analysis_series_enabled: bool,
+    pub(crate) async_runtime: super::async_stacktrace_query::Runtime,
     pub(crate) store: Arc<S>,
     pub(crate) async_query_slots:
         tokio::sync::Mutex<BTreeMap<String, std::collections::BTreeSet<String>>>,
@@ -86,6 +88,8 @@ impl<S: ProfileStore> QuerierState<S> {
         Self {
             query_architecture: super::PyroscopeQueryArchitecture::default(),
             async_queries_enabled: false,
+            query_analysis_series_enabled: false,
+            async_runtime: super::async_stacktrace_query::Runtime::default(),
             store,
             async_query_slots: tokio::sync::Mutex::new(BTreeMap::new()),
             engine,
@@ -119,6 +123,42 @@ impl<S: ProfileStore> QuerierState<S> {
     pub fn with_async_queries_enabled(mut self, enabled: bool) -> Self {
         self.async_queries_enabled = enabled;
         self
+    }
+
+    /// Enables selector-matching series counts in v1 query analysis.
+    /// Physical component costs are reported regardless of this setting.
+    #[must_use]
+    pub fn with_query_analysis_series_enabled(mut self, enabled: bool) -> Self {
+        self.query_analysis_series_enabled = enabled;
+        self
+    }
+
+    /// Overrides maintenance intervals for durable asynchronous query records.
+    ///
+    /// # Errors
+    /// Rejects zero intervals and leases shorter than a heartbeat.
+    pub fn with_async_query_policy(
+        mut self,
+        policy: super::AsyncQueryPolicy,
+    ) -> Result<Self, super::ConnectError> {
+        if policy.heartbeat_interval.is_zero()
+            || policy.adoption_interval.is_zero()
+            || policy.cleanup_interval.is_zero()
+            || policy.retention.is_zero()
+            || policy.lease_timeout < policy.heartbeat_interval
+        {
+            return Err(super::ConnectError::new(
+                super::Code::InvalidArgument,
+                "invalid async maintenance intervals",
+            ));
+        }
+        self.async_runtime.policy = policy;
+        Ok(self)
+    }
+
+    /// Cancels maintenance and workers, awaiting lease relinquishment.
+    pub async fn shutdown_async_queries(&self) {
+        super::async_stacktrace_query::shutdown(self).await;
     }
 
     #[must_use]

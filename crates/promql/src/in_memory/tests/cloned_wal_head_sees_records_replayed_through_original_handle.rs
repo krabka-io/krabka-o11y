@@ -7,8 +7,8 @@ pub(crate) async fn cloned_wal_head_sees_records_replayed_through_original_handl
     head.apply_wal_record(&WalRecord {
         tenant: "tenant-a".to_string(),
         labels: vec![
-            ("__name__".to_string(), "up".to_string()),
-            ("job".to_string(), "api".to_string()),
+            ("__name__".to_string(), "up".to_string().into()),
+            ("job".to_string(), "api".to_string().into()),
         ],
         payload: SamplePayload::Float {
             timestamp_ms: 10_000,

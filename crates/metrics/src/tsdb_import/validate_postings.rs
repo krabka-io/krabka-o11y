@@ -14,7 +14,7 @@ pub fn validate_postings(
     toc: &IndexToc,
     series: &[IndexSeries],
 ) -> Result<(), TsdbImportError> {
-    let mut expected = BTreeMap::<(&str, &str), Vec<u32>>::new();
+    let mut expected = BTreeMap::<(&str, &[u8]), Vec<u32>>::new();
     for entry in series {
         let reference = u32::try_from(entry.reference).map_err(|_| {
             TsdbImportError::InvalidIndex(format!(
@@ -22,10 +22,13 @@ pub fn validate_postings(
                 entry.reference
             ))
         })?;
-        expected.entry(("", "")).or_default().push(reference);
+        expected
+            .entry(("", b"".as_slice()))
+            .or_default()
+            .push(reference);
         for (name, value) in &entry.labels {
             expected
-                .entry((name.as_str(), value.as_str()))
+                .entry((name.as_str(), value.as_bytes()))
                 .or_default()
                 .push(reference);
         }
@@ -48,7 +51,7 @@ pub fn validate_postings(
         }
         let found_name = reader.uvarint_bytes()?;
         let found_value = reader.uvarint_bytes()?;
-        if found_name != name.as_bytes() || found_value != value.as_bytes() {
+        if found_name != name.as_bytes() || found_value != *value {
             return Err(TsdbImportError::InvalidIndex(format!(
                 "postings offset table does not list {name}={value:?} in order"
             )));
@@ -69,7 +72,7 @@ fn check_list(
     toc: &IndexToc,
     offset: u64,
     name: &str,
-    value: &str,
+    value: &[u8],
     references: &[u32],
 ) -> Result<(), TsdbImportError> {
     if offset < toc.postings || offset >= toc.label_indices_table || !offset.is_multiple_of(4) {

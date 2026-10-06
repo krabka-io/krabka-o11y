@@ -24,10 +24,12 @@ pub(crate) fn search_json(resp: SearchResponse) -> Value {
                 // response, so a rounded value would surface there too.
                 "durationMs": trace.duration.millis_i64_trunc(),
                 "spanSets": trace.span_sets.into_iter().map(|set| {
-                    json!({
+                    let mut value = json!({
                         "spans": set.spans.iter().map(search_span_json).collect::<Vec<_>>(),
                         "matched": set.matched,
-                    })
+                    });
+                    if !set.attributes.is_empty() { value["attributes"] = attrs_json(&set.attributes); }
+                    value
                 }).collect::<Vec<_>>(),
             })
         }).collect::<Vec<_>>(),

@@ -394,7 +394,6 @@ async fn compactor_delete_requests_filter_querier_stream_results() {
                 {
                     "stream": {
                         "app": "api",
-                        "detected_level": "unknown",
                         "env": "prod"
                     },
                     "values": [
@@ -514,7 +513,6 @@ async fn compactor_delete_requests_persist_for_configured_querier() {
                 {
                     "stream": {
                         "app": "api",
-                        "detected_level": "unknown",
                         "env": "prod"
                     },
                     "values": [
@@ -646,7 +644,6 @@ async fn compactor_delete_requests_filter_querier_metric_results() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [17, "2"]
@@ -793,7 +790,6 @@ async fn compactor_delete_requests_filter_querier_tail_results() {
                     {
                         "stream": {
                             "app": "api",
-                            "detected_level": "unknown",
                             "env": "prod"
                         },
                         "values": [
@@ -939,12 +935,6 @@ async fn compactor_delete_requests_filter_querier_detected_fields_results() {
         json_body(fields_response).await
             == json!({
                 "fields": [
-                    {
-                        "label": "detected_level",
-                        "type": "string",
-                        "cardinality": 1,
-                        "parsers": null
-                    },
                     {
                         "label": "msg",
                         "type": "string",

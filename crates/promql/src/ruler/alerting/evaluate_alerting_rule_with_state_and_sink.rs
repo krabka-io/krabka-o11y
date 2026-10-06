@@ -1,9 +1,9 @@
 use super::{
     AlertStateKey, AlertmanagerAlert, AlertmanagerSink, BTreeMap, MetricStore, PromqlEngine,
     PromqlError, QueryResult, RecordingRuleWalSink, RulerAlertState, RulerAlertStateRecord,
-    RulerStateSink, SamplePayload, SampleValue, TenantId, TimeExt, WalRecord,
-    alert_template_queries, expand_alert_label_map, labels_to_map, template_query_value,
-    yaml_duration, yaml_optional_string, yaml_required_string, yaml_string_map,
+    RulerStateSink, SamplePayload, TenantId, TimeExt, WalRecord, alert_template_variables,
+    expand_alert_label_map_async, labels_to_map, yaml_duration, yaml_optional_string,
+    yaml_required_string, yaml_string_map,
 };
 
 #[allow(clippy::too_many_lines)]
@@ -33,11 +33,6 @@ where
 
     let rule_labels = yaml_string_map(rule, "labels");
     let annotations = yaml_string_map(rule, "annotations");
-    let mut template_queries = BTreeMap::new();
-    for query in alert_template_queries(rule_labels.values().chain(annotations.values())) {
-        let result = engine.query_instant(tenant, &query, eval_time_ms).await?;
-        template_queries.insert(query, template_query_value(result));
-    }
     let external_labels = sink.template_external_labels();
     let external_url = sink.template_external_url(&alert_name);
     let hold_for = yaml_duration(rule, "for")?;
@@ -47,23 +42,35 @@ where
     let mut active_records = Vec::new();
     let mut alerts = Vec::new();
     let mut synthetic_records = Vec::new();
+    let mut prepared = Vec::new();
+    let mut identities = std::collections::BTreeSet::new();
     for sample in samples {
-        let SampleValue::Float(value) = sample.value else {
-            continue;
-        };
-        let mut labels = labels_to_map(&sample.labels);
-        labels.insert("alertname".to_string(), alert_name.clone());
-        labels.extend(rule_labels.clone());
-        // Expand `$value`/`$labels` in alert label values against the sample's
-        // series labels, matching Prometheus alert templating.
-        let labels = expand_alert_label_map(
-            &labels,
-            value,
-            &sample.labels,
+        let value = sample.value;
+        let storage_labels = sample.labels.clone();
+        let mut labels = sample.labels;
+        labels.remove("__name__");
+        let variables = alert_template_variables(
+            super::template_sample_value(value.clone()),
+            &storage_labels,
             &external_labels,
             &external_url,
-            &template_queries,
         );
+        for (name, value) in
+            expand_alert_label_map_async(engine, tenant, &rule_labels, &variables, eval_time_ms)
+                .await
+        {
+            labels.insert(name, value);
+        }
+        labels.insert("alertname", alert_name.as_str());
+        if !identities.insert(labels.clone()) {
+            return Err(PromqlError::Exec(
+                "vector contains metrics with the same labelset after applying alert labels"
+                    .to_owned(),
+            ));
+        }
+        prepared.push((storage_labels, labels, value));
+    }
+    for (storage_labels, labels, value) in prepared {
         let key = AlertStateKey {
             tenant: tenant.to_string(),
             rule_id: rule_id.clone(),
@@ -122,17 +129,21 @@ where
             starts_at_ms,
             eval_time_ms,
         ));
-        let annotations = expand_alert_label_map(
-            &annotations,
-            value,
-            &sample.labels,
+        let variables = alert_template_variables(
+            super::template_sample_value(value.clone()),
+            &storage_labels,
             &external_labels,
             &external_url,
-            &template_queries,
         );
+        let annotations =
+            expand_alert_label_map_async(engine, tenant, &annotations, &variables, eval_time_ms)
+                .await;
         alerts.push(AlertmanagerAlert {
-            labels,
-            annotations,
+            labels: labels_to_map(&labels),
+            annotations: annotations
+                .into_iter()
+                .map(|(name, value)| (name, value.as_str().to_owned()))
+                .collect(),
             starts_at_ms,
             ends_at_ms: None,
             generator_url: external_url.clone(),
@@ -181,7 +192,7 @@ where
                     eval_time_ms,
                 ));
                 alerts.push(AlertmanagerAlert {
-                    labels: key.labels.clone(),
+                    labels: labels_to_map(&key.labels),
                     annotations: BTreeMap::new(),
                     starts_at_ms,
                     ends_at_ms: None,
@@ -211,7 +222,7 @@ where
                     eval_time_ms,
                 ));
                 alerts.push(AlertmanagerAlert {
-                    labels: key.labels.clone(),
+                    labels: labels_to_map(&key.labels),
                     annotations: BTreeMap::new(),
                     starts_at_ms,
                     ends_at_ms: Some(eval_time_ms),
@@ -278,7 +289,7 @@ where
 #[allow(clippy::cast_precision_loss)]
 fn active_alert_records(
     tenant: &TenantId,
-    labels: &BTreeMap<String, String>,
+    labels: &crate::PromqlLabels,
     alert_state: &str,
     starts_at_ms: i64,
     eval_time_ms: i64,
@@ -291,7 +302,7 @@ fn active_alert_records(
 
 fn stale_alert_records(
     tenant: &TenantId,
-    labels: &BTreeMap<String, String>,
+    labels: &crate::PromqlLabels,
     alert_state: &str,
     eval_time_ms: i64,
 ) -> [WalRecord; 2] {
@@ -304,32 +315,32 @@ fn stale_alert_records(
 
 fn alerts_record(
     tenant: &TenantId,
-    labels: &BTreeMap<String, String>,
+    labels: &crate::PromqlLabels,
     alert_state: &str,
     value: f64,
     eval_time_ms: i64,
 ) -> WalRecord {
     let mut labels = labels.clone();
-    labels.insert("__name__".into(), "ALERTS".into());
-    labels.insert("alertstate".into(), alert_state.into());
+    labels.insert("__name__", "ALERTS");
+    labels.insert("alertstate", alert_state);
     wal_record(tenant, labels, value, eval_time_ms)
 }
 
 fn alert_for_state_record(
     tenant: &TenantId,
-    labels: &BTreeMap<String, String>,
+    labels: &crate::PromqlLabels,
     value: f64,
     eval_time_ms: i64,
 ) -> WalRecord {
     let mut labels = labels.clone();
-    labels.insert("__name__".into(), "ALERTS_FOR_STATE".into());
+    labels.insert("__name__", "ALERTS_FOR_STATE");
     labels.remove("alertstate");
     wal_record(tenant, labels, value, eval_time_ms)
 }
 
 fn wal_record(
     tenant: &TenantId,
-    labels: BTreeMap<String, String>,
+    labels: crate::PromqlLabels,
     value: f64,
     eval_time_ms: i64,
 ) -> WalRecord {

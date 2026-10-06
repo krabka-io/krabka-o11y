@@ -1,14 +1,14 @@
 use super::{BTreeMap, BTreeSet, LabelValueCardinality, SeriesFingerprint};
 
 pub(crate) fn label_value_cardinality(
-    by_value: BTreeMap<(String, String), BTreeSet<SeriesFingerprint>>,
+    by_value: BTreeMap<(String, crate::PromqlString), BTreeSet<SeriesFingerprint>>,
 ) -> Vec<LabelValueCardinality> {
     let mut out = by_value
         .into_iter()
         .map(
             |((label_name, label_value), fingerprints)| LabelValueCardinality {
                 label_name,
-                label_value,
+                label_value: label_value.as_str().to_owned(),
                 series_count: fingerprints.len(),
             },
         )

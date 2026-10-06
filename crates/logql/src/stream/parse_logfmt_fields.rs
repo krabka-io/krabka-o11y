@@ -1,4 +1,4 @@
-use super::{Labels, LogfmtParser, insert_extracted_field, sanitize_logfmt_field_name};
+use super::{Labels, LogfmtParser, insert_raw_parsed_field, sanitize_logfmt_field_name};
 
 pub(crate) fn parse_logfmt_fields(line: &str, fields: &mut Labels) {
     let mut parser = LogfmtParser::new(line);
@@ -9,7 +9,7 @@ pub(crate) fn parse_logfmt_fields(line: &str, fields: &mut Labels) {
                 if parser.pos <= previous_pos {
                     break;
                 }
-                insert_extracted_field(fields, &sanitize_logfmt_field_name(&key), value);
+                insert_raw_parsed_field(fields, &sanitize_logfmt_field_name(&key), value);
             }
             Ok(None) | Err(_) => break,
         }

@@ -18,15 +18,15 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use arrow::record_batch::RecordBatch;
-use krabka_blockstore::{BlockStoreError, BlockWriter, Labels, escape_object_path_segment};
+use krabka_blockstore::{BlockStoreError, BlockWriter, escape_object_path_segment};
 use num_traits::ToPrimitive;
 use object_store::{ObjectStore, ObjectStoreExt, PutMode, PutOptions, PutPayload, path::Path};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
     BucketSpan, CompactionIndexError, CompactionIndexManifest, CompactionObjectPlan, FloatRow,
-    HistogramCodecError, MetricBlockKind, NativeHistogram, NativeHistogramRow, ResetHint,
-    TenantBatches, TenantCompactionRows,
+    HistogramCodecError, MetricBlockKind, MetricLabels as Labels, MetricString, NativeHistogram,
+    NativeHistogramRow, ResetHint, TenantBatches, TenantCompactionRows,
     compactor::{compaction_index_key, series_labels_for_kind},
     encode_tenant_batches,
     wire::validate_spans_and_counts,

@@ -1,10 +1,10 @@
-use super::{Deserialize, Labels, SamplePayload, Serialize, WalError, WalExemplar};
+use super::{Deserialize, Labels, MetricString, SamplePayload, Serialize, WalError, WalExemplar};
 
 /// A single metrics WAL record.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WalRecord {
     pub tenant: String,
-    pub labels: Vec<(String, String)>,
+    pub labels: Vec<(String, MetricString)>,
     pub payload: SamplePayload,
     pub exemplars: Vec<WalExemplar>,
 }

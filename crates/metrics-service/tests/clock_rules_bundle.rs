@@ -535,7 +535,7 @@ fn bundle_path() -> PathBuf {
 }
 
 /// Renders one label set as `name{label="value",…}`.
-fn series_key(labels: &Labels) -> String {
+fn series_key(labels: &krabka_metrics::MetricLabels) -> String {
     let name = labels.get("__name__").unwrap_or_default().to_string();
     let rest = labels
         .iter()
@@ -1103,16 +1103,12 @@ async fn the_ruler_dispatches_the_firing_clock_alerts() {
         firing
             == vec![DispatchedAlert {
                 labels: BTreeMap::from([
-                    (
-                        "__name__".to_string(),
-                        "krabka_clock_sync_state".to_string()
-                    ),
-                    ("alertname".to_string(), "ClockInHoldover".to_string()),
-                    ("clock".to_string(), "CLOCK_REALTIME".to_string()),
-                    ("node".to_string(), "node-a".to_string()),
-                    ("severity".to_string(), "warning".to_string()),
-                    ("source".to_string(), "ptp".to_string()),
-                    ("state".to_string(), "holdover".to_string()),
+                    ("alertname".to_string(), "ClockInHoldover".into()),
+                    ("clock".to_string(), "CLOCK_REALTIME".into()),
+                    ("node".to_string(), "node-a".into()),
+                    ("severity".to_string(), "warning".into()),
+                    ("source".to_string(), "ptp".into()),
+                    ("state".to_string(), "holdover".into()),
                 ]),
                 starts_at_ms: MIDPOINT_MS,
                 ends_at_ms: None,

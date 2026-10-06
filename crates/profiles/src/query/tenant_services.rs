@@ -312,12 +312,6 @@ pub(crate) async fn upsert_recording_rule_handler<S: ProfileStore>(
 ) -> Result<ConnectResponse<pb::settings::v1::UpsertRecordingRuleResponse>, ConnectError> {
     let tenant = tenant(&state, &principal, &headers)?;
     let req = req.0;
-    if req.stacktrace_filter.is_some() {
-        return Err(admin_error(
-            Code::InvalidArgument,
-            "stacktrace filters are not supported",
-        ));
-    }
     validate_metric_name(&req.metric_name)?;
     let profile_type = recording_profile_type(&req.matchers)?;
     if req.group_by.iter().any(|name| !valid_label_name(name))
@@ -369,7 +363,7 @@ pub(crate) async fn upsert_recording_rule_handler<S: ProfileStore>(
             group_by: req.group_by.clone(),
             external_labels: req.external_labels.clone(),
             generation,
-            stacktrace_filter: None,
+            stacktrace_filter: req.stacktrace_filter.clone(),
             provisioned: false,
         };
         if let Some(position) = position {
@@ -489,8 +483,8 @@ pub(crate) async fn feature_flags_handler<S: ProfileStore>(
                 ),
                 flag(
                     "pyroscopeRulerFunctions",
-                    false,
-                    "Function recording rules are not enabled.",
+                    recording_rules_enabled,
+                    "Function recording-rule evaluation is configured on the compactor.",
                 ),
                 flag(
                     "utf8LabelNames",

@@ -1,12 +1,9 @@
-use super::{
-    Aggregate, Field, MetricFilter, MetricFunction, MetricPlan, RankLimit, Result, TraceqlError,
-};
+use super::{Aggregate, Field, MetricFunction, MetricPlan, Pipeline, Result, TraceqlError};
 
 pub(crate) fn metric_plan_for(
     aggregate: &Aggregate,
     by: Vec<Field>,
-    filter: Option<MetricFilter>,
-    rank: Option<RankLimit>,
+    stages: Vec<Pipeline>,
 ) -> Result<MetricPlan> {
     let (function, value, quantiles) = match aggregate {
         Aggregate::Rate => (MetricFunction::Rate, None, Vec::new()),
@@ -33,7 +30,8 @@ pub(crate) fn metric_plan_for(
             Some(field.clone()),
             quantiles.clone(),
         ),
-        Aggregate::Count
+        Aggregate::Expression { .. }
+        | Aggregate::Count
         | Aggregate::Avg(_)
         | Aggregate::Sum(_)
         | Aggregate::Min(_)
@@ -49,8 +47,12 @@ pub(crate) fn metric_plan_for(
         quantiles,
         by,
         exemplar_fields: Vec::new(),
-        filter,
-        rank,
+        stages,
+        spanset_pipeline: Vec::new(),
+        sampling_factor: 1.0,
+        spanset_pipeline_had_input: false,
+        frontend_labels: false,
+        instant: false,
         compare: None,
     })
 }

@@ -17,7 +17,7 @@ pub(crate) fn cardinality_label_values_response(
 ) -> Value {
     // For each (label_name, label_value), the distinct series carrying it.
     let mut series_by_value =
-        BTreeMap::<String, BTreeMap<String, BTreeSet<SeriesFingerprint>>>::new();
+        BTreeMap::<String, BTreeMap<crate::PromqlString, BTreeSet<SeriesFingerprint>>>::new();
     let mut total_series = BTreeSet::<SeriesFingerprint>::new();
     for labels in series {
         let fp = labels.fingerprint();
@@ -74,7 +74,7 @@ pub(crate) fn cardinality_label_values_response(
                     .into_iter()
                     .map(|(label_value, count)| {
                         json!({
-                            "label_value": label_value,
+                            "label_value": label_value.as_str(),
                             "series_count": count,
                         })
                     })

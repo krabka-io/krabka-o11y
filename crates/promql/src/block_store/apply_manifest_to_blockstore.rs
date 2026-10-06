@@ -5,9 +5,11 @@ pub(crate) fn apply_manifest_to_blockstore(
     manifest: &CompactionIndexManifest,
 ) {
     for series in &manifest.series {
-        store
-            .index_mut()
-            .add_series(&manifest.tenant, series.fingerprint, &series.labels);
+        store.index_mut().add_series(
+            &manifest.tenant,
+            series.fingerprint,
+            &series.labels.utf8_projection(),
+        );
     }
     store.index_mut().add_block(&BlockMeta {
         tenant: manifest.tenant.clone(),

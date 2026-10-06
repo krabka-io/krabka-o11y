@@ -49,6 +49,7 @@ mod tests {
                 span_sets: vec![SpanSet {
                     spans: vec![],
                     matched: 3,
+                    attributes: Vec::new(),
                 }],
             }],
             inspected_traces: 1,

@@ -23,7 +23,7 @@ use krabka_blockstore::{
     BlockDeletion, BlockDeletionFailure, BlockDeletionReport, BlockLevel, BlockMeta,
     BlockStoreError, BlockTimestampUnit, BlockWriter, CompactionCandidate, CompactionJob,
     CompactionPolicy, DEFAULT_BLOCK_SWEEP_GRACE, ERASURE_REQUEST_PREFIX, ErasureRequest, Index,
-    Labels, LifecycleError, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, ObjectStoreMetrics,
+    LifecycleError, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, ObjectStoreMetrics,
     ObjectStoreRetryPolicy, OrphanSweepStats, RetentionWindows, RetryingObjectStore, SortedMerge,
     SummaryColumns, delete_blocks, escape_object_path_segment, input_key_fingerprint,
     list_erasure_requests, open_block_stream, plan_compactions, plan_expired_blocks,
@@ -240,10 +240,10 @@ mod tests {
         let rows = super::TenantCompactionRows {
             tenant: "t".to_string(),
             series_labels: std::collections::BTreeMap::from([
-                (1, named("float")),
-                (2, named("histogram")),
-                (3, named("exemplar")),
-                (4, named("metadata")),
+                (1, named("float").into()),
+                (2, named("histogram").into()),
+                (3, named("exemplar").into()),
+                (4, named("metadata").into()),
             ]),
             float_rows: vec![FloatRow {
                 fingerprint: 1,
@@ -491,7 +491,7 @@ mod tests {
             &block_meta,
             vec![super::CompactionSeriesLabels {
                 fingerprint: 7,
-                labels: labels(&[("__name__", "up")]),
+                labels: labels(&[("__name__", "up")]).into(),
             }],
         );
         let encoded = manifest.encode().expect("encode manifest");
@@ -518,7 +518,7 @@ mod tests {
                     fingerprints: vec![7, 9],
                     series: vec![super::CompactionSeriesLabels {
                         fingerprint: 7,
-                        labels: labels(&[("__name__", "up")]),
+                        labels: labels(&[("__name__", "up")]).into(),
                     }],
                 }
         );
@@ -708,7 +708,7 @@ mod tests {
         let sink = super::ObjectStoreCompactionIndexSink::new(store.clone());
         let rows = super::TenantCompactionRows {
             tenant: tenant.to_string(),
-            series_labels: BTreeMap::from([(7, labels(&[("__name__", "up")]))]),
+            series_labels: BTreeMap::from([(7, labels(&[("__name__", "up")]).into())]),
             float_rows: vec![FloatRow {
                 fingerprint: 7,
                 timestamp_ms,
@@ -1313,7 +1313,7 @@ overrides:
         let sink = RecordingIndexSink::default();
         let rows = super::TenantCompactionRows {
             tenant: "tenant-a".to_string(),
-            series_labels: BTreeMap::from([(7, labels(&[("__name__", "up")]))]),
+            series_labels: BTreeMap::from([(7, labels(&[("__name__", "up")]).into())]),
             float_rows: vec![
                 FloatRow {
                     fingerprint: 7,
@@ -1367,7 +1367,10 @@ overrides:
         let sink = RecordingIndexSink::default();
         let rows = super::TenantCompactionRows {
             tenant: "tenant-a".to_string(),
-            series_labels: BTreeMap::from([(7, labels(&[("__name__", "http_requests_total")]))]),
+            series_labels: BTreeMap::from([(
+                7,
+                labels(&[("__name__", "http_requests_total")]).into(),
+            )]),
             float_rows: Vec::new(),
             histogram_rows: Vec::new(),
             exemplar_rows: Vec::new(),
@@ -2649,11 +2652,11 @@ overrides:
     #[test]
     fn compact_wal_records_does_not_duplicate_series_exemplars_per_sample() {
         let labels = krabka_blockstore::Labels::from_iter([
-            ("__name__".to_string(), "http_requests_total".to_string()),
-            ("job".to_string(), "api".to_string()),
+            ("__name__".to_string(), "http_requests_total".into()),
+            ("job".to_string(), "api".into()),
         ]);
         let exemplar_labels =
-            krabka_blockstore::Labels::from_iter([("trace_id".to_string(), "abc".to_string())]);
+            krabka_blockstore::Labels::from_iter([("trace_id".to_string(), "abc".into())]);
         let records = wal_records_from_series(
             "tenant-a",
             &[DecodedSeries {

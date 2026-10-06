@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use krabka_blockstore::Labels;
 use krabka_metrics::{NativeHistogram, ResetHint};
 use promql_parser::parser::{
     BinModifier, BinaryExpr, LabelModifier, VectorMatchCardinality,
@@ -20,7 +19,7 @@ use super::{
     },
 };
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels,
     error::Result,
     result::{InstantSample, QueryResult, SampleValue},
 };

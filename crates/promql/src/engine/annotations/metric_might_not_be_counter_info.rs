@@ -1,6 +1,5 @@
-use krabka_blockstore::Labels;
-
 use super::emit_info;
+use crate::PromqlLabels as Labels;
 
 pub(crate) fn metric_might_not_be_counter_info(metric: &str, metric_type: &str) -> String {
     format!(

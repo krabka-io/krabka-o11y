@@ -1,12 +1,11 @@
 //! Metrics WAL topic record shared by ingest, compaction, and query.
 
 use bytes::Bytes;
-use krabka_blockstore::Labels;
 use krabka_units::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    NativeHistogram,
+    MetricLabels as Labels, MetricString, NativeHistogram,
     wire::{DecodedClockReading, UnixNanos},
 };
 
@@ -165,6 +164,63 @@ mod tests {
         b.labels = vec![("b".into(), "2".into()), ("a".into(), "1".into())];
 
         assert!(a.series_fingerprint() == b.series_fingerprint());
+    }
+
+    #[test]
+    fn byte_labels_preserve_utf8_wal_encoding_and_distinct_raw_fingerprints() {
+        // This independent old envelope verifies the UTF-8 WAL contract, rather
+        // than comparing the new encoder only with its own decoder.
+        #[derive(serde::Serialize)]
+        struct Utf8Record {
+            tenant: String,
+            labels: Vec<(String, String)>,
+            payload: SamplePayload,
+            exemplars: Vec<WalExemplar>,
+        }
+        let payload = SamplePayload::Float {
+            timestamp_ms: 17,
+            value: 3.5,
+            start_timestamp_ms: Some(11),
+        };
+        let legacy = Utf8Record {
+            tenant: "tenant".to_owned(),
+            labels: vec![
+                ("__name__".to_owned(), "recorded".to_owned()),
+                ("raw".to_owned(), "é".to_owned()),
+            ],
+            payload: payload.clone(),
+            exemplars: Vec::new(),
+        };
+        let legacy_bytes =
+            <serde_wincode::SerdeCompat<Utf8Record> as wincode::Serialize>::serialize(&legacy)
+                .unwrap();
+        let expected = WalRecord {
+            tenant: legacy.tenant.clone(),
+            labels: legacy
+                .labels
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone().into()))
+                .collect(),
+            payload,
+            exemplars: Vec::new(),
+        };
+        assert2::assert!(expected.encode().unwrap() == legacy_bytes);
+        assert2::assert!(WalRecord::decode(&legacy_bytes).unwrap() == expected);
+        let native = krabka_blockstore::Labels::from_pairs(legacy.labels);
+        assert2::assert!(native.fingerprint() == expected.series_fingerprint());
+        let mut fingerprints = std::collections::BTreeSet::new();
+        for bytes in [
+            vec![0xff],
+            vec![0xfe],
+            "\u{fffd}".as_bytes().to_vec(),
+            b"__krabka_bytes_ff".to_vec(),
+        ] {
+            let mut record = expected.clone();
+            record.labels[1].1 = bytes.clone().into();
+            let decoded = WalRecord::decode(&record.encode().unwrap()).unwrap();
+            assert2::assert!(decoded.labels[1].1.as_bytes() == bytes);
+            assert2::assert!(fingerprints.insert(decoded.series_fingerprint()));
+        }
     }
 
     #[test]

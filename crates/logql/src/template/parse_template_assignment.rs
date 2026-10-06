@@ -9,6 +9,7 @@ pub(crate) fn parse_template_assignment(
     if !expression.trim_start().starts_with('$') {
         return Ok(None);
     }
+    let expression_declaration = expression.contains(":=");
     let (variable, expression) = if let Some((variable, expression)) = expression.split_once(":=") {
         (variable, expression)
     } else if let Some((variable, expression)) = expression.split_once('=') {
@@ -25,6 +26,7 @@ pub(crate) fn parse_template_assignment(
     let variable = parse_template_variable_name(variable.trim(), "expected template variable")?;
     Ok(Some(TemplateAssignment {
         variable,
+        declare: expression_declaration,
         expression: TemplateExpression::parse(expression.trim())?,
     }))
 }

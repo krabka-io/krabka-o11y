@@ -37,7 +37,7 @@ pub(crate) async fn metadata_reads_compacted_metadata_sidecar_blocks() {
         &block_meta,
         vec![CompactionSeriesLabels {
             fingerprint: fp,
-            labels: series_labels,
+            labels: series_labels.into(),
         }],
     );
 

@@ -1,7 +1,7 @@
 //! OTLP `TracesData` to internal spans.
 
 use opentelemetry_proto::tonic::{
-    common::v1::{AnyValue, KeyValue as OtlpKv, any_value::Value},
+    common::v1::{AnyValue, KeyValue as OtlpKv},
     trace::v1::{Status, TracesData, span::SpanKind as OtlpKind},
 };
 
@@ -123,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn decodes_array_attributes_as_repeated_values() {
+    fn decodes_array_attributes_without_losing_array_identity() {
         let mut data = data();
         data.resource_spans[0].scope_spans[0].spans[0]
             .attributes
@@ -152,8 +152,79 @@ mod tests {
             .map(|attr| &attr.value)
             .collect::<Vec<_>>();
 
-        assert2::assert!(methods.contains(&&AttrValue::Str("GET".into())));
-        assert2::assert!(methods.contains(&&AttrValue::Str("POST".into())));
+        assert2::assert!(
+            methods
+                == vec![
+                    &AttrValue::Str("GET".into()),
+                    &AttrValue::Array(vec![
+                        AttrValue::Str("GET".into()),
+                        AttrValue::Str("POST".into())
+                    ]),
+                ]
+        );
+    }
+
+    #[test]
+    fn array_wire_identity_survives_empty_singleton_and_nested_values() {
+        let mut data = data();
+        let values = [
+            AttrValue::Array(Vec::new()),
+            AttrValue::Array(vec![AttrValue::Int(7)]),
+            AttrValue::Array(vec![AttrValue::Double(1.25), AttrValue::Double(2.5)]),
+            AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
+            AttrValue::Array(vec![AttrValue::Str("one".into()), AttrValue::Int(7)]),
+            AttrValue::Array(vec![AttrValue::Array(vec![AttrValue::Bytes(vec![
+                0xff, 0x00,
+            ])])]),
+        ];
+        for (index, value) in values.iter().enumerate() {
+            data.resource_spans[0].scope_spans[0].spans[0]
+                .attributes
+                .push(OtlpKv {
+                    key: format!("array{index}"),
+                    value: Some(value.otlp_value()),
+                    ..OtlpKv::default()
+                });
+        }
+        let spans = decode_otlp(&data).unwrap();
+        for (index, expected) in values.iter().enumerate() {
+            let actual = &spans[0]
+                .span_attrs
+                .iter()
+                .find(|attr| attr.key == format!("array{index}"))
+                .unwrap()
+                .value;
+            assert2::check!(actual == expected);
+            assert2::check!(actual.otlp_value() == expected.otlp_value());
+        }
+    }
+
+    #[test]
+    fn empty_wire_values_survive_ingest_inside_arrays() {
+        let mut data = data();
+        let expected = AnyValue {
+            value: Some(Value::ArrayValue(ArrayValue {
+                values: vec![
+                    AnyValue { value: None },
+                    AnyValue {
+                        value: Some(Value::IntValue(7)),
+                    },
+                    AnyValue { value: None },
+                ],
+            })),
+        };
+        data.resource_spans[0].scope_spans[0].spans[0].attributes = vec![OtlpKv {
+            key: "empty-elements".into(),
+            value: Some(expected.clone()),
+            ..OtlpKv::default()
+        }];
+        let spans = decode_otlp(&data).unwrap();
+        let attr = spans[0]
+            .span_attrs
+            .iter()
+            .find(|attr| attr.key == "empty-elements")
+            .unwrap();
+        assert2::check!(attr.value.otlp_value() == expected);
     }
 
     #[test]
@@ -195,6 +266,7 @@ mod tests {
 }
 
 mod any_to_attr;
+#[cfg(test)]
 mod any_to_text;
 mod decode_otlp;
 mod fixed16;
@@ -205,6 +277,7 @@ mod kvs;
 mod status_of;
 
 use any_to_attr::any_to_attr;
+#[cfg(test)]
 use any_to_text::any_to_text;
 pub use decode_otlp::decode_otlp;
 use fixed8::fixed8;

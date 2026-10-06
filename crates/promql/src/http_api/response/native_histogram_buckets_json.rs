@@ -1,9 +1,9 @@
 use super::{
-    NativeHistogram, Value, append_custom_histogram_buckets, append_standard_histogram_buckets,
-    json, sample_string,
+    HistogramBucketJson, NativeHistogram, Value, append_custom_histogram_buckets,
+    append_standard_histogram_buckets, json, sample_string,
 };
 
-pub(crate) fn native_histogram_buckets_json(histogram: &NativeHistogram) -> Vec<Value> {
+pub(crate) fn native_histogram_buckets(histogram: &NativeHistogram) -> Vec<HistogramBucketJson> {
     let mut buckets = Vec::new();
     if histogram.is_nhcb() {
         append_custom_histogram_buckets(&mut buckets, histogram);
@@ -12,6 +12,10 @@ pub(crate) fn native_histogram_buckets_json(histogram: &NativeHistogram) -> Vec<
     }
     buckets.sort_by(|left, right| left.lower.total_cmp(&right.lower));
     buckets
+}
+
+pub(crate) fn native_histogram_buckets_json(histogram: &NativeHistogram) -> Vec<Value> {
+    native_histogram_buckets(histogram)
         .into_iter()
         .map(|bucket| {
             json!([

@@ -24,7 +24,7 @@ pub(crate) async fn created_timestamp_survives_cold_and_hot_merge() {
         .unwrap();
     blocks
         .index_mut()
-        .add_series("tenant-a", fp, &series_labels);
+        .add_series("tenant-a", fp, &series_labels.utf8_projection());
     blocks.index_mut().add_block(&block_meta);
 
     let mut hot = InMemoryMetricStore::new();

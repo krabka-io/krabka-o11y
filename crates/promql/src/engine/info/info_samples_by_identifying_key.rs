@@ -23,8 +23,16 @@ pub(crate) fn info_samples_by_identifying_key(
             continue;
         };
         let key = format!(
-            "{key}name={}\n",
-            sample.labels.get("__name__").unwrap_or("")
+            "{key}{}",
+            super::Labels::from_pairs([(
+                "__name__",
+                sample
+                    .labels
+                    .get_value("__name__")
+                    .cloned()
+                    .unwrap_or_default()
+            )])
+            .order_key()
         );
         if let Some(existing) = info_by_key.get(&key)
             && sample.ts_ms == existing.ts_ms

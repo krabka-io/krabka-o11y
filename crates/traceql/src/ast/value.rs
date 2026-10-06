@@ -7,4 +7,6 @@ pub enum Value {
     Duration(i64),
     Bool(bool),
     Nil,
+    /// Runtime array attribute; array literals are not part of the parser syntax.
+    Array(Vec<Value>),
 }

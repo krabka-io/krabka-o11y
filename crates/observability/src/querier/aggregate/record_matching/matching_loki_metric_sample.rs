@@ -33,8 +33,5 @@ pub(crate) fn matching_loki_metric_sample(
             metric_labels.remove(unwrap.label());
         }
     }
-    if should_insert_unknown_detected_level_for_stream_query(&query.stream, &metric_labels) {
-        metric_labels.insert("detected_level".to_string(), "unknown".to_string());
-    }
     Ok(Some((metric_labels, evaluation.line, unwrap_sample)))
 }

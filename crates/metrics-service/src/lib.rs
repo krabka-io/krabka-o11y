@@ -31,17 +31,18 @@ use axum::{
 use bytes::Bytes;
 use futures::TryStreamExt;
 pub use ids::{Offset, PartitionIndex};
-use krabka_blockstore::{BlockStore, LabelMatcher, Labels, TENANT_HEADER, TenantId};
+use krabka_blockstore::{BlockStore, TENANT_HEADER, TenantId};
 use krabka_client_consumer::{Consumer, ConsumerRecord};
 use krabka_client_producer::{Producer, ProducerRecord};
 use krabka_metrics::{CompactionIndexManifest, WalRecord, partition_key};
 use krabka_promql::{
     AlertmanagerSink, EngineOpts, ExemplarScan, InMemoryMetricStore, LabelNameCardinality,
     LabelValueCardinality, MergedMetricStore, MetadataScan, MetricBlockStore, MetricStore,
-    PrometheusApiState, QueryFrontendOptions, RecordingRuleWalSink, RulerAlertState,
-    RulerAlertStateRecord, RulerGroupEvaluation, RulerGroupState, RulerGroupStateRecord,
-    RulerShard, RulerStateSink, RulerWalError, ScanResult, TsdbBlock, WalHead,
-    evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report, prometheus_router,
+    PrometheusApiState, PromqlMatcher as LabelMatcher, QueryFrontendOptions, RecordingRuleWalSink,
+    RulerAlertState, RulerAlertStateRecord, RulerGroupEvaluation, RulerGroupState,
+    RulerGroupStateRecord, RulerShard, RulerStateSink, RulerWalError, ScanResult, TsdbBlock,
+    WalHead, evaluate_and_persist_ruler_rule_set_for_shard_due_for_eval_with_report,
+    prometheus_router,
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, path::Path};
@@ -908,7 +909,7 @@ mod tests {
         let alert = krabka_promql::RulerAlertStateRecord {
             tenant: "acme".into(),
             rule_id: "r1".into(),
-            labels: std::collections::BTreeMap::new(),
+            labels: krabka_metrics::MetricLabels::new(),
             active_since_ms: Some(9),
             keep_firing_until_ms: None,
         };
@@ -1133,8 +1134,8 @@ rules:
             &krabka_blockstore::TenantId::new("tenant-a").unwrap(),
             vec![krabka_promql::AlertmanagerAlert {
                 labels: std::collections::BTreeMap::from([
-                    ("alertname".to_string(), "InstanceDown".to_string()),
-                    ("severity".to_string(), "page".to_string()),
+                    ("alertname".to_string(), "InstanceDown".into()),
+                    ("severity".to_string(), "page".into()),
                 ]),
                 annotations: std::collections::BTreeMap::from([(
                     "summary".to_string(),
@@ -1200,8 +1201,8 @@ rules:
         let sink = super::AlertmanagerHttpSink::with_delivery(
             vec![format!("http://{bound}/api/v2/alerts")],
             std::collections::BTreeMap::from([
-                ("cluster".to_string(), "prod".to_string()),
-                ("severity".to_string(), "external-default".to_string()),
+                ("cluster".to_string(), "prod".into()),
+                ("severity".to_string(), "external-default".into()),
             ]),
             Some("https://metrics.example/alerts/{alertname}".to_string()),
             2,
@@ -1211,8 +1212,8 @@ rules:
 
         sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
             labels: std::collections::BTreeMap::from([
-                ("alertname".to_string(), "Instance Down?/&".to_string()),
-                ("severity".to_string(), "page".to_string()),
+                ("alertname".to_string(), "Instance Down?/&".into()),
+                ("severity".to_string(), "page".into()),
             ]),
             annotations: std::collections::BTreeMap::new(),
             starts_at_ms: 60_000,
@@ -1674,9 +1675,9 @@ rules:
         let alert = krabka_promql::RulerAlertStateRecord {
             tenant: "tenant-a".to_string(),
             rule_id: "InstanceDown\nup == 0".to_string(),
-            labels: std::collections::BTreeMap::from([
-                ("alertname".to_string(), "InstanceDown".to_string()),
-                ("job".to_string(), "api".to_string()),
+            labels: krabka_metrics::MetricLabels::from_pairs([
+                ("alertname".to_string(), "InstanceDown"),
+                ("job".to_string(), "api"),
             ]),
             active_since_ms: Some(120_000),
             keep_firing_until_ms: Some(180_000),
@@ -1734,7 +1735,7 @@ rules:
             super::RulerStateWalRecord::Alert(krabka_promql::RulerAlertStateRecord {
                 tenant: "tenant-a".to_string(),
                 rule_id: "InstanceDown\nup == 0".to_string(),
-                labels: std::collections::BTreeMap::from([(
+                labels: krabka_metrics::MetricLabels::from_pairs([(
                     "alertname".to_string(),
                     "InstanceDown".to_string(),
                 )]),
@@ -2066,7 +2067,7 @@ rules:
             &block_meta,
             vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: fp,
-                labels,
+                labels: labels.into(),
             }],
         );
         krabka_metrics::CompactionIndexSink::write_manifest(
@@ -2141,7 +2142,7 @@ rules:
                 &meta,
                 vec![krabka_metrics::CompactionSeriesLabels {
                     fingerprint: fp,
-                    labels: labels.clone(),
+                    labels: labels.clone().into(),
                 }],
             ));
         }
@@ -2230,7 +2231,7 @@ rules:
             &block_meta,
             vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: fp,
-                labels,
+                labels: labels.into(),
             }],
         );
         krabka_metrics::CompactionIndexSink::write_manifest(
@@ -2294,7 +2295,7 @@ rules:
             &block_meta,
             vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: fp,
-                labels,
+                labels: labels.into(),
             }],
         );
         krabka_metrics::CompactionIndexSink::write_manifest(
@@ -2310,7 +2311,7 @@ rules:
             "metrics/tenant-a",
             krabka_promql::WalHead::new(),
         );
-        let matchers = Vec::<krabka_blockstore::LabelMatcher>::new();
+        let matchers = Vec::<krabka_promql::PromqlMatcher>::new();
 
         let (a, b, c, d) = tokio::join!(
             metric_store.series("tenant-a", &matchers, 0, 20_000),
@@ -2362,7 +2363,7 @@ rules:
             &old_block,
             vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: old_fp,
-                labels: old_labels,
+                labels: old_labels.into(),
             }],
         );
         krabka_metrics::CompactionIndexSink::write_manifest(&sink, &old_manifest)
@@ -2398,7 +2399,7 @@ rules:
             &new_block,
             vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: new_fp,
-                labels: new_labels,
+                labels: new_labels.into(),
             }],
         );
         krabka_metrics::CompactionIndexSink::write_manifest(&sink, &new_manifest)
@@ -2411,7 +2412,7 @@ rules:
             "metrics/tenant-a",
             krabka_promql::WalHead::new(),
         );
-        let matchers = [krabka_blockstore::LabelMatcher::new(
+        let matchers = [krabka_promql::PromqlMatcher::new(
             "__name__",
             krabka_blockstore::MatchOp::Eq,
             "up",
@@ -2472,7 +2473,7 @@ rules:
             "metrics/tenant-a",
             krabka_promql::WalHead::new(),
         );
-        let matchers = [krabka_blockstore::LabelMatcher::new(
+        let matchers = [krabka_promql::PromqlMatcher::new(
             "__name__",
             krabka_blockstore::MatchOp::Eq,
             "up",
@@ -2647,7 +2648,7 @@ rules:
             &block_meta,
             vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: fp,
-                labels: labels.clone(),
+                labels: labels.clone().into(),
             }],
         );
         krabka_metrics::CompactionIndexSink::write_manifest(
@@ -2661,7 +2662,7 @@ rules:
             tenant: "tenant-a".to_string(),
             labels: labels
                 .iter()
-                .map(|(name, value)| (name.clone(), value.clone()))
+                .map(|(name, value)| (name.clone(), value.clone().into()))
                 .collect(),
             payload: krabka_metrics::SamplePayload::Float {
                 timestamp_ms: 20_000,
@@ -2734,7 +2735,7 @@ rules:
             &block_meta,
             vec![krabka_metrics::CompactionSeriesLabels {
                 fingerprint: fp,
-                labels,
+                labels: labels.into(),
             }],
         );
         krabka_metrics::CompactionIndexSink::write_manifest(sink, &manifest)
@@ -2747,7 +2748,7 @@ rules:
         let head = krabka_promql::WalHead::new();
         let record = krabka_metrics::WalRecord {
             tenant: "tenant-a".to_string(),
-            labels: vec![("__name__".to_string(), "up".to_string())],
+            labels: vec![("__name__".to_string(), "up".into())],
             payload: krabka_metrics::SamplePayload::Float {
                 timestamp_ms: 10_000,
                 value: 1.0,
@@ -2799,8 +2800,8 @@ rules:
         let record = |job: &str, timestamp_ms: i64| krabka_metrics::WalRecord {
             tenant: "tenant-a".to_string(),
             labels: vec![
-                ("__name__".to_string(), "up".to_string()),
-                ("job".to_string(), job.to_string()),
+                ("__name__".to_string(), "up".into()),
+                ("job".to_string(), job.into()),
             ],
             payload: krabka_metrics::SamplePayload::Float {
                 timestamp_ms,
@@ -2830,7 +2831,7 @@ rules:
         )
         .unwrap();
 
-        let matchers = [krabka_blockstore::LabelMatcher::new(
+        let matchers = [krabka_promql::PromqlMatcher::new(
             "__name__",
             krabka_blockstore::MatchOp::Eq,
             "up",
@@ -2872,7 +2873,7 @@ rules:
         let head = krabka_promql::WalHead::new();
         let record = krabka_metrics::WalRecord {
             tenant: "tenant-a".to_string(),
-            labels: vec![("__name__".to_string(), "up".to_string())],
+            labels: vec![("__name__".to_string(), "up".into())],
             payload: krabka_metrics::SamplePayload::Float {
                 timestamp_ms: 10_000,
                 value: 1.0,
@@ -2945,7 +2946,7 @@ rules:
         let head = krabka_promql::WalHead::new();
         let record = krabka_metrics::WalRecord {
             tenant: "tenant-a".to_string(),
-            labels: vec![("__name__".to_string(), "up".to_string())],
+            labels: vec![("__name__".to_string(), "up".into())],
             payload: krabka_metrics::SamplePayload::Float {
                 timestamp_ms: 10_000,
                 value: 1.0,

@@ -21,7 +21,10 @@ pub(crate) fn metric_label_json(
         Some(TraceMetricLabelType::Bool) => {
             return json!({"key":key,"value":{"boolValue":value.parse::<bool>().expect("boolean metric label is produced from bool")}});
         }
-        None => {}
+        Some(TraceMetricLabelType::Array) => {
+            return json!({"key":key,"value":serde_json::from_str::<Value>(value).expect("array metric label is produced as OTLP JSON")});
+        }
+        Some(TraceMetricLabelType::Nil) | None => {}
     }
 
     if matches!(key, "p" | "__bucket")
@@ -37,6 +40,32 @@ mod tests {
     use assert2::assert;
 
     use super::*;
+
+    #[test]
+    fn array_labels_keep_order_and_element_types_instead_of_collapsing_to_first_value() {
+        let ints = json!({"arrayValue":{"values":[{"intValue":"1"},{"intValue":"2"}]}});
+        let strings = json!({"arrayValue":{"values":[{"stringValue":"1"},{"stringValue":"2"}]}});
+        assert!(
+            metric_label_json(
+                "span.values",
+                &ints.to_string(),
+                Some(TraceMetricLabelType::Array)
+            )["value"]
+                == ints
+        );
+        assert!(
+            metric_label_json(
+                "span.values",
+                &strings.to_string(),
+                Some(TraceMetricLabelType::Array)
+            )["value"]
+                == strings
+        );
+        assert!(
+            metric_label_json("span.values", "1", Some(TraceMetricLabelType::Int))["value"] != ints
+        );
+        assert!(ints != strings);
+    }
 
     #[test]
     fn scalar_labels_preserve_anyvalue_type_and_nonfinite_doubles() {

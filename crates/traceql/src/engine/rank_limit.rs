@@ -7,6 +7,11 @@ pub(crate) struct RankLimit {
 }
 
 pub(crate) fn rank_limit(pipeline: &Pipeline) -> Result<RankLimit> {
+    if matches!(pipeline, Pipeline::TopK(0) | Pipeline::BottomK(0)) {
+        return Err(TraceqlError::Plan(
+            "metrics rank limit must be positive".into(),
+        ));
+    }
     match pipeline {
         Pipeline::TopK(k) => Ok(RankLimit {
             direction: RankDirection::Top,

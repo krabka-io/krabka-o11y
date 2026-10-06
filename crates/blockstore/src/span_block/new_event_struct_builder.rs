@@ -22,12 +22,14 @@ pub(crate) fn new_event_struct_builder() -> StructBuilder {
                 ))),
                 true,
             ),
+            Field::new("attr_typed", DataType::Utf8, true),
         ]),
         vec![
             Box::new(StringBuilder::new()),
             Box::new(Int64Builder::new()),
             Box::new(new_str_list()),
             Box::new(new_str_list_list()),
+            Box::new(StringBuilder::new()),
         ],
     )
 }

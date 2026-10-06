@@ -20,6 +20,16 @@ pub(crate) fn merge_limits(base: &Limits, partial: &PartialLimits) -> Limits {
         max_structured_metadata_entries_count: partial
             .max_structured_metadata_entries_count
             .unwrap_or(base.max_structured_metadata_entries_count),
+        discover_log_levels: partial
+            .discover_log_levels
+            .unwrap_or(base.discover_log_levels),
+        log_level_fields: partial
+            .log_level_fields
+            .clone()
+            .unwrap_or_else(|| base.log_level_fields.clone()),
+        log_level_from_json_max_depth: partial
+            .log_level_from_json_max_depth
+            .unwrap_or(base.log_level_from_json_max_depth),
         otlp_config: partial
             .otlp_config
             .clone()
@@ -48,6 +58,13 @@ pub(crate) fn merge_limits(base: &Limits, partial: &PartialLimits) -> Limits {
             .max_entries_limit_per_query
             .unwrap_or(base.max_entries_limit_per_query),
         max_query_series: partial.max_query_series.unwrap_or(base.max_query_series),
+        enable_multi_variant_queries: partial
+            .enable_multi_variant_queries
+            .unwrap_or(base.enable_multi_variant_queries),
+        shard_aggregations: partial
+            .shard_aggregations
+            .clone()
+            .unwrap_or_else(|| base.shard_aggregations.clone()),
         max_query_read: partial.max_query_read.unwrap_or(base.max_query_read),
         max_query_string_bytes: partial
             .max_query_string_bytes

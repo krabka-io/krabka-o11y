@@ -124,6 +124,22 @@ async fn borrowed_window_keeps_complete_rows_order_and_owned_output() {
                 key: "bytes".into(),
                 value: AttrValue::Bytes(vec![0, 255]),
             },
+            KeyValue {
+                key: "empty".into(),
+                value: AttrValue::Array(Vec::new()),
+            },
+            KeyValue {
+                key: "one".into(),
+                value: AttrValue::Array(vec![AttrValue::Int(7)]),
+            },
+            KeyValue {
+                key: "many".into(),
+                value: AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
+            },
+            KeyValue {
+                key: "mixed".into(),
+                value: AttrValue::Array(vec![AttrValue::Int(7), AttrValue::Str("seven".into())]),
+            },
         ]);
         store.ingest(SpanRecord {
             tenant: "t".into(),
@@ -175,18 +191,49 @@ async fn borrowed_window_keeps_complete_rows_order_and_owned_output() {
             SpanAttr {
                 key: "bytes".into(),
                 is_array: false,
-                value: Value::Str(vec!["00ff".into()]),
+                value: Value::Unsupported(r#"{"bytesValue":"AP8="}"#.into()),
+            },
+            SpanAttr {
+                key: "empty".into(),
+                is_array: true,
+                value: Value::Str(Vec::new()),
+            },
+            SpanAttr {
+                key: "one".into(),
+                is_array: true,
+                value: Value::Int(vec![7]),
+            },
+            SpanAttr {
+                key: "many".into(),
+                is_array: true,
+                value: Value::Bool(vec![true, false]),
+            },
+            SpanAttr {
+                key: "mixed".into(),
+                is_array: false,
+                value: Value::Unsupported(
+                    r#"{"arrayValue":{"values":[{"intValue":"7"},{"stringValue":"seven"}]}}"#
+                        .into(),
+                ),
             },
         ],
         events: vec![SpanEvent {
             name: "exception".into(),
             time_since_start: Time::from_nanos(-900),
-            attrs: vec![("exception.type".into(), "timeout".into())],
+            attrs: vec![SpanAttr {
+                key: "exception.type".into(),
+                is_array: false,
+                value: Value::Str(vec!["timeout".into()]),
+            }],
         }],
         links: vec![SpanLink {
             linked_trace_id: [9; 16],
             linked_span_id: [8; 8],
-            attrs: vec![("link.kind".into(), "retry".into())],
+            attrs: vec![SpanAttr {
+                key: "link.kind".into(),
+                is_array: false,
+                value: Value::Str(vec!["retry".into()]),
+            }],
         }],
     });
     // Compare every Arrow column with an independent row ledger.

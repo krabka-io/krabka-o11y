@@ -3387,13 +3387,14 @@ name = "krabka-logql"
 version = "0.4.0"
 dependencies = [
  "base64 0.23.1",
+ "bigdecimal",
  "chrono",
- "chrono-tz",
  "derive_more",
  "krabka-blockstore",
  "krabka-units",
  "num-traits",
  "regex",
+ "serde",
  "serde_json",
  "thiserror",
  "time",
@@ -3767,6 +3768,7 @@ dependencies = [
  "krabka-client-consumer",
  "krabka-client-core",
  "krabka-client-producer",
+ "krabka-logql",
  "krabka-metrics",
  "krabka-observability",
  "krabka-query-frontend",

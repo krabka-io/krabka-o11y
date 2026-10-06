@@ -35,6 +35,7 @@ mod a_query_answers_around_a_deleted_block_and_warns;
 mod a_query_over_present_blocks_raises_no_warning;
 mod an_http_query_over_a_deleted_block_warns_in_the_response;
 mod an_instant_query_reads_each_float_block_a_fixed_number_of_times;
+mod byte_recording_rules_survive_wal_compaction_and_restart;
 mod cold_series_labels;
 mod counting_object_store;
 mod exemplar_batch;

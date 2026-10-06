@@ -7,7 +7,6 @@ use serde::Deserialize;
 use url::form_urlencoded;
 
 use super::{ApiError, required_form_param, success_data_response};
-use crate::parse_promql;
 
 mod format_query;
 mod format_query_inner;

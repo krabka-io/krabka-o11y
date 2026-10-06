@@ -13,7 +13,11 @@ enum ScalarType {
 
 fn scalar_type(expr: &ScalarExpr) -> Result<ScalarType> {
     Ok(match expr {
+        ScalarExpr::Predicate(_) => ScalarType::Bool,
         ScalarExpr::Field(field) => match field.scope {
+            Scope::Parent => {
+                return Err(TraceqlError::Unsupported("parent field expressions".into()));
+            }
             Scope::Intrinsic(
                 Intrinsic::Duration
                 | Intrinsic::TraceDuration
@@ -33,6 +37,7 @@ fn scalar_type(expr: &ScalarExpr) -> Result<ScalarType> {
             Value::Str(_) => ScalarType::String,
             Value::Bool(_) => ScalarType::Bool,
             Value::Nil => ScalarType::Nil,
+            Value::Array(_) => ScalarType::Unknown,
         },
         ScalarExpr::Negate(inner) => {
             let kind = scalar_type(inner)?;
@@ -63,6 +68,16 @@ pub(crate) fn validate_scalar_comparison(
     op: ComparisonOp,
     rhs: &ScalarExpr,
 ) -> Result<()> {
+    // Tempo rewrites equality with nil to a not-exists operation. These fields
+    // cannot be nil even when a particular span has no event or link.
+    if op == ComparisonOp::Eq
+        && matches!(rhs, ScalarExpr::Literal(Value::Nil))
+        && let ScalarExpr::Field(field) = lhs
+        && (matches!(field.scope, Scope::Intrinsic(_))
+            || matches!(field.scope, Scope::Resource) && field.key == "service.name")
+    {
+        return Err(TraceqlError::Plan(format!("{} cannot be nil", field.key)));
+    }
     // Preserve the existing simple intrinsic enum literal representation: its
     // string token is resolved by the intrinsic planner. Arithmetic is typed.
     if matches!(lhs, ScalarExpr::Field(_)) && matches!(rhs, ScalarExpr::Literal(_)) {
@@ -89,6 +104,38 @@ pub(crate) fn validate_scalar_comparison(
     {
         return Err(TraceqlError::Plan(
             "comparison operator is invalid for operand type".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_boolean_field(field: &super::Field) -> Result<()> {
+    if scalar_type(&ScalarExpr::Field(field.clone()))? != ScalarType::Unknown {
+        return Err(TraceqlError::Plan(
+            "span filter field expressions must resolve to a boolean".into(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_span_expression(expr: &ScalarExpr, numeric: bool) -> Result<()> {
+    let kind = scalar_type(expr)?;
+    if numeric && !matches!(kind, ScalarType::Number | ScalarType::Unknown) {
+        return Err(TraceqlError::Plan(
+            "aggregate field expressions must resolve to a number type".into(),
+        ));
+    }
+    let mut fields = Vec::new();
+    expr.collect_fields(&mut fields);
+    if fields
+        .iter()
+        .any(|field| matches!(field.scope, Scope::Parent))
+    {
+        return Err(TraceqlError::Unsupported("parent field expressions".into()));
+    }
+    if fields.is_empty() {
+        return Err(TraceqlError::Plan(
+            "field expressions must reference the span".into(),
         ));
     }
     Ok(())

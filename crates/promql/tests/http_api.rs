@@ -2724,7 +2724,7 @@ rules:
     state.apply_ruler_alert_state(RulerAlertStateRecord {
         tenant: "tenant-a".to_string(),
         rule_id: "InstanceDown\nup > 0".to_string(),
-        labels: alert_labels,
+        labels: alert_labels.into(),
         active_since_ms: Some(0),
         keep_firing_until_ms: None,
     });
@@ -4860,6 +4860,118 @@ async fn format_query_endpoint_returns_formatted_expression() {
 }
 
 #[tokio::test]
+async fn histogram_trim_round_trips_through_get_and_post_ast_apis_and_evaluation() {
+    let mut store = InMemoryMetricStore::new();
+    // Schema 0: one observation in (0.5, 1], three in (1, 2].
+    store.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "h"), ("job", "api")]),
+        10_000,
+        NativeHistogram {
+            schema: 0,
+            is_float: true,
+            reset_hint: ResetHint::No,
+            zero_threshold: 0.0,
+            zero_count: 0.0,
+            count: 4.0,
+            sum: 5.0,
+            positive_spans: vec![BucketSpan {
+                offset: 0,
+                length: 2,
+            }],
+            positive_counts: vec![1.0, 3.0],
+            negative_spans: vec![],
+            negative_counts: vec![],
+            custom_values: None,
+            start_timestamp_ms: None,
+        },
+    );
+    let app = prometheus_router(Arc::new(PrometheusApiState::new(
+        Arc::new(store),
+        EngineOpts::default(),
+    )));
+    let query = "sum(histogram_count((h </ 2) >/ 1)) + 1";
+    let encoded = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("query", query)
+        .finish();
+    for method in ["GET", "POST"] {
+        for endpoint in ["format_query", "parse_query"] {
+            let uri = if method == "GET" {
+                format!("/api/v1/{endpoint}?{encoded}")
+            } else {
+                format!("/prometheus/api/v1/{endpoint}")
+            };
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .header("X-Scope-OrgID", "tenant-a")
+                        .header("Content-Type", "application/x-www-form-urlencoded")
+                        .body(if method == "POST" {
+                            Body::from(encoded.clone())
+                        } else {
+                            Body::empty()
+                        })
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert2::assert!(response.status() == StatusCode::OK);
+            let body = response_json(response).await;
+            if endpoint == "format_query" {
+                assert2::assert!(body["data"] == query);
+            } else {
+                assert2::assert!(body["data"]["lhs"]["expr"]["args"][0]["op"] == ">/");
+                assert2::assert!(
+                    body["data"]["lhs"]["expr"]["args"][0]["lhs"]["expr"]["op"] == "</"
+                );
+                assert2::assert!(body["data"]["lhs"]["expr"]["func"]["name"] == "histogram_count");
+            }
+        }
+    }
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/query?{encoded}&time=10"))
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert2::assert!(response.status() == StatusCode::OK);
+    assert2::assert!(
+        response_json(response).await["data"]["result"]
+            == serde_json::json!([{"metric":{},"value":[10,"4"]}])
+    );
+    // Trim is not a comparison: bool is illegal, scalar operands parse but fail evaluation.
+    for (query, endpoint, status) in [
+        ("h </ bool 2", "parse_query", StatusCode::BAD_REQUEST),
+        ("1 </ 2", "parse_query", StatusCode::OK),
+        ("1 </ 2", "query", StatusCode::UNPROCESSABLE_ENTITY),
+    ] {
+        let encoded = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("query", query)
+            .finish();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/{endpoint}?{encoded}&time=10"))
+                    .header("X-Scope-OrgID", "tenant-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert2::assert!(response.status() == status, "{query}");
+    }
+}
+
+#[tokio::test]
 async fn parse_query_endpoint_is_available_under_mimir_prefix() {
     let state = Arc::new(PrometheusApiState::new(
         Arc::new(InMemoryMetricStore::new()),
@@ -5199,7 +5311,7 @@ async fn status_walreplay_endpoint_reports_live_materialized_offsets_without_cla
     head.apply_wal_record_at(
         &WalRecord {
             tenant: "tenant-a".to_string(),
-            labels: vec![("__name__".to_string(), "up".to_string())],
+            labels: vec![("__name__".to_string(), "up".into())],
             payload: SamplePayload::Float {
                 timestamp_ms: 10_000,
                 value: 1.0,
@@ -5352,4 +5464,447 @@ async fn status_runtimeinfo_endpoint_is_available_under_mimir_prefix() {
     assert2::assert!(body["data"]["storageRetention"].as_str() == Some("12m"));
     assert2::assert!(body["data"]["corruptionCount"].is_null());
     assert2::assert!(body["data"]["corruptionCountStatus"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn byte_label_identity_is_preserved_until_the_http_json_boundary() {
+    let mut store = InMemoryMetricStore::new();
+    for bytes in [vec![0xff], vec![0xfe], "�".as_bytes().to_vec()] {
+        let mut labels = krabka_promql::PromqlLabels::from_pairs([("__name__", "byte_input")]);
+        labels.insert("raw", krabka_promql::PromqlString::from(bytes));
+        store.push_float("tenant-a", labels, 10_000, 2.0);
+    }
+    let app = prometheus_router(Arc::new(PrometheusApiState::new(
+        Arc::new(store),
+        EngineOpts::default(),
+    )));
+    for (query, expected) in [
+        (
+            "count(byte_input)",
+            serde_json::json!({"resultType":"vector","result":[{"metric":{},"value":[10,"3"]}]}),
+        ),
+        (
+            "sum by(raw)(byte_input)",
+            serde_json::json!({"resultType":"vector","result":[{"metric":{"raw":"�"},"value":[10,"2"]},{"metric":{"raw":"�"},"value":[10,"2"]},{"metric":{"raw":"�"},"value":[10,"2"]}]}),
+        ),
+        (
+            r#"byte_input{raw="\xff"}"#,
+            serde_json::json!({"resultType":"vector","result":[{"metric":{"__name__":"byte_input","raw":"�"},"value":[10,"2"]}]}),
+        ),
+        (
+            r#"label_join(label_replace(byte_input{raw="\xff"},"captured","$1","raw","(.*)"),"joined","\xfe","captured","raw")"#,
+            serde_json::json!({"resultType":"vector","result":[{"metric":{"__name__":"byte_input","raw":"�","captured":"�","joined":"���"},"value":[10,"2"]}]}),
+        ),
+    ] {
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("query", query)
+            .append_pair("time", "10")
+            .finish();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/query")
+                    .header("x-scope-orgid", "tenant-a")
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert2::assert!(response.status() == StatusCode::OK, "{query}");
+        let body = response_json(response).await;
+        assert2::assert!(body["data"] == expected, "{query}");
+    }
+    for (path, expected) in [
+        (
+            "/api/v1/label/raw/values",
+            serde_json::json!(["�", "�", "�"]),
+        ),
+        (
+            "/api/v1/series?match%5B%5D=byte_input%7Braw%3D%22%5Cxff%22%7D",
+            serde_json::json!([{"__name__":"byte_input","raw":"�"}]),
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("x-scope-orgid", "tenant-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert2::assert!(response.status() == StatusCode::OK);
+        assert2::assert!(response_json(response).await["data"] == expected);
+    }
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("query", r#"byte_input{raw=~"\xff"}"#)
+        .append_pair("time", "10")
+        .finish();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/query")
+                .header("x-scope-orgid", "tenant-a")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
+    let body = response_json(response).await;
+    assert2::assert!(body["status"] == "error" && body["errorType"] == "bad_data");
+}
+
+#[tokio::test]
+async fn remote_read_preserves_go_byte_labels_in_samples_and_chunked_frames() {
+    use krabka_metrics::wire::remote_read_pb::v1 as raw;
+    let mut store = InMemoryMetricStore::new();
+    for (bytes, value) in [
+        (vec![0xff], 2.0),
+        (vec![0xfe], 3.0),
+        ("�".as_bytes().to_vec(), 4.0),
+    ] {
+        let mut labels = krabka_promql::PromqlLabels::from_pairs([("__name__", "byte_input")]);
+        labels.insert("raw", krabka_promql::PromqlString::from(bytes));
+        store.push_float("tenant-a", labels, 10_000, value);
+    }
+    let app = prometheus_router(Arc::new(PrometheusApiState::new(
+        Arc::new(store),
+        EngineOpts::default(),
+    )));
+    for (response_type, selected) in [
+        (0, None),
+        (0, Some(vec![0xff])),
+        (1, None),
+        (1, Some(vec![0xfe])),
+    ] {
+        let mut matchers = vec![raw::LabelMatcher {
+            r#type: 0,
+            name: "__name__".into(),
+            value: b"byte_input".to_vec(),
+        }];
+        if let Some(bytes) = &selected {
+            matchers.push(raw::LabelMatcher {
+                r#type: 0,
+                name: "raw".into(),
+                value: bytes.clone(),
+            });
+        }
+        let request = raw::ReadRequest {
+            queries: vec![raw::Query {
+                start_timestamp_ms: 10_000,
+                end_timestamp_ms: 10_000,
+                matchers,
+                hints: None,
+            }],
+            accepted_response_types: vec![response_type],
+        };
+        let compressed = SnappyEncoder::new()
+            .compress_vec(&request.encode_to_vec())
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/read")
+                    .header("X-Scope-OrgID", "tenant-a")
+                    .header("Content-Type", "application/x-protobuf")
+                    .header("Content-Encoding", "snappy")
+                    .body(Body::from(compressed))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert2::assert!(response.status() == StatusCode::OK);
+        let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let mut actual = Vec::new();
+        if response_type == 0 {
+            let decoded = SnappyDecoder::new().decompress_vec(&body).unwrap();
+            for series in raw::ReadResponse::decode(decoded.as_slice())
+                .unwrap()
+                .results[0]
+                .timeseries
+                .clone()
+            {
+                let bytes = series
+                    .labels
+                    .into_iter()
+                    .find(|label| label.name == "raw")
+                    .unwrap()
+                    .value;
+                assert2::assert!(
+                    series.samples.len() == 1 && series.samples[0].timestamp == 10_000
+                );
+                let want = match bytes.as_slice() {
+                    [0xff] => 2.0,
+                    [0xfe] => 3.0,
+                    _ => 4.0,
+                };
+                assert2::assert!(series.samples[0].value == want);
+                actual.push(bytes);
+            }
+        } else {
+            let mut remaining = body.as_ref();
+            while !remaining.is_empty() {
+                let length =
+                    usize::try_from(prost::encoding::decode_varint(&mut remaining).unwrap())
+                        .unwrap();
+                let checksum = u32::from_be_bytes(remaining[..4].try_into().unwrap());
+                let payload = &remaining[4..4 + length];
+                assert2::assert!(checksum == crc32c::crc32c(payload));
+                let frame = raw::ChunkedReadResponse::decode(payload).unwrap();
+                assert2::assert!(frame.query_index == 0 && frame.chunked_series.len() == 1);
+                let series = &frame.chunked_series[0];
+                assert2::assert!(
+                    series.chunks.len() == 1
+                        && series.chunks[0].min_time_ms == 10_000
+                        && series.chunks[0].max_time_ms == 10_000
+                );
+                actual.push(
+                    series
+                        .labels
+                        .iter()
+                        .find(|label| label.name == "raw")
+                        .unwrap()
+                        .value
+                        .clone(),
+                );
+                remaining = &remaining[4 + length..];
+            }
+        }
+        actual.sort();
+        let mut expected = selected.map_or_else(
+            || vec![vec![0xff], vec![0xfe], "�".as_bytes().to_vec()],
+            |bytes| vec![bytes],
+        );
+        expected.sort();
+        assert2::assert!(actual == expected);
+    }
+}
+
+#[tokio::test]
+async fn http_alert_templates_reuse_byte_identity_and_replayed_start_times() {
+    let values = [
+        vec![0xff],
+        vec![0xfe],
+        "�".as_bytes().to_vec(),
+        b"__krabka_bytes_ff".to_vec(),
+    ];
+    let mut store = InMemoryMetricStore::new();
+    for bytes in &values {
+        let mut labels = krabka_promql::PromqlLabels::from_pairs([("__name__", "byte_input")]);
+        labels.insert("raw", krabka_promql::PromqlString::from(bytes.clone()));
+        store.push_float("tenant-a", labels, 60_000, 2.0);
+    }
+    let state = Arc::new(PrometheusApiState::new(
+        Arc::new(store),
+        EngineOpts::default(),
+    ));
+    state.set_ruler_evaluation_time_ms(60_000);
+    for (index, bytes) in values.iter().enumerate() {
+        let mut labels = krabka_promql::PromqlLabels::from_pairs([("alertname", "ByteAlert")]);
+        labels.insert("raw", krabka_promql::PromqlString::from(bytes.clone()));
+        labels.insert("copied", krabka_promql::PromqlString::from(bytes.clone()));
+        labels.insert(
+            "from_query",
+            krabka_promql::PromqlString::from(bytes.clone()),
+        );
+        state.apply_ruler_alert_state(krabka_promql::RulerAlertStateRecord {
+            tenant: "tenant-a".into(),
+            rule_id: "ByteAlert\nbyte_input > 0".into(),
+            labels,
+            active_since_ms: Some(i64::try_from(index).unwrap() * 1_000),
+            keep_firing_until_ms: None,
+        });
+    }
+    let app = prometheus_router(state.clone());
+    let rule = r#"
+name: bytes
+rules:
+  - alert: ByteAlert
+    expr: byte_input > 0
+    for: 1m
+    labels:
+      raw: '{{ $labels.raw }}'
+      copied: '{{ $labels.raw }}'
+      from_query: '{{ query (printf "byte_input{raw=%q}" $labels.raw) | first | label "raw" }}'
+    annotations:
+      origin_name: '{{ $labels.__name__ }}'
+      failed_query: '{{ query `absent(` }}'
+      dependent: '{{ if eq (query (printf "byte_input{raw=%q}" $labels.raw) | first | value) 2.0 }}{{ query (printf "byte_input{raw=%q}" (query (printf "byte_input{raw=%q}" $labels.raw) | first | label "raw")) | first | value }}{{ else }}wrong{{ end }}'
+      skipped: '{{ if false }}{{ query `absent(` }}{{ else }}skipped{{ end }}'
+      clock: '{{ now }}'
+      fresh_samples: '{{ eq (query (printf "byte_input{raw=%q}" $labels.raw) | first) (query (printf "byte_input{raw=%q}" $labels.raw) | first) }}'
+      same_sample: '{{ $sample := query (printf "byte_input{raw=%q}" $labels.raw) | first }}{{ eq $sample $sample }}'
+      scalar_query: '{{ query "7" | first | value }}'
+
+"#;
+    let configured = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/prometheus/config/v1/rules/bytes")
+                .header("X-Scope-OrgID", "tenant-a")
+                .header("Content-Type", "application/yaml")
+                .body(Body::from(rule))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert2::assert!(configured.status() == StatusCode::ACCEPTED);
+    for time in [60_000, 120_000] {
+        state.set_ruler_evaluation_time_ms(time);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/alerts")
+                    .header("X-Scope-OrgID", "tenant-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert2::assert!(response.status() == StatusCode::OK);
+        let body = response_json(response).await;
+        let alerts = body["data"]["alerts"].as_array().unwrap();
+        assert2::assert!(alerts.len() == 4);
+        let mut starts = alerts
+            .iter()
+            .map(|alert| alert["activeAt"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        starts.sort();
+        assert2::assert!(
+            starts
+                == [
+                    "1970-01-01T00:00:00Z",
+                    "1970-01-01T00:00:01Z",
+                    "1970-01-01T00:00:02Z",
+                    "1970-01-01T00:00:03Z"
+                ]
+        );
+        for alert in alerts {
+            assert2::assert!(
+                alert["labels"]["raw"] == alert["labels"]["copied"]
+                    && alert["labels"]["from_query"] == alert["labels"]["raw"]
+                    && alert["labels"].get("__name__").is_none()
+            );
+            assert2::assert!(alert["annotations"]["origin_name"] == "byte_input");
+            assert2::assert!(alert["annotations"]["dependent"] == "2");
+            assert2::assert!(alert["annotations"]["skipped"] == "skipped");
+            assert2::assert!(alert["annotations"]["fresh_samples"] == "false");
+            assert2::assert!(alert["annotations"]["same_sample"] == "true");
+            assert2::assert!(alert["annotations"]["scalar_query"] == "7");
+            assert2::assert!(alert["annotations"]["clock"] == (time / 1000).to_string());
+            assert2::assert!(
+                alert["annotations"]["failed_query"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("<error expanding template: ")
+            );
+            let wanted = if time == 120_000 || alert["activeAt"] == "1970-01-01T00:00:00Z" {
+                "firing"
+            } else {
+                "pending"
+            };
+            assert2::assert!(alert["state"] == wanted);
+        }
+    }
+}
+
+#[tokio::test]
+async fn http_alerts_keep_histogram_expressions_and_typed_query_template_values() {
+    let mut store = InMemoryMetricStore::new();
+    store.push_histogram(
+        "tenant-a",
+        krabka_promql::PromqlLabels::from_pairs([("__name__", "native_input"), ("job", "api")]),
+        60_000,
+        krabka_metrics::NativeHistogram {
+            schema: -53,
+            is_float: true,
+            reset_hint: krabka_metrics::ResetHint::Gauge,
+            zero_threshold: 0.0,
+            zero_count: 0.0,
+            count: 5.0,
+            sum: 9.0,
+            positive_spans: vec![krabka_metrics::BucketSpan {
+                offset: 0,
+                length: 3,
+            }],
+            positive_counts: vec![2.0, 0.0, 3.0],
+            negative_spans: vec![],
+            negative_counts: vec![],
+            custom_values: Some(vec![1.0, 2.0]),
+            start_timestamp_ms: None,
+        },
+    );
+    let state = Arc::new(PrometheusApiState::new(
+        Arc::new(store),
+        EngineOpts::default(),
+    ));
+    state.set_ruler_evaluation_time_ms(60_000);
+    let app = prometheus_router(state);
+    let rule = r#"
+name: native
+rules:
+  - alert: NativeAlert
+    expr: native_input
+    labels:
+      count: '{{ $value.Count }}'
+    annotations:
+      typed: '{{ $value.Count }}/{{ $value.Sum }}/{{ $value.Schema }}/{{ $value.UsesCustomBuckets }}'
+      buckets: '{{ $value.String }}'
+      queried: '{{ query "native_input" | first | value }}'
+      invalid_numeric: '{{ $value | humanize }}'
+"#;
+    let configured = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/prometheus/config/v1/rules/native")
+                .header("X-Scope-OrgID", "tenant-a")
+                .header("Content-Type", "application/yaml")
+                .body(Body::from(rule))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert2::assert!(configured.status() == StatusCode::ACCEPTED);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/alerts")
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert2::assert!(response.status() == StatusCode::OK);
+    let body = response_json(response).await;
+    let alerts = body["data"]["alerts"].as_array().unwrap();
+    assert2::assert!(alerts.len() == 1);
+    let alert = &alerts[0];
+    assert2::assert!(alert["labels"]["count"] == "5" && alert["labels"]["job"] == "api");
+    assert2::assert!(alert["labels"].get("__name__").is_none());
+    assert2::assert!(alert["annotations"]["typed"] == "5/9/-53/true");
+    assert2::assert!(alert["annotations"]["buckets"] == "{count:5, sum:9, [-Inf,1]:2, (2,+Inf]:3}");
+    assert2::assert!(alert["annotations"]["queried"] == alert["annotations"]["buckets"]);
+    assert2::assert!(
+        alert["annotations"]["invalid_numeric"]
+            .as_str()
+            .unwrap()
+            .starts_with("<error expanding template: ")
+    );
+    assert2::assert!(alert["state"] == "firing" && alert["value"] == "0");
 }

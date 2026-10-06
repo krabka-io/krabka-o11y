@@ -23,12 +23,7 @@ pub(crate) fn field_values(field: &Field, row: &CompareRow) -> Vec<Value> {
     match compare_field_class(field) {
         Ok(CompareFieldClass::Attr { scope, key }) => compare_row_attr_values(row, &scope, &key)
             .into_iter()
-            .map(|value| match value {
-                AttrValue::Str(value) => Value::Str(value.clone()),
-                AttrValue::Int(value) => Value::Int(*value),
-                AttrValue::Float(value) => Value::Float(*value),
-                AttrValue::Bool(value) => Value::Bool(*value),
-            })
+            .map(attribute_scalar)
             .collect(),
         Ok(CompareFieldClass::Intrinsic(intrinsic)) => {
             let value = match intrinsic {
@@ -37,11 +32,34 @@ pub(crate) fn field_values(field: &Field, row: &CompareRow) -> Vec<Value> {
                 Intrinsic::Duration => row.duration.map(Value::Duration),
                 Intrinsic::Status => row.status_code.map(|value| Value::Int(i64::from(value))),
                 Intrinsic::Kind => row.kind.map(|value| Value::Int(i64::from(value))),
-                _ => None,
+                _ => super::metric_field_column(field)
+                    .ok()
+                    .and_then(|column| row.columns.get(&column).cloned())
+                    .map(|value| {
+                        if matches!(
+                            intrinsic,
+                            Intrinsic::TraceDuration | Intrinsic::EventTimeSinceStart
+                        ) && let Value::Int(value) = value
+                        {
+                            return Value::Duration(value);
+                        }
+                        value
+                    }),
             };
             value.into_iter().collect()
         }
         Err(_) => Vec::new(),
+    }
+}
+
+fn attribute_scalar(value: &AttrValue) -> Value {
+    match value {
+        AttrValue::Str(value) => Value::Str(value.clone()),
+        AttrValue::Int(value) => Value::Int(*value),
+        AttrValue::Float(value) => Value::Float(*value),
+        AttrValue::Bool(value) => Value::Bool(*value),
+        AttrValue::Unsupported(_) => Value::Nil,
+        AttrValue::Array(values) => Value::Array(values.iter().map(attribute_scalar).collect()),
     }
 }
 
@@ -83,6 +101,21 @@ pub(crate) fn field_comparison_matches(
 
 pub(crate) fn scalar_matches(lhs: &Value, op: ComparisonOp, rhs: &Value) -> bool {
     match (lhs, rhs) {
+        (Value::Array(_), Value::Array(_)) => false,
+        (Value::Array(values), scalar) => {
+            if matches!(op, ComparisonOp::Neq | ComparisonOp::Nre) {
+                values.iter().all(|value| scalar_matches(value, op, scalar))
+            } else {
+                values.iter().any(|value| scalar_matches(value, op, scalar))
+            }
+        }
+        (scalar, Value::Array(values)) => {
+            if matches!(op, ComparisonOp::Neq | ComparisonOp::Nre) {
+                values.iter().all(|value| scalar_matches(scalar, op, value))
+            } else {
+                values.iter().any(|value| scalar_matches(scalar, op, value))
+            }
+        }
         (Value::Str(lhs), Value::Str(rhs)) => match op {
             ComparisonOp::Eq => lhs == rhs,
             ComparisonOp::Neq => lhs != rhs,
@@ -128,6 +161,7 @@ mod tests {
             status_message: None,
             kind: Some(2),
             duration: None,
+            columns: std::collections::BTreeMap::new(),
         };
         let status = Field {
             scope: super::super::Scope::Intrinsic(Intrinsic::Status),

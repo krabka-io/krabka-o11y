@@ -1,8 +1,8 @@
 use super::{
     ApiError, Arc, Body, Bytes, Extension, HeaderMap, IntoResponse, Message, MetricStore,
     Principal, PrometheusApiState, Response, State, StatusCode, authorized_tenant_from_headers,
-    encode_chunked_read_frames, header, negotiate_remote_read_response_type, pb,
-    remote_read_response, require_remote_read_headers, snappy_block_decode,
+    encode_chunked_read_frames, encode_read_response, header, negotiate_remote_read_response_type,
+    pb, remote_read_response, require_remote_read_headers, snappy_block_decode,
 };
 
 pub(crate) async fn remote_read<S: MetricStore>(
@@ -53,8 +53,7 @@ pub(crate) async fn remote_read<S: MetricStore>(
             .into_response();
     }
 
-    let encoded = response.encode_to_vec();
-    let compressed = match snap::raw::Encoder::new().compress_vec(&encoded) {
+    let compressed = match encode_read_response(&response) {
         Ok(compressed) => compressed,
         Err(error) => {
             return ApiError {

@@ -4,8 +4,8 @@ use super::*;
 pub(crate) async fn replay_wal_records_populates_queryable_head() {
     let mut store = InMemoryMetricStore::new();
     let series_labels = vec![
-        ("__name__".to_string(), "up".to_string()),
-        ("job".to_string(), "api".to_string()),
+        ("__name__".to_string(), "up".to_string().into()),
+        ("job".to_string(), "api".to_string().into()),
     ];
     store.apply_wal_record(&WalRecord {
         tenant: "tenant-a".to_string(),
@@ -22,9 +22,9 @@ pub(crate) async fn replay_wal_records_populates_queryable_head() {
         labels: vec![
             (
                 "__name__".to_string(),
-                "request_duration_seconds".to_string(),
+                "request_duration_seconds".to_string().into(),
             ),
-            ("job".to_string(), "api".to_string()),
+            ("job".to_string(), "api".to_string().into()),
         ],
         payload: SamplePayload::Hist {
             timestamp_ms: 10_000,
@@ -48,7 +48,7 @@ pub(crate) async fn replay_wal_records_populates_queryable_head() {
         labels: series_labels.clone(),
         payload: SamplePayload::Exemplars,
         exemplars: vec![WalExemplar {
-            labels: vec![("trace_id".to_string(), "abc".to_string())],
+            labels: vec![("trace_id".to_string(), "abc".to_string().into())],
             value: 1.0,
             timestamp_ms: 10_000,
         }],

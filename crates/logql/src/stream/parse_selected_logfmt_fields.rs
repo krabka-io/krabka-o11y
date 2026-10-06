@@ -1,11 +1,12 @@
 use super::{
-    Labels, LogfmtParser, LogfmtParserConfig, insert_extracted_field, insert_logfmt_parser_error,
+    Labels, LogfmtParser, LogfmtParserConfig, insert_logfmt_parser_error, insert_raw_parsed_field,
 };
 
 pub(crate) fn parse_selected_logfmt_fields(
     line: &str,
     fields: &mut Labels,
     config: &LogfmtParserConfig,
+    has_collision: impl Fn(&str) -> bool,
 ) {
     let mut parsed = Labels::new();
     let mut parser = LogfmtParser::new(line);
@@ -27,7 +28,10 @@ pub(crate) fn parse_selected_logfmt_fields(
     }
 
     for extraction in config.extractions() {
-        let value = parsed.get(extraction.source()).cloned().unwrap_or_default();
-        insert_extracted_field(fields, extraction.destination(), value);
+        let value = parsed.get(extraction.source()).cloned();
+        if value.is_none() && has_collision(extraction.destination()) {
+            continue;
+        }
+        insert_raw_parsed_field(fields, extraction.destination(), value.unwrap_or_default());
     }
 }

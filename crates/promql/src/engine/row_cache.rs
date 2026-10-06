@@ -8,11 +8,13 @@ use arrow::{
     datatypes::{Float64Type, Int64Type, UInt64Type},
 };
 use datafusion::prelude::SessionContext;
-use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::{NativeHistogram, decode_native_histograms};
 
 use super::samples_per_query_exceeded;
-use crate::{PromqlError, ScanResult, error::Result};
+use crate::{
+    PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher, ScanResult, error::Result,
+};
 
 tokio::task_local! {
     /// Active for the dynamic extent of the step loop in

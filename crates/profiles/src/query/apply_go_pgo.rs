@@ -182,4 +182,73 @@ mod tests {
         check!(profile.location.len() == 1);
         check!(profile.location[0].line[0].line == 0);
     }
+    #[test]
+    fn aggregation_matches_shared_caller_and_callee_location_clearing() {
+        let mut profile = pb::google::v1::Profile {
+            sample: vec![
+                pb::google::v1::Sample {
+                    location_id: vec![2, 1],
+                    value: vec![100],
+                    ..Default::default()
+                },
+                pb::google::v1::Sample {
+                    location_id: vec![1],
+                    value: vec![40],
+                    ..Default::default()
+                },
+            ],
+            location: vec![
+                pb::google::v1::Location {
+                    id: 1,
+                    line: vec![pb::google::v1::Line {
+                        function_id: 1,
+                        line: 10,
+                    }],
+                    ..Default::default()
+                },
+                pb::google::v1::Location {
+                    id: 2,
+                    line: vec![pb::google::v1::Line {
+                        function_id: 2,
+                        line: 20,
+                    }],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let selector = pb::types::v1::StackTraceSelector {
+            go_pgo: Some(pb::types::v1::GoPgo {
+                keep_locations: 2,
+                aggregate_callees: true,
+            }),
+            ..Default::default()
+        };
+        apply_go_pgo(&mut profile, Some(&selector));
+        let mut observed: Vec<_> = profile
+            .sample
+            .iter()
+            .map(|sample| {
+                let stack: Vec<_> = sample
+                    .location_id
+                    .iter()
+                    .map(|id| {
+                        let location = profile
+                            .location
+                            .iter()
+                            .find(|location| location.id == *id)
+                            .unwrap();
+                        (location.line[0].function_id, location.line[0].line)
+                    })
+                    .collect();
+                (stack, sample.value.clone())
+            })
+            .collect();
+        observed.sort();
+        // The pinned resolver clears a shared location globally. A caller
+        // occurrence also becomes line zero when another sample uses it as
+        // a leaf: resolver_pprof_go_pgo.go::clearCalleeLineNumber.
+        check!(observed == vec![(vec![(1, 0)], vec![40]), (vec![(2, 0), (1, 0)], vec![100])]);
+        check!(profile.location.len() == 2);
+    }
 }

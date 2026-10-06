@@ -1,10 +1,12 @@
 use prost::Message;
 
-use super::{RemoteReadError, encode_histogram_chunks, encode_xor_chunks, v1};
+use super::{RemoteReadError, encode_histogram_chunks, encode_xor_chunks};
 
 pub fn encode_chunked_read_frames(
-    response: v1::ReadResponse,
+    response: impl Into<crate::wire::remote_read_pb::v1::ReadResponse>,
 ) -> impl Iterator<Item = Result<Vec<u8>, RemoteReadError>> {
+    use crate::wire::remote_read_pb::v1;
+    let response: v1::ReadResponse = response.into();
     response
         .results
         .into_iter()

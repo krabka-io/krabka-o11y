@@ -31,22 +31,35 @@ impl Parser {
         self.pos += 1;
         self.expect(&Token::LParen)?;
         let mut hints = QueryHints::default();
+        let mut most_recent_seen = false;
         loop {
             let name = self.expect_ident()?;
             self.expect(&Token::Eq)?;
-            let value = match self.advance() {
-                Token::Bool(value) => value,
-                other => {
-                    return Err(Self::err(format!(
-                        "expected boolean query hint value, got {other:?}"
-                    )));
-                }
+            if matches!(self.peek(), Token::LParen | Token::Nil | Token::Minus)
+                || matches!(self.peek(), Token::Ident(value) if !value.starts_with(|c: char| c.is_ascii_digit()) && !matches!(value.as_str(), "minInt" | "maxInt" | "ok" | "error" | "unset" | "unspecified" | "internal" | "server" | "client" | "producer" | "consumer"))
+            {
+                return Err(Self::err("query hint requires a static value"));
+            }
+            let ScalarExpr::Literal(value) = self.parse_scalar_expression(40, false)? else {
+                return Err(Self::err("query hint requires a static value"));
             };
-            match name.as_str() {
-                "most_recent" => hints.most_recent = value,
-                "exemplars" => hints.exemplars = Some(value),
-                "sample" => hints.sample = Some(value),
-                other => return Err(Self::err(format!("unsupported query hint {other:?}"))),
+            let value = match value {
+                Value::Str(value) if value == "minInt" => Value::Int(i64::MIN),
+                Value::Str(value) if value == "maxInt" => Value::Int(i64::MAX),
+                value => value,
+            };
+            match (name.as_str(), &value) {
+                ("most_recent", Value::Bool(value)) if !most_recent_seen => {
+                    hints.most_recent = *value;
+                    most_recent_seen = true;
+                }
+                ("exemplars", Value::Bool(value)) if hints.exemplars.is_none() => {
+                    hints.exemplars = Some(*value);
+                }
+                ("sample", Value::Bool(value)) if hints.sample.is_none() => {
+                    hints.sample = Some(*value);
+                }
+                _ => hints.values.push((name, value)),
             }
             if !eat!(self, &Token::Comma) {
                 break;
@@ -58,13 +71,19 @@ impl Parser {
 
     pub(crate) fn parse_pipeline(&mut self) -> Result<Vec<Pipeline>> {
         let mut out = Vec::new();
+        let mut metrics = false;
         while eat!(self, &Token::Pipe) {
-            out.push(self.parse_pipeline_stage()?);
+            let stage = self.parse_pipeline_stage()?;
+            metrics |= matches!(&stage, Pipeline::Aggregate(aggregate) if aggregate.is_metric());
+            out.push(stage);
             if let Some(by) = self.parse_adjacent_by()? {
                 out.push(by);
             }
-            if let Some((op, value)) = self.parse_numeric_filter()? {
+            while let Some((op, value)) = self.parse_numeric_filter(metrics)? {
                 out.push(Pipeline::Filter { op, value });
+                if !metrics {
+                    break;
+                }
             }
         }
         Ok(out)
@@ -96,7 +115,37 @@ impl Parser {
                 }))
             }
             "sum" | "avg" | "max" | "min" => self.parse_field_aggregate(&name),
-            "by" => Ok(Pipeline::By(self.parse_parenthesized_field_list()?)),
+            "by" => {
+                self.expect(&Token::LParen)?;
+                let saved = self.pos;
+                let predicate = self.parse_field_or();
+                let expr = match predicate {
+                    Ok(FieldExpr::Field(field)) => ScalarExpr::Field(field),
+                    Ok(predicate) => ScalarExpr::Predicate(Box::new(predicate)),
+                    Err(_) => {
+                        self.pos = saved;
+                        self.parse_scalar_expression(0, true)?
+                    }
+                };
+                if let ScalarExpr::Field(field) = expr {
+                    let mut fields = vec![field];
+                    while eat!(self, &Token::Comma) {
+                        fields.push(self.parse_field()?);
+                    }
+                    self.expect(&Token::RParen)?;
+                    for field in &fields {
+                        super::scalar_type::validate_span_expression(
+                            &ScalarExpr::Field(field.clone()),
+                            false,
+                        )?;
+                    }
+                    Ok(Pipeline::By(fields))
+                } else {
+                    self.expect(&Token::RParen)?;
+                    super::scalar_type::validate_span_expression(&expr, false)?;
+                    Ok(Pipeline::Group(expr))
+                }
+            }
             "topk" => {
                 self.expect(&Token::LParen)?;
                 let k = self.parse_rank_limit()?;
@@ -125,8 +174,22 @@ impl Parser {
 
     pub(crate) fn parse_field_aggregate(&mut self, name: &str) -> Result<Pipeline> {
         self.expect(&Token::LParen)?;
-        let field = self.parse_field()?;
+        let expr = self.parse_scalar_expression(0, true)?;
         self.expect(&Token::RParen)?;
+        super::scalar_type::validate_span_expression(&expr, true)?;
+        let ScalarExpr::Field(field) = expr else {
+            let function = match name {
+                "sum" => crate::ast::ScalarAggregate::Sum,
+                "avg" => crate::ast::ScalarAggregate::Avg,
+                "max" => crate::ast::ScalarAggregate::Max,
+                "min" => crate::ast::ScalarAggregate::Min,
+                _ => unreachable!("matched aggregate is exhaustive"),
+            };
+            return Ok(Pipeline::Aggregate(Aggregate::Expression {
+                function,
+                expr,
+            }));
+        };
         let aggregate = match name {
             "sum" => Aggregate::Sum(field),
             "avg" => Aggregate::Avg(field),
@@ -266,11 +329,20 @@ impl Parser {
         usize::try_from(value).map_err(|e| TraceqlError::Parse(e.to_string()))
     }
 
-    pub(crate) fn parse_numeric_filter(&mut self) -> Result<Option<(ComparisonOp, f64)>> {
+    pub(crate) fn parse_numeric_filter(
+        &mut self,
+        metrics: bool,
+    ) -> Result<Option<(ComparisonOp, f64)>> {
         let Some(op) = self.parse_comparison_op() else {
             return Ok(None);
         };
-        let value = numeric_filter_value(self.parse_additive_value(&numeric_filter_field())?)?;
+        let value = self.parse_additive_value(&numeric_filter_field())?;
+        let value = match value {
+            Value::Duration(value) if metrics => {
+                numeric_filter_value(Value::Duration(value))? / 1_000_000_000.0
+            }
+            value => numeric_filter_value(value)?,
+        };
         Ok(Some((op, value)))
     }
 
@@ -431,7 +503,10 @@ impl Parser {
         let lhs = self.parse_scalar_expression(0, true)?;
         let Some(op) = self.parse_comparison_op() else {
             return match lhs {
-                ScalarExpr::Field(field) => Ok(FieldExpr::Field(field)),
+                ScalarExpr::Field(field) => {
+                    super::scalar_type::validate_boolean_field(&field)?;
+                    Ok(FieldExpr::Field(field))
+                }
                 ScalarExpr::Literal(Value::Bool(value)) => Ok(FieldExpr::Const(value)),
                 _ => Err(Self::err("scalar predicate requires a comparison")),
             };
@@ -561,7 +636,15 @@ impl Parser {
             let key = self.expect_ident()?;
             return Ok(Field {
                 scope: Scope::Intrinsic(intrinsic(&first, &key)?),
-                key,
+                key: format!(
+                    "{first}:{}",
+                    match key.as_str() {
+                        "parentId" => "parentID",
+                        "traceId" => "traceID",
+                        "spanId" => "spanID",
+                        other => other,
+                    }
+                ),
             });
         }
         if eat!(self, &Token::Dot) {

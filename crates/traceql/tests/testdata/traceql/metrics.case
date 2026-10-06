@@ -98,4 +98,4 @@ name: metrics_bottomk_truncates_groups
 kind: metrics
 query: { .svc != nil } | count_over_time() | by(span.svc) | bottomk(1)
 expect_series_count: 1
-expect_metrics: [{"labels":[["span.svc","c"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]}]
+expect_metrics: [{"labels":[["span.svc","x"]],"points":[[0,1.0],[10000,0.0]],"exemplars":[]}]

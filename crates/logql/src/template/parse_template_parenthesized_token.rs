@@ -13,7 +13,7 @@ pub(crate) fn parse_template_parenthesized_token(
             escaped = false;
             continue;
         }
-        if quote == Some('"') && ch == '\\' {
+        if matches!(quote, Some('"' | '\'')) && ch == '\\' {
             escaped = true;
             continue;
         }
@@ -23,7 +23,7 @@ pub(crate) fn parse_template_parenthesized_token(
             }
             continue;
         }
-        if matches!(ch, '"' | '`') {
+        if matches!(ch, '"' | '\'' | '`') {
             quote = Some(ch);
             continue;
         }

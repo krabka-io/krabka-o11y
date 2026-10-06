@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use krabka_blockstore::Labels;
 use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
 
 use super::{
@@ -16,6 +15,7 @@ use super::{
     },
 };
 use crate::{
+    PromqlLabels as Labels,
     error::{PromqlError, Result},
     result::{InstantSample, SampleValue},
 };
@@ -464,7 +464,9 @@ mod scale_native_histogram_values;
 mod scaled_native_histogram;
 mod spanned_histogram_counts;
 mod standard_histogram_bound;
+mod template_histogram;
 mod trim_native_histogram;
+pub(crate) use template_histogram::template_histogram_value;
 mod zero_bucket_bounds;
 mod zero_count_at_threshold;
 
@@ -511,7 +513,7 @@ use remap_custom_counts::remap_custom_counts;
 pub(super) use scale_native_histogram_values::scale_native_histogram_values;
 pub(super) use scaled_native_histogram::scaled_native_histogram;
 use spanned_histogram_counts::spanned_histogram_counts;
-use standard_histogram_bound::standard_histogram_bound;
+pub(crate) use standard_histogram_bound::standard_histogram_bound;
 pub(super) use trim_native_histogram::trim_native_histogram;
 use zero_bucket_bounds::zero_bucket_bounds;
 use zero_count_at_threshold::zero_count_at_threshold;

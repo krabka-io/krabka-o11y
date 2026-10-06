@@ -52,6 +52,11 @@ pub fn span_block_schema_with_promoted_attrs(promoted_attrs: &[PromotedSpanAttr]
             true,
         ),
         Field::new(SCOL_ATTR_VALUE_BOOL, list_list_of(DataType::Boolean), true),
+        Field::new(
+            "attr_value_unsupported",
+            list_of("item", DataType::Utf8, true),
+            true,
+        ),
         Field::new(SCOL_EVENTS, list_of("item", event_struct(), true), true),
         Field::new(SCOL_LINKS, list_of("item", link_struct(), true), true),
     ]);

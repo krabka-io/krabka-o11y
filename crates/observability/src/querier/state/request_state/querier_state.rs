@@ -1,4 +1,5 @@
 use super::*;
+use crate::{ByteSize, Time};
 
 impl QuerierState {
     #[must_use]
@@ -18,6 +19,8 @@ impl QuerierState {
             query_authorizer: Arc::new(AllowAllQueryAuthorizer),
             overrides: Arc::new(OverridesProvider::new(Limits::default())),
             limits: Limits::default(),
+            max_count_min_sketch_heap_size: 10_000,
+            federated_metric_tenants: None,
             metrics: None,
             query_frontend_cache: Arc::new(
                 InMemoryCache::<Value>::new(days(7).to_std()).with_weigher(json_value_bytes),
@@ -79,7 +82,69 @@ impl QuerierState {
     /// Resolves one tenant's limits, once, for the request in hand.
     pub(crate) fn with_tenant_limits(&self, tenant: &TenantId) -> Self {
         let mut state = self.clone();
-        state.limits = self.overrides.for_tenant(tenant).clone();
+        if self.federated_metric_tenants.is_none() {
+            state.limits = self.overrides.for_tenant(tenant).clone();
+        }
+        state
+    }
+
+    pub(crate) fn with_federated_metric_tenants(&self, tenants: &[TenantId]) -> Self {
+        let mut state = self.clone();
+        let limits = tenants
+            .iter()
+            .map(|tenant| self.overrides.for_tenant(tenant))
+            .collect::<Vec<_>>();
+        if let Some(first) = limits.first() {
+            state.limits = (*first).clone();
+            state.limits.enable_multi_variant_queries = limits
+                .iter()
+                .any(|limit| limit.enable_multi_variant_queries);
+            state.limits.max_query_series = limits
+                .iter()
+                .map(|limit| limit.max_query_series)
+                .min()
+                .unwrap_or_default();
+            state.limits.shard_aggregations.retain(|name| {
+                limits
+                    .iter()
+                    .all(|limit| limit.shard_aggregations.contains(name))
+            });
+            for limit in limits {
+                for (value, candidate) in [
+                    (&mut state.limits.max_query_length, limit.max_query_length),
+                    (
+                        &mut state.limits.max_query_lookback,
+                        limit.max_query_lookback,
+                    ),
+                    (&mut state.limits.max_query_range, limit.max_query_range),
+                ] {
+                    if candidate > Time::ZERO && (*value == Time::ZERO || candidate < *value) {
+                        *value = candidate;
+                    }
+                }
+                for (value, candidate) in [
+                    (&mut state.limits.max_query_read, limit.max_query_read),
+                    (
+                        &mut state.limits.max_query_string_bytes,
+                        limit.max_query_string_bytes,
+                    ),
+                ] {
+                    if candidate > ByteSize::ZERO
+                        && (*value == ByteSize::ZERO || candidate < *value)
+                    {
+                        *value = candidate;
+                    }
+                }
+                let candidate = limit.max_entries_limit_per_query;
+                if candidate > 0
+                    && (state.limits.max_entries_limit_per_query == 0
+                        || candidate < state.limits.max_entries_limit_per_query)
+                {
+                    state.limits.max_entries_limit_per_query = candidate;
+                }
+            }
+        }
+        state.federated_metric_tenants = Some(Arc::from(tenants));
         state
     }
 
@@ -152,6 +217,7 @@ impl QuerierState {
     }
 
     pub(crate) fn with_runtime_policy(mut self, config: &ServiceConfig) -> Self {
+        self.max_count_min_sketch_heap_size = config.max_count_min_sketch_heap_size;
         self.dynamic_index_cache.cache_ttl = config.querier_dynamic_index_cache_ttl;
         self.dynamic_index_cache.shard_cache_ttl = config.querier_shard_index_cache_ttl;
         self.dynamic_index_cache.shard_fetch_concurrency = config.querier_shard_fetch_concurrency;

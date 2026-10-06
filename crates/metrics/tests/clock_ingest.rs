@@ -72,8 +72,8 @@ fn snappy_batch(readings: &[pb::clocks::ClockReading]) -> Vec<u8> {
 /// A well-formed NTP reading with every discipline field filled.
 fn ntp_wire() -> pb::clocks::ClockReading {
     pb::clocks::ClockReading {
-        node: "host-a".into(),
-        clock: "CLOCK_REALTIME".into(),
+        node: "host-a".to_string(),
+        clock: "CLOCK_REALTIME".to_string(),
         source_kind: pb::clocks::SourceKind::Ntp.into(),
         reading_unix_nanos: READING_NANOS,
         uncertainty_nanos: 2_000_000,
@@ -553,10 +553,10 @@ fn the_clock_wal_record_carries_the_identity_and_the_ingest_stamp() {
             == vec![WalRecord {
                 tenant: "tenant-a".to_string(),
                 labels: vec![
-                    ("__name__".to_string(), CLOCK_READING_METRIC.to_string()),
-                    ("node".to_string(), "host-a".to_string()),
-                    ("clock".to_string(), "CLOCK_REALTIME".to_string()),
-                    ("source".to_string(), "ntp".to_string()),
+                    ("__name__".to_string(), CLOCK_READING_METRIC.into()),
+                    ("node".to_string(), "host-a".into()),
+                    ("clock".to_string(), "CLOCK_REALTIME".into()),
+                    ("source".to_string(), "ntp".into()),
                 ],
                 payload: SamplePayload::ClockReading(Box::new(ClockReadingPayload {
                     reading,
@@ -762,10 +762,10 @@ async fn a_pushed_batch_lands_as_a_clock_record_and_its_projection() {
                 .map(|(_, value)| value.clone())
         })
         .collect::<Vec<_>>();
-    check!(float_names.contains(&"krabka_clock_path_delay_seconds".to_string()));
-    check!(float_names.contains(&"krabka_clock_uncertainty_seconds".to_string()));
-    check!(float_names.contains(&"krabka_clock_sync_state".to_string()));
-    check!(!float_names.contains(&CLOCK_READING_METRIC.to_string()));
+    check!(float_names.contains(&"krabka_clock_path_delay_seconds".into()));
+    check!(float_names.contains(&"krabka_clock_uncertainty_seconds".into()));
+    check!(float_names.contains(&"krabka_clock_sync_state".into()));
+    check!(!float_names.contains(&CLOCK_READING_METRIC.into()));
 }
 
 #[tokio::test]

@@ -19,8 +19,6 @@ mod parse_decimal_sample_exponent;
 mod parse_decimal_sample_literal;
 mod parse_metric_sample_value;
 mod query_row;
-mod should_insert_unknown_detected_level;
-mod should_insert_unknown_detected_level_for_stream_query;
 mod sort_loki_stream_values;
 mod structured_metadata_value;
 
@@ -36,7 +34,5 @@ pub(crate) use parse_decimal_sample_exponent::parse_decimal_sample_exponent;
 pub(crate) use parse_decimal_sample_literal::parse_decimal_sample_literal;
 pub(crate) use parse_metric_sample_value::parse_metric_sample_value;
 pub(crate) use query_row::QueryRow;
-pub(crate) use should_insert_unknown_detected_level::should_insert_unknown_detected_level;
-pub(crate) use should_insert_unknown_detected_level_for_stream_query::should_insert_unknown_detected_level_for_stream_query;
 pub(crate) use sort_loki_stream_values::sort_loki_stream_values;
 pub(crate) use structured_metadata_value::structured_metadata_value;

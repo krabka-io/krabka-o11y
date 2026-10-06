@@ -16,6 +16,7 @@ pub(crate) fn append_attrs(
         is_array.values().append_value(attr.is_array);
 
         match &attr.value {
+            AttrValue::Unsupported(_) => {}
             AttrValue::Str(values) => {
                 for value in values {
                     str_values.values().values().append_value(value);

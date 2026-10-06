@@ -167,26 +167,48 @@ impl<S: SpanStore> TraceqlEngine<S> {
         scan_options: ScanOptions,
     ) -> Result<TraceMetricsResponse> {
         let q = parse(query)?;
-        let metric = metric_plan(&q)?;
+        let mut metric = metric_plan(&q)?;
+        metric.frontend_labels = scan_options.tempo_frontend_labels;
+        metric.instant = scan_options.tempo_instant_metrics;
         let max_exemplars = hinted_max_exemplars(self.opts.max_exemplars, q.hints.exemplars);
+        let mut scan_options = scan_options;
+        let fractional = |name| {
+            q.hints
+                .numeric(name)
+                .filter(|fraction| *fraction > 0.0 && *fraction < 1.0)
+        };
+        scan_options.sample_fraction = fractional("span_sample");
+        scan_options.trace_sample_fraction = fractional("trace_sample");
+        if let Some(fraction) = fractional("sample") {
+            let needs_trace = !matches!(q.root, crate::ast::SpansetExpr::Selector(_))
+                || metric
+                    .spanset_pipeline
+                    .iter()
+                    .any(|stage| matches!(stage, crate::ast::Pipeline::Aggregate(_)));
+            if needs_trace {
+                scan_options.trace_sample_fraction = Some(fraction);
+            } else {
+                scan_options.sample_fraction = Some(fraction);
+            }
+        }
         if let Some(compare) = metric.compare.clone() {
             return self
                 .query_range_compare(
                     tenant,
-                    q.root,
+                    (q.root, metric.spanset_pipeline.clone()),
                     compare,
                     MetricsRange {
                         scan_start: UnixNano(start_ns),
                         scan_end: UnixNano(end_ns),
-                        output_start: UnixNano(start_ns),
+                        output_start: UnixNano(if metric.instant { end_ns } else { start_ns }),
                         step: DurationNanos(step_ns),
+                        instant: metric.instant,
                     },
                     scan_options,
                 )
                 .await;
         }
 
-        let mut scan_options = scan_options;
         scan_options.include_raw_attributes |=
             !metric.by.is_empty() || metric.value.is_some() || max_exemplars > 0;
         extend_metric_projection_matchers(&mut scan_options, &metric);
@@ -200,11 +222,13 @@ impl<S: SpanStore> TraceqlEngine<S> {
             },
             &Query {
                 root: q.root,
-                pipeline: Vec::new(),
+                pipeline: metric.spanset_pipeline.clone(),
                 hints: QueryHints::default(),
             },
         )
         .await?;
+        metric.sampling_factor = planned.sampling_factor;
+        metric.spanset_pipeline_had_input = planned.spanset_pipeline_had_input;
         let batches = collect_planned_batches(planned).await?;
         assemble_metrics_response(
             &batches,
@@ -213,7 +237,7 @@ impl<S: SpanStore> TraceqlEngine<S> {
             DurationNanos(step_ns),
             &metric,
             (max_exemplars, &self.opts.histogram_buckets),
-            UnixNano(start_ns),
+            UnixNano(if metric.instant { end_ns } else { start_ns }),
         )
     }
 
@@ -231,7 +255,7 @@ impl<S: SpanStore> TraceqlEngine<S> {
     pub(crate) async fn query_range_compare(
         &self,
         tenant: &str,
-        root: crate::ast::SpansetExpr,
+        (root, pipeline): (crate::ast::SpansetExpr, Vec<crate::ast::Pipeline>),
         compare: CompareSpec,
         range: MetricsRange,
         scan_options: ScanOptions,
@@ -257,7 +281,7 @@ impl<S: SpanStore> TraceqlEngine<S> {
             },
             &Query {
                 root,
-                pipeline: Vec::new(),
+                pipeline,
                 hints: QueryHints::default(),
             },
         )

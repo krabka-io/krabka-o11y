@@ -11,7 +11,7 @@ pub(crate) fn urldecode_template_string(value: &str) -> String {
             bytes = &rest[2..];
             continue;
         }
-        decoded.push(byte);
+        decoded.push(if byte == b'+' { b' ' } else { byte });
         bytes = rest;
     }
     String::from_utf8_lossy(&decoded).into_owned()

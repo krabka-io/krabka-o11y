@@ -1,6 +1,6 @@
 use super::{
-    Arc, ArrayRef, Float64Array, Int64Array, Labels, PromqlError, RecordBatch, Result, Schema,
-    StringArray,
+    Arc, ArrayRef, BinaryArray, Float64Array, Int64Array, Labels, PromqlError, RecordBatch, Result,
+    Schema,
 };
 
 pub(crate) fn build_leaf_batch(
@@ -10,12 +10,12 @@ pub(crate) fn build_leaf_batch(
 ) -> Result<RecordBatch> {
     let mut columns: Vec<ArrayRef> = Vec::with_capacity(label_names.len() + 2);
     for name in label_names {
-        // `None` (NULL) for an ABSENT label; `Some("")` for a PRESENT-empty one.
+        // `None` (NULL) for an ABSENT label; `Some(b"")` for a PRESENT-empty one.
         let values = rows
             .iter()
-            .map(|(labels, _, _)| labels.get(name).map(str::to_string))
-            .collect::<Vec<Option<String>>>();
-        columns.push(Arc::new(StringArray::from(values)));
+            .map(|(labels, _, _)| labels.get_value(name).map(crate::PromqlString::as_bytes))
+            .collect::<Vec<Option<&[u8]>>>();
+        columns.push(Arc::new(BinaryArray::from(values)));
     }
     columns.push(Arc::new(Float64Array::from_iter_values(
         rows.iter().map(|(_, _, value)| *value),

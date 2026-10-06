@@ -77,7 +77,12 @@ fn rows(tenant: &str, samples: &[(u64, i64, f64)]) -> TenantCompactionRows {
         tenant: tenant.to_string(),
         series_labels: samples
             .iter()
-            .map(|(fingerprint, _, _)| (*fingerprint, labels(&format!("series_{fingerprint}"))))
+            .map(|(fingerprint, _, _)| {
+                (
+                    *fingerprint,
+                    labels(&format!("series_{fingerprint}")).into(),
+                )
+            })
             .collect(),
         float_rows: samples
             .iter()
@@ -211,11 +216,11 @@ async fn two_level_zero_blocks_in_one_window_become_one_level_one_block() {
             == vec![
                 CompactionSeriesLabels {
                     fingerprint: 7,
-                    labels: labels("series_7"),
+                    labels: labels("series_7").into(),
                 },
                 CompactionSeriesLabels {
                     fingerprint: 9,
-                    labels: labels("series_9"),
+                    labels: labels("series_9").into(),
                 },
             ]
     );
@@ -489,7 +494,7 @@ async fn metadata_and_disjoint_clock_dictionaries_merge() {
         };
         let rows = TenantCompactionRows {
             tenant: "tenant-a".to_string(),
-            series_labels: BTreeMap::from([(7, labels("metric"))]),
+            series_labels: BTreeMap::from([(7, labels("metric").into())]),
             float_rows: Vec::new(),
             histogram_rows: Vec::new(),
             exemplar_rows: Vec::new(),
@@ -719,7 +724,7 @@ fn the_level_survives_a_manifest_round_trip() {
             fingerprints: vec![7],
             series: vec![CompactionSeriesLabels {
                 fingerprint: 7,
-                labels: labels("up"),
+                labels: labels("up").into(),
             }],
         };
 
@@ -787,7 +792,7 @@ async fn two_native_histogram_blocks_merge_into_one() {
     let block_writer = BlockWriter::new(store.clone());
     for (offset, timestamp_ms, count) in [(1_i64, NOW_MS, 3.0), (3, NOW_MS + 1_000, 5.0)] {
         let mut rows = rows("tenant-a", &[]);
-        rows.series_labels = BTreeMap::from([(7, labels("latency"))]);
+        rows.series_labels = BTreeMap::from([(7, labels("latency").into())]);
         rows.histogram_rows = vec![NativeHistogramRow {
             fingerprint: 7,
             timestamp_ms,
@@ -963,7 +968,7 @@ async fn manifest_listing_follows_publication_replacement_and_removal() {
     );
     first.series = vec![CompactionSeriesLabels {
         fingerprint: 7,
-        labels: Labels::from_pairs([("__name__", "温度"), ("region", "north")]),
+        labels: Labels::from_pairs([("__name__", "温度"), ("region", "north")]).into(),
     }];
     let second = manifest(
         "tenant-b",
@@ -985,7 +990,7 @@ async fn manifest_listing_follows_publication_replacement_and_removal() {
     first.fingerprints = vec![7, 99];
     first.series.push(CompactionSeriesLabels {
         fingerprint: 99,
-        labels: Labels::from_pairs([("__name__", "温度"), ("region", "south")]),
+        labels: Labels::from_pairs([("__name__", "温度"), ("region", "south")]).into(),
     });
     sink.write_manifest(&first).await.unwrap();
     assert!(

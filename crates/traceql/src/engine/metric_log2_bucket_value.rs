@@ -13,6 +13,9 @@ pub(crate) fn metric_log2_bucket_value(
 ) -> Result<Option<f64>> {
     let values = super::compare_row(batch, row, super::UnixNano(0))?;
     let raw = super::compare_row_attr_values(&values, &field.scope, &field.key);
+    if raw.len() > 1 {
+        return Ok(None);
+    }
     let value = if let Some(value) = raw.first() {
         match value {
             super::AttrValue::Int(value) => *value,
@@ -49,7 +52,12 @@ pub(crate) fn metric_log2_bucket_value(
         .ok_or_else(|| TraceqlError::Exec("histogram bucket exceeds u64".into()))?;
     let bucket = f64_from_u64(bucket)?;
     Ok(Some(
-        if matches!(field.scope, Scope::Intrinsic(Intrinsic::Duration)) {
+        if matches!(
+            field.scope,
+            Scope::Intrinsic(
+                Intrinsic::Duration | Intrinsic::TraceDuration | Intrinsic::EventTimeSinceStart
+            )
+        ) {
             bucket / 1_000_000_000.0
         } else {
             bucket

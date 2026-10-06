@@ -54,6 +54,7 @@ mod tests {
                         attributes: vec![],
                     }],
                     matched: 1,
+                    attributes: Vec::new(),
                 }],
             }],
             warnings: vec![],
@@ -149,6 +150,7 @@ mod tests {
                             ],
                         }],
                         matched: 3,
+                        attributes: Vec::new(),
                     }],
                 }],
                 metrics: Metrics {
@@ -233,6 +235,7 @@ mod tests {
             span_sets: vec![SpanSet {
                 spans: vec![span],
                 matched: 1,
+                attributes: Vec::new(),
             }],
         };
         let json = TraceJson::from(&trace);
@@ -265,6 +268,7 @@ mod tests {
                         links: Vec::new(),
                     }],
                     matched: 1,
+                    attributes: Vec::new(),
                 }],
             }
         );

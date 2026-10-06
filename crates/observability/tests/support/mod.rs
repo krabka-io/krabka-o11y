@@ -581,7 +581,6 @@ fn expected_api_error_at_with_stats(timestamp_ns: &str, stats: &Value) -> Value 
                 {
                     "stream": {
                         "app": "api",
-                        "detected_level": "unknown",
                         "env": "prod"
                     },
                     "values": [

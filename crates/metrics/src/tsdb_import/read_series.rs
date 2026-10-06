@@ -1,5 +1,6 @@
 use super::{
-    ByteReader, ChunkMeta, IndexSeries, IndexToc, TsdbImportError, TsdbImportLimits, format_labels,
+    ByteReader, ChunkMeta, IndexSeries, IndexToc, MetricString, TsdbImportError, TsdbImportLimits,
+    format_labels,
 };
 
 /// Reads every series entry between the series and label-index offsets of
@@ -21,7 +22,7 @@ use super::{
 pub fn read_series(
     index: &[u8],
     toc: &IndexToc,
-    symbols: &[String],
+    symbols: &[MetricString],
     limits: &TsdbImportLimits,
 ) -> Result<Vec<IndexSeries>, TsdbImportError> {
     const SECTION: &str = "index series";
@@ -84,7 +85,7 @@ struct ChunkCursor {
 fn parse_entry(
     content: &[u8],
     reference: u64,
-    symbols: &[String],
+    symbols: &[MetricString],
     limits: &TsdbImportLimits,
     cursor: &mut ChunkCursor,
 ) -> Result<IndexSeries, TsdbImportError> {
@@ -96,9 +97,13 @@ fn parse_entry(
         limits.max_labels_per_series,
     )?;
     let label_count = usize::try_from(label_count).unwrap_or(usize::MAX);
-    let mut labels = Vec::<(String, String)>::with_capacity(label_count);
+    let mut labels = Vec::<(String, MetricString)>::with_capacity(label_count);
     for _ in 0..label_count {
-        let name = symbol(symbols, reader.uvarint()?)?;
+        let name = symbol(symbols, reader.uvarint()?)?.utf8().ok_or_else(|| {
+            TsdbImportError::InvalidLabels(format!(
+                "series {reference} has a label name that is not valid UTF-8"
+            ))
+        })?;
         let value = symbol(symbols, reader.uvarint()?)?;
         if name.is_empty() || value.is_empty() {
             return Err(TsdbImportError::InvalidLabels(format!(
@@ -192,11 +197,10 @@ fn parse_entry(
     })
 }
 
-fn symbol(symbols: &[String], reference: u64) -> Result<&str, TsdbImportError> {
+fn symbol(symbols: &[MetricString], reference: u64) -> Result<&MetricString, TsdbImportError> {
     usize::try_from(reference)
         .ok()
         .and_then(|reference| symbols.get(reference))
-        .map(String::as_str)
         .ok_or_else(|| {
             TsdbImportError::InvalidIndex(format!("symbol reference {reference} is out of range"))
         })

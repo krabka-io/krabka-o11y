@@ -40,8 +40,8 @@ use krabka_observability::{
     BufferedLogHotTail, KafkaLogWalConsumer, KafkaLogWalSink, LogWalConsumer as _, LogWalSink as _,
     Offset, PartitionIndex, QuerierIndexSource, Role, ServiceConfig, ServiceDependencies,
     WalLogRecord, WalPosition, build_service_dependencies, build_service_router,
-    poll_log_hot_tail_once, run_compactor_until_idle, run_compactor_until_shutdown,
-    serve_service_listener, wal_consumer_metrics::WalConsumerMetrics,
+    poll_log_hot_tail_once, run_compactor_until_idle, serve_service_listener,
+    wal_consumer_metrics::WalConsumerMetrics,
 };
 use krabka_units::{millis, secs};
 use serde_json::{Value, json};
@@ -63,9 +63,6 @@ const INDEX_PREFIX: &str = "observability/logs";
 /// its partition, so the first poll of one can legitimately return nothing.
 /// That is a retry, not a failure; this bounds the retrying.
 const BROKER_DEADLINE: Duration = Duration::from_secs(30);
-
-/// How long one block-builder run gets before its shutdown signal fires.
-const COMPACTOR_RUN: Duration = Duration::from_millis(750);
 
 // ---------------------------------------------------------------------------
 // The raw sink and consumer pair.
@@ -210,7 +207,7 @@ async fn a_broker_producer_byte_rate_quota_refuses_a_push_before_the_wal_append(
 ///
 /// No block builder runs here, and no object store is configured. Every line
 /// in the answer therefore came off the broker through the querier's own hot
-/// tail.
+/// tail. The raw WAL record bypasses distributor-level metadata discovery.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_querier_answers_from_the_live_wal_tail_before_anything_is_compacted() {
     let live = LiveBroker::start("__krabka_observability_logs_wal_hot_only").await;
@@ -252,7 +249,6 @@ async fn the_querier_answers_from_the_live_wal_tail_before_anything_is_compacted
                 "result": [{
                     "stream": {
                         "app": "api",
-                        "detected_level": "unknown",
                         "env": "prod",
                     },
                     "values": [["20000000000", "api live tail error"]],
@@ -403,7 +399,7 @@ async fn an_otlp_log_reaches_a_query_answer_through_the_live_wal_and_a_block() {
         body.pointer("/data/result/0/stream")
             == Some(&json!({
                 "deployment_environment": "prod",
-                "detected_level": "unknown",
+                "detected_level": "error",
                 "instrumentation_scope": "api",
                 "service_name": "checkout",
                 "status": "500",
@@ -555,16 +551,14 @@ async fn a_restarted_block_builder_resumes_from_the_committed_wal_offset() {
     let second = fixture_timestamp_ns(20_000_000);
     push_log(&distributor, TENANT, &first, "api first restart error").await;
 
-    let config = live.compactor_config(&data_root, &object_root, "restart");
-    let first_run = run_compactor_for(&config, COMPACTOR_RUN).await;
+    let first_run = live.compact(&data_root, &object_root, "restart").await;
     assert!(first_run.len() == 1);
     check!(first_run[0].key.first_offset == 0);
     check!(first_run[0].key.last_offset == 0);
 
     push_log(&distributor, TENANT, &second, "api second restart error").await;
 
-    let restarted = live.compactor_config(&data_root, &object_root, "restart");
-    let second_run = run_compactor_for(&restarted, COMPACTOR_RUN).await;
+    let second_run = live.compact(&data_root, &object_root, "restart").await;
     assert!(second_run.len() == 1);
     check!(second_run[0].key.first_offset == 1);
     check!(second_run[0].key.last_offset == 1);
@@ -627,7 +621,6 @@ async fn a_log_produced_by_a_native_kafka_client_reaches_a_query_answer() {
         body.pointer("/data/result/0/stream")
             == Some(&json!({
                 "app": "api",
-                "detected_level": "unknown",
                 "env": "prod",
                 "trace_id": "abc123",
             }))
@@ -770,21 +763,6 @@ async fn dependencies(config: &ServiceConfig) -> ServiceDependencies {
     build_service_dependencies(config, WalConsumerMetrics::unregistered())
         .await
         .expect("service dependencies")
-}
-
-/// Runs a block builder for a fixed wall-clock span and returns its blocks.
-async fn run_compactor_for(config: &ServiceConfig, duration: Duration) -> Vec<BlockDescriptor> {
-    run_compactor_until_shutdown(
-        config,
-        dependencies(config).await,
-        None,
-        // A fixed run duration, not a progress poll: the point is that the
-        // run ends where it ends and the next one picks up from the committed
-        // offset.
-        tokio::time::sleep(duration),
-    )
-    .await
-    .expect("block builder run")
 }
 
 async fn produce_native_kafka_log(broker: &LiveBroker, timestamp_ns: &str, line: &str) {

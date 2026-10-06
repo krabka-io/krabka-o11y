@@ -18,12 +18,17 @@ pub fn apply_label_join(
     samples
         .into_iter()
         .map(|mut sample| {
-            let value = src_labels
-                .iter()
-                .map(|label| sample.labels.get(label).unwrap_or(""))
-                .collect::<Vec<_>>()
-                .join(separator);
-            sample.labels = set_label_value(&sample.labels, dst_label, &value);
+            let mut value = Vec::new();
+            for (index, name) in src_labels.iter().enumerate() {
+                if index > 0 {
+                    value.extend_from_slice(separator.as_bytes());
+                }
+                if let Some(source) = sample.labels.get_value(name) {
+                    value.extend_from_slice(source.as_bytes());
+                }
+            }
+            sample.labels =
+                set_label_value(&sample.labels, dst_label, crate::PromqlString::from(value));
             if dst_label == "__name__" {
                 sample.drop_name = false;
             }

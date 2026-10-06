@@ -1,9 +1,9 @@
 use super::{
     DistributorError, Labels, Limits, OtlpAttributeAction, ProtoExportLogsServiceRequest, TenantId,
-    WalLogRecord, discover_service_name_label, is_default_otlp_resource_label,
-    proto_attributes_to_labels, proto_log_record_structured_metadata, proto_timestamp_ns,
-    proto_value_to_string, validate_loki_label_limits, validate_loki_line_size,
-    validate_loki_timestamp_window,
+    WalLogRecord, discover_detected_level_label, discover_service_name_label,
+    is_default_otlp_resource_label, proto_attributes_to_labels,
+    proto_log_record_structured_metadata, proto_timestamp_ns, proto_value_to_string,
+    validate_loki_label_limits, validate_loki_line_size, validate_loki_timestamp_window,
 };
 use crate::{
     distributor::loki_normalization::validate_structured_metadata_limits, truncate_loki_line,
@@ -133,6 +133,7 @@ pub(crate) fn normalize_otlp_proto_logs_for_tenant(
                     }
                 }
                 validate_structured_metadata_limits(&structured_metadata, &labels, limits)?;
+                discover_detected_level_label(&labels, &mut structured_metadata, &line, limits);
                 records.push(WalLogRecord {
                     tenant: tenant.to_owned(),
                     labels: labels.clone(),

@@ -282,11 +282,21 @@ impl<S: MetricStore> PromqlEngine<S> {
                 while let Expr::Paren(paren) = param {
                     param = paren.expr.as_ref();
                 }
-                let Expr::StringLiteral(label_name) = param else {
+                let Some(label_name) = crate::planner::byte_string_expr::string_expr_value(param)
+                else {
                     return Err(PromqlError::Plan(
                         "count_values label-name parameter must be a string".to_string(),
                     ));
                 };
+                let label_name = label_name
+                    .utf8()
+                    .filter(|name| !name.is_empty())
+                    .ok_or_else(|| {
+                        PromqlError::Exec(format!(
+                            "invalid label name {}",
+                            krabka_logql::quote_go_bytes(label_name.as_bytes())
+                        ))
+                    })?;
                 let Some(samples) = self
                     .param_aggregate_inner_vector(tenant, &aggregate.expr, time_ms)
                     .await?
@@ -296,7 +306,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 Ok(Some(PlannedInstant::Precomputed(
                     apply_count_values_aggregate(
                         samples,
-                        &label_name.val,
+                        label_name,
                         aggregate.modifier.as_ref(),
                         time_ms,
                     ),

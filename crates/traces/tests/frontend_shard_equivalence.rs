@@ -53,7 +53,11 @@ fn trace_with_spans(tid: &str, start: u64, span_ids: &[&str]) -> TraceJson {
         root_trace_name: "GET /".to_string(),
         start_time_unix_nano: start.to_string(),
         duration: millis(1),
-        span_sets: vec![SpanSetJson { spans, matched }],
+        span_sets: vec![SpanSetJson {
+            spans,
+            matched,
+            attributes: Vec::new(),
+        }],
     }
 }
 

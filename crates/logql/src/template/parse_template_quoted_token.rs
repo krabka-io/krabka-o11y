@@ -13,7 +13,7 @@ pub(crate) fn parse_template_quoted_token(
             escaped = false;
             continue;
         }
-        if quote == '"' && ch == '\\' {
+        if matches!(quote, '"' | '\'') && ch == '\\' {
             escaped = true;
             continue;
         }

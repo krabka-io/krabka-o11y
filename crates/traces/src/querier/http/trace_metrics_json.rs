@@ -1,3 +1,5 @@
+use krabka_traceql::TraceMetricSeries;
+
 use super::{
     TraceMetricsResponse, Value, json, metric_label_json, metric_prom_labels, metric_value_json,
     metrics_operation_name,
@@ -11,12 +13,14 @@ pub(crate) fn trace_metrics_json(resp: &TraceMetricsResponse, query: &str) -> Va
     let name = metrics_operation_name(query);
     json!({
         "series": resp.series.iter().map(|series| {
+            let name = series_name(series, name);
+            let mut legend_labels = series.labels.clone();
+            if let Some(name) = name {
+                legend_labels.push(("__name__".into(), name.into()));
+            }
             json!({
-                "labels": series.labels.iter()
-                    .map(|(key, value)| metric_label_json(key, value, series.label_types.get(key).copied()))
-                    .chain(name.filter(|_| !series.labels.iter().any(|(key, _)| matches!(key.as_str(), "__bucket" | "p"))).map(|name| metric_label_json("__name__", name, None)))
-                    .collect::<Vec<_>>(),
-                "promLabels": metric_prom_labels(&series.labels),
+                "labels": metric_labels_json(series, name),
+                "promLabels": metric_prom_labels(&legend_labels, &series.label_types),
                 "samples": series.points.iter()
                     .map(|(ts_ns, value)| json!({
                         "timestampMs": (ts_ns / 1_000_000).to_string(),
@@ -45,6 +49,38 @@ pub(crate) fn trace_metrics_json(resp: &TraceMetricsResponse, query: &str) -> Va
     })
 }
 
+pub(crate) fn trace_metrics_instant_json(resp: &TraceMetricsResponse, query: &str) -> Value {
+    let name = metrics_operation_name(query);
+    super::instant_metrics_response(resp.series.iter().filter_map(|series| {
+        series.points.first().map(|(_, value)| {
+            (
+                metric_labels_json(series, series_name(series, name)),
+                *value,
+            )
+        })
+    }))
+}
+
+fn series_name(series: &TraceMetricSeries, name: Option<&'static str>) -> Option<&'static str> {
+    name.filter(|_| {
+        !series
+            .labels
+            .iter()
+            .any(|(key, _)| matches!(key.as_str(), "__bucket" | "p"))
+    })
+}
+
+fn metric_labels_json(series: &TraceMetricSeries, name: Option<&str>) -> Value {
+    Value::Array(
+        series
+            .labels
+            .iter()
+            .map(|(key, value)| metric_label_json(key, value, series.label_types.get(key).copied()))
+            .chain(name.map(|name| metric_label_json("__name__", name, None)))
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -53,6 +89,33 @@ mod tests {
     use krabka_traceql::{TraceMetricExemplar, TraceMetricSeries};
 
     use super::*;
+
+    #[test]
+    fn instant_serialization_uses_first_sample_and_omits_sampleless_series() {
+        let response = TraceMetricsResponse {
+            series: vec![
+                TraceMetricSeries {
+                    label_types: BTreeMap::new(),
+                    labels: Vec::new(),
+                    points: vec![(1, 3.0), (2, 99.0)],
+                    exemplars: Vec::new(),
+                },
+                TraceMetricSeries {
+                    label_types: BTreeMap::new(),
+                    labels: vec![("missing".into(), "no-sample".into())],
+                    points: Vec::new(),
+                    exemplars: Vec::new(),
+                },
+            ],
+        };
+        assert!(
+            trace_metrics_instant_json(&response, "{} | count_over_time()")
+                == json!({
+                    "series":[{"labels":[{"key":"__name__","value":{"stringValue":"count_over_time"}}],"value":3.0}],
+                    "metrics":{"completedJobs":1,"totalJobs":1}
+                })
+        );
+    }
 
     #[test]
     fn placeholder_exemplars_attach_to_right_closed_samples_and_keep_real_values() {

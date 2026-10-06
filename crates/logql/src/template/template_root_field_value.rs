@@ -2,11 +2,7 @@ use super::{Labels, TemplateRuntimeValue, template_variable_path_value};
 
 pub(crate) fn template_root_field_value(fields: &Labels, path: &[String]) -> TemplateRuntimeValue {
     let Some((first, rest)) = path.split_first() else {
-        let object = fields
-            .iter()
-            .map(|(key, value)| (key.clone(), serde_json::Value::String(value.clone())))
-            .collect();
-        return TemplateRuntimeValue::Json(serde_json::Value::Object(object));
+        return TemplateRuntimeValue::Labels(fields.clone());
     };
 
     let Some(value) = fields.get(first) else {

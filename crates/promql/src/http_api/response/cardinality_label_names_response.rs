@@ -9,7 +9,7 @@ use super::{BTreeMap, BTreeSet, Labels, Value, apply_limit, json};
 /// then by `label_name` ASC. A `limit` greater than 0 truncates that array. This
 /// function computes the two totals over the full, unlimited series set.
 pub(crate) fn cardinality_label_names_response(series: &[Labels], limit: Option<usize>) -> Value {
-    let mut values_by_name = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut values_by_name = BTreeMap::<String, BTreeSet<crate::PromqlString>>::new();
     for labels in series {
         for (name, value) in labels.iter() {
             values_by_name

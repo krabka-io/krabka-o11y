@@ -10,7 +10,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use krabka_blockstore::{Labels, TenantId};
+use krabka_blockstore::TenantId;
 use krabka_observability::{
     audit::{
         AuditOutcome, AuditResource, OPERATION_RULE_GROUP_DELETE, OPERATION_RULE_GROUP_SET,
@@ -26,13 +26,11 @@ use url::form_urlencoded;
 
 use super::{
     AlertStateKey, ApiError, AuditHandle, Extension, Principal, PrometheusApiState, RulesParams,
-    alert_templates::{expand_alert_mapping_json, expand_alert_template, labels_from_map},
     authorized_tenant_from_headers, sample_string, success_data_response,
 };
 use crate::{MetricStore, PromqlError, QueryResult, SampleValue, parse_promql};
 
 mod accepted_response;
-mod alert_labels_map;
 mod alerts;
 mod delete_ruler_config_group;
 mod delete_ruler_config_namespace;
@@ -65,7 +63,6 @@ mod yaml_string;
 mod zero_evaluation_time;
 
 use accepted_response::accepted_response;
-use alert_labels_map::alert_labels_map;
 pub(super) use alerts::alerts;
 pub(super) use delete_ruler_config_group::delete_ruler_config_group;
 pub(super) use delete_ruler_config_namespace::delete_ruler_config_namespace;

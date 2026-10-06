@@ -7,7 +7,6 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use krabka_blockstore::Labels;
 use krabka_metrics::{decode_float_samples, decode_native_histograms};
 
 use super::{
@@ -16,7 +15,7 @@ use super::{
     cardinality_label_values_response, enforce_selected_series_limit, labels_key,
     parse_cardinality_form, parse_cardinality_params, selector_matchers,
 };
-use crate::MetricStore;
+use crate::{MetricStore, PromqlLabels as Labels};
 
 mod cardinality_active_native_histogram_metrics;
 mod cardinality_active_series;

@@ -128,6 +128,7 @@ mod tests {
 
 mod is_json_path_field_name_char;
 mod json_extraction;
+mod json_object_fields;
 mod json_parser_config;
 mod json_path;
 mod json_path_parser;
@@ -138,10 +139,11 @@ mod logfmt_parser_config;
 
 use is_json_path_field_name_char::is_json_path_field_name_char;
 pub use json_extraction::JsonExtraction;
+pub use json_object_fields::parse_json_object_entries;
 pub use json_parser_config::JsonParserConfig;
 use json_path::JsonPath;
 use json_path_parser::JsonPathParser;
-use json_path_part::JsonPathPart;
+pub(crate) use json_path_part::JsonPathPart;
 pub use logfmt_extraction::LogfmtExtraction;
-pub(crate) use logfmt_parser::LogfmtParser;
+pub use logfmt_parser::LogfmtParser;
 pub use logfmt_parser_config::LogfmtParserConfig;

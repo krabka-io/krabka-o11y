@@ -4,7 +4,7 @@ use std::{
 };
 
 use datafusion::{catalog::MemTable, prelude::SessionContext};
-use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::{
     encode_float_samples, encode_native_histograms, float_sample_schema, native_histogram_schema,
 };
@@ -14,7 +14,7 @@ use super::{
     matcher::{all_match, prepare_matchers, row_matches},
 };
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher,
     error::Result,
     store::{
         ExemplarRecord, ExemplarScan, LabelNameCardinality, LabelValueCardinality, MetadataScan,

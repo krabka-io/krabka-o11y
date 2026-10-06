@@ -51,7 +51,9 @@ impl InMemorySpanStore {
             for span in &trace.spans {
                 for (key, value) in &span.attrs {
                     cols.entry(key.clone()).or_insert_with(|| match value {
-                        AttrValue::Str(_) => DataType::Utf8,
+                        AttrValue::Unsupported(_) | AttrValue::Array(_) | AttrValue::Str(_) => {
+                            DataType::Utf8
+                        }
                         AttrValue::Int(_) => DataType::Int64,
                         AttrValue::Float(_) => DataType::Float64,
                         AttrValue::Bool(_) => DataType::Boolean,
@@ -153,7 +155,7 @@ impl InMemorySpanStore {
                     for link in &link_rows {
                         builders.append(trace, span, i, event, *link, &mut attr_builders)?;
                         if include_raw_attributes {
-                            raw_rows.push(span);
+                            raw_rows.push((span, event, *link));
                         }
                     }
                 }
@@ -164,7 +166,13 @@ impl InMemorySpanStore {
         columns.extend(attr_builders.into_iter().map(|(_, b)| b.finish()));
 
         let schema = if include_raw_attributes {
-            let raw = super::raw_attribute_columns::raw_attribute_columns(&raw_rows);
+            let raw = super::raw_attribute_columns::raw_attribute_columns(
+                &raw_rows,
+                (
+                    !matchers.iter().any(super::is_event_matcher),
+                    !matchers.iter().any(super::is_link_matcher),
+                ),
+            );
             let mut fields = schema.fields().to_vec();
             for (name, array) in raw {
                 fields.push(Arc::new(arrow::datatypes::Field::new(
@@ -372,7 +380,7 @@ impl SpanStore for InMemorySpanStore {
                                             .strip_prefix(INSTRUMENTATION_ATTR_PREFIX)
                                             .is_some_and(|key| key == attr_tag))
                             })
-                            .map(|(_, value)| typed_value_parts(value)),
+                            .flat_map(|(_, value)| typed_value_parts(value)),
                     );
                 }
             }

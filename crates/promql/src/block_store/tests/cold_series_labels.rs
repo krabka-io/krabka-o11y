@@ -1,7 +1,7 @@
-use krabka_blockstore::{LabelMatcher, MatchOp};
+use krabka_blockstore::MatchOp;
 
 use super::*;
-use crate::{InMemoryMetricStore, MergedMetricStore, WalHead};
+use crate::{InMemoryMetricStore, MergedMetricStore, PromqlMatcher as LabelMatcher, WalHead};
 
 #[tokio::test]
 async fn cold_label_values_survive_the_merged_instant_scan() {
@@ -33,7 +33,14 @@ async fn cold_label_values_survive_the_merged_instant_scan() {
         .as_ref()
         .unwrap()
         .index()
-        .series("t", &matcher)
+        .series(
+            "t",
+            &[krabka_blockstore::LabelMatcher::new(
+                "__name__",
+                MatchOp::Eq,
+                "up",
+            )],
+        )
         .unwrap();
     assert2::assert!(histogram == vec![up.clone()]);
 

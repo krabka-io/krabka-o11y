@@ -33,7 +33,7 @@ pub(crate) async fn recording_rule_merges_rule_level_labels_into_every_series() 
             assert2::assert!(
                 record
                     .labels
-                    .contains(&(name.to_string(), value.to_string()))
+                    .contains(&(name.to_string(), value.to_string().into()))
             );
         }
     }

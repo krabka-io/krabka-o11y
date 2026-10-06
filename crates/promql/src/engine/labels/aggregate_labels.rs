@@ -5,7 +5,7 @@ pub(crate) fn aggregate_labels(input: &Labels, modifier: Option<&LabelModifier>)
     match modifier {
         Some(LabelModifier::Include(include)) => {
             for name in &include.labels {
-                if let Some(value) = input.get(name) {
+                if let Some(value) = input.get_value(name) {
                     labels.insert(name, value);
                 }
             }

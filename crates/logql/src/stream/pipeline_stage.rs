@@ -13,6 +13,8 @@ pub enum PipelineStage {
     DropLabels(LabelSelectionSet),
     KeepLabels(LabelSelectionSet),
     Distinct(Vec<String>),
+    /// Internal extractor boundary; never produced by the public parser.
+    VariantBoundary,
     Unwrap(UnwrapExpression),
     FieldFilter(FieldFilter),
     FieldFilterChain(FieldFilterChain),
@@ -47,7 +49,13 @@ impl PipelineStage {
                 true
             }
             Self::LineFormat(format) => {
-                *line = format.render_with_timestamp(line, fields, timestamp_ns);
+                match format.render_checked_with_timestamp(line, fields, timestamp_ns) {
+                    Ok(rendered) => *line = rendered,
+                    Err(error) => {
+                        fields.insert("__error__".to_string(), "TemplateFormatErr".to_string());
+                        fields.insert("__error_details__".to_string(), error);
+                    }
+                }
                 true
             }
             Self::LabelFormat(format) => {
@@ -62,7 +70,7 @@ impl PipelineStage {
                 labels.apply_keep(fields);
                 true
             }
-            Self::Distinct(_) => true,
+            Self::Distinct(_) | Self::VariantBoundary => true,
             Self::Unwrap(unwrap) => {
                 unwrap.apply(fields);
                 true

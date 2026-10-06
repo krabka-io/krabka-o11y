@@ -58,6 +58,7 @@ pub(crate) async fn run_querier(
             .with_admin_store(configured.store)
             .with_query_architecture(cli.query_architecture)
             .with_async_queries_enabled(cli.async_queries_enabled)
+            .with_query_analysis_series_enabled(cli.query_analysis_series_enabled)
             .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
             .with_metrics(metrics.clone()),
     );

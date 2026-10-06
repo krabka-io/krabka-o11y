@@ -6,13 +6,16 @@ use promql_parser::parser::{
 };
 
 // Private AST tokens for operators absent from promql-parser 0.10. Parsing uses
-// the corresponding comparison precedence, then restores the operator in order.
+// the corresponding comparison precedence, then restores the operator in order. A temporary bool modifier permits scalar
+// operands without treating trim as a comparison. A user bool modifier consequently
+// becomes a duplicate and is rejected, as it is for trim in the pinned grammar.
 pub(crate) const HISTOGRAM_TRIM_UPPER: u16 = u16::MAX;
 pub(crate) const HISTOGRAM_TRIM_LOWER: u16 = u16::MAX - 1;
 
 pub(crate) fn normalize_histogram_trim(query: &str) -> (String, VecDeque<u16>) {
     let mut bytes = query.as_bytes().to_vec();
     let mut operators = VecDeque::new();
+    let mut bool_positions = Vec::new();
     let mut quote = None;
     let mut braces = 0_u32;
     let mut index = 0;
@@ -41,6 +44,7 @@ pub(crate) fn normalize_histogram_trim(query: &str) -> (String, VecDeque<u16>) {
             let next = bytes.get(index + 1).copied();
             if next == Some(b'/') {
                 bytes[index + 1] = b' ';
+                bool_positions.push(index + 2);
                 operators.push_back(if byte == b'<' {
                     HISTOGRAM_TRIM_UPPER
                 } else {
@@ -52,10 +56,11 @@ pub(crate) fn normalize_histogram_trim(query: &str) -> (String, VecDeque<u16>) {
         }
         index += 1;
     }
-    (
-        String::from_utf8(bytes).expect("only ASCII operator bytes changed"),
-        operators,
-    )
+    let mut normalized = String::from_utf8(bytes).expect("only ASCII operator bytes changed");
+    for position in bool_positions.into_iter().rev() {
+        normalized.insert_str(position, " bool ");
+    }
+    (normalized, operators)
 }
 
 pub(crate) fn restore_histogram_trim(expr: &mut Expr, operators: &mut VecDeque<u16>) {
@@ -66,6 +71,11 @@ pub(crate) fn restore_histogram_trim(expr: &mut Expr, operators: &mut VecDeque<u
                 && let Some(operator) = operators.pop_front()
             {
                 binary.op = TokenType::new(operator);
+                if matches!(operator, HISTOGRAM_TRIM_UPPER | HISTOGRAM_TRIM_LOWER)
+                    && let Some(modifier) = &mut binary.modifier
+                {
+                    modifier.return_bool = false;
+                }
             }
             restore_histogram_trim(&mut binary.rhs, operators);
         }

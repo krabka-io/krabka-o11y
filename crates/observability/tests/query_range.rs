@@ -56,7 +56,7 @@ async fn deprecated_api_prom_query_range_endpoint_returns_loki_streams_json() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [["19", "api error"]]
@@ -148,7 +148,7 @@ async fn query_range_endpoint_applies_metric_binary_arithmetic() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -189,7 +189,7 @@ async fn query_range_endpoint_applies_bool_metric_binary_comparison() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -227,7 +227,7 @@ async fn query_range_endpoint_applies_metric_binary_set_or() {
                 {
                     "metric": {
                         "app": "api",
-                        "detected_level": "unknown",
+
                         "env": "prod"
                     },
                     "values": [
@@ -237,7 +237,7 @@ async fn query_range_endpoint_applies_metric_binary_set_or() {
                 {
                     "metric": {
                         "app": "worker",
-                        "detected_level": "unknown",
+
                         "env": "prod"
                     },
                     "values": [
@@ -297,7 +297,7 @@ async fn query_range_endpoint_applies_bool_metric_query_scalar_comparison() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -338,7 +338,7 @@ async fn query_range_endpoint_applies_bool_scalar_metric_query_comparison() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -379,7 +379,7 @@ async fn query_range_endpoint_applies_metric_query_scalar_arithmetic() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -420,7 +420,7 @@ async fn query_range_endpoint_applies_scalar_metric_query_arithmetic() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -522,7 +522,7 @@ async fn metric_query_endpoint_splits_stats_for_cold_blocks_and_hot_tail_samples
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "dev"
                             },
                             "value": [30, "1"]
@@ -530,7 +530,7 @@ async fn metric_query_endpoint_splits_stats_for_cold_blocks_and_hot_tail_samples
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "value": [30, "1"]
@@ -609,7 +609,7 @@ async fn query_range_endpoint_returns_streams_as_parquet_when_requested() {
         .unwrap();
     assert!(timestamps.value(0) == 19);
     let labels = batch.column(1).as_any().downcast_ref::<MapArray>().unwrap();
-    assert!(labels.value_offsets() == &[0, 3]);
+    assert!(labels.value_offsets() == &[0, 2]);
     let keys = labels
         .keys()
         .as_any()
@@ -620,11 +620,7 @@ async fn query_range_endpoint_returns_streams_as_parquet_when_requested() {
         .as_any()
         .downcast_ref::<StringArray>()
         .unwrap();
-    for (index, expected_key, expected_value) in [
-        (0, "app", "api"),
-        (1, "detected_level", "unknown"),
-        (2, "env", "prod"),
-    ] {
+    for (index, expected_key, expected_value) in [(0, "app", "api"), (1, "env", "prod")] {
         check!(keys.value(index) == expected_key);
         check!(values.value(index) == expected_value);
     }
@@ -696,7 +692,7 @@ async fn query_range_metric_endpoint_fans_out_pipe_separated_tenant_header() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -706,7 +702,7 @@ async fn query_range_metric_endpoint_fans_out_pipe_separated_tenant_header() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "stage"
                             },
                             "values": [
@@ -824,7 +820,7 @@ async fn query_range_endpoint_logfmt_sanitizes_ansi_prefixed_field_names() {
 }
 
 #[tokio::test]
-async fn query_range_endpoint_keep_stage_suppresses_detected_level_fallback() {
+async fn query_range_endpoint_keep_stage_retains_only_requested_base_labels() {
     let state = fixture();
     let app = loki_router(state);
 
@@ -935,7 +931,7 @@ async fn query_range_endpoint_applies_interval_to_stream_results() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -1161,7 +1157,7 @@ async fn query_range_endpoint_returns_count_over_time_matrix_json() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -1243,7 +1239,7 @@ async fn query_range_endpoint_applies_negative_count_over_time_offset() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -1284,7 +1280,7 @@ async fn query_range_endpoint_accepts_range_selector_before_pipeline() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -1605,7 +1601,7 @@ async fn query_range_endpoint_returns_metric_timestamps_as_unix_seconds_numbers(
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown"
+
                             },
                             "values": [
                                 [1, "1"],
@@ -1650,7 +1646,7 @@ async fn query_range_endpoint_accepts_form_encoded_post_body() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -1716,7 +1712,7 @@ async fn query_range_endpoint_treats_integer_step_as_seconds() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -1758,7 +1754,7 @@ async fn query_range_endpoint_accepts_float_seconds_step_for_count_over_time_mat
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -1800,7 +1796,7 @@ async fn query_range_endpoint_accepts_duration_step_for_count_over_time_matrix_j
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -1842,7 +1838,7 @@ async fn query_range_endpoint_accepts_compound_duration_step_for_grafana() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -1883,7 +1879,7 @@ async fn query_range_endpoint_accepts_millisecond_duration_step_for_grafana() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -1925,7 +1921,7 @@ async fn query_range_endpoint_accepts_compound_duration_range_selector() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [

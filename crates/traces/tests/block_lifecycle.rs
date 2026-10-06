@@ -615,6 +615,7 @@ async fn typed_queries_survive_compaction_deletion_and_snapshot_reload() {
     let objects: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(objects.clone());
     let mut index = TraceIndex::new();
+    let mut job_counts = BTreeMap::new();
     for (tenant, trace, foo, bar, offset) in [
         ("tenant-a", 1, 10, 10, 10),
         ("tenant-a", 2, 20, 20, 20),
@@ -633,36 +634,54 @@ async fn typed_queries_survive_compaction_deletion_and_snapshot_reload() {
                 value: AttrValue::Int(bar),
             },
         ];
-        build_blocks(&writer, &mut index, tenant, 7, &[record], (offset, offset))
+        let metas = build_blocks(&writer, &mut index, tenant, 7, &[record], (offset, offset))
             .await
             .expect("independent input block");
+        assert2::assert!(metas.len() == 1);
+        job_counts.insert(
+            metas[0].object_key.clone(),
+            if tenant == "tenant-a" {
+                [Some(1), (foo == bar).then_some(1)]
+            } else {
+                [None, None]
+            },
+        );
     }
     index
         .save_latest_snapshot(&objects, SNAPSHOT)
         .await
         .unwrap();
-    check_lifecycle_queries(objects.clone(), &index).await;
+    check_lifecycle_queries(objects.clone(), &index, &job_counts).await;
 
     let pass = compact_once(objects.clone(), &writer, &mut index, "", wide_policy())
         .await
         .expect("compact the three tenant-a blocks");
     check!(pass.retired_inputs.len() == 3);
+    assert2::assert!(pass.outputs.len() == 1);
+    for key in &pass.retired_inputs {
+        job_counts.remove(key);
+    }
+    job_counts.insert(pass.outputs[0].object_key.clone(), [Some(3), Some(2)]);
     index
         .save_latest_snapshot(&objects, SNAPSHOT)
         .await
         .unwrap();
     // Retired inputs still exist here: overlap must not double-count them.
-    check_lifecycle_queries(objects.clone(), &index).await;
+    check_lifecycle_queries(objects.clone(), &index, &job_counts).await;
     let deletion = delete_trace_blocks(&objects, &pass.retired_inputs).await;
     check!(deletion.blocks_deleted == 3);
-    check_lifecycle_queries(objects.clone(), &index).await;
+    check_lifecycle_queries(objects.clone(), &index, &job_counts).await;
     let reloaded = TraceIndex::load_latest_snapshot(&objects, SNAPSHOT)
         .await
         .unwrap();
-    check_lifecycle_queries(objects, &reloaded).await;
+    check_lifecycle_queries(objects, &reloaded, &job_counts).await;
 }
 
-async fn check_lifecycle_queries(objects: Arc<dyn ObjectStore>, index: &TraceIndex) {
+async fn check_lifecycle_queries(
+    objects: Arc<dyn ObjectStore>,
+    index: &TraceIndex,
+    job_counts: &BTreeMap<String, [Option<u8>; 2]>,
+) {
     use krabka_traceql::{EngineOpts, ScanJob, ScanOptions, TraceMetricSeries, TraceqlEngine};
     let snapshot = TraceIndex::load_latest_snapshot(&objects, "index/query-lifecycle.json")
         .await
@@ -692,10 +711,19 @@ async fn check_lifecycle_queries(objects: Arc<dyn ObjectStore>, index: &TraceInd
         })
         .collect::<BTreeSet<_>>();
     check!(identities == BTreeSet::from([([1; 16], [1; 8]), ([2; 16], [2; 8])]));
-    for (query, count) in [
+    check!(
+        indexed_block_keys(index)
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            == job_counts.keys().cloned().collect::<BTreeSet<_>>()
+    );
+    for (query_index, (query, count)) in [
         ("{} | count_over_time()", 3.0),
         ("{ .foo = .bar } | count_over_time()", 2.0),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let response = engine
             .query_range("tenant-a", query, NOW_NS, NOW_NS + 10, 10)
             .await
@@ -723,7 +751,7 @@ async fn check_lifecycle_queries(objects: Arc<dyn ObjectStore>, index: &TraceInd
                     10,
                     ScanOptions {
                         job: Some(ScanJob {
-                            object_key: key,
+                            object_key: key.clone(),
                             row_group_start: 0,
                             row_group_end: 1,
                         }),
@@ -732,11 +760,21 @@ async fn check_lifecycle_queries(objects: Arc<dyn ObjectStore>, index: &TraceInd
                 )
                 .await
                 .expect("independent cold scan job");
-            check!(response.series.len() == 1);
-            check!(response.series[0].points.len() == 2);
-            for (slot, (timestamp, value)) in response.series[0].points.iter().enumerate() {
-                check!(*timestamp == NOW_NS + i64::try_from(slot).unwrap() * 10);
-                sharded[slot] += value;
+            // The ledger comes from the seeded rows, not the query response.
+            // An excluded tenant or nonmatching predicate produces no series.
+            let expected = job_counts[&key][query_index].map_or_else(Vec::new, |count| {
+                vec![TraceMetricSeries {
+                    label_types: BTreeMap::default(),
+                    labels: Vec::new(),
+                    points: vec![(NOW_NS, f64::from(count)), (NOW_NS + 10, 0.0)],
+                    exemplars: Vec::new(),
+                }]
+            });
+            check!(response.series == expected, "scan job {key}");
+            for series in &response.series {
+                for (sum, (_, value)) in sharded.iter_mut().zip(&series.points) {
+                    *sum += value;
+                }
             }
         }
         check!(sharded.map(f64::to_bits) == [count, 0.0].map(f64::to_bits));

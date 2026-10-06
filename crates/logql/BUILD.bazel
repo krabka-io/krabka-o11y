@@ -3,11 +3,21 @@ load("//bazel:defs.bzl", "crate_library", "crate_tests")
 package(default_visibility = ["//visibility:public"])
 
 # Consumed by `crate.from_cargo` (see //MODULE.bazel).
-exports_files(["Cargo.toml"])
+exports_files([
+    "Cargo.toml",
+    "tests/support/template_functions.rs",
+])
 
-crate_library(name = "logql")
+crate_library(
+    name = "logql",
+    compile_data = ["src/template/template_time/zoneinfo.zip"],
+)
 
 crate_tests(
+    compile_data = [
+        "src/template/template_time/zoneinfo.zip",
+        "src/template/template_time/zoneinfo-oracle.tsv",
+    ],
     lib = "logql",
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is
     # crate size times mutants-per-shard. At the default `long` (900s) every

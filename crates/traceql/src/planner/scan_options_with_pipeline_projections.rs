@@ -5,6 +5,9 @@ pub(crate) fn scan_options_with_pipeline_projections(
     pipeline: &[Pipeline],
 ) -> ScanOptions {
     let mut options = options.clone();
+    options.include_raw_attributes |= pipeline
+        .iter()
+        .any(super::apply_expression_pipeline::requires_expression_execution);
     for matcher in pipeline_nested_projection_matchers(pipeline) {
         if !options.projection_matchers.contains(&matcher) {
             options.projection_matchers.push(matcher);

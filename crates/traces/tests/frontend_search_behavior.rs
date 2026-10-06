@@ -687,7 +687,7 @@ async fn metrics_query_limits_exemplars() {
 async fn metrics_instant_query_is_a_single_unsharded_job() {
     let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let app = Router::new()
-        .route("/api/metrics/query", get(record_metrics))
+        .route("/api/metrics/query", get(record_instant_metrics))
         .with_state(seen.clone());
     let upstream = spawn(app).await;
     let router = build_router(&upstream, two_shard_cfg(), single_block_catalog());
@@ -709,11 +709,9 @@ async fn metrics_instant_query_is_a_single_unsharded_job() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: Value = serde_json::from_slice(&body).unwrap();
     assert2::assert!(
-        json["series"][0]["samples"]
-            == json!([
-                {"timestampMs": "1000000000", "value": 1.0},
-                {"timestampMs": "2000000000", "value": 2.0}
-            ])
+        json == json!({"series": [{
+        "labels": [{"key": "svc", "value": {"stringValue": "api"}}], "value": 2.0
+    }], "metrics": {"completedJobs":1,"totalJobs":1}})
     );
 
     let log = seen.lock().unwrap();
@@ -1160,6 +1158,18 @@ async fn record_metrics(
             "exemplars": [],
         }]
     }))
+}
+
+async fn record_instant_metrics(
+    State(seen): State<Arc<Mutex<Vec<String>>>>,
+    uri: Uri,
+) -> axum::Json<Value> {
+    seen.lock()
+        .unwrap()
+        .push(uri.query().unwrap_or_default().to_string());
+    axum::Json(json!({"series": [{
+        "labels": [{"key": "svc", "value": {"stringValue": "api"}}], "value": 2.0
+    }], "metrics": {"completedJobs":1,"totalJobs":1}}))
 }
 
 async fn sharded_tags_response(State(()): State<()>, uri: Uri) -> axum::Json<Value> {

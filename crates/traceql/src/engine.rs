@@ -120,6 +120,414 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn expression_aggregates_group_per_trace_keep_nil_and_execute_coalesce_in_order() {
+        let mut store = InMemorySpanStore::new();
+        for (trace, costs) in [(1, vec![1, 1, 4]), (2, vec![1])] {
+            let spans = costs
+                .into_iter()
+                .enumerate()
+                .map(|(index, cost)| {
+                    let mut span =
+                        sp_at(trace, u8::try_from(index + 1).unwrap(), None, "groups", 1);
+                    span.attrs.push(("cost".into(), AttrValue::Int(cost)));
+                    if cost == 1 {
+                        span.attrs.push(("lane".into(), AttrValue::Str("a".into())));
+                    }
+                    span
+                })
+                .collect();
+            store.push_trace("t", "groups", "root", spans);
+        }
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        let grouped = engine
+            .search_with_spss("t", "{} | by(span.lane)", 0, 1000, 100, 100)
+            .await
+            .unwrap();
+        assert!(grouped.traces.len() == 2);
+        assert!(grouped.traces[0].span_sets.len() == 2);
+        assert!(grouped.traces[1].span_sets.len() == 1);
+        let mut group_sizes = grouped.traces[0]
+            .span_sets
+            .iter()
+            .map(|set| set.matched)
+            .collect::<Vec<_>>();
+        group_sizes.sort_unstable();
+        assert!(group_sizes == vec![1, 2]);
+        let mut grouped_attributes = grouped.traces[0]
+            .span_sets
+            .iter()
+            .map(|set| set.attributes.clone())
+            .collect::<Vec<_>>();
+        grouped_attributes.sort_by_key(|attrs| format!("{attrs:?}"));
+        assert!(
+            grouped_attributes
+                == vec![
+                    vec![("by(span.lane)".into(), AttrValue::Str("a".into()))],
+                    vec![("by(span.lane)".into(), AttrValue::Str("nil".into()))],
+                ]
+        );
+        let boolean = engine
+            .search_with_spss(
+                "t",
+                "{} | by(span.cost > 1) | count() > 1",
+                0,
+                1000,
+                100,
+                100,
+            )
+            .await
+            .unwrap();
+        assert!(boolean.traces.len() == 1);
+        assert!(boolean.traces[0].span_sets.len() == 1);
+        assert!(boolean.traces[0].span_sets[0].matched == 2);
+        assert!(
+            boolean.traces[0].span_sets[0].attributes
+                == vec![
+                    ("by(span.cost > 1)".into(), AttrValue::Bool(false)),
+                    ("count()".into(), AttrValue::Int(2)),
+                ]
+        );
+
+        for (query, expected) in [
+            (
+                "{} | sum(span.cost * 2) > 10",
+                vec![([1; 16], vec![[1; 8], [2; 8], [3; 8]])],
+            ),
+            (
+                "{} | avg(span.cost + 1) >= 3",
+                vec![([1; 16], vec![[1; 8], [2; 8], [3; 8]])],
+            ),
+            (
+                "{} | by(span.cost / 2) | count() > 1",
+                vec![([1; 16], vec![[1; 8], [2; 8]])],
+            ),
+            (
+                "{} | by(span.lane) | min(span.cost * 2) > 3",
+                vec![([1; 16], vec![[3; 8]])],
+            ),
+            (
+                "{} | by(span.cost / 2) | coalesce() | count() > 2",
+                vec![([1; 16], vec![[1; 8], [2; 8], [3; 8]])],
+            ),
+            ("{} | max(span.cost - 1) < 0", vec![]),
+        ] {
+            let response = engine
+                .search_with_spss("t", query, 0, 1000, 100, 100)
+                .await
+                .unwrap();
+            let actual = response
+                .traces
+                .into_iter()
+                .map(|trace| {
+                    let mut ids = trace
+                        .span_sets
+                        .into_iter()
+                        .flat_map(|set| set.spans)
+                        .map(|span| span.span_id)
+                        .collect::<Vec<_>>();
+                    ids.sort_unstable();
+                    (trace.trace_id, ids)
+                })
+                .collect::<Vec<_>>();
+            assert!(actual == expected, "{query}");
+        }
+    }
+
+    #[tokio::test]
+    async fn enum_group_attributes_compose_with_counts_without_integer_type_conflation() {
+        let spans = [(1, 2, 2), (2, 3, 2), (3, 2, 0)]
+            .into_iter()
+            .map(|(id, kind, status)| {
+                let mut span = sp_at(1, id, None, "enum-groups", 1);
+                span.kind = kind;
+                span.status_code = status;
+                span
+            })
+            .collect();
+        let mut store = InMemorySpanStore::new();
+        store.push_trace("t", "enum-groups", "root", spans);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        for (field, text, expected_ids) in [
+            ("span:kind", "server", vec![[1; 8], [3; 8]]),
+            ("span:status", "error", vec![[1; 8], [2; 8]]),
+        ] {
+            let response = engine
+                .search_with_spss(
+                    "t",
+                    &format!("{{}} | by({field}) | count() > 1"),
+                    0,
+                    1000,
+                    10,
+                    10,
+                )
+                .await
+                .unwrap();
+            assert!(response.traces.len() == 1);
+            assert!(response.traces[0].span_sets.len() == 1);
+            let set = &response.traces[0].span_sets[0];
+            let mut ids = set
+                .spans
+                .iter()
+                .map(|span| span.span_id)
+                .collect::<Vec<_>>();
+            ids.sort();
+            assert!(ids == expected_ids);
+            assert!(
+                set.attributes
+                    == vec![
+                        (format!("by({field})"), AttrValue::Str(text.into())),
+                        ("count()".into(), AttrValue::Int(2))
+                    ]
+            );
+            assert!(set.attributes[0].1 != AttrValue::Int(2));
+        }
+    }
+
+    #[tokio::test]
+    async fn bare_attribute_requires_scalar_boolean_true_without_coercion() {
+        let mut spans = Vec::new();
+        for (index, values) in [
+            vec![AttrValue::Bool(true)],
+            vec![AttrValue::Bool(false)],
+            vec![AttrValue::Str("true".into())],
+            vec![AttrValue::Int(1)],
+            vec![AttrValue::Bool(true), AttrValue::Bool(false)],
+            Vec::new(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut span = sp_at(1, u8::try_from(index + 1).unwrap(), None, "bool", 1);
+            span.attrs
+                .extend(values.into_iter().map(|value| ("flag".into(), value)));
+            spans.push(span);
+        }
+        let mut store = InMemorySpanStore::new();
+        store.push_trace("t", "bool", "root", spans);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        for (query, expected) in [
+            ("{ .flag }", vec![[1; 8]]),
+            ("{ span:id = \"0202020202020202\" && !.flag }", vec![[2; 8]]),
+            (
+                "{ .flag || span:id = \"0606060606060606\" }",
+                vec![[1; 8], [5; 8]],
+            ),
+            ("{ .flag && duration > 0ns }", vec![[1; 8], [5; 8]]),
+        ] {
+            let response = engine
+                .search_with_spss("t", query, 0, 1000, 100, 100)
+                .await
+                .unwrap();
+            let mut ids = response
+                .traces
+                .iter()
+                .flat_map(|trace| &trace.span_sets)
+                .flat_map(|set| &set.spans)
+                .map(|span| span.span_id)
+                .collect::<Vec<_>>();
+            ids.sort_unstable();
+            assert!(ids == expected, "{query}");
+        }
+        assert!(
+            engine
+                .search("t", "{ !.flag }", 0, 1000, 100)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn dynamic_scopes_preserve_types_intrinsic_units_and_boolean_composition() {
+        let mut spans = Vec::new();
+        for id in 1..=3 {
+            let mut span = sp_at(1, id, (id > 1).then_some(1), "typed", i64::from(id));
+            span.attrs.extend([
+                ("limit".into(), AttrValue::Int(3)),
+                (
+                    "__instrumentation.cost".into(),
+                    AttrValue::Int(i64::from(id)),
+                ),
+                (
+                    "__instrumentation.name".into(),
+                    AttrValue::Str("tracer".into()),
+                ),
+            ]);
+            for value in match id {
+                1 => [2, 4],
+                2 => [1, 2],
+                _ => [6, 8],
+            } {
+                span.attrs.push(("numbers".into(), AttrValue::Int(value)));
+            }
+            span.events = vec![EventRef {
+                name: format!("op-{id}"),
+                time_since_start: nanos(50),
+                attributes: if id == 3 {
+                    Vec::new()
+                } else {
+                    vec![
+                        (
+                            "cost".into(),
+                            if id == 1 {
+                                AttrValue::Int(2)
+                            } else {
+                                AttrValue::Str("2".into())
+                            },
+                        ),
+                        ("peer".into(), AttrValue::Str(format!("op-{id}"))),
+                    ]
+                },
+            }];
+            span.links = vec![LinkRef {
+                trace_id: span.trace_id,
+                span_id: if id == 3 { [9; 8] } else { span.span_id },
+                attributes: vec![("cost".into(), AttrValue::Int(i64::from(id)))],
+            }];
+            spans.push(span);
+        }
+        let mut store = InMemorySpanStore::new();
+        store.push_trace("t", "typed", "root", spans);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        for (predicate, expected) in [
+            ("event.cost + 1 = span.limit", vec![[1; 8]]),
+            ("event.peer = name", vec![[1; 8], [2; 8]]),
+            (
+                "instrumentation.cost + link.cost = span.limit + 1",
+                vec![[2; 8]],
+            ),
+            (
+                "instrumentation.name = instrumentation:name",
+                vec![[1; 8], [2; 8], [3; 8]],
+            ),
+            (
+                "event:timeSinceStart * 2 < duration && event:name = name",
+                vec![[1; 8], [2; 8], [3; 8]],
+            ),
+            (
+                "span:id = link:spanID && trace:id = link:traceID",
+                vec![[1; 8], [2; 8]],
+            ),
+            (
+                "trace:duration >= duration && span:childCount + 1 > 2",
+                vec![[1; 8]],
+            ),
+            (
+                "event.peer = name || span:childCount > 1",
+                vec![[1; 8], [2; 8]],
+            ),
+            ("event.cost = span.limit", vec![]),
+            ("event.cost = nil && link.cost = span.limit", vec![[3; 8]]),
+            ("span.numbers > span.limit", vec![[1; 8], [3; 8]]),
+            (
+                "span.limit < span.numbers && name != \"op-1\"",
+                vec![[3; 8]],
+            ),
+        ] {
+            let query = format!("{{ {predicate} }}");
+            let response = engine
+                .search_with_spss("t", &query, 0, 1000, 100, 100)
+                .await
+                .unwrap();
+            let mut ids = response
+                .traces
+                .iter()
+                .flat_map(|trace| trace.span_sets.iter())
+                .flat_map(|set| set.spans.iter())
+                .map(|span| span.span_id)
+                .collect::<Vec<_>>();
+            ids.sort_unstable();
+            assert!(ids == expected, "{query}");
+        }
+        for predicate in ["span.numbers + 1 > 0", "span.numbers = span.numbers"] {
+            assert!(
+                engine
+                    .search("t", &format!("{{ {predicate} }}"), 0, 1000, 100)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn array_shapes_are_lossless_but_query_values_follow_pinned_collector_cardinality() {
+        let mut store = InMemorySpanStore::new();
+        let spans = [
+            Some(AttrValue::Int(1)),
+            Some(AttrValue::Array(vec![AttrValue::Int(1)])),
+            Some(AttrValue::Array(vec![])),
+            Some(AttrValue::Array(vec![AttrValue::Int(1), AttrValue::Int(2)])),
+            None,
+            Some(AttrValue::Unsupported(
+                r#"{"arrayValue":{"values":[{"intValue":"1"},{"stringValue":"x"}]}}"#.into(),
+            )),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let mut span = sp_at(1, u8::try_from(index + 1).unwrap(), None, "arrays", 1);
+            if let Some(value) = value {
+                span.attrs.push(("v".into(), value));
+            }
+            span
+        })
+        .collect();
+        store.push_trace("t", "arrays", "root", spans);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        for (query, expected) in [
+            ("{ span.v > 0 }", vec![[1; 8], [2; 8], [4; 8]]),
+            ("{ span.v = nil }", vec![[3; 8], [5; 8], [6; 8]]),
+        ] {
+            let response = engine
+                .search_with_spss("t", query, 0, 1000, 10, 10)
+                .await
+                .unwrap();
+            let mut ids = response
+                .traces
+                .into_iter()
+                .flat_map(|trace| trace.span_sets)
+                .flat_map(|set| set.spans)
+                .map(|span| span.span_id)
+                .collect::<Vec<_>>();
+            ids.sort();
+            assert!(ids == expected, "{query}");
+        }
+        let grouped = engine
+            .query_range("t", "{} | count_over_time() by(span.v)", 0, 1000, 1000)
+            .await
+            .unwrap();
+        assert!(grouped.series.len() == 3);
+        let scalar = grouped
+            .series
+            .iter()
+            .find(|series| series.label_types.get("span.v") == Some(&TraceMetricLabelType::Int))
+            .unwrap();
+        assert!(scalar.labels == vec![("span.v".into(), "1".into())]);
+        assert!(scalar.points[0].1.to_bits() == 2.0_f64.to_bits());
+        let nil = grouped
+            .series
+            .iter()
+            .find(|series| series.labels == vec![("span.v".into(), "nil".into())])
+            .unwrap();
+        assert!(nil.points[0].1.to_bits() == 3.0_f64.to_bits());
+        let array = grouped
+            .series
+            .iter()
+            .find(|series| series.label_types.get("span.v") == Some(&TraceMetricLabelType::Array))
+            .unwrap();
+        assert!(
+            serde_json::from_str::<serde_json::Value>(&array.labels[0].1).unwrap()
+                == serde_json::json!({"arrayValue":{"values":[{"intValue":"1"},{"intValue":"2"}]}})
+        );
+        assert!(array.points[0].1.to_bits() == 1.0_f64.to_bits());
+        assert!(
+            engine
+                .search("t", "{ span.v + 1 = 2 }", 0, 1000, 10)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn typed_grouping_keeps_equal_spellings_separate_and_preserves_missing_group() {
         let mut store = InMemorySpanStore::new();
         let spans = [
@@ -168,6 +576,40 @@ mod tests {
             });
         }
         assert!(response.series == expected);
+    }
+
+    #[tokio::test]
+    async fn numeric_metrics_do_not_treat_an_array_first_element_as_a_scalar() {
+        let mut store = InMemorySpanStore::new();
+        let mut scalar = sp_at(1, 1, None, "arrays", 1);
+        scalar.attrs.push(("values".into(), AttrValue::Int(4)));
+        let mut array = sp_at(1, 2, None, "arrays", 1);
+        array.attrs.extend([
+            ("values".into(), AttrValue::Int(100)),
+            ("values".into(), AttrValue::Int(200)),
+        ]);
+        store.push_trace("t", "arrays", "root", vec![scalar, array]);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        for (aggregate, expected) in [
+            ("sum_over_time", 4.0),
+            ("avg_over_time", 4.0),
+            ("min_over_time", 4.0),
+            ("max_over_time", 4.0),
+        ] {
+            let response = engine
+                .query_range("t", &format!("{{}} | {aggregate}(span.values)"), 0, 10, 10)
+                .await
+                .unwrap();
+            assert!(response.series.len() == 1);
+            assert!(response.series[0].points == vec![(0, expected)]);
+        }
+        let histogram = engine
+            .query_range("t", "{} | histogram_over_time(span.values)", 0, 10, 10)
+            .await
+            .unwrap();
+        assert!(histogram.series.len() == 1);
+        assert!(histogram.series[0].labels == vec![("__bucket".into(), "4".into())]);
+        assert!(histogram.series[0].points == vec![(0, 1.0), (10, 0.0)]);
     }
 
     #[tokio::test]
@@ -1576,13 +2018,13 @@ mod tests {
             got == vec![
                 TraceMetricSeries {
                     label_types: Default::default(),
-                    labels: vec![("name".into(), "cache.hit".into())],
+                    labels: vec![("event:name".into(), "cache.hit".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
                     label_types: Default::default(),
-                    labels: vec![("name".into(), "cache.miss".into())],
+                    labels: vec![("event:name".into(), "cache.miss".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
@@ -1591,7 +2033,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn count_over_time_by_event_name_counts_each_event_on_a_span() {
+    async fn count_over_time_by_event_name_uses_first_event_on_a_span() {
         let mut span = sp_at(1, 1, None, "api", 0);
         span.events = vec![
             EventRef {
@@ -1622,25 +2064,17 @@ mod tests {
 
         got.sort_by(|a, b| a.labels.cmp(&b.labels));
         assert!(
-            got == vec![
-                TraceMetricSeries {
-                    label_types: Default::default(),
-                    labels: vec![("name".into(), "cache.hit".into())],
-                    points: vec![(0, 1.0), (60_000, 0.0)],
-                    exemplars: vec![],
-                },
-                TraceMetricSeries {
-                    label_types: Default::default(),
-                    labels: vec![("name".into(), "cache.miss".into())],
-                    points: vec![(0, 1.0), (60_000, 0.0)],
-                    exemplars: vec![],
-                },
-            ]
+            got == vec![TraceMetricSeries {
+                label_types: Default::default(),
+                labels: vec![("event:name".into(), "cache.miss".into())],
+                points: vec![(0, 1.0), (60_000, 0.0)],
+                exemplars: vec![],
+            },]
         );
     }
 
     #[tokio::test]
-    async fn count_over_time_by_event_attribute_counts_each_event_attribute() {
+    async fn count_over_time_by_event_attribute_uses_first_event_attribute() {
         let mut span = sp_at(1, 1, None, "api", 0);
         span.events = vec![
             EventRef {
@@ -1671,20 +2105,12 @@ mod tests {
 
         got.sort_by(|a, b| a.labels.cmp(&b.labels));
         assert!(
-            got == vec![
-                TraceMetricSeries {
-                    label_types: Default::default(),
-                    labels: vec![("event.cache.key".into(), "orders".into())],
-                    points: vec![(0, 1.0), (60_000, 0.0)],
-                    exemplars: vec![],
-                },
-                TraceMetricSeries {
-                    label_types: Default::default(),
-                    labels: vec![("event.cache.key".into(), "users".into())],
-                    points: vec![(0, 1.0), (60_000, 0.0)],
-                    exemplars: vec![],
-                },
-            ]
+            got == vec![TraceMetricSeries {
+                label_types: Default::default(),
+                labels: vec![("event.cache.key".into(), "users".into())],
+                points: vec![(0, 1.0), (60_000, 0.0)],
+                exemplars: vec![],
+            },]
         );
     }
 
@@ -1714,7 +2140,10 @@ mod tests {
         assert!(
             got == vec![TraceMetricSeries {
                 label_types: Default::default(),
-                labels: vec![("traceID".into(), "09090909090909090909090909090909".into())],
+                labels: vec![(
+                    "link:traceID".into(),
+                    "09090909090909090909090909090909".into()
+                )],
                 points: vec![(0, 1.0), (60_000, 0.0)],
                 exemplars: vec![],
             }]
@@ -1722,7 +2151,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn count_over_time_by_link_span_id_counts_each_link_without_link_selector() {
+    async fn count_over_time_by_link_span_id_uses_first_link_without_link_selector() {
         let mut span = sp_at(1, 1, None, "api", 0);
         span.links = vec![
             LinkRef {
@@ -1753,20 +2182,12 @@ mod tests {
 
         got.sort_by(|a, b| a.labels.cmp(&b.labels));
         assert!(
-            got == vec![
-                TraceMetricSeries {
-                    label_types: Default::default(),
-                    labels: vec![("spanID".into(), "0606060606060606".into())],
-                    points: vec![(0, 1.0), (60_000, 0.0)],
-                    exemplars: vec![],
-                },
-                TraceMetricSeries {
-                    label_types: Default::default(),
-                    labels: vec![("spanID".into(), "0808080808080808".into())],
-                    points: vec![(0, 1.0), (60_000, 0.0)],
-                    exemplars: vec![],
-                },
-            ]
+            got == vec![TraceMetricSeries {
+                label_types: Default::default(),
+                labels: vec![("link:spanID".into(), "0808080808080808".into())],
+                points: vec![(0, 1.0), (60_000, 0.0)],
+                exemplars: vec![],
+            },]
         );
     }
 
@@ -1964,13 +2385,13 @@ mod tests {
             got == vec![
                 TraceMetricSeries {
                     label_types: Default::default(),
-                    labels: vec![("id".into(), "11111111111111111111111111111111".into())],
+                    labels: vec![("trace:id".into(), "11111111111111111111111111111111".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
                     label_types: Default::default(),
-                    labels: vec![("id".into(), "22222222222222222222222222222222".into())],
+                    labels: vec![("trace:id".into(), "22222222222222222222222222222222".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
@@ -2007,14 +2428,20 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
-                    label_types: BTreeMap::from([("childCount".into(), TraceMetricLabelType::Int)]),
-                    labels: vec![("childCount".into(), "0".into())],
+                    label_types: BTreeMap::from([(
+                        "span:childCount".into(),
+                        TraceMetricLabelType::Int
+                    )]),
+                    labels: vec![("span:childCount".into(), "0".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
-                    label_types: BTreeMap::from([("childCount".into(), TraceMetricLabelType::Int)]),
-                    labels: vec![("childCount".into(), "1".into())],
+                    label_types: BTreeMap::from([(
+                        "span:childCount".into(),
+                        TraceMetricLabelType::Int
+                    )]),
+                    labels: vec![("span:childCount".into(), "1".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
@@ -2042,7 +2469,7 @@ mod tests {
         assert!(
             got == vec![TraceMetricSeries {
                 label_types: Default::default(),
-                labels: vec![("name".into(), "tracer".into())],
+                labels: vec![("instrumentation:name".into(), "tracer".into())],
                 points: vec![(0, 1.0), (60_000, 0.0)],
                 exemplars: vec![],
             }]
@@ -2447,7 +2874,7 @@ mod tests {
                 "t",
                 "{ .svc != nil } | count_over_time() | by(span.svc) | topk(2)",
                 0,
-                60_000,
+                59_999,
                 60_000,
             )
             .await
@@ -2459,13 +2886,13 @@ mod tests {
                 TraceMetricSeries {
                     label_types: Default::default(),
                     labels: vec![("span.svc".into(), "api".into())],
-                    points: vec![(0, 2.0), (60_000, 0.0)],
+                    points: vec![(0, 2.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
                     label_types: Default::default(),
                     labels: vec![("span.svc".into(), "worker".into())],
-                    points: vec![(0, 3.0), (60_000, 0.0)],
+                    points: vec![(0, 3.0)],
                     exemplars: vec![],
                 },
             ]
@@ -2476,7 +2903,7 @@ mod tests {
                 "t",
                 "{ .svc != nil } | count_over_time() | by(span.svc) | bottomk(1)",
                 0,
-                60_000,
+                59_999,
                 60_000,
             )
             .await
@@ -2486,7 +2913,7 @@ mod tests {
                 == vec![TraceMetricSeries {
                     label_types: Default::default(),
                     labels: vec![("span.svc".into(), "db".into())],
-                    points: vec![(0, 1.0), (60_000, 0.0)],
+                    points: vec![(0, 1.0)],
                     exemplars: vec![],
                 }]
         );
@@ -2515,7 +2942,7 @@ mod tests {
                 "t",
                 "{ .svc != nil } | count_over_time() | topk(2) | by(span.svc)",
                 0,
-                60_000,
+                59_999,
                 60_000,
             )
             .await
@@ -2527,13 +2954,13 @@ mod tests {
                 TraceMetricSeries {
                     label_types: Default::default(),
                     labels: vec![("span.svc".into(), "api".into())],
-                    points: vec![(0, 2.0), (60_000, 0.0)],
+                    points: vec![(0, 2.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
                     label_types: Default::default(),
                     labels: vec![("span.svc".into(), "worker".into())],
-                    points: vec![(0, 3.0), (60_000, 0.0)],
+                    points: vec![(0, 3.0)],
                     exemplars: vec![],
                 },
             ]
@@ -2541,7 +2968,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn by_before_count_over_time_groups_metric_series() {
+    async fn spanset_grouping_before_metrics_preserves_rows_without_creating_metric_labels() {
         let mut s = InMemorySpanStore::new();
         s.push_trace(
             "t",
@@ -2560,7 +2987,7 @@ mod tests {
                 "t",
                 "{ .svc != nil } | by(span.svc) | count_over_time()",
                 0,
-                60_000,
+                59_999,
                 60_000,
             )
             .await
@@ -2570,25 +2997,17 @@ mod tests {
 
         assert!(
             series
-                == vec![
-                    TraceMetricSeries {
-                        label_types: Default::default(),
-                        labels: vec![("span.svc".into(), "api".into())],
-                        points: vec![(0, 2.0), (60_000, 0.0)],
-                        exemplars: vec![],
-                    },
-                    TraceMetricSeries {
-                        label_types: Default::default(),
-                        labels: vec![("span.svc".into(), "db".into())],
-                        points: vec![(0, 1.0), (60_000, 0.0)],
-                        exemplars: vec![],
-                    },
-                ]
+                == vec![TraceMetricSeries {
+                    label_types: BTreeMap::new(),
+                    labels: Vec::new(),
+                    points: vec![(0, 3.0)],
+                    exemplars: Vec::new()
+                }]
         );
     }
 
     #[tokio::test]
-    async fn by_before_count_over_time_supports_ranked_metric_series() {
+    async fn spanset_grouping_before_metrics_can_feed_ranked_ungrouped_metrics() {
         let mut s = InMemorySpanStore::new();
         s.push_trace(
             "t",
@@ -2610,7 +3029,7 @@ mod tests {
                 "t",
                 "{ .svc != nil } | by(span.svc) | count_over_time() | topk(2)",
                 0,
-                60_000,
+                59_999,
                 60_000,
             )
             .await
@@ -2619,20 +3038,622 @@ mod tests {
         top.sort_by(|a, b| a.labels.cmp(&b.labels));
 
         assert!(
-            top == vec![
-                TraceMetricSeries {
-                    label_types: Default::default(),
-                    labels: vec![("span.svc".into(), "api".into())],
-                    points: vec![(0, 2.0), (60_000, 0.0)],
-                    exemplars: vec![],
+            top == vec![TraceMetricSeries {
+                label_types: BTreeMap::new(),
+                labels: Vec::new(),
+                points: vec![(0, 6.0)],
+                exemplars: Vec::new()
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn scalar_filters_before_metrics_and_ordered_second_stages_compose() {
+        let mut store = InMemorySpanStore::new();
+        store.push_trace(
+            "t",
+            "a",
+            "root",
+            vec![
+                sp_at(1, 1, None, "api", 1),
+                sp_at(1, 2, Some(1), "api", 2),
+                sp_at(1, 3, Some(1), "db", 3),
+            ],
+        );
+        store.push_trace("t", "b", "root", vec![sp_at(2, 1, None, "worker", 4)]);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        let expected = |labels, count| {
+            vec![TraceMetricSeries {
+                labels,
+                label_types: BTreeMap::new(),
+                points: vec![(0, count)],
+                exemplars: Vec::new(),
+            }]
+        };
+        for (query, wanted) in [
+            (
+                "{} | count() > 1 | count_over_time()",
+                expected(Vec::new(), 3.0),
+            ),
+            (
+                "{} | by(span.svc) | count() > 1 | count_over_time()",
+                expected(Vec::new(), 2.0),
+            ),
+            (
+                "{} | count() > 3 | count_over_time()",
+                expected(Vec::new(), 0.0),
+            ),
+            (
+                "{} | count() > 1 | count_over_time() by(span.svc) | topk(2) | bottomk(1)",
+                expected(vec![("span.svc".into(), "db".into())], 1.0),
+            ),
+            (
+                "{} | count_over_time() by(span.svc) > 0 < 2 | topk(1)",
+                expected(vec![("span.svc".into(), "db".into())], 1.0),
+            ),
+            (
+                "{} | count_over_time() by(span.svc) | topk(1) > 2",
+                Vec::new(),
+            ),
+        ] {
+            assert!(
+                engine
+                    .query_range("t", query, 0, 9, 10)
+                    .await
+                    .unwrap()
+                    .series
+                    == wanted,
+                "{query}"
+            );
+        }
+        for query in [
+            "{} | count() + sum(duration) > 10",
+            "{} | count() > sum(duration)",
+        ] {
+            assert!(
+                engine
+                    .query_range("t", &format!("{query} | count_over_time()"), 0, 9, 10)
+                    .await
+                    .is_err(),
+                "pinned engine rejects aggregate-result expressions: {query}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rejected_spansets_keep_only_initialized_ungrouped_count_or_rate_series() {
+        let mut store = InMemorySpanStore::new();
+        store.push_trace("t", "a", "root", vec![sp_at(1, 1, None, "api", 1)]);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        let zero = vec![TraceMetricSeries {
+            labels: Vec::new(),
+            label_types: BTreeMap::new(),
+            points: vec![(0, 0.0), (10, 0.0)],
+            exemplars: Vec::new(),
+        }];
+        for (tenant, query, initialized) in [
+            ("t", "{} | count() > 1 | count_over_time()", true),
+            ("t", "{} | by(name) | count() > 1 | rate()", true),
+            ("t", "{} | count() > 1 | count_over_time() by(name)", false),
+            ("t", "{} | count() > 1 | sum_over_time(duration)", false),
+            ("t", "{} | count() > 1 | avg_over_time(duration)", false),
+            ("t", "{} | count() > 1 | count_over_time() > 0", false),
+            (
+                "t",
+                "{ span.svc = \"missing\" } | count() > 1 | count_over_time()",
+                false,
+            ),
+            ("other", "{} | count() > 1 | count_over_time()", false),
+        ] {
+            let query = format!("{query} with(exemplars=false)");
+            let actual = engine.query_range(tenant, &query, 0, 19, 10).await.unwrap();
+            assert!(
+                actual.series
+                    == if initialized {
+                        zero.clone()
+                    } else {
+                        Vec::new()
+                    },
+                "tenant={tenant} query={query}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn fractional_sampling_runs_before_selector_and_scaling_before_metric_filter() {
+        let mut store = InMemorySpanStore::new();
+        store.push_trace(
+            "t",
+            "a",
+            "root",
+            vec![
+                sp_at(1, 1, None, "api", 1),
+                sp_at(1, 2, None, "api", 2),
+                sp_at(1, 3, None, "db", 3),
+                sp_at(1, 4, None, "worker", 4),
+            ],
+        );
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        let response = engine
+            .query_range(
+                "t",
+                "{ span.svc = \"db\" } | count_over_time() > 1 with(sample=0.5)",
+                0,
+                9,
+                10,
+            )
+            .await
+            .unwrap();
+        assert!(
+            response.series
+                == vec![TraceMetricSeries {
+                    labels: Vec::new(),
+                    label_types: BTreeMap::new(),
+                    points: vec![(0, 2.0)],
+                    exemplars: Vec::new()
+                }]
+        );
+        let exact = engine.query_range("t", "{ span.svc = \"db\" } | count_over_time() > 1 with(sample=1.0, unused=\"accepted\")", 0, 9, 10).await.unwrap();
+        assert!(exact.series.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sampled_averages_keep_constant_values_while_additive_metrics_scale() {
+        let mut store = InMemorySpanStore::new();
+        let spans = (1..=4)
+            .map(|id| {
+                let mut span = sp_at(1, id, None, "api", i64::from(id));
+                span.attrs.push(("constant".into(), AttrValue::Int(7)));
+                span
+            })
+            .collect();
+        store.push_trace("t", "a", "root", spans);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        for (metric, expected) in [
+            ("avg_over_time(span.constant)", 7.0),
+            ("avg_over_time(span.constant) < 8", 7.0),
+            ("sum_over_time(span.constant)", 28.0),
+            ("count_over_time()", 4.0),
+            ("rate()", 400_000_000.0),
+        ] {
+            let query = format!("{{}} | {metric} with(sample=0.5, exemplars=false)");
+            let actual = engine.query_range("t", &query, 0, 9, 10).await.unwrap();
+            assert!(
+                actual.series
+                    == vec![TraceMetricSeries {
+                        labels: Vec::new(),
+                        label_types: BTreeMap::new(),
+                        points: vec![(0, expected)],
+                        exemplars: Vec::new(),
+                    }],
+                "{query}"
+            );
+        }
+        let rejected = engine
+            .query_range(
+                "t",
+                "{} | avg_over_time(span.constant) > 8 with(sample=0.5, exemplars=false)",
+                0,
+                9,
+                10,
+            )
+            .await
+            .unwrap();
+        assert!(rejected.series.is_empty());
+    }
+
+    #[tokio::test]
+    async fn tempo_instant_metrics_pool_both_endpoints_before_rates_and_filters() {
+        let mut store = InMemorySpanStore::new();
+        store.push_trace(
+            "t",
+            "svc",
+            "root",
+            [-1, 0, 1, 2, 3]
+                .into_iter()
+                .enumerate()
+                .map(|(index, start)| {
+                    sp_at(1, u8::try_from(index + 1).unwrap(), None, "api", start)
+                })
+                .collect(),
+        );
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        let expected = |value| {
+            vec![TraceMetricSeries {
+                labels: Vec::new(),
+                label_types: BTreeMap::new(),
+                points: vec![(2, value)],
+                exemplars: Vec::new(),
+            }]
+        };
+        for (query, wanted) in [
+            ("{} | count_over_time()", expected(3.0)),
+            ("{} | rate()", expected(1_500_000_000.0)),
+            ("{} | rate() > 1200000000", expected(1_500_000_000.0)),
+            ("{} | rate() > 1600000000", Vec::new()),
+        ] {
+            let response = engine
+                .query_range_with_options(
+                    "t",
+                    &format!("{query} with(exemplars=false)"),
+                    0,
+                    2,
+                    2,
+                    ScanOptions {
+                        tempo_instant_metrics: true,
+                        ..ScanOptions::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(response.series == wanted, "{query}");
+        }
+        let range = engine
+            .query_range("t", "{} | count_over_time() with(exemplars=false)", 0, 2, 2)
+            .await
+            .unwrap();
+        assert!(
+            range.series
+                == vec![TraceMetricSeries {
+                    labels: Vec::new(),
+                    label_types: BTreeMap::new(),
+                    points: vec![(0, 2.0), (2, 1.0)],
+                    exemplars: Vec::new(),
+                }]
+        );
+        assert!(
+            engine
+                .query_range_with_options(
+                    "t",
+                    "{} | rate()",
+                    0,
+                    0,
+                    0,
+                    ScanOptions {
+                        tempo_instant_metrics: true,
+                        ..ScanOptions::default()
+                    }
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_instant_count_and_rate_keep_only_initialized_ungrouped_zeroes() {
+        let mut store = InMemorySpanStore::new();
+        store.push_trace("t", "svc", "root", vec![sp_at(1, 1, None, "api", 1)]);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        let zero = vec![TraceMetricSeries {
+            labels: Vec::new(),
+            label_types: BTreeMap::new(),
+            points: vec![(19, 0.0)],
+            exemplars: Vec::new(),
+        }];
+        for (tenant, query, initialized) in [
+            ("t", "{} | count_over_time()", true),
+            ("t", "{} | rate()", true),
+            ("t", "{ span.svc = \"missing\" } | count_over_time()", true),
+            ("other", "{} | count_over_time()", true),
+            ("t", "{} | count_over_time() > 0", false),
+            ("t", "{} | rate() > 0", false),
+            ("t", "{} | count_over_time() by(span.svc)", false),
+            ("t", "{} | rate() by(span.svc)", false),
+            ("t", "{} | sum_over_time(duration)", false),
+            ("t", "{} | avg_over_time(duration)", false),
+        ] {
+            let response = engine
+                .query_range_with_options(
+                    tenant,
+                    &format!("{query} with(exemplars=false)"),
+                    10,
+                    19,
+                    9,
+                    ScanOptions {
+                        tempo_instant_metrics: true,
+                        ..ScanOptions::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(
+                response.series
+                    == if initialized {
+                        zero.clone()
+                    } else {
+                        Vec::new()
+                    },
+                "{tenant}/{query}"
+            );
+        }
+        let empty_engine =
+            TraceqlEngine::new(Arc::new(InMemorySpanStore::new()), EngineOpts::default());
+        let empty = empty_engine
+            .query_range_with_options(
+                "t",
+                "{} | count_over_time() with(exemplars=false)",
+                10,
+                19,
+                9,
+                ScanOptions {
+                    tempo_instant_metrics: true,
+                    ..ScanOptions::default()
                 },
-                TraceMetricSeries {
-                    label_types: Default::default(),
-                    labels: vec![("span.svc".into(), "worker".into())],
-                    points: vec![(0, 3.0), (60_000, 0.0)],
-                    exemplars: vec![],
+            )
+            .await
+            .unwrap();
+        assert!(empty.series == zero);
+        let range = engine
+            .query_range(
+                "t",
+                "{} | count_over_time() with(exemplars=false)",
+                10,
+                19,
+                9,
+            )
+            .await
+            .unwrap();
+        assert!(range.series.is_empty());
+    }
+
+    #[tokio::test]
+    async fn public_metric_array_decoding_pools_observations_before_reduction_and_stages() {
+        let mut store = InMemorySpanStore::new();
+        // Three observations in one array group, one in another, and one
+        // scalar decoy distinguish a weighted mean from averaging group means.
+        let spans = [(1, 2), (1, 4), (1, 8), (3, 32), (17, 16)]
+            .into_iter()
+            .enumerate()
+            .map(|(index, (group, value))| {
+                let mut span = sp_at(1, u8::try_from(index + 1).unwrap(), None, "api", 1);
+                span.attrs.extend([
+                    (
+                        "group".into(),
+                        if group == 17 {
+                            AttrValue::Int(group)
+                        } else {
+                            AttrValue::Array(vec![AttrValue::Int(group), AttrValue::Int(group + 1)])
+                        },
+                    ),
+                    ("value".into(), AttrValue::Int(value)),
+                ]);
+                span
+            })
+            .collect();
+        store.push_trace("t", "api", "root", spans);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        for (metric, expected) in [
+            ("count_over_time()", 4.0),
+            ("rate()", 400_000_000.0),
+            ("sum_over_time(span.value)", 46.0),
+            ("avg_over_time(span.value)", 11.5),
+            ("min_over_time(span.value)", 2.0),
+            ("max_over_time(span.value)", 32.0),
+            ("quantile_over_time(span.value, 0.5)", 4.0),
+        ] {
+            let query =
+                format!("{{ span.group != nil }} | {metric} by(span.group) with(exemplars=false)");
+            let raw = engine.query_range("t", &query, 0, 9, 10).await.unwrap();
+            assert!(raw.series.len() == 3, "{query}");
+            assert!(
+                raw.series
+                    .iter()
+                    .filter(|series| series.label_types.get("span.group")
+                        == Some(&TraceMetricLabelType::Array))
+                    .count()
+                    == 2
+            );
+            let public = engine
+                .query_range_with_options(
+                    "t",
+                    &query,
+                    0,
+                    9,
+                    10,
+                    ScanOptions {
+                        tempo_frontend_labels: true,
+                        ..ScanOptions::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(public.series.len() == 2, "{query}");
+            let nil = public
+                .series
+                .iter()
+                .find(|series| {
+                    series.label_types.get("span.group") == Some(&TraceMetricLabelType::Nil)
+                })
+                .unwrap();
+            assert!(nil.labels.contains(&("span.group".into(), "nil".into())));
+            assert!(nil.points == vec![(0, expected)], "{query}");
+            assert!(nil.exemplars.is_empty());
+        }
+        for (metric, expected_kind, expected_value) in [
+            (
+                "avg_over_time(span.value) by(span.group) | topk(1)",
+                TraceMetricLabelType::Int,
+                16.0,
+            ),
+            (
+                "avg_over_time(span.value) by(span.group) > 12",
+                TraceMetricLabelType::Int,
+                16.0,
+            ),
+            (
+                "count_over_time() by(span.group) > 3",
+                TraceMetricLabelType::Nil,
+                4.0,
+            ),
+        ] {
+            let query = format!("{{}} | {metric} with(exemplars=false)");
+            let public = engine
+                .query_range_with_options(
+                    "t",
+                    &query,
+                    0,
+                    9,
+                    10,
+                    ScanOptions {
+                        tempo_frontend_labels: true,
+                        ..ScanOptions::default()
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(public.series.len() == 1, "{query}");
+            assert!(public.series[0].label_types.get("span.group") == Some(&expected_kind));
+            assert!(
+                public.series[0].points == vec![(0, expected_value)],
+                "{query}"
+            );
+        }
+        let histogram = engine
+            .query_range_with_options(
+                "t",
+                "{} | histogram_over_time(span.value) by(span.group) with(exemplars=false)",
+                0,
+                9,
+                10,
+                ScanOptions {
+                    tempo_frontend_labels: true,
+                    ..ScanOptions::default()
                 },
-            ]
+            )
+            .await
+            .unwrap();
+        let mut array_buckets = histogram
+            .series
+            .iter()
+            .filter(|series| {
+                series.label_types.get("span.group") == Some(&TraceMetricLabelType::Nil)
+            })
+            .map(|series| (series.labels[0].1.clone(), series.points.clone()))
+            .collect::<Vec<_>>();
+        array_buckets.sort_by(|left, right| left.0.cmp(&right.0));
+        assert!(
+            array_buckets
+                == vec![
+                    ("2".into(), vec![(0, 1.0)]),
+                    ("32".into(), vec![(0, 1.0)]),
+                    ("4".into(), vec![(0, 1.0)]),
+                    ("8".into(), vec![(0, 1.0)]),
+                ]
+        );
+    }
+
+    #[tokio::test]
+    async fn frontend_decoded_nil_remains_distinct_from_a_real_nil_string() {
+        let mut store = InMemorySpanStore::new();
+        let spans = [
+            Some(AttrValue::Array(vec![AttrValue::Int(1), AttrValue::Int(2)])),
+            Some(AttrValue::Array(vec![AttrValue::Int(3), AttrValue::Int(4)])),
+            Some(AttrValue::Str("nil".into())),
+            None,
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let mut span = sp_at(1, u8::try_from(index + 1).unwrap(), None, "api", 1);
+            if let Some(value) = value {
+                span.attrs.push(("group".into(), value));
+            }
+            span
+        })
+        .collect();
+        store.push_trace("t", "api", "root", spans);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        let response = engine
+            .query_range_with_options(
+                "t",
+                "{} | count_over_time() by(span.group) with(exemplars=false)",
+                0,
+                9,
+                10,
+                ScanOptions {
+                    tempo_frontend_labels: true,
+                    ..ScanOptions::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(response.series.len() == 2);
+        for series in &response.series {
+            assert!(series.labels == vec![("span.group".into(), "nil".into())]);
+            assert!(series.points == vec![(0, 2.0)]);
+        }
+        assert!(
+            response
+                .series
+                .iter()
+                .filter(|series| series.label_types.get("span.group")
+                    == Some(&TraceMetricLabelType::Nil))
+                .count()
+                == 1
+        );
+        assert!(
+            response
+                .series
+                .iter()
+                .filter(|series| series.label_types.is_empty())
+                .count()
+                == 1
+        );
+    }
+
+    #[tokio::test]
+    async fn frontend_exemplar_decoding_preserves_selected_span_and_scalar_labels() {
+        let mut store = InMemorySpanStore::new();
+        let mut span = sp_at(1, 2, None, "api", 3);
+        span.attrs.push((
+            "group".into(),
+            AttrValue::Array(vec![AttrValue::Int(1), AttrValue::Int(2)]),
+        ));
+        store.push_trace("t", "api", "root", vec![span]);
+        let engine = TraceqlEngine::new(
+            Arc::new(store),
+            EngineOpts {
+                max_exemplars: 1,
+                ..EngineOpts::default()
+            },
+        );
+        let query = "{ span.group > 0 && span.svc = \"api\" } | count_over_time() by(span.group)";
+        let raw = engine.query_range("t", query, 0, 9, 10).await.unwrap();
+        assert!(raw.series[0].exemplars.len() == 1);
+        assert!(
+            raw.series[0].exemplars[0].label_types.get("span.group")
+                == Some(&TraceMetricLabelType::Array)
+        );
+        let public = engine
+            .query_range_with_options(
+                "t",
+                query,
+                0,
+                9,
+                10,
+                ScanOptions {
+                    tempo_frontend_labels: true,
+                    ..ScanOptions::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(public.series.len() == 1);
+        assert!(public.series[0].exemplars.len() == 1);
+        let exemplar = &public.series[0].exemplars[0];
+        assert!(exemplar.timestamp_ns == 3);
+        assert!(exemplar.value.is_nan());
+        assert!(
+            exemplar.label_types
+                == BTreeMap::from([("span.group".into(), TraceMetricLabelType::Nil)])
+        );
+        assert!(
+            exemplar.labels
+                == vec![
+                    ("trace:id".into(), "1010101010101010101010101010101".into()),
+                    ("span.group".into(), "nil".into()),
+                    ("span.svc".into(), "api".into()),
+                ]
         );
     }
 
@@ -2666,16 +3687,18 @@ mod tests {
             .await
             .unwrap();
         check!(got.series.len() == 1);
-        check!(got.series[0].exemplars.len() == 1);
-        check!(
-            got.series[0].exemplars[0].labels
+        assert!(got.series[0].exemplars.len() == 1);
+        let exemplar = &got.series[0].exemplars[0];
+        assert!(
+            exemplar.labels
                 == vec![
                     ("trace:id".into(), "11111111111111111111111111111111".into()),
-                    (".svc".into(), "api".into())
+                    (".svc".into(), "api".into()),
                 ]
         );
-        check!(got.series[0].exemplars[0].timestamp_ns == 0);
-        check!(got.series[0].exemplars[0].value.is_nan());
+        assert!(exemplar.label_types.is_empty());
+        assert!([0, 10_000].contains(&exemplar.timestamp_ns));
+        assert!(exemplar.value.is_nan());
     }
 
     #[tokio::test]
@@ -2712,16 +3735,7 @@ mod tests {
         check!(got.series.len() == 1);
         check!(got.series[0].labels == vec![("span.svc".into(), "api".into())]);
         check!(got.series[0].points == vec![(0, 2.0)]);
-        check!(got.series[0].exemplars.len() == 1);
-        check!(got.series[0].exemplars[0].timestamp_ns == 0);
-        check!(
-            got.series[0].exemplars[0].labels
-                == vec![
-                    ("trace:id".into(), "11111111111111111111111111111111".into()),
-                    (".svc".into(), "api".into()),
-                    ("span.svc".into(), "api".into())
-                ]
-        );
+        check!(got.series[0].exemplars.is_empty());
     }
 
     #[tokio::test]
@@ -3133,7 +4147,7 @@ mod tests {
 
     #[test]
     fn metric_pipeline_parts_rejects_duplicate_stages() {
-        use crate::ast::{Aggregate, ComparisonOp, Pipeline};
+        use crate::ast::{Aggregate, Pipeline};
 
         let by = vec![field(Scope::Span, "svc")];
 
@@ -3144,7 +4158,7 @@ mod tests {
                 .is_some()
         );
 
-        // Duplicate aggregate / by / filter / rank / compare stages must abort the
+        // Duplicate aggregate / by / compare stages must abort the
         // parse (Ok(None)); each match guard `<slot>.is_none()` (and `!compare`)
         // is what enforces that. Replacing a guard with `true` would accept the
         // duplicate.
@@ -3168,28 +4182,6 @@ mod tests {
                     Pipeline::Aggregate(Aggregate::CountOverTime),
                     Pipeline::By(by.clone()),
                     Pipeline::By(by.clone()),
-                ],
-            ),
-            (
-                "filter",
-                vec![
-                    Pipeline::Aggregate(Aggregate::CountOverTime),
-                    Pipeline::Filter {
-                        op: ComparisonOp::Gt,
-                        value: 1.0,
-                    },
-                    Pipeline::Filter {
-                        op: ComparisonOp::Gt,
-                        value: 2.0,
-                    },
-                ],
-            ),
-            (
-                "rank",
-                vec![
-                    Pipeline::Aggregate(Aggregate::CountOverTime),
-                    Pipeline::TopK(1),
-                    Pipeline::TopK(2),
                 ],
             ),
             (
@@ -3362,15 +4354,20 @@ mod tests {
             "a structural operand inside a conjunction"
         );
 
-        // An intrinsic the comparison cannot classify disqualifies its whole
-        // expression, however deeply it is nested.
-        check!(!simple("{ span:id = \"abc\" }"), "an unsupported intrinsic");
         check!(
-            !simple(r#"{ .a = "x" } && { span:id = "abc" }"#),
+            simple("{ span:id = \"abc\" }"),
+            "a supported identifier intrinsic"
+        );
+        check!(
+            !simple("{ parent.a = \"abc\" }"),
+            "parent is unsupported upstream"
+        );
+        check!(
+            !simple(r#"{ .a = "x" } && { parent.a = "abc" }"#),
             "one unsupported leaf is enough"
         );
         check!(
-            !simple(r#"{ .a = "x" && !(span:id = "abc") }"#),
+            !simple(r#"{ .a = "x" && !(parent.a = "abc") }"#),
             "negation is descended into"
         );
     }
@@ -3486,8 +4483,12 @@ mod tests {
             quantiles: Vec::new(),
             by: Vec::new(),
             exemplar_fields: Vec::new(),
-            filter: None,
-            rank: None,
+            stages: Vec::new(),
+            spanset_pipeline: Vec::new(),
+            sampling_factor: 1.0,
+            spanset_pipeline_had_input: false,
+            frontend_labels: false,
+            instant: false,
             compare: None,
         }
     }
@@ -3992,6 +4993,7 @@ mod tests {
             scan_end: UnixNano(60_000),
             output_start: UnixNano(0),
             step: DurationNanos(60_000),
+            instant: false,
         }
     }
 
@@ -4086,6 +5088,7 @@ mod tests {
             scan_end: UnixNano(0),
             output_start: UnixNano(0),
             step: DurationNanos(60_000),
+            instant: false,
         };
         let resp =
             assemble_compare_response(&[compare_block_batch()], &compare, equal_range, 256, None)
@@ -4097,6 +5100,7 @@ mod tests {
             scan_end: UnixNano(0),
             output_start: UnixNano(60_000),
             step: DurationNanos(60_000),
+            instant: false,
         };
         assert!(
             assemble_compare_response(
@@ -4123,6 +5127,7 @@ mod tests {
             scan_end: UnixNano(14),
             output_start: UnixNano(10),
             step: DurationNanos(2),
+            instant: false,
         };
         let resp = assemble_compare_response(
             &[compare_start_batch(&[9, 10, 12, 14, 15])],
@@ -4139,6 +5144,42 @@ mod tests {
             .unwrap();
 
         assert!(baseline_total.points == vec![(10, 1.0), (12, 1.0), (14, 1.0)]);
+    }
+
+    #[test]
+    fn instant_compare_pools_both_endpoints_and_excludes_outside_rows() {
+        let compare = CompareSpec {
+            selection: selector(FieldExpr::Const(false)),
+            top_n: 10,
+            start: None,
+            end: None,
+        };
+        let response = assemble_compare_response(
+            &[compare_start_batch(&[-1, 0, 1, 2, 3])],
+            &compare,
+            MetricsRange {
+                scan_start: UnixNano(0),
+                scan_end: UnixNano(2),
+                output_start: UnixNano(2),
+                step: DurationNanos(2),
+                instant: true,
+            },
+            256,
+            None,
+        )
+        .unwrap();
+        let baseline = response
+            .series
+            .iter()
+            .find(|series| series_label(series, "__meta_type") == Some("baseline_total"))
+            .unwrap();
+        assert!(baseline.points == vec![(2, 3.0)]);
+        assert!(
+            response
+                .series
+                .iter()
+                .all(|series| series.points.len() == 1)
+        );
     }
 
     // ---- MAJOR 3: != / !~ on an absent attribute stays Baseline ----
@@ -4158,6 +5199,7 @@ mod tests {
             status_message: None,
             kind: None,
             duration: None,
+            columns: std::collections::BTreeMap::new(),
         };
         let neq = CompareSpec {
             selection: selector(FieldExpr::Comparison {
@@ -4199,6 +5241,7 @@ mod tests {
             status_message: None,
             kind: None,
             duration: None,
+            columns: std::collections::BTreeMap::new(),
         };
         let present = FieldExpr::Comparison {
             lhs: field(Scope::Span, "present"),
@@ -4297,6 +5340,7 @@ mod tests {
             status_message: Some("failed".into()),
             kind: Some(3),
             duration: Some(100),
+            columns: std::collections::BTreeMap::new(),
         };
         for intrinsic in [
             Intrinsic::Name,
@@ -4314,6 +5358,7 @@ mod tests {
             status_code: None,
             kind: None,
             duration: None,
+            columns: std::collections::BTreeMap::new(),
             ..populated
         };
         for intrinsic in [
@@ -4339,6 +5384,7 @@ mod tests {
             status_message: Some("failed".into()),
             kind: Some(3),
             duration: Some(100),
+            columns: std::collections::BTreeMap::new(),
         };
         let regexes = CompareRegexCache::new();
 
@@ -4462,7 +5508,20 @@ mod tests {
         let row = compare_row(&batch, 0, UnixNano(0)).unwrap();
 
         assert!(row.attrs == vec![("span.http.method".into(), "GET".into())]);
-        assert!(row.raw_span_attrs == vec![("http.method".into(), AttrValue::Str("GET".into()))]);
+        assert!(
+            row.raw_span_attrs
+                == vec![
+                    (
+                        format!("{EVENT_ATTR_PREFIX}exception.type"),
+                        AttrValue::Str("IOError".into())
+                    ),
+                    (
+                        format!("{LINK_ATTR_PREFIX}trace_id"),
+                        AttrValue::Str("abcd".into())
+                    ),
+                    ("http.method".into(), AttrValue::Str("GET".into())),
+                ]
+        );
     }
 
     // ---- MAJOR 4: baseline and selection share one value set per attribute ----
@@ -4784,8 +5843,8 @@ mod rank_limit;
 mod resource_attr_prefix;
 mod row_attr_values;
 mod row_attrs;
+mod sample_exemplar_rows;
 mod search_options;
-mod series_rank_score;
 mod spanset_matches_row;
 mod status_enum_name;
 mod status_enum_value;
@@ -4835,7 +5894,7 @@ use compare_intrinsic_matches::compare_intrinsic_matches;
 use compare_intrinsic_present::compare_intrinsic_present;
 use compare_points::compare_points;
 use compare_regex_cache::CompareRegexCache;
-use compare_row::{CompareRow, compare_row};
+pub(crate) use compare_row::{CompareRow, compare_row};
 use compare_row_attr_values::compare_row_attr_values;
 use compare_row_in_selection_window::compare_row_in_selection_window;
 use compare_span_identities::compare_span_identities;
@@ -4863,7 +5922,7 @@ use i32_value::i32_value;
 use i64_attr_values::i64_attr_values;
 use i64_value::i64_value;
 use is_inert_metric_stage::is_inert_metric_stage;
-use kind_enum_name::kind_enum_name;
+pub(crate) use kind_enum_name::kind_enum_name;
 use kind_enum_value::kind_enum_value;
 use meta_type_key::META_TYPE_KEY;
 use metric_bucket::MetricBucket;
@@ -4895,10 +5954,10 @@ use rank_limit::{RankLimit, rank_limit};
 use resource_attr_prefix::RESOURCE_ATTR_PREFIX;
 use row_attr_values::row_attr_values;
 use row_attrs::row_attrs;
+use sample_exemplar_rows::sample_exemplar_rows;
 pub use search_options::SearchOptions;
-use series_rank_score::series_rank_score;
 use spanset_matches_row::spanset_matches_row;
-use status_enum_name::status_enum_name;
+pub(crate) use status_enum_name::status_enum_name;
 use status_enum_value::status_enum_value;
 use string_array_value::string_array_value;
 use string_attr_values::string_attr_values;
@@ -4919,7 +5978,8 @@ mod metric_log2_bucket_value;
 use metric_log2_bucket_value::metric_log2_bucket_value;
 
 mod metric_duration_label;
-use metric_duration_label::metric_duration_label;
+pub(crate) use metric_duration_label::metric_duration_label;
 
 mod scalar_expression_value;
-use scalar_expression_value::{evaluate_typed_predicate, scalar_expression_value};
+pub(crate) use field_comparison::{field_values, scalar_matches};
+pub(crate) use scalar_expression_value::{evaluate_typed_predicate, scalar_expression_value};

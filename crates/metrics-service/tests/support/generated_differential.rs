@@ -85,7 +85,9 @@ struct TraceField {
 impl TraceField {
     fn render(&self) -> String {
         if self.scope.is_empty() {
-            if matches!(self.key.as_str(), "name" | "duration" | "status" | "kind") {
+            if self.key.contains(':')
+                || matches!(self.key.as_str(), "name" | "duration" | "status" | "kind")
+            {
                 self.key.clone()
             } else {
                 format!(".{}", self.key)
@@ -146,6 +148,12 @@ enum TypedNode {
         op: CompareOp,
         right: TraceField,
     },
+    TraceScaledDurationComparison {
+        left: TraceField,
+        factor: i64,
+        op: CompareOp,
+        right: TraceField,
+    },
     ProfileSelector {
         labels: Vec<LabelMatcher>,
     },
@@ -193,10 +201,31 @@ fn valid_labels(labels: &[LabelMatcher]) -> bool {
 }
 
 fn valid_trace_field(field: &TraceField) -> bool {
+    if field.key.contains(':') {
+        return field.scope.is_empty()
+            && match field.scalar_type {
+                ScalarType::String => matches!(
+                    field.key.as_str(),
+                    "span:name"
+                        | "span:id"
+                        | "event:name"
+                        | "link:traceID"
+                        | "link:spanID"
+                        | "instrumentation:name"
+                        | "instrumentation:version"
+                ),
+                ScalarType::Duration => {
+                    matches!(field.key.as_str(), "span:duration" | "event:timeSinceStart")
+                }
+            };
+    }
+    if field.scalar_type == ScalarType::Duration {
+        return field.scope.is_empty() && field.key == "duration";
+    }
     valid_identifier(&field.key)
         && matches!(
             field.scope.as_str(),
-            "" | "resource" | "span" | "event" | "link"
+            "" | "resource" | "span" | "event" | "link" | "instrumentation"
         )
         && !(field.scalar_type == ScalarType::String
             && matches!(field.scope.as_str(), "" | "span")
@@ -300,6 +329,49 @@ impl TypedExpr {
             },
         }
     }
+    /// Compares fixture fields with the declared duration type, including intrinsics.
+    pub fn trace_duration_field_compare(left: &str, op: CompareOp, right: &str) -> Self {
+        Self {
+            node: TypedNode::TraceFieldComparison {
+                left: TraceField {
+                    scope: String::new(),
+                    key: left.into(),
+                    scalar_type: ScalarType::Duration,
+                },
+                op,
+                right: TraceField {
+                    scope: String::new(),
+                    key: right.into(),
+                    scalar_type: ScalarType::Duration,
+                },
+            },
+        }
+    }
+    /// Multiplies a duration field by an integer literal before comparing it.
+    /// The mixed numeric operation yields a float, which is comparable to duration.
+    pub fn trace_duration_times_integer_compare(
+        left: &str,
+        factor: i64,
+        op: CompareOp,
+        right: &str,
+    ) -> Self {
+        Self {
+            node: TypedNode::TraceScaledDurationComparison {
+                left: TraceField {
+                    scope: String::new(),
+                    key: left.into(),
+                    scalar_type: ScalarType::Duration,
+                },
+                factor,
+                op,
+                right: TraceField {
+                    scope: String::new(),
+                    key: right.into(),
+                    scalar_type: ScalarType::Duration,
+                },
+            },
+        }
+    }
     pub fn profile_selector(labels: &[LabelMatcher]) -> Self {
         Self {
             node: TypedNode::ProfileSelector {
@@ -353,7 +425,19 @@ impl TypedExpr {
                 if valid_trace_field(left)
                     && valid_trace_field(right)
                     && left.scalar_type == right.scalar_type
-                    && matches!(op, CompareOp::Eq | CompareOp::Neq) =>
+                    && (matches!(op, CompareOp::Eq | CompareOp::Neq)
+                        || (left.scalar_type == ScalarType::Duration
+                            && !matches!(op, CompareOp::Regex | CompareOp::NotRegex))) =>
+            {
+                QueryType::TracePredicate
+            }
+            TypedNode::TraceScaledDurationComparison {
+                left, op, right, ..
+            } if valid_trace_field(left)
+                && valid_trace_field(right)
+                && left.scalar_type == ScalarType::Duration
+                && right.scalar_type == ScalarType::Duration
+                && !matches!(op, CompareOp::Regex | CompareOp::NotRegex) =>
             {
                 QueryType::TracePredicate
             }
@@ -375,7 +459,7 @@ impl TypedExpr {
                 .collect::<Vec<_>>()
                 .join(",")
         };
-        let comparison = |field: &TraceField, op: CompareOp, value: String| {
+        let comparison = |field: String, op: CompareOp, value: String| {
             let op = match op {
                 CompareOp::Eq => "=",
                 CompareOp::Neq => "!=",
@@ -386,7 +470,7 @@ impl TypedExpr {
                 CompareOp::Regex => "=~",
                 CompareOp::NotRegex => "!~",
             };
-            format!("{} {op} {value}", field.render())
+            format!("{field} {op} {value}")
         };
         match &self.node {
             TypedNode::PromScalar { value } => value.to_string(),
@@ -413,12 +497,23 @@ impl TypedExpr {
             TypedNode::LogCount { input, seconds } => {
                 format!("count_over_time({}[{seconds}s])", input.render())
             }
-            TypedNode::TraceString { field, op, value } => comparison(field, *op, quoted(value)),
+            TypedNode::TraceString { field, op, value } => {
+                comparison(field.render(), *op, quoted(value))
+            }
             TypedNode::TraceDuration { field, op, nanos } => {
-                comparison(field, *op, format!("{nanos}ns"))
+                comparison(field.render(), *op, format!("{nanos}ns"))
             }
             TypedNode::TraceFieldComparison { left, op, right } => {
-                comparison(left, *op, right.render())
+                comparison(left.render(), *op, right.render())
+            }
+            TypedNode::TraceScaledDurationComparison {
+                left,
+                factor,
+                op,
+                right,
+            } => {
+                let left = format!("{} * {factor}", left.render());
+                comparison(format!("({left})"), *op, right.render())
             }
             TypedNode::ProfileSelector { labels: items } => labels(items),
             TypedNode::Apply { constructor, input } => constructor.render(&input.render()),
@@ -440,6 +535,9 @@ impl TypedExpr {
         }
     }
     fn depth(&self) -> usize {
+        if matches!(self.node, TypedNode::TraceScaledDurationComparison { .. }) {
+            return 1;
+        }
         self.children()
             .iter()
             .map(|child| child.depth() + 1)
@@ -929,6 +1027,57 @@ mod tests {
         let fields = TypedExpr::trace_field_compare("", "foo", CompareOp::Eq, "", "bar");
         assert!(fields.render() == ".foo = .bar");
         assert!(fields.value_type().unwrap() == QueryType::TracePredicate);
+        let intrinsics =
+            TypedExpr::trace_field_compare("", "span:name", CompareOp::Eq, "", "event:name");
+        assert!(
+            intrinsics.value_type().unwrap() == QueryType::TracePredicate
+                && intrinsics.render() == "span:name = event:name"
+        );
+        let durations = TypedExpr::trace_duration_field_compare(
+            "span:duration",
+            CompareOp::Gt,
+            "event:timeSinceStart",
+        );
+        assert!(
+            durations.value_type().unwrap() == QueryType::TracePredicate
+                && durations.render() == "span:duration > event:timeSinceStart"
+        );
+        let scaled = TypedExpr::trace_duration_times_integer_compare(
+            "duration",
+            2,
+            CompareOp::Gt,
+            "duration",
+        );
+        assert!(
+            scaled.value_type().unwrap() == QueryType::TracePredicate
+                && scaled.render() == "(duration * 2) > duration"
+                && scaled.depth() == 1
+        );
+        assert!(
+            TypedExpr::trace_duration_field_compare("name", CompareOp::Gt, "duration")
+                .value_type()
+                .is_err()
+        );
+        assert!(
+            TypedExpr::trace_duration_field_compare("duration", CompareOp::Regex, "duration")
+                .value_type()
+                .is_err()
+        );
+        assert!(
+            TypedExpr::trace_duration_times_integer_compare(
+                "span:name",
+                2,
+                CompareOp::Gt,
+                "duration"
+            )
+            .value_type()
+            .is_err()
+        );
+        assert!(
+            TypedExpr::trace_field_compare("", "span:unknown", CompareOp::Eq, "", "event:name")
+                .value_type()
+                .is_err()
+        );
         let selector = TypedExpr::profile_selector(&labels);
         let profile = apply(
             selector,

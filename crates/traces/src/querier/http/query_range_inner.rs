@@ -45,10 +45,13 @@ where
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
     let exemplar_selection = exemplar_selection(&uri);
-    let scan_options = match scan_options_param(&uri) {
+    let mut scan_options = match scan_options_param(&uri) {
         Ok(value) => value,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
+    // Public requests and the frontend's single unrestricted Live job need
+    // final label decoding; explicit per-block jobs retain raw worker labels.
+    scan_options.tempo_frontend_labels = scan_options.job.is_none();
     let (scan_start_ns, scan_end_ns) = bounds.as_ref().map_or((start_ns, end_ns), |bounds| {
         (bounds.scan_start_ns, bounds.scan_end_ns)
     });

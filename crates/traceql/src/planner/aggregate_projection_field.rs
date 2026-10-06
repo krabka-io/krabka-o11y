@@ -12,6 +12,9 @@ pub(crate) fn aggregate_projection_field(agg: &Aggregate) -> Option<&Field> {
         | Aggregate::MaxOverTime(field)
         | Aggregate::HistogramOverTime(field)
         | Aggregate::QuantileOverTime { field, .. } => Some(field),
-        Aggregate::Count | Aggregate::Rate | Aggregate::CountOverTime => None,
+        Aggregate::Expression { .. }
+        | Aggregate::Count
+        | Aggregate::Rate
+        | Aggregate::CountOverTime => None,
     }
 }

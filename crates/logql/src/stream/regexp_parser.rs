@@ -1,5 +1,5 @@
 use super::{
-    Labels, ParseError, Regex, insert_extracted_field, insert_regexp_parser_error,
+    Labels, ParseError, Regex, insert_raw_parsed_field, insert_regexp_parser_error,
     regexp_parse_error,
 };
 
@@ -47,7 +47,7 @@ impl RegexpParser {
 
         for name in &self.capture_names {
             if let Some(value) = captures.name(name) {
-                insert_extracted_field(fields, name, value.as_str().to_string());
+                insert_raw_parsed_field(fields, name, value.as_str().to_string());
             }
         }
     }

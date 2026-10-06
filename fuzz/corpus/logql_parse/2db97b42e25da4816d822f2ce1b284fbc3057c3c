@@ -1,0 +1,1 @@
+approx_topk(1,count_over_time({app="api"}[1m]))

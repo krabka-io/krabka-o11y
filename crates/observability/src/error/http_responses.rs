@@ -30,6 +30,7 @@ impl IntoResponse for HttpQueryError {
             | Self::QuerySeriesTooLarge { .. }
             | Self::LokiPlainParse(_)
             | Self::CountValuesQuery
+            | Self::VariantsDisabled
             | Self::Plan(_)
             | Self::Query(QueryError::MetricPipelineError { .. })
             | Self::Parse(_) => StatusCode::BAD_REQUEST,
@@ -37,7 +38,9 @@ impl IntoResponse for HttpQueryError {
                 StatusCode::FORBIDDEN
             }
             Self::QueryOverloaded { .. } => StatusCode::TOO_MANY_REQUESTS,
-            Self::ApproxTopKDisabled
+            Self::VariantUnsupported(_)
+            | Self::ApproxTopKDisabled
+            | Self::ApproxTopKRangeQuery
             | Self::Arrow(_)
             | Self::QueryAuthorization(QueryAuthorizationError::Unavailable { .. })
             | Self::Query(_)
@@ -89,7 +92,10 @@ impl IntoResponse for HttpQueryError {
                 | Self::MaxEntriesLimitPerQuery { .. }
                 | Self::QueryResolutionTooHigh
                 | Self::LokiPlainParse(_)
+                | Self::VariantsDisabled
+                | Self::VariantUnsupported(_)
                 | Self::ApproxTopKDisabled
+                | Self::ApproxTopKRangeQuery
                 | Self::CountValuesQuery
         ) {
             return text_response(status, &self.to_string());

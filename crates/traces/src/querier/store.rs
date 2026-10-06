@@ -3458,36 +3458,31 @@ mod tests {
                 == BTreeSet::from([matching_id, split_events_id])
         );
 
+        // Scalar groups belong to one trace: each fixture trace has one span,
+        // including the span with two events. Events cannot inflate count().
+        for selector in ["event:name != nil", "span:name = \"GET /users\""] {
+            let resp = engine
+                .search(
+                    "tenant",
+                    &format!("{{ {selector} }} | count() by (event:name) > 1"),
+                    0,
+                    10_000,
+                    10,
+                )
+                .await
+                .unwrap();
+            check!(resp.traces.is_empty(), "{selector}");
+        }
         let resp = engine
             .search(
                 "tenant",
-                "{ event:name != nil } | count() by (event:name) > 1",
+                "{ event:name != nil } | count() by (event:name) = 1",
                 0,
                 10_000,
                 10,
             )
             .await
             .unwrap();
-
-        check!(
-            resp.traces
-                .iter()
-                .map(|trace| trace.trace_id)
-                .collect::<BTreeSet<_>>()
-                == BTreeSet::from([matching_id, other_id, split_events_id])
-        );
-
-        let resp = engine
-            .search(
-                "tenant",
-                "{ span:name = \"GET /users\" } | count() by (event:name) > 1",
-                0,
-                10_000,
-                10,
-            )
-            .await
-            .unwrap();
-
         check!(
             resp.traces
                 .iter()
@@ -3547,11 +3542,24 @@ mod tests {
             .series;
 
         series.sort_by(|a, b| a.labels.cmp(&b.labels));
-        let cache_hit = series
-            .iter()
-            .find(|series| series.labels == vec![("name".into(), "cache.hit".into())])
-            .unwrap();
-        assert2::assert!(cache_hit.points == vec![(0, 2.0), (10_000, 0.0)]);
+        // Grouping reads the first fetched event value, so split_events is in
+        // exception, and its later cache.hit event cannot create a second row.
+        assert2::assert!(
+            series
+                .iter()
+                .map(|series| (series.labels.clone(), series.points.clone()))
+                .collect::<Vec<_>>()
+                == vec![
+                    (
+                        vec![("event:name".into(), "cache.hit".into())],
+                        vec![(0, 1.0), (10_000, 0.0)]
+                    ),
+                    (
+                        vec![("event:name".into(), "exception".into())],
+                        vec![(0, 2.0), (10_000, 0.0)]
+                    ),
+                ]
+        );
 
         let mut series = engine
             .query_range(
@@ -3566,12 +3574,26 @@ mod tests {
             .series;
 
         series.sort_by(|a, b| a.labels.cmp(&b.labels));
-        // `by(event.exception.type)` groups by an event ATTRIBUTE, so the series
-        // label key carries its `event.` scope (matching real Tempo, per the
-        // live-Tempo differential) — unlike the bare `event:name` intrinsic above.
-        assert2::assert!(series.iter().any(|series| series.labels
-            == vec![("event.exception.type".into(), "timeout".into())]
-            && series.points == vec![(0, 3.0), (10_000, 0.0)]));
+        assert2::assert!(
+            series
+                .iter()
+                .map(|series| (series.labels.clone(), series.points.clone()))
+                .collect::<Vec<_>>()
+                == vec![
+                    (
+                        vec![("event.exception.type".into(), "nil".into())],
+                        vec![(0, 1.0), (10_000, 0.0)]
+                    ),
+                    (
+                        vec![("event.exception.type".into(), "other".into())],
+                        vec![(0, 1.0), (10_000, 0.0)]
+                    ),
+                    (
+                        vec![("event.exception.type".into(), "timeout".into())],
+                        vec![(0, 2.0), (10_000, 0.0)]
+                    ),
+                ]
+        );
 
         let mut series = engine
             .query_range(
@@ -3586,9 +3608,16 @@ mod tests {
             .series;
 
         series.sort_by(|a, b| a.labels.cmp(&b.labels));
-        assert2::assert!(series.iter().any(|series| series.labels
-            == vec![("spanID".into(), "0606060606060606".into())]
-            && series.points == vec![(0, 1.0), (10_000, 0.0)]));
+        assert2::assert!(
+            series
+                .iter()
+                .map(|series| (series.labels.clone(), series.points.clone()))
+                .collect::<Vec<_>>()
+                == vec![(
+                    vec![("link:spanID".into(), "0808080808080808".into())],
+                    vec![(0, 4.0), (10_000, 0.0)]
+                )]
+        );
     }
 
     #[tokio::test]
@@ -3920,10 +3949,13 @@ mod tests {
                 .collect::<Vec<_>>()
                 == vec![(
                     [1; 16],
-                    vec![
-                        ("http.method".into(), AttrValue::Str("GET".into())),
-                        ("http.method".into(), AttrValue::Str("POST".into())),
-                    ],
+                    vec![(
+                        "http.method".into(),
+                        AttrValue::Array(vec![
+                            AttrValue::Str("GET".into()),
+                            AttrValue::Str("POST".into()),
+                        ]),
+                    )],
                 )]
         );
 
@@ -3933,6 +3965,84 @@ mod tests {
             .unwrap();
         assert2::assert!(resp.traces.len() == 1);
         assert2::assert!(resp.traces[0].trace_id == [3; 16]);
+    }
+
+    #[test]
+    fn persisted_nested_attributes_keep_types_array_shapes_and_unsupported_payloads() {
+        let attrs = vec![
+            SpanAttr {
+                key: "scalar".into(),
+                is_array: false,
+                value: BlockAttrValue::Int(vec![1]),
+            },
+            SpanAttr {
+                key: "singleton".into(),
+                is_array: true,
+                value: BlockAttrValue::Int(vec![1]),
+            },
+            SpanAttr {
+                key: "empty".into(),
+                is_array: true,
+                value: BlockAttrValue::Str(vec![]),
+            },
+            SpanAttr {
+                key: "many".into(),
+                is_array: true,
+                value: BlockAttrValue::Bool(vec![true, false]),
+            },
+            SpanAttr {
+                key: "opaque".into(),
+                is_array: false,
+                value: BlockAttrValue::Unsupported(
+                    r#"{"arrayValue":{"values":[{"intValue":"1"},{"stringValue":"x"}]}}"#.into(),
+                ),
+            },
+        ];
+        let mut row = block_attr_span_row([1; 16], [2; 8], "typed", false, vec!["GET".into()]);
+        row.events.push(krabka_blockstore::SpanEvent {
+            name: "typed".into(),
+            time_since_start: nanos(1),
+            attrs: attrs.clone(),
+        });
+        row.links.push(krabka_blockstore::SpanLink {
+            linked_trace_id: [3; 16],
+            linked_span_id: [4; 8],
+            attrs,
+        });
+        let batch = encode_span_rows(&[row]).unwrap();
+        let mut writer =
+            parquet::arrow::ArrowWriter::try_new(Vec::new(), batch.schema(), None).unwrap();
+        writer.write(&batch).unwrap();
+        let bytes = bytes::Bytes::from(writer.into_inner().unwrap());
+        let mut reader =
+            parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(bytes)
+                .unwrap()
+                .build()
+                .unwrap();
+        let restored = reader.next().unwrap().unwrap();
+        let expected = vec![
+            ("scalar".into(), AttrValue::Int(1)),
+            (
+                "singleton".into(),
+                AttrValue::Array(vec![AttrValue::Int(1)]),
+            ),
+            ("empty".into(), AttrValue::Array(vec![])),
+            (
+                "many".into(),
+                AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
+            ),
+            (
+                "opaque".into(),
+                AttrValue::Unsupported(
+                    r#"{"arrayValue":{"values":[{"intValue":"1"},{"stringValue":"x"}]}}"#.into(),
+                ),
+            ),
+        ];
+        assert2::assert!(event_values(&restored, 0).unwrap()[0].attributes == expected);
+        assert2::assert!(link_values(&restored, 0).unwrap()[0].attributes == expected);
+        let mut wrong = expected.clone();
+        wrong[1].1 = AttrValue::Int(1);
+        assert2::assert!(event_values(&restored, 0).unwrap()[0].attributes != wrong);
     }
 
     fn block_attr_span_row(

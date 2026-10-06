@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 
 use super::{
     PromqlEngine,
@@ -13,7 +13,7 @@ use super::{
     samples_per_query_exceeded, series_per_query_exceeded,
 };
 use crate::{
-    ScanResult,
+    PromqlLabels as Labels, PromqlMatcher as LabelMatcher, ScanResult,
     error::Result,
     extension::is_stale_nan,
     planner::{LabeledSeries, TimedValue},

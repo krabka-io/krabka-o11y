@@ -1,7 +1,9 @@
 use super::{AttrValue, SpanAttr, block_attr_value, extend_block_attr_value, same_block_attr_type};
 
 pub(crate) fn push_span_attr(attrs: &mut Vec<SpanAttr>, key: String, value: &AttrValue) {
+    let explicit_array = matches!(value, AttrValue::Array(_));
     let value = block_attr_value(value);
+    let is_array = explicit_array && !matches!(value, super::BlockAttrValue::Unsupported(_));
     if let Some(existing) = attrs
         .iter_mut()
         .find(|attr| attr.key == key && same_block_attr_type(&attr.value, &value))
@@ -12,7 +14,7 @@ pub(crate) fn push_span_attr(attrs: &mut Vec<SpanAttr>, key: String, value: &Att
     }
     attrs.push(SpanAttr {
         key,
-        is_array: false,
+        is_array,
         value,
     });
 }

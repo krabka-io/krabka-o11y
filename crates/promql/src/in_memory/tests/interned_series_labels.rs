@@ -179,7 +179,7 @@ async fn cold_labels_do_not_hide_different_hot_labels_with_the_same_row_id() {
     );
     blocks
         .index_mut()
-        .add_series("tenant-a", cold_fp ^ 1, &cold_labels);
+        .add_series("tenant-a", cold_fp ^ 1, &cold_labels.utf8_projection());
     let mut hot = InMemoryMetricStore::new();
     // The row ID shares the cold label key. The hot labels still need their
     // own canonical key in the returned label map.
@@ -472,4 +472,88 @@ async fn summary_falls_back_after_direct_append_and_rebuilt_label_identity_colli
     assert!(scan.samples == vec![(fp, 11_000, 7.0, Some(0))]);
     assert!(scan.labels == BTreeMap::from([(fp, Arc::clone(&in_window))]));
     assert!(Arc::ptr_eq(&scan.labels[&fp], &in_window));
+}
+
+#[tokio::test]
+async fn byte_labels_remain_distinct_in_interning_and_latest_scan_snapshots() {
+    let values = [vec![0xff], vec![0xfe], "\u{fffd}".as_bytes().to_vec()];
+    let mut hot = InMemoryMetricStore::new();
+    for (index, bytes) in values.iter().enumerate() {
+        let mut labels = lbls(&[("__name__", "up")]);
+        labels.insert("raw", bytes.clone());
+        hot.push_float(
+            "tenant-a",
+            labels.clone(),
+            10_000,
+            f64::from(u32::try_from(index).unwrap()) + 1.0,
+        );
+        hot.push_float(
+            "tenant-a",
+            labels,
+            11_000,
+            f64::from(u32::try_from(index).unwrap()) + 4.0,
+        );
+    }
+    let expected = values
+        .iter()
+        .zip([4.0_f64, 5.0, 6.0])
+        .map(|(bytes, value)| {
+            let mut labels = lbls(&[("__name__", "up")]);
+            labels.insert("raw", bytes.clone());
+            (
+                labels.fingerprint(),
+                (Arc::new(labels), 11_000, value.to_bits(), None),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert!(summary_ledger(&hot, "tenant-a", &[], 9_000, 9_001, 11_000) == Some((expected, 6)));
+    let head = WalHead::from_store(hot);
+    let snapshot = head.snapshot();
+    let rows = snapshot.floats["tenant-a"].iter().collect::<Vec<_>>();
+    for pair in rows.as_chunks::<2>().0 {
+        assert!(Arc::ptr_eq(&pair[0].labels, &pair[1].labels));
+    }
+    assert!(snapshot.series_labels["tenant-a"].len() == 3);
+    let blocks = BlockStore::new(
+        Arc::new(InMemory::new()),
+        url::Url::parse("memory:///").unwrap(),
+    );
+    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), head.clone());
+    let captured = store
+        .try_latest_float_scan("tenant-a", &[], 9_000, 9_001, 11_000, 6)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(captured.samples.len() == 3 && captured.labels.len() == 3);
+    for (index, bytes) in values.iter().enumerate() {
+        let mut labels = lbls(&[("__name__", "up")]);
+        labels.insert("raw", bytes.clone());
+        let fp = labels.fingerprint();
+        assert!(captured.labels[&fp].get_value("raw").unwrap().as_bytes() == bytes);
+        assert!(captured.samples.contains(&(
+            fp,
+            11_000,
+            f64::from(u32::try_from(index).unwrap()) + 4.0,
+            None
+        )));
+        let matcher = LabelMatcher::new("raw", MatchOp::Eq, bytes.clone());
+        let selected = store
+            .try_latest_float_scan("tenant-a", &[matcher], 9_000, 9_001, 11_000, 2)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            selected.samples
+                == vec![(
+                    fp,
+                    11_000,
+                    f64::from(u32::try_from(index).unwrap()) + 4.0,
+                    None
+                )]
+        );
+        assert!(selected.labels.len() == 1 && selected.labels[&fp].as_ref() == &labels);
+    }
+    head.delete_tenant("tenant-a");
+    assert!(head.snapshot().floats.is_empty());
+    assert!(captured.labels.len() == 3 && snapshot.floats["tenant-a"].len() == 6);
 }

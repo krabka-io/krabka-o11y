@@ -1,18 +1,18 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt::Write as _,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use axum::{
     Json,
     response::{IntoResponse, Response},
 };
-use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::{BucketSpan, NativeHistogram};
 use serde_json::{Map, Value, json};
 
 use super::apply_limit;
-use crate::{Annotations, QueryResult, RangeSeries, SampleValue, store::ExemplarRecord};
+use crate::{
+    Annotations, PromqlLabels as Labels, QueryResult, RangeSeries, SampleValue,
+    store::ExemplarRecord,
+};
 
 mod active_series_response;
 mod append_custom_histogram_buckets;
@@ -59,9 +59,10 @@ pub(super) use exemplars_json::exemplars_json;
 use format_float_exponent::format_float_exponent;
 pub(crate) use format_sample_value::format_sample_value;
 use format_timestamp_token::format_timestamp_token;
-use histogram_bucket_json::HistogramBucketJson;
+pub(crate) use histogram_bucket_json::HistogramBucketJson;
 pub(super) use labels_json::labels_json;
 pub(super) use labels_key::labels_key;
+pub(crate) use native_histogram_buckets_json::native_histogram_buckets;
 use native_histogram_buckets_json::native_histogram_buckets_json;
 use native_histogram_json::native_histogram_json;
 pub(crate) use native_histogram_string::native_histogram_string;

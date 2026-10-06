@@ -149,9 +149,10 @@ async fn check_limit_scan(
             .or_default()
             .push(json!([timestamp.to_string(), line]));
     }
-    let result = entries.into_iter().map(|(app, values)| {
-        json!({"stream":{"app":app,"detected_level":"unknown"},"values":values})
-    }).collect::<Vec<_>>();
+    let result = entries
+        .into_iter()
+        .map(|(app, values)| json!({"stream":{"app":app},"values":values}))
+        .collect::<Vec<_>>();
     check!(actual == json!({"status":"success","data":{"resultType":"streams","result":result}}));
     check!(scan.scanned_blocks.len() == expected_scanned);
     if expected_scanned > 1 && limit.is_some_and(|limit| limit > 1) {

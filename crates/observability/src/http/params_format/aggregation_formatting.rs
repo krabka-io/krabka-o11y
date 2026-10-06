@@ -1,5 +1,8 @@
 use std::fmt::Write as _;
 
+mod apply_approx_metric_selection;
+pub(crate) use apply_approx_metric_selection::apply_approx_metric_selection;
+
 use crate::{
     Quantile, RangeAggregation, ScalarSample, ScalarVectorExpressionResult, VectorAggregation,
     VectorAggregationOp, VectorGrouping, format_logql_quoted_string,

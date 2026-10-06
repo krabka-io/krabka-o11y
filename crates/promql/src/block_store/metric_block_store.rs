@@ -7,6 +7,7 @@ pub struct MetricBlockStore {
     pub(crate) histograms: Option<BlockStore>,
     pub(crate) exemplars: Option<BlockStore>,
     pub(crate) metadata: Option<BlockStore>,
+    pub(crate) metric_labels: std::collections::BTreeMap<(String, u64), crate::PromqlLabels>,
 }
 
 impl MetricBlockStore {
@@ -17,6 +18,7 @@ impl MetricBlockStore {
             histograms: None,
             exemplars: None,
             metadata: None,
+            metric_labels: std::collections::BTreeMap::new(),
         }
     }
 
@@ -27,6 +29,7 @@ impl MetricBlockStore {
             histograms: Some(histogram_store),
             exemplars: None,
             metadata: None,
+            metric_labels: std::collections::BTreeMap::new(),
         }
     }
 
@@ -48,7 +51,16 @@ impl MetricBlockStore {
         let mut histograms = histogram_store;
         let mut exemplars = None::<BlockStore>;
         let mut metadata = None::<BlockStore>;
+        let mut metric_labels = std::collections::BTreeMap::new();
         for manifest in manifests {
+            for series in &manifest.series {
+                if series.labels.has_byte_values() {
+                    metric_labels.insert(
+                        (manifest.tenant.clone(), series.fingerprint),
+                        series.labels.clone(),
+                    );
+                }
+            }
             match manifest.kind {
                 MetricBlockKind::Float => apply_manifest_to_blockstore(&mut float_store, manifest),
                 MetricBlockKind::NativeHistograms => {
@@ -78,6 +90,7 @@ impl MetricBlockStore {
             histograms,
             exemplars,
             metadata,
+            metric_labels,
         }
     }
 }

@@ -63,7 +63,7 @@ pub fn wal_records(count: usize) -> Vec<WalRecord> {
             tenant: TENANT.to_string(),
             labels: series_labels(which)
                 .iter()
-                .map(|(name, value)| (name.clone(), value.clone()))
+                .map(|(name, value)| (name.clone(), value.clone().into()))
                 .collect(),
             payload: SamplePayload::Float {
                 timestamp_ms: FIRST_APPLIED_MS

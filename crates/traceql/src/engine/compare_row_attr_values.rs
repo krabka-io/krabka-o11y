@@ -5,8 +5,27 @@ pub(crate) fn compare_row_attr_values<'a>(
     scope: &Scope,
     key: &str,
 ) -> Vec<&'a AttrValue> {
+    let prefixed;
+    let key = match scope {
+        Scope::Event => {
+            prefixed = format!("{}{key}", super::EVENT_ATTR_PREFIX);
+            &prefixed
+        }
+        Scope::Link => {
+            prefixed = format!("{}{key}", super::LINK_ATTR_PREFIX);
+            &prefixed
+        }
+        Scope::Instrumentation => {
+            prefixed = format!("{}{key}", super::INSTRUMENTATION_ATTR_PREFIX);
+            &prefixed
+        }
+        _ => key,
+    };
     let mut out = Vec::new();
-    let want_span = matches!(scope, Scope::Both | Scope::Span);
+    let want_span = matches!(
+        scope,
+        Scope::Both | Scope::Span | Scope::Event | Scope::Link | Scope::Instrumentation
+    );
     let want_resource = matches!(scope, Scope::Both | Scope::Resource);
     if want_span {
         out.extend(
@@ -26,7 +45,34 @@ pub(crate) fn compare_row_attr_values<'a>(
                 .map(|(_, value)| value),
         );
     }
-    out
+    if matches!(scope, Scope::Both) && out.is_empty() {
+        for prefix in [
+            super::EVENT_ATTR_PREFIX,
+            super::LINK_ATTR_PREFIX,
+            super::INSTRUMENTATION_ATTR_PREFIX,
+        ] {
+            let prefixed = format!("{prefix}{key}");
+            out.extend(
+                row.raw_span_attrs
+                    .iter()
+                    .filter(|(key, _)| key == &prefixed)
+                    .map(|(_, value)| value),
+            );
+            if !out.is_empty() {
+                break;
+            }
+        }
+    }
+    // Pinned vParquet5 attributeCollector ignores IsArray: empty lists are
+    // nil and a single element is scalar. Keep original shape for retrieval.
+    out.into_iter()
+        .filter_map(|value| match value {
+            AttrValue::Unsupported(_) => None,
+            AttrValue::Array(values) if values.is_empty() => None,
+            AttrValue::Array(values) if values.len() == 1 => values.first(),
+            value => Some(value),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -50,6 +96,7 @@ mod tests {
             status_message: None,
             kind: None,
             duration: None,
+            columns: std::collections::BTreeMap::new(),
         };
         assert!(compare_row_attr_values(&row, &Scope::Both, "shared") == vec![&AttrValue::Int(1)]);
         assert!(

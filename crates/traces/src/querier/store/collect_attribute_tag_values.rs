@@ -23,20 +23,20 @@ pub(crate) fn collect_attribute_tag_values(
                 [tag, index_tag].contains(&key.as_str())
             };
             if matches {
-                values.insert(attr_typed_value_parts(&value));
+                values.extend(attr_typed_value_parts(&value));
             }
         }
         for event in event_values(batch, row)? {
             for (key, value) in event.attributes {
                 if key == tag || key == index_tag {
-                    values.insert(attr_typed_value_parts(&value));
+                    values.extend(attr_typed_value_parts(&value));
                 }
             }
         }
         for link in link_values(batch, row)? {
             for (key, value) in link.attributes {
                 if key == tag || key == index_tag {
-                    values.insert(attr_typed_value_parts(&value));
+                    values.extend(attr_typed_value_parts(&value));
                 }
             }
         }

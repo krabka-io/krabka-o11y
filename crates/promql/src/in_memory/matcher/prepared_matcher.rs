@@ -4,10 +4,22 @@ use super::{
 };
 
 pub(crate) enum PreparedMatcher {
-    LabelEq { name: String, value: String },
-    LabelNeq { name: String, value: String },
-    LabelRe { name: String, regex: regex::Regex },
-    LabelNre { name: String, regex: regex::Regex },
+    LabelEq {
+        name: String,
+        value: crate::PromqlString,
+    },
+    LabelNeq {
+        name: String,
+        value: crate::PromqlString,
+    },
+    LabelRe {
+        name: String,
+        regex: regex::Regex,
+    },
+    LabelNre {
+        name: String,
+        regex: regex::Regex,
+    },
     QueryShardEq(QueryShardSelector),
     QueryShardNeq(QueryShardSelector),
 }
@@ -38,19 +50,33 @@ impl PreparedMatcher {
             }),
             MatchOp::Re => Ok(Self::LabelRe {
                 name: matcher.name.clone(),
-                regex: regex_anchored(&matcher.value)?,
+                regex: regex_anchored(matcher.value.utf8().ok_or_else(|| {
+                    PromqlError::Plan("invalid UTF-8 in regular expression".into())
+                })?)?,
             }),
             MatchOp::Nre => Ok(Self::LabelNre {
                 name: matcher.name.clone(),
-                regex: regex_anchored(&matcher.value)?,
+                regex: regex_anchored(matcher.value.utf8().ok_or_else(|| {
+                    PromqlError::Plan("invalid UTF-8 in regular expression".into())
+                })?)?,
             }),
         }
     }
 
     pub(crate) fn matches(&self, fp: SeriesFingerprint, labels: &Labels) -> bool {
         match self {
-            Self::LabelEq { name, value } => labels.get(name).unwrap_or("") == value.as_str(),
-            Self::LabelNeq { name, value } => labels.get(name).unwrap_or("") != value.as_str(),
+            Self::LabelEq { name, value } => {
+                labels
+                    .get_value(name)
+                    .map_or(&[][..], crate::PromqlString::as_bytes)
+                    == value.as_bytes()
+            }
+            Self::LabelNeq { name, value } => {
+                labels
+                    .get_value(name)
+                    .map_or(&[][..], crate::PromqlString::as_bytes)
+                    != value.as_bytes()
+            }
             Self::LabelRe { name, regex } => regex.is_match(labels.get(name).unwrap_or("")),
             Self::LabelNre { name, regex } => !regex.is_match(labels.get(name).unwrap_or("")),
             Self::QueryShardEq(selector) => selector.matches(fp),

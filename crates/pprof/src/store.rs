@@ -122,7 +122,7 @@ mod profile_scan;
 mod profile_stats;
 mod profile_store;
 
-pub use profile_query_stats::ProfileQueryStats;
+pub use profile_query_stats::{ProfileQueryScope, ProfileQueryStats};
 pub use profile_scan::ProfileScan;
 pub use profile_stats::ProfileStats;
 pub use profile_store::ProfileStore;

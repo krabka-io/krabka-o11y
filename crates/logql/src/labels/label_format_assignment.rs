@@ -46,20 +46,29 @@ impl LabelFormatAssignment {
         line: &str,
         fields: &mut Labels,
         timestamp_ns: Option<i64>,
-    ) {
+    ) -> bool {
         match &self.value {
             LabelFormatValue::Rename(source) => {
-                if let Some(value) = fields.remove(source) {
+                if let Some(value) = fields.get(source).cloned() {
                     fields.insert(self.destination.clone(), value);
+                    fields.remove(source);
+                    true
                 } else {
-                    fields.remove(&self.destination);
+                    false
                 }
             }
             LabelFormatValue::Template(template) => {
-                fields.insert(
-                    self.destination.clone(),
-                    template.render_with_timestamp(line, fields, timestamp_ns),
-                );
+                match template.render_checked_with_timestamp(line, fields, timestamp_ns) {
+                    Ok(rendered) => {
+                        fields.insert(self.destination.clone(), rendered);
+                        true
+                    }
+                    Err(error) => {
+                        fields.insert("__error__".to_string(), "TemplateFormatErr".to_string());
+                        fields.insert("__error_details__".to_string(), error);
+                        false
+                    }
+                }
             }
         }
     }

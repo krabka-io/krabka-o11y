@@ -1,13 +1,14 @@
 use krabka_blockstore::escape_object_path_segment;
+use krabka_promql::PromqlLabels as Labels;
 use object_store::{ObjectStoreExt, path::Path};
 
 use super::{
     Arc, BTreeMap, BlockStore, CachedMetricBlockStore, CompactionIndexManifest,
     DEFAULT_COLD_CACHE_TTL, DEFAULT_UNBOUNDED_COMPATIBILITY_LOOKBACK, ExemplarScan, Instant,
-    LabelMatcher, LabelNameCardinality, LabelValueCardinality, Labels, MergedMetricStore,
-    MetadataScan, MetricBlockStore, MetricStore, MetricsServiceError, ObjectStore, ScanResult,
-    Time, TsdbBlock, Url, WalHead, load_compaction_manifests_for_range_with_cache,
-    normalize_refresh_range, unix_time_ms,
+    LabelMatcher, LabelNameCardinality, LabelValueCardinality, MergedMetricStore, MetadataScan,
+    MetricBlockStore, MetricStore, MetricsServiceError, ObjectStore, ScanResult, Time, TsdbBlock,
+    Url, WalHead, load_compaction_manifests_for_range_with_cache, normalize_refresh_range,
+    unix_time_ms,
 };
 
 pub(crate) const MIMIR_TENANT_DELETION_PREFIX: &str = "mimir-tenant-deletions";
@@ -281,7 +282,7 @@ impl MetricStore for RefreshingMetricBlockStore {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<String>, krabka_promql::PromqlError> {
+    ) -> Result<Vec<krabka_metrics::MetricString>, krabka_promql::PromqlError> {
         self.current_store_for_tenant(tenant, start_ms, end_ms)
             .await?
             .label_values(tenant, name, matchers, start_ms, end_ms)

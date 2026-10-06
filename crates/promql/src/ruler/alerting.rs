@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use krabka_blockstore::{Labels, TenantId};
+use krabka_blockstore::TenantId;
 use krabka_metrics::SamplePayload;
 use krabka_units::prelude::*;
 
@@ -12,6 +12,7 @@ use super::{
 };
 use crate::{MetricStore, PromqlEngine, PromqlError, QueryResult, SampleValue};
 
+#[cfg(test)]
 mod alert_template_queries;
 mod evaluate_alerting_rule_with_state_and_sink;
 mod evaluate_and_dispatch_alerting_rule;
@@ -23,7 +24,6 @@ mod expand_alert_label_map;
 mod labels_to_map;
 mod template_query_value;
 
-use alert_template_queries::alert_template_queries;
 use evaluate_alerting_rule_with_state_and_sink::evaluate_alerting_rule_with_state_and_sink;
 pub(crate) use evaluate_alerting_rule_with_state_and_sink::evaluate_and_persist_alerting_rule_with_state_and_wal;
 pub use evaluate_and_dispatch_alerting_rule::evaluate_and_dispatch_alerting_rule;
@@ -31,6 +31,8 @@ pub use evaluate_and_dispatch_alerting_rule_group::evaluate_and_dispatch_alertin
 pub use evaluate_and_dispatch_alerting_rule_with_state::evaluate_and_dispatch_alerting_rule_with_state;
 pub use evaluate_and_persist_alerting_rule_group::evaluate_and_persist_alerting_rule_group;
 pub use evaluate_and_persist_alerting_rule_with_state::evaluate_and_persist_alerting_rule_with_state;
-use expand_alert_label_map::expand_alert_label_map;
+#[cfg(test)]
+pub(crate) use expand_alert_label_map::expand_alert_label_map;
+pub(crate) use expand_alert_label_map::{alert_template_variables, expand_alert_label_map_async};
 use labels_to_map::labels_to_map;
-use template_query_value::template_query_value;
+pub(crate) use template_query_value::{template_query_value, template_sample_value};

@@ -46,7 +46,7 @@ pub(crate) async fn instant_selector_returns_latest_sample_within_lookback() {
             approx_eq(float_value(&samples[0].value), 2.0),
         ) == (
             1,
-            &labels(&[("__name__", "up"), ("job", "api")]),
+            &crate::PromqlLabels::from(labels(&[("__name__", "up"), ("job", "api")])),
             30_000,
             true,
         )

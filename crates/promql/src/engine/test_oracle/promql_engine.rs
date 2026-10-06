@@ -39,7 +39,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 }),
                 Expr::StringLiteral(s) => Ok(QueryResult::Str {
                     ts_ms: time_ms,
-                    value: s.val.clone(),
+                    value: s.val.clone().into(),
                 }),
                 Expr::VectorSelector(vs) => self.eval_instant_selector(tenant, vs, time_ms).await,
                 Expr::Aggregate(aggregate) => {
@@ -51,29 +51,15 @@ impl<S: MetricStore> PromqlEngine<S> {
                 Expr::Unary(unary) => self.eval_instant_unary(tenant, unary, time_ms).await,
                 Expr::Paren(paren) => self.eval_instant_expr(tenant, &paren.expr, time_ms).await,
                 Expr::Extension(extension) => {
-                    let Some(extended) = extension
-                        .expr
-                        .as_any()
-                        .downcast_ref::<ExtendedSelectorExpr>()
-                    else {
-                        return Err(PromqlError::Unsupported(format!(
+                    if let Some(planned) = self
+                        .plan_extension_expr(tenant, expr, extension, time_ms)
+                        .await?
+                    {
+                        self.assemble_planned_instant(planned, time_ms).await
+                    } else {
+                        Err(PromqlError::Unsupported(format!(
                             "expression not implemented yet: {expr}"
-                        )));
-                    };
-                    let Some(Expr::VectorSelector(selector)) = extended.child() else {
-                        return Err(PromqlError::Unsupported(format!(
-                            "expression not implemented yet: {expr}"
-                        )));
-                    };
-                    match extended.modifier() {
-                        ExtendedSelectorModifier::Smoothed => {
-                            self.eval_smoothed_instant_selector(tenant, selector, time_ms)
-                                .await
-                        }
-                        ExtendedSelectorModifier::Anchored => Err(PromqlError::Unsupported(
-                            "anchored modifier is not valid on instant-vector selectors"
-                                .to_string(),
-                        )),
+                        )))
                     }
                 }
                 Expr::MatrixSelector(ms) => self
@@ -336,11 +322,21 @@ impl<S: MetricStore> PromqlEngine<S> {
         while let Expr::Paren(paren) = param {
             param = paren.expr.as_ref();
         }
-        let Expr::StringLiteral(label_name) = param else {
+        let Some(label_name) = crate::planner::byte_string_expr::string_expr_value(param) else {
             return Err(PromqlError::Plan(
                 "count_values label-name parameter must be a string".to_string(),
             ));
         };
+
+        let label_name = label_name
+            .utf8()
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                PromqlError::Exec(format!(
+                    "invalid label name {}",
+                    krabka_logql::quote_go_bytes(label_name.as_bytes())
+                ))
+            })?;
 
         let input = self
             .eval_instant_expr(tenant, &aggregate.expr, time_ms)
@@ -353,7 +349,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         // Shared with the operator path (`plan_param_aggregate_expr`).
         Ok(QueryResult::InstantVector(apply_count_values_aggregate(
             samples,
-            &label_name.val,
+            label_name,
             aggregate.modifier.as_ref(),
             time_ms,
         )))
@@ -777,7 +773,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         }
 
         let labels = (1..call.args.args.len())
-            .map(|index| string_literal_arg(call, index, "label name"))
+            .map(|index| {
+                string_literal_arg(call, index, "label name")
+                    .map(|name| name.utf8().unwrap_or("").to_owned())
+            })
             .collect::<Result<Vec<_>>>()?;
         let QueryResult::InstantVector(samples) = self
             .eval_instant_expr(tenant, &call.args.args[0], time_ms)
@@ -968,6 +967,12 @@ impl<S: MetricStore> PromqlEngine<S> {
 
         let vector_arg = &call.args.args[0];
         let label_name = string_literal_arg(call, 1, "label name")?;
+        let label_name = label_name
+            .utf8()
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                PromqlError::Exec("invalid label name in histogram_quantiles".to_owned())
+            })?;
         let mut quantiles = Vec::with_capacity(call.args.args.len().saturating_sub(2));
         for index in 2..call.args.args.len() {
             quantiles.push(
@@ -1062,9 +1067,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<QueryResult> {
-        if call.args.args.len() < 4 {
+        if call.args.args.len() < 3 {
             return Err(PromqlError::Plan(format!(
-                "{} expects at least four arguments, got {}",
+                "{} expects at least three arguments, got {}",
                 call.func.name,
                 call.args.args.len()
             )));
@@ -1088,12 +1093,9 @@ impl<S: MetricStore> PromqlEngine<S> {
             )));
         };
 
-        Ok(QueryResult::InstantVector(label_ops::apply_label_join(
-            samples,
-            &dst_label,
-            &separator,
-            &src_labels,
-        )))
+        Ok(QueryResult::InstantVector(
+            label_ops::apply_byte_label_join(samples, &dst_label, &separator, &src_labels)?,
+        ))
     }
 
     #[cfg(test)]
@@ -1130,13 +1132,15 @@ impl<S: MetricStore> PromqlEngine<S> {
             )));
         };
 
-        Ok(QueryResult::InstantVector(label_ops::apply_label_replace(
-            samples,
-            &dst_label,
-            &replacement,
-            &src_label,
-            &regex,
-        )?))
+        Ok(QueryResult::InstantVector(
+            label_ops::apply_byte_label_replace(
+                samples,
+                &dst_label,
+                &replacement,
+                &src_label,
+                &regex,
+            )?,
+        ))
     }
 
     #[cfg(test)]

@@ -2,11 +2,12 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::NativeHistogram;
 use krabka_units::prelude::*;
 
 use crate::{
+    PromqlLabels as Labels, PromqlMatcher as LabelMatcher,
     error::Result,
     ids::{Offset, PartitionIndex},
     store::{MetadataRecord, TsdbBlock},
@@ -14,7 +15,7 @@ use crate::{
 
 mod head;
 mod ingest;
-mod matcher;
+pub(crate) mod matcher;
 mod store_impl;
 
 pub use head::WalHead;

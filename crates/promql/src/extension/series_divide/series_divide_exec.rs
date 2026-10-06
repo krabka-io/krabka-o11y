@@ -1,3 +1,5 @@
+use arrow::array::BinaryArray;
+
 use super::{
     Arc, DataFusionError, DfResult, DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
     RecordBatch, RecordBatchStreamAdapter, SendableRecordBatchStream, StreamExt, TaskContext,
@@ -71,6 +73,12 @@ impl SeriesDivideExec {
             }
             if left_null {
                 // Both NULL on this column: identical here, check the next.
+                continue;
+            }
+            if let Some(bytes) = column.as_any().downcast_ref::<BinaryArray>() {
+                if bytes.value(left) != bytes.value(right) {
+                    return Ok(true);
+                }
                 continue;
             }
             let left_value = array_value_to_string(column.as_ref(), left)

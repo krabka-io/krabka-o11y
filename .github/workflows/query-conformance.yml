@@ -152,7 +152,7 @@ jobs:
               cp "${provenance}" "${evidence}/"
             fi
           done
-          (cd "${evidence}" && find . -type f ! -name SHA256SUMS -print0 \
+          (cd "${evidence}" && find . -type f ! -path ./SHA256SUMS -print0 \
             | sort -z | xargs -0 -r sha256sum > SHA256SUMS)
       - name: upload raw evidence
         if: always()

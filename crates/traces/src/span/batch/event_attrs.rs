@@ -1,8 +1,9 @@
-use super::{KeyValue, event_attr_value};
+use super::{KeyValue, SpanAttr, push_span_attr};
 
-pub(crate) fn event_attrs(attrs: &[KeyValue]) -> Vec<(String, String)> {
-    attrs
-        .iter()
-        .map(|attr| (attr.key.clone(), event_attr_value(&attr.value)))
-        .collect()
+pub(crate) fn event_attrs(attrs: &[KeyValue]) -> Vec<SpanAttr> {
+    let mut values = Vec::new();
+    for attr in attrs {
+        push_span_attr(&mut values, attr.key.clone(), &attr.value);
+    }
+    values
 }

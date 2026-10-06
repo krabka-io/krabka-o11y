@@ -11,7 +11,6 @@ for: 5m
     )
     .expect("alerting rule yaml");
     let alert_labels = BTreeMap::from([
-        ("__name__".to_string(), "up".to_string()),
         ("alertname".to_string(), "InstanceUp".to_string()),
         ("job".to_string(), "api".to_string()),
     ]);
@@ -19,7 +18,7 @@ for: 5m
     state.apply_record(super::super::RulerAlertStateRecord {
         tenant: "tenant-a".to_string(),
         rule_id: "InstanceUp\nup > 0".to_string(),
-        labels: alert_labels.clone(),
+        labels: alert_labels.clone().into(),
         active_since_ms: Some(60_000),
         keep_firing_until_ms: None,
     });
@@ -47,7 +46,7 @@ for: 5m
     state.apply_record(super::super::RulerAlertStateRecord {
         tenant: "tenant-a".to_string(),
         rule_id: "InstanceUp\nup > 0".to_string(),
-        labels: alert_labels,
+        labels: alert_labels.into(),
         active_since_ms: None,
         keep_firing_until_ms: None,
     });

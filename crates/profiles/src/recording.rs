@@ -10,10 +10,11 @@ use arrow::array::{Int64Array, UInt64Array};
 use futures::{StreamExt as _, TryStreamExt as _};
 use krabka_blockstore::{
     BlockLevel, BlockMeta, COL_FINGERPRINT, COL_TIMESTAMP, DEFAULT_BLOCK_READ_MAX,
-    MERGE_READ_BATCH_ROWS, PCOL_TOTAL_VALUE, ProfileIndex, SeriesFingerprint, open_block_stream,
+    MERGE_READ_BATCH_ROWS, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION, PCOL_VALUE, ProfileIndex,
+    SeriesFingerprint, open_block_stream,
 };
 use krabka_metrics::wire::pb::v1::{Label, Sample, TimeSeries, WriteRequest};
-use krabka_pprof::parse_label_selector;
+use krabka_pprof::{SymbolDb, parse_label_selector};
 use object_store::{ObjectStore, ObjectStoreExt as _, PutMode, PutOptions, path::Path};
 use prost::Message as _;
 
@@ -216,15 +217,13 @@ async fn evaluate_block(
     block: &BlockMeta,
     rules: &[pb::settings::v1::RecordingRule],
 ) -> Result<Vec<TimeSeries>, ProfilesError> {
-    let totals = block_totals(store, &block.object_key).await?;
+    let function_names: BTreeSet<_> = rules.iter().filter_map(recording_function_name).collect();
+    let totals = block_totals(store, &block.object_key, &function_names).await?;
     let available: BTreeSet<_> = block.fingerprints.iter().copied().collect();
     let mut output = Vec::new();
     for rule in rules {
-        if rule.stacktrace_filter.is_some() {
-            return Err(recording_error(
-                "stored stacktrace filters are not supported",
-            ));
-        }
+        let rule_totals = recording_function_name(rule)
+            .map_or(&totals.unfiltered, |name| &totals.functions[name]);
         let mut matchers = Vec::new();
         for selector in &rule.matchers {
             matchers.extend(parse_label_selector(selector).map_err(recording_error)?);
@@ -234,7 +233,7 @@ async fn evaluate_block(
             .map_err(recording_error)?;
         let mut groups = BTreeMap::<Vec<(String, String)>, BTreeMap<i64, i64>>::new();
         for fingerprint in matching.intersection(&available) {
-            let Some(total) = totals.get(fingerprint) else {
+            let Some(total) = rule_totals.get(fingerprint) else {
                 continue;
             };
             let labels =
@@ -284,10 +283,40 @@ async fn evaluate_block(
     Ok(output)
 }
 
+type ProfileTotals = HashMap<SeriesFingerprint, BTreeMap<i64, i64>>;
+
+struct BlockTotals {
+    unfiltered: ProfileTotals,
+    functions: HashMap<String, ProfileTotals>,
+}
+
+fn recording_function_name(rule: &pb::settings::v1::RecordingRule) -> Option<&str> {
+    rule.stacktrace_filter
+        .as_ref()?
+        .function_name
+        .as_ref()
+        .map(|filter| filter.function_name.as_str())
+        .filter(|name| !name.is_empty())
+}
+
 async fn block_totals(
     store: &Arc<dyn ObjectStore>,
     object_key: &str,
-) -> Result<HashMap<SeriesFingerprint, BTreeMap<i64, i64>>, ProfilesError> {
+    function_names: &BTreeSet<&str>,
+) -> Result<BlockTotals, ProfilesError> {
+    let symbols = if function_names.is_empty() {
+        None
+    } else {
+        let bytes = store
+            .get(&Path::from(format!("{object_key}.symdb")))
+            .await
+            .map_err(recording_error)?
+            .bytes()
+            .await
+            .map_err(recording_error)?;
+        Some(SymbolDb::decode(&bytes).map_err(recording_error)?)
+    };
+    let mut matching_stacks = HashMap::<(u64, u32), BTreeSet<String>>::new();
     let (_, _, mut batches) = open_block_stream(
         Arc::clone(store),
         object_key,
@@ -296,31 +325,106 @@ async fn block_totals(
     )
     .await
     .map_err(recording_error)?;
-    let mut totals = HashMap::<SeriesFingerprint, BTreeMap<i64, i64>>::new();
+    let mut totals = BlockTotals {
+        unfiltered: ProfileTotals::new(),
+        functions: function_names
+            .iter()
+            .map(|name| ((*name).to_string(), ProfileTotals::new()))
+            .collect(),
+    };
     while let Some(batch) = batches.next().await {
         let batch = batch.map_err(recording_error)?;
         let fingerprints = batch
             .column_by_name(COL_FINGERPRINT)
             .and_then(|array| array.as_any().downcast_ref::<UInt64Array>())
             .ok_or_else(|| recording_error("profile block has no fingerprint column"))?;
+        // Blocks contain one row per stack sample. Profile totals repeat on
+        // every row, while sample values add across distinct same-time profiles.
         let values = batch
-            .column_by_name(PCOL_TOTAL_VALUE)
+            .column_by_name(PCOL_VALUE)
             .and_then(|array| array.as_any().downcast_ref::<Int64Array>())
-            .ok_or_else(|| recording_error("profile block has no total-value column"))?;
+            .ok_or_else(|| recording_error("profile block has no value column"))?;
         let timestamps = batch
             .column_by_name(COL_TIMESTAMP)
             .and_then(|array| array.as_any().downcast_ref::<Int64Array>())
             .ok_or_else(|| recording_error("profile block has no timestamp column"))?;
         for row in 0..batch.num_rows() {
             totals
+                .unfiltered
                 .entry(fingerprints.value(row))
                 .or_default()
                 .entry(timestamps.value(row))
-                .and_modify(|total| *total = (*total).max(values.value(row)))
+                .and_modify(|total| *total += values.value(row))
                 .or_insert_with(|| values.value(row));
+        }
+        if let Some(symbols) = &symbols {
+            add_function_totals(
+                &batch,
+                symbols,
+                function_names,
+                &mut matching_stacks,
+                &mut totals.functions,
+            )?;
         }
     }
     Ok(totals)
+}
+
+fn add_function_totals(
+    batch: &arrow::record_batch::RecordBatch,
+    symbols: &SymbolDb,
+    function_names: &BTreeSet<&str>,
+    matching_stacks: &mut HashMap<(u64, u32), BTreeSet<String>>,
+    functions: &mut HashMap<String, ProfileTotals>,
+) -> Result<(), ProfilesError> {
+    let fingerprints = batch
+        .column_by_name(COL_FINGERPRINT)
+        .and_then(|array| array.as_any().downcast_ref::<UInt64Array>())
+        .ok_or_else(|| recording_error("profile block has no fingerprint column"))?;
+    let timestamps = batch
+        .column_by_name(COL_TIMESTAMP)
+        .and_then(|array| array.as_any().downcast_ref::<Int64Array>())
+        .ok_or_else(|| recording_error("profile block has no timestamp column"))?;
+    let column = |name| {
+        batch
+            .column_by_name(name)
+            .and_then(|array| array.as_any().downcast_ref::<UInt64Array>())
+            .ok_or_else(|| recording_error(format!("profile block has no {name} column")))
+    };
+    let partitions = column(PCOL_STACKTRACE_PARTITION)?;
+    let stacks = column(PCOL_STACKTRACE_ID)?;
+    let values = batch
+        .column_by_name(PCOL_VALUE)
+        .and_then(|array| array.as_any().downcast_ref::<Int64Array>())
+        .ok_or_else(|| recording_error("profile block has no value column"))?;
+    for row in 0..batch.num_rows() {
+        let stack = u32::try_from(stacks.value(row)).map_err(recording_error)?;
+        let matching = matching_stacks
+            .entry((partitions.value(row), stack))
+            .or_insert_with(|| {
+                function_names
+                    .iter()
+                    .filter(|name| {
+                        symbols.stacktrace_contains_function(partitions.value(row), stack, name)
+                    })
+                    .map(|name| (*name).to_string())
+                    .collect()
+            });
+        // Pyroscope 2.3.1 metrics/observer.go matches any exact frame,
+        // including inline frames. A set counts recursive occurrences
+        // once per stack sample. Keep zeroes for matched series too.
+        for (name, function_totals) in &mut *functions {
+            let total = function_totals
+                .entry(fingerprints.value(row))
+                .or_default()
+                .entry(timestamps.value(row))
+                .or_default();
+            if matching.contains(name) {
+                *total += values.value(row);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn recording_error(error: impl std::fmt::Display) -> ProfilesError {
@@ -329,6 +433,8 @@ fn recording_error(error: impl std::fmt::Display) -> ProfilesError {
 
 #[cfg(test)]
 mod tests {
+    mod function_filters;
+
     use assert2::assert;
     use axum::{
         Extension, Router,
@@ -389,6 +495,12 @@ mod tests {
                 matchers: vec![format!(r#"{{__profile_type__="{PROFILE_TYPE}"}}"#)],
                 group_by: vec!["service_name".to_string()],
                 generation: 1,
+                stacktrace_filter: Some(pb::settings::v1::StacktraceFilter {
+                    function_name: Some(pb::settings::v1::StacktraceFilterFunctionName {
+                        function_name: "main".into(),
+                        metric_type: 0,
+                    }),
+                }),
                 ..Default::default()
             }],
         };

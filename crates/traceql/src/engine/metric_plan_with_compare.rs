@@ -12,8 +12,12 @@ pub(crate) fn metric_plan_with_compare(compare: CompareSpec) -> MetricPlan {
         quantiles: Vec::new(),
         by: Vec::new(),
         exemplar_fields: Vec::new(),
-        filter: None,
-        rank: None,
+        stages: Vec::new(),
+        spanset_pipeline: Vec::new(),
+        sampling_factor: 1.0,
+        spanset_pipeline_had_input: false,
+        frontend_labels: false,
+        instant: false,
         compare: Some(compare),
     }
 }

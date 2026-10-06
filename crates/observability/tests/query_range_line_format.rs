@@ -415,7 +415,9 @@ async fn query_range_endpoint_line_format_applies_measurement_template_helpers()
 
     assert!(response.status() == StatusCode::OK);
     let body = json_body(response).await;
-    assert!(body.pointer("/data/result/0/values") == Some(&json!([["19", "90 0.25 1572864"]])));
+    assert!(
+        body.pointer("/data/result/0/values") == Some(&json!([["19", "90 0.25 1.572864e+06"]]))
+    );
 }
 
 #[tokio::test]

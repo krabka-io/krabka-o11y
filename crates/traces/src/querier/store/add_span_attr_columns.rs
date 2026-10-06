@@ -80,7 +80,9 @@ pub(crate) fn add_span_attr_columns(
                             .find(|(key, _)| key == &lookup_key)
                     {
                         let next = match value {
-                            AttrValue::Str(_) => DataType::Utf8,
+                            AttrValue::Unsupported(_) | AttrValue::Array(_) | AttrValue::Str(_) => {
+                                DataType::Utf8
+                            }
                             AttrValue::Int(_) => DataType::Int64,
                             AttrValue::Float(_) => DataType::Float64,
                             AttrValue::Bool(_) => DataType::Boolean,

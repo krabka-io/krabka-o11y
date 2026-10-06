@@ -1,12 +1,14 @@
-use super::{ByteReader, IndexToc, TsdbImportError, TsdbImportLimits, checked_section};
+use super::{
+    ByteReader, IndexToc, MetricString, TsdbImportError, TsdbImportLimits, checked_section,
+};
 
-/// Reads the symbol table. Every symbol must be valid UTF-8, and the table
-/// must be strictly sorted, as the Prometheus writer produces it.
+/// Reads the symbol table. Symbols retain arbitrary bytes, and the table
+/// must be strictly sorted by bytes, as the Prometheus writer produces it.
 pub fn read_symbols(
     index: &[u8],
     toc: &IndexToc,
     limits: &TsdbImportLimits,
-) -> Result<Vec<String>, TsdbImportError> {
+) -> Result<Vec<MetricString>, TsdbImportError> {
     let content = checked_section(index, toc.symbols, "index symbols")?;
     let mut reader = ByteReader::new(content, "index symbols");
     let count = u64::from(reader.be32()?);
@@ -17,17 +19,16 @@ pub fn read_symbols(
         .ok_or(TsdbImportError::Truncated {
             section: "index symbols",
         })?;
-    let mut symbols = Vec::<String>::with_capacity(count);
+    let mut symbols = Vec::<MetricString>::with_capacity(count);
     for _ in 0..count {
-        let symbol = std::str::from_utf8(reader.uvarint_bytes()?).map_err(|_| {
-            TsdbImportError::InvalidLabels("a symbol is not valid UTF-8".to_owned())
-        })?;
-        if symbols.last().is_some_and(|last| last.as_str() >= symbol) {
+        let symbol = MetricString::from(reader.uvarint_bytes()?.to_vec());
+        if symbols.last().is_some_and(|last| last >= &symbol) {
             return Err(TsdbImportError::InvalidIndex(format!(
-                "symbol {symbol:?} is out of order"
+                "symbol {} is out of order",
+                symbol.quoted()
             )));
         }
-        symbols.push(symbol.to_owned());
+        symbols.push(symbol);
     }
     if reader.remaining() != 0 {
         return Err(TsdbImportError::InvalidIndex(

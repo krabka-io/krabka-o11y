@@ -32,7 +32,10 @@ async fn histogram_only_store(series: &Labels) -> MetricBlockStore {
     let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let rows = TenantCompactionRows {
         tenant: "tenant-a".to_string(),
-        series_labels: std::collections::BTreeMap::from([(series.fingerprint(), series.clone())]),
+        series_labels: std::collections::BTreeMap::from([(
+            series.fingerprint(),
+            series.clone().into(),
+        )]),
         float_rows: Vec::new(),
         histogram_rows: [(30_000, 1.0), (60_000, 3.0), (90_000, 5.0)]
             .into_iter()
@@ -68,10 +71,10 @@ async fn histogram_only_store(series: &Labels) -> MetricBlockStore {
 pub(crate) async fn histogram_blocks_answer_count_over_time_and_rate() {
     let series = labels(&[("__name__", "request_duration_seconds"), ("job", "api")]);
     let store = histogram_only_store(&series).await;
-    let matchers = [krabka_blockstore::LabelMatcher {
+    let matchers = [crate::PromqlMatcher {
         name: "__name__".to_string(),
         op: krabka_blockstore::MatchOp::Eq,
-        value: "request_duration_seconds".to_string(),
+        value: "request_duration_seconds".to_string().into(),
     }];
 
     // The store says where histograms can be, and says it from its index.
@@ -111,7 +114,7 @@ pub(crate) async fn histogram_blocks_answer_count_over_time_and_rate() {
         check!(
             result
                 == QueryResult::InstantVector(vec![InstantSample {
-                    labels: job.clone(),
+                    labels: job.clone().into(),
                     ts_ms: 90_000,
                     value: expected,
                     drop_name: false,

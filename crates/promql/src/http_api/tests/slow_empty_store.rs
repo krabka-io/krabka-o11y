@@ -64,7 +64,7 @@ impl MetricStore for SlowEmptyStore {
         _matchers: &[LabelMatcher],
         _start_ms: i64,
         _end_ms: i64,
-    ) -> Result<Vec<String>, PromqlError> {
+    ) -> Result<Vec<krabka_metrics::MetricString>, PromqlError> {
         Ok(Vec::new())
     }
 
@@ -74,7 +74,7 @@ impl MetricStore for SlowEmptyStore {
         _matchers: &[LabelMatcher],
         _start_ms: i64,
         _end_ms: i64,
-    ) -> Result<Vec<Labels>, PromqlError> {
+    ) -> Result<Vec<crate::PromqlLabels>, PromqlError> {
         Ok(Vec::new())
     }
 
@@ -110,7 +110,10 @@ impl MetricStore for SlowEmptyStore {
         Ok(Vec::new())
     }
 
-    async fn cardinality_active_series(&self, _tenant: &str) -> Result<Vec<Labels>, PromqlError> {
+    async fn cardinality_active_series(
+        &self,
+        _tenant: &str,
+    ) -> Result<Vec<crate::PromqlLabels>, PromqlError> {
         Ok(Vec::new())
     }
 

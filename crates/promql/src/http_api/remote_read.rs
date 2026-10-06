@@ -10,10 +10,13 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use krabka_blockstore::{LabelMatcher, Labels, MatchOp, SeriesFingerprint, TenantId};
+use krabka_blockstore::{MatchOp, SeriesFingerprint, TenantId};
 use krabka_metrics::{
     BucketSpan, NativeHistogram, ResetHint, decode_native_histograms,
-    wire::{encode_chunked_read_frames, negotiate_read_response_type, pb, snappy_block_decode},
+    wire::{
+        encode_chunked_read_frames, encode_read_response, negotiate_read_response_type,
+        remote_read_pb as pb, snappy_block_decode,
+    },
 };
 use num_traits::ToPrimitive;
 use prost::Message;
@@ -24,7 +27,7 @@ use super::{
     validate_timestamp_range,
 };
 use crate::{
-    MetricStore, PromqlError,
+    MetricStore, PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher,
     store::{ExemplarRecord, ScanResult},
 };
 

@@ -76,6 +76,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn query_series_counts_project_profile_ids_without_losing_matching_or_physical_rows() {
+        let mut store = InMemoryProfileStore::new();
+        let pt = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
+        let public = vec![
+            ("service_name".into(), "api".into()),
+            ("__profile_type__".into(), pt.into()),
+        ];
+        for (tenant, id, timestamp) in [("t", "a", 1000), ("t", "b", 2000), ("u", "c", 1000)] {
+            let mut labels = public.clone();
+            labels.push(("__profile_id__".into(), id.into()));
+            store.push_sample((tenant, pt), labels, (0, 0), 5, timestamp);
+        }
+        let expected = Labels::from_pairs(public).fingerprint();
+        let analysis = store.query_stats("t", pt, &[], 1000, 2000).await.unwrap();
+        assert!(analysis.fingerprints == BTreeSet::from([expected]));
+        assert!(analysis.profile_count == 2);
+        assert!(analysis.sample_count == 2);
+        assert!(analysis.scopes[0].series_count == 2);
+        let matching = [LabelMatcher::new("__profile_id__", MatchOp::Eq, "b")];
+        assert!(
+            store
+                .query_stats("t", pt, &matching, 1000, 2000)
+                .await
+                .unwrap()
+                .fingerprints
+                == BTreeSet::from([expected])
+        );
+        let missing = [LabelMatcher::new("__profile_id__", MatchOp::Eq, "c")];
+        assert!(
+            store
+                .query_stats("t", pt, &missing, 1000, 2000)
+                .await
+                .unwrap()
+                .fingerprints
+                .is_empty()
+        );
+        assert!(
+            store
+                .query_stats("absent", pt, &[], 1000, 2000)
+                .await
+                .unwrap()
+                .fingerprints
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn select_registers_samples_table_and_symbols() {
         let store = store_with_two_samples();
         let scan = store
@@ -310,7 +357,7 @@ mod sample_row;
 use compile_matchers::compile_matchers;
 use compiled_matcher::CompiledMatcher;
 use encode_rows::encode_rows;
-use fingerprint_labels::fingerprint_labels;
+use fingerprint_labels::{fingerprint_labels, queried_series_fingerprint};
 pub use in_memory_profile_store::InMemoryProfileStore;
 use label_value::label_value;
 use row_matches::row_matches;

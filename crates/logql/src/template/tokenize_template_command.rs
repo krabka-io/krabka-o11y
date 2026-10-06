@@ -13,7 +13,7 @@ pub(crate) fn tokenize_template_command(command: &str) -> Result<Vec<String>, Pa
         pos = pos
             .checked_add(offset)
             .expect("template token offset cannot overflow");
-        if matches!(ch, '"' | '`') {
+        if matches!(ch, '"' | '\'' | '`') {
             let (token, next) = parse_template_quoted_token(command, pos, ch)?;
             ensure_template_quoted_token(command, pos, &token, next, ch)?;
             tokens.push(token);
@@ -21,8 +21,15 @@ pub(crate) fn tokenize_template_command(command: &str) -> Result<Vec<String>, Pa
         } else if ch == '(' {
             let (token, next) = parse_template_parenthesized_token(command, pos)?;
             ensure_template_parenthesized_token(command, pos, &token, next)?;
-            tokens.push(token);
-            pos = next;
+            let end = if command.as_bytes().get(next) == Some(&b'.') {
+                command[next..]
+                    .find(char::is_whitespace)
+                    .map_or(command.len(), |offset| next + offset)
+            } else {
+                next
+            };
+            tokens.push(format!("{token}{}", &command[next..end]));
+            pos = end;
         } else {
             let end = command
                 .get(pos..)

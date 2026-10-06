@@ -9,6 +9,17 @@ pub(crate) fn compare_value_match(
     regexes: &CompareRegexCache,
 ) -> bool {
     match (value, rhs) {
+        (AttrValue::Array(values), rhs) => {
+            if matches!(op, ComparisonOp::Neq | ComparisonOp::Nre) {
+                values
+                    .iter()
+                    .all(|value| compare_value_match(value, op, rhs, regexes))
+            } else {
+                values
+                    .iter()
+                    .any(|value| compare_value_match(value, op, rhs, regexes))
+            }
+        }
         (AttrValue::Str(value), Value::Str(rhs)) => string_cmp(value, op, rhs, regexes),
         (AttrValue::Int(value), Value::Int(rhs) | Value::Duration(rhs)) => {
             num_cmp(*value, op, *rhs)

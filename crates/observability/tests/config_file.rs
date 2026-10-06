@@ -341,3 +341,49 @@ wal_sasl_password_path: /etc/krabka/wal-password
             }
     );
 }
+
+#[test]
+fn log_level_detection_values_survive_config_files_and_cli_overrides() {
+    let _environment = lock_environment();
+    let directory = tempfile::tempdir().expect("temp dir");
+    let path = write_config(
+        directory.path(),
+        "target: distributor\ndiscover_log_levels: false\nlog_level_fields: [priority, SeverityText]\nlog_level_from_json_max_depth: -1\n",
+    );
+    let base: Vec<OsString> = vec![
+        "krabka-observability".into(),
+        "--config.file".into(),
+        path.into(),
+    ];
+    let from_file = ServiceCli::parse_from(
+        argv_with_config_file::<ServiceCli>(base.clone()).expect("detector config applies"),
+    )
+    .service;
+    check!(
+        from_file
+            == ServiceConfig {
+                discover_log_levels: false,
+                log_level_fields: vec!["priority".into(), "SeverityText".into()],
+                log_level_from_json_max_depth: -1,
+                ..ServiceConfig::default()
+            }
+    );
+    let argv = base.into_iter().chain([
+        OsString::from("--discover-log-levels=true"),
+        OsString::from("--log-level-fields=custom"),
+        OsString::from("--log-level-from-json-max-depth=3"),
+    ]);
+    let from_cli = ServiceCli::parse_from(
+        argv_with_config_file::<ServiceCli>(argv).expect("detector overrides apply"),
+    )
+    .service;
+    check!(
+        from_cli
+            == ServiceConfig {
+                discover_log_levels: true,
+                log_level_fields: vec!["custom".into()],
+                log_level_from_json_max_depth: 3,
+                ..ServiceConfig::default()
+            }
+    );
+}

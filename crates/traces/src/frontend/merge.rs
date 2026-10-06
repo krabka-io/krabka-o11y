@@ -181,7 +181,11 @@ mod tests {
             root_trace_name: "GET /".to_string(),
             start_time_unix_nano: start.to_string(),
             duration: millis(1),
-            span_sets: vec![SpanSetJson { spans, matched }],
+            span_sets: vec![SpanSetJson {
+                spans,
+                matched,
+                attributes: Vec::new(),
+            }],
         }
     }
 
@@ -220,6 +224,7 @@ mod tests {
                     span_sets: vec![SpanSetJson {
                         spans: vec![span("01", 10, 5), span("02", 8, 9)],
                         matched: 2,
+                        attributes: Vec::new(),
                     }],
                 }],
                 metrics: Metrics {

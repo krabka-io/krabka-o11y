@@ -12,6 +12,22 @@ pub(crate) type MetricLabels = (
     BTreeMap<String, TraceMetricLabelType>,
 );
 
+/// Tempo 3.0.3's frontend `StaticFromAnyValue` decodes only scalar values.
+/// Its raw worker serializes arrays, but frontend decoding turns them into
+/// `StaticNil`, retaining the label key. Keep this conversion out of raw
+/// metric grouping, selectors, and search attribute export.
+pub(crate) fn decode_frontend_metric_labels(
+    labels: &mut [(String, String)],
+    types: &mut BTreeMap<String, TraceMetricLabelType>,
+) {
+    for (key, value) in labels {
+        if types.get(key) == Some(&TraceMetricLabelType::Array) {
+            *value = "nil".into();
+            types.insert(key.clone(), TraceMetricLabelType::Nil);
+        }
+    }
+}
+
 pub(crate) fn metric_labels(
     batch: &RecordBatch,
     row: usize,
@@ -25,8 +41,21 @@ pub(crate) fn metric_labels(
         let raw = compare_row_attr_values(&values, &field.scope, &field.key);
         // Packed fields preserve original types even when promoted columns
         // stringify heterogeneous values. Scopeless lookup prefers the span.
+        let elements = match raw.as_slice() {
+            [AttrValue::Array(values)] => Some(values.iter().collect::<Vec<_>>()),
+            values if values.len() > 1 => Some(values.to_vec()),
+            _ => None,
+        };
+        if let Some(elements) = elements {
+            types.insert(key.clone(), TraceMetricLabelType::Array);
+            labels.push((key, serde_json::json!({"arrayValue":{"values":elements.into_iter().map(attribute_json).collect::<Vec<_>>()}}).to_string()));
+            continue;
+        }
         if let Some(value) = raw.first() {
             let (value, kind) = match value {
+                AttrValue::Unsupported(_) | AttrValue::Array(_) => {
+                    unreachable!("array labels are handled above")
+                }
                 AttrValue::Str(value) => (value.clone(), None),
                 AttrValue::Int(value) => (value.to_string(), Some(TraceMetricLabelType::Int)),
                 AttrValue::Float(value) => (value.to_string(), Some(TraceMetricLabelType::Double)),
@@ -78,4 +107,30 @@ pub(crate) fn metric_labels(
         labels.push((key, value));
     }
     Ok((labels, types))
+}
+
+fn attribute_json(value: &AttrValue) -> serde_json::Value {
+    match value {
+        AttrValue::Unsupported(value) => {
+            serde_json::from_str(value).expect("opaque attribute contains AnyValue JSON")
+        }
+        AttrValue::Str(value) => serde_json::json!({"stringValue":value}),
+        AttrValue::Int(value) => serde_json::json!({"intValue":value.to_string()}),
+        AttrValue::Bool(value) => serde_json::json!({"boolValue":value}),
+        AttrValue::Float(value) => {
+            let number = if value.is_nan() {
+                serde_json::json!("NaN")
+            } else if *value == f64::INFINITY {
+                serde_json::json!("Infinity")
+            } else if *value == f64::NEG_INFINITY {
+                serde_json::json!("-Infinity")
+            } else {
+                serde_json::json!(value)
+            };
+            serde_json::json!({"doubleValue":number})
+        }
+        AttrValue::Array(values) => {
+            serde_json::json!({"arrayValue":{"values":values.iter().map(attribute_json).collect::<Vec<_>>()}})
+        }
+    }
 }

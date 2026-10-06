@@ -25,6 +25,37 @@ pub struct SymbolDb {
 }
 
 impl SymbolDb {
+    /// Retained symbol payload buffers. Allocator metadata and hash table
+    /// bucket arrays are excluded; separately allocated hash keys are included.
+    pub(crate) fn payload_memory_bytes(&self) -> usize {
+        let strings = self.strings.capacity() * std::mem::size_of::<String>()
+            + self.strings.iter().map(String::capacity).sum::<usize>()
+            + self
+                .string_index
+                .keys()
+                .map(String::capacity)
+                .sum::<usize>();
+        let functions = self.functions.capacity() * std::mem::size_of::<FunctionRec>();
+        let locations = self.locations.capacity() * std::mem::size_of::<LocationRec>()
+            + self
+                .locations
+                .iter()
+                .map(|location| location.lines.capacity() * std::mem::size_of::<LineRec>())
+                .sum::<usize>()
+            + self
+                .location_index
+                .keys()
+                .map(|location| location.lines.capacity() * std::mem::size_of::<LineRec>())
+                .sum::<usize>();
+        let mappings = self.mappings.capacity() * std::mem::size_of::<MappingRec>();
+        let nodes = self
+            .partitions
+            .values()
+            .map(|partition| partition.nodes.capacity() * std::mem::size_of::<TreeNode>())
+            .sum::<usize>();
+        strings + functions + locations + mappings + nodes
+    }
+
     #[must_use]
     pub fn new() -> Self {
         let mut db = Self::default();
@@ -270,6 +301,48 @@ impl SymbolDb {
             current = node.parent;
         }
         frames
+    }
+
+    /// Matches an exact stored function name anywhere in a stack, including
+    /// inline frames. Recording rules use raw names, before Go generic-name
+    /// normalization used for query rendering.
+    #[must_use]
+    pub fn stacktrace_contains_function(
+        &self,
+        partition: u64,
+        stacktrace_id: u32,
+        name: &str,
+    ) -> bool {
+        if stacktrace_id == EMPTY_STACKTRACE_ID {
+            return false;
+        }
+        let Some(partition) = self.partitions.get(&partition) else {
+            return false;
+        };
+        let mut current = i32::try_from(stacktrace_id).unwrap_or(-1);
+        for _ in 0..partition.nodes.len() {
+            let Some(node) = usize::try_from(current)
+                .ok()
+                .and_then(|index| partition.nodes.get(index))
+            else {
+                break;
+            };
+            if usize::try_from(node.location_ref)
+                .ok()
+                .and_then(|index| self.locations.get(index))
+                .is_some_and(|location| {
+                    location.lines.iter().any(|line| {
+                        self.functions
+                            .get(line.function_id as usize)
+                            .is_some_and(|function| self.string(function.name) == name)
+                    })
+                })
+            {
+                return true;
+            }
+            current = node.parent;
+        }
+        false
     }
 
     #[must_use]

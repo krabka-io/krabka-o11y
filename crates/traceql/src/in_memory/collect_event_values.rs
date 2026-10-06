@@ -23,7 +23,7 @@ pub(crate) fn collect_event_values(
                 .attributes
                 .iter()
                 .filter(|(key, _)| nested_attribute_key_matches(key, tag, "event."))
-                .map(|(_, value)| typed_value_parts(value)),
+                .flat_map(|(_, value)| typed_value_parts(value)),
         );
     }
 }

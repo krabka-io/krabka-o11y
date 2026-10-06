@@ -17,10 +17,34 @@ pub(crate) fn parse_info_call(call: &Call) -> Result<InfoContext<'_>> {
             call.args.args.len()
         )));
     }
+    let mut byte_matchers = None;
     let data_label_selector = match data_label_selector {
         [] => None,
         [selector] => match selector.as_ref() {
             Expr::VectorSelector(selector) => Some(selector),
+            Expr::Extension(extension) => {
+                let Some(byte) = extension
+                    .expr
+                    .as_any()
+                    .downcast_ref::<crate::planner::byte_selector_expr::ByteSelectorExpr>(
+                ) else {
+                    return Err(PromqlError::Plan(
+                        "info data label selector must be a vector selector".to_owned(),
+                    ));
+                };
+                let Expr::VectorSelector(selector) = &byte.child else {
+                    return Err(PromqlError::Plan(
+                        "info data label selector must be a vector selector".to_owned(),
+                    ));
+                };
+                let [matchers] = byte.matcher_sets.as_slice() else {
+                    return Err(PromqlError::Plan(
+                        "info data label selector does not support or matchers".to_owned(),
+                    ));
+                };
+                byte_matchers = Some(matchers.clone());
+                Some(selector)
+            }
             _ => {
                 return Err(PromqlError::Plan(
                     "info data label selector must be a vector selector".to_string(),
@@ -29,10 +53,14 @@ pub(crate) fn parse_info_call(call: &Call) -> Result<InfoContext<'_>> {
         },
         [_, _, ..] => unreachable!("data label selector arity checked above"),
     };
-    let data_label_matchers = data_label_selector
-        .map(info_data_label_matchers)
-        .transpose()?
-        .unwrap_or_default();
+    let data_label_matchers = if let Some(matchers) = byte_matchers {
+        matchers
+    } else {
+        data_label_selector
+            .map(info_data_label_matchers)
+            .transpose()?
+            .unwrap_or_default()
+    };
     let required_data_label_matchers = data_label_matchers
         .iter()
         .filter(|matcher| matcher.name != "__name__")

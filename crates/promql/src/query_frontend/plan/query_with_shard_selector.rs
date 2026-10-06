@@ -1,4 +1,5 @@
 use super::{PromqlError, QueryShard, inject_shard_into_expr, parse_promql};
+use crate::format_promql_expr;
 
 pub(crate) fn query_with_shard_selector(
     query: &str,
@@ -6,5 +7,5 @@ pub(crate) fn query_with_shard_selector(
 ) -> Result<String, PromqlError> {
     let mut expr = parse_promql(query)?;
     inject_shard_into_expr(&mut expr, shard);
-    Ok(expr.to_string())
+    Ok(format_promql_expr(&expr))
 }

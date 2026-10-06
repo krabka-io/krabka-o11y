@@ -75,7 +75,6 @@ async fn executes_stream_query_over_planned_cold_blocks_as_loki_json() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -206,7 +205,6 @@ async fn executes_stream_query_merging_cold_blocks_with_hot_wal_tail() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -385,7 +383,6 @@ async fn executes_stream_query_filters_hot_tail_by_partition_offset_frontier() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -524,7 +521,6 @@ fn executes_tail_query_over_hot_wal_tail_as_loki_streams_json_frame() {
                     {
                         "stream": {
                             "app": "api",
-                            "detected_level": "unknown",
                             "env": "prod"
                         },
                         "values": [
@@ -583,7 +579,6 @@ fn executes_tail_query_filters_hot_tail_by_partition_offset_frontier() {
                     {
                         "stream": {
                             "app": "api",
-                            "detected_level": "unknown",
                             "env": "prod"
                         },
                         "values": [
@@ -650,7 +645,6 @@ async fn executes_stream_query_with_json_field_filter_over_structured_metadata()
                             // default encoding leaves it.
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "status": "500"
                             },
@@ -707,7 +701,6 @@ async fn executes_stream_query_with_field_filter_over_original_labels() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -762,7 +755,6 @@ async fn executes_stream_query_with_extracted_label_collision_suffix() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "env_extracted": "dev",
                                 "status": "500"
@@ -830,7 +822,6 @@ async fn executes_stream_query_with_nested_json_field_filter_over_line_body() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "request_method": "GET",
                                 "response_status": "500"
@@ -900,7 +891,6 @@ async fn executes_stream_query_with_selected_json_field_filter_over_line_body() 
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "first_server": "10.0.0.2",
                                 "ua": "Agent/2"
@@ -957,7 +947,6 @@ async fn executes_stream_query_with_logfmt_field_filter_over_line_body() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "msg": "api error",
                                 "status": "500"
@@ -1024,7 +1013,6 @@ async fn executes_stream_query_with_parameterized_logfmt_field_filter_over_line_
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "message": "api error",
                                 "status": "500"
@@ -1089,7 +1077,6 @@ async fn executes_stream_query_with_pattern_parser_over_line_body() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "duration": "1.5s",
                                 "env": "prod",
                                 "method": "POST",
@@ -1156,7 +1143,6 @@ async fn executes_stream_query_with_regexp_parser_over_line_body() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "duration": "1.5s",
                                 "env": "prod",
                                 "method": "POST",
@@ -1226,7 +1212,6 @@ async fn executes_stream_query_with_unpack_parser_replacing_line_body() {
                             "stream": {
                                 "app": "api",
                                 "container": "myapp",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "pod": "pod-3223f"
                             },
@@ -1285,7 +1270,6 @@ async fn executes_stream_query_with_line_format_replacing_line_body() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "msg": "api error",
                                 "status": "500"
@@ -1350,7 +1334,6 @@ async fn executes_stream_query_with_label_format_rewriting_stream_labels() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "method": "GET",
                                 "namespace": "prod",
                                 "path": "/api",
@@ -1477,7 +1460,6 @@ async fn executes_stream_query_with_decolorize_rewriting_line_body() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -1549,7 +1531,6 @@ async fn executes_stream_query_with_duration_and_bytes_logfmt_field_filters() {
                             "stream": {
                                 "app": "api",
                                 "bytes_consumed": "21MB",
-                                "detected_level": "unknown",
                                 "duration": "25ms",
                                 "env": "prod",
                                 "msg": "matched"
@@ -1685,7 +1666,6 @@ async fn executes_count_over_time_query_as_loki_matrix_json() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -1789,7 +1769,6 @@ async fn count_over_time_honors_json_parser_error_filters() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "format": "json",
                                 "msg": "api later"
                             },
@@ -1800,7 +1779,6 @@ async fn count_over_time_honors_json_parser_error_filters() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "format": "json",
                                 "msg": "api ok"
                             },
@@ -1882,7 +1860,6 @@ async fn executes_count_over_time_merging_cold_blocks_with_hot_wal_tail() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -1960,7 +1937,6 @@ async fn executes_rate_merging_cold_blocks_with_hot_wal_tail() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -2038,7 +2014,6 @@ async fn executes_bytes_rate_merging_cold_blocks_with_hot_wal_tail() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -2116,7 +2091,6 @@ async fn executes_bytes_over_time_merging_cold_blocks_with_hot_wal_tail() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -2267,7 +2241,6 @@ async fn executes_parser_metric_query_with_loki_pipeline_labels() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "request_method": "GET",
                                 "response_status": "500"
@@ -2328,7 +2301,6 @@ async fn executes_sum_over_time_unwrap_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -2387,7 +2359,6 @@ async fn executes_sum_over_time_decimal_unwrap_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -2446,7 +2417,6 @@ async fn executes_sum_over_time_signed_decimal_unwrap_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -2505,7 +2475,6 @@ async fn executes_sum_over_time_scientific_unwrap_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -2564,7 +2533,6 @@ async fn executes_sum_over_time_unwrap_bytes_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -2623,7 +2591,6 @@ async fn executes_sum_over_time_unwrap_duration_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -2681,7 +2648,6 @@ async fn executes_rate_unwrap_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -2742,7 +2708,6 @@ async fn executes_rate_counter_unwrap_metric_query_with_reset() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -2801,7 +2766,6 @@ async fn executes_avg_over_time_unwrap_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -2865,7 +2829,6 @@ async fn executes_metric_query_with_range_offset() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -2984,7 +2947,6 @@ async fn executes_stdvar_over_time_unwrap_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -3044,7 +3006,6 @@ async fn executes_stddev_over_time_unwrap_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -3105,7 +3066,6 @@ async fn executes_quantile_over_time_unwrap_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -3164,7 +3124,6 @@ async fn executes_min_over_time_unwrap_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -3223,7 +3182,6 @@ async fn executes_max_over_time_unwrap_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -3282,7 +3240,6 @@ async fn executes_first_over_time_unwrap_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -3341,7 +3298,6 @@ async fn executes_last_over_time_unwrap_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -3405,7 +3361,6 @@ async fn executes_count_over_time_query_with_stepped_matrix_samples() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -3471,7 +3426,6 @@ async fn executes_present_over_time_query_with_stepped_matrix_samples() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -3537,7 +3491,6 @@ async fn executes_rate_query_with_stepped_matrix_samples() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -3603,7 +3556,6 @@ async fn executes_bytes_over_time_query_with_stepped_matrix_samples() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -3669,7 +3621,6 @@ async fn executes_bytes_rate_query_with_stepped_matrix_samples() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -3818,7 +3769,6 @@ async fn executes_avg_without_vector_aggregation_with_stepped_matrix_samples() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -4182,7 +4132,6 @@ async fn executes_topk_and_bottomk_vector_aggregations() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "pod": "b"
                             },
@@ -4193,7 +4142,6 @@ async fn executes_topk_and_bottomk_vector_aggregations() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "stage",
                                 "pod": "b"
                             },
@@ -4239,7 +4187,6 @@ async fn executes_topk_and_bottomk_vector_aggregations() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "pod": "a"
                             },
@@ -4250,7 +4197,6 @@ async fn executes_topk_and_bottomk_vector_aggregations() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "pod": "b"
                             },
@@ -4296,7 +4242,6 @@ async fn executes_topk_and_bottomk_vector_aggregations() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "pod": "a"
                             },
@@ -4307,7 +4252,6 @@ async fn executes_topk_and_bottomk_vector_aggregations() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "stage",
                                 "pod": "a"
                             },
@@ -4484,7 +4428,6 @@ async fn executes_stream_query_over_object_store_blocks_as_loki_json() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -4546,7 +4489,6 @@ async fn object_store_stream_query_returns_partial_result_with_warning_for_unrea
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -4615,7 +4557,6 @@ async fn object_store_metric_query_returns_partial_result_with_warning_for_unrea
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [

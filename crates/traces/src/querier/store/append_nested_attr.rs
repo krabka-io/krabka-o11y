@@ -1,31 +1,21 @@
-use super::{
-    EventRef, LinkRef, NestedAttrColumn, NestedAttrScope, StringBuilder, attr_typed_value_parts,
-};
+use super::{AttrValue, EventRef, LinkRef, NestedAttrColumn, NestedAttrScope};
 
 pub(crate) fn append_nested_attr(
     event: Option<&EventRef>,
     link: Option<&LinkRef>,
     attr: NestedAttrColumn<'_>,
-    builder: &mut StringBuilder,
+    builder: &mut Vec<Vec<AttrValue>>,
 ) {
-    let value = match attr.scope {
-        NestedAttrScope::Event => event.and_then(|event| {
-            event
-                .attributes
-                .iter()
-                .find(|(key, _)| key == attr.key)
-                .map(|(_, value)| value)
-        }),
-        NestedAttrScope::Link => link.and_then(|link| {
-            link.attributes
-                .iter()
-                .find(|(key, _)| key == attr.key)
-                .map(|(_, value)| value)
-        }),
+    let attributes = match attr.scope {
+        NestedAttrScope::Event => event.map(|event| &event.attributes),
+        NestedAttrScope::Link => link.map(|link| &link.attributes),
     };
-    if let Some(value) = value {
-        builder.append_value(attr_typed_value_parts(value).1);
-    } else {
-        builder.append_null();
-    }
+    builder.push(
+        attributes
+            .into_iter()
+            .flatten()
+            .filter(|(key, _)| key == attr.key)
+            .map(|(_, value)| value.clone())
+            .collect(),
+    );
 }

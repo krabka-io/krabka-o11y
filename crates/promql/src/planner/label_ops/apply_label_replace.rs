@@ -1,4 +1,4 @@
-use super::{InstantSample, PromqlError, Regex, Result, set_label_value};
+use super::{InstantSample, Result};
 
 /// Applies `label_replace(v, dst_label, replacement, src_label, regex)` to an
 /// already-assembled instant vector.
@@ -26,25 +26,11 @@ pub fn apply_label_replace(
     src_label: &str,
     regex: &str,
 ) -> Result<Vec<InstantSample>> {
-    // Prometheus FULLY anchors `label_replace`'s regex (`^(?:<regex>)$`), so it
-    // must match the *entire* source-label value — `regexp.MatchString` on a
-    // `^(?:...)$`-wrapped pattern, the same anchoring `krabka-blockstore`'s
-    // `anchored_regex` applies to label matchers. A raw unanchored `Regex` would
-    // wrongly match a substring (e.g. `foo` inside `xfooy`).
-    let regex = Regex::new(&format!("^(?:{regex})$"))
-        .map_err(|err| PromqlError::Exec(format!("invalid label_replace regex: {err}")))?;
-    Ok(samples
-        .into_iter()
-        .map(|mut sample| {
-            if let Some(captures) = regex.captures(sample.labels.get(src_label).unwrap_or("")) {
-                let mut value = String::new();
-                captures.expand(replacement, &mut value);
-                sample.labels = set_label_value(&sample.labels, dst_label, &value);
-                if dst_label == "__name__" {
-                    sample.drop_name = false;
-                }
-            }
-            sample
-        })
-        .collect())
+    super::apply_byte_label_replace(
+        samples,
+        &dst_label.into(),
+        &replacement.into(),
+        &src_label.into(),
+        &regex.into(),
+    )
 }

@@ -1,7 +1,7 @@
-use krabka_blockstore::{LabelMatcher, MatchOp};
+use krabka_blockstore::MatchOp;
 
 use super::*;
-use crate::{MergedMetricStore, MetricStore, WalHead};
+use crate::{MergedMetricStore, MetricStore, PromqlMatcher as LabelMatcher, WalHead};
 
 fn labels(name: &str, job: &str) -> Labels {
     let mut labels = Labels::new();
@@ -31,9 +31,9 @@ async fn shared_series_labels_follow_snapshots_and_limits() {
         .labels_by_fingerprint_sets("t", &[matchers.clone()], 1_000, 2_000)
         .await
         .unwrap();
-    let expected = BTreeMap::from([
-        (api.fingerprint(), api.clone()),
-        (latency.fingerprint(), latency.clone()),
+    let expected: BTreeMap<_, crate::PromqlLabels> = BTreeMap::from([
+        (api.fingerprint(), api.clone().into()),
+        (latency.fingerprint(), latency.clone().into()),
     ]);
     let hot_series = head
         .series_shared("t", &matchers, 1_000, 2_000)

@@ -1,13 +1,14 @@
 use arrow::{array::AsArray, datatypes::Int64Type};
 use assert2::check;
-use krabka_blockstore::{LabelMatcher, Labels, MatchOp};
+use krabka_blockstore::MatchOp;
 use krabka_metrics::{
     BucketSpan, NativeHistogram, ResetHint, SamplePayload, WalExemplar, WalRecord,
 };
 
 use super::*;
 use crate::{
-    EngineOpts, PromqlEngine, PromqlError, QueryResult, SampleValue, WalHead,
+    EngineOpts, PromqlEngine, PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher,
+    QueryResult, SampleValue, WalHead,
     store::{
         LabelNameCardinality, LabelValueCardinality, MetricStore, NamedTsdbStat, ScanResult,
         TsdbHeadStats,

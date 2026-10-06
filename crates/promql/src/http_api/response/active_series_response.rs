@@ -7,7 +7,7 @@ use super::{Labels, Value, json, labels_json};
 pub(crate) fn active_series_response(series: Vec<Labels>) -> Value {
     let data = series
         .into_iter()
-        .map(|labels| labels_json(&labels))
+        .map(|labels| labels_json(labels.iter()))
         .collect::<Vec<_>>();
     json!({ "data": data })
 }

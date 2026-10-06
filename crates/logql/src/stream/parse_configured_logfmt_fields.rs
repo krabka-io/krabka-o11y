@@ -1,5 +1,5 @@
 use super::{
-    Labels, LogfmtParser, LogfmtParserConfig, insert_extracted_field, insert_logfmt_parser_error,
+    Labels, LogfmtParser, LogfmtParserConfig, insert_logfmt_parser_error, insert_raw_parsed_field,
     sanitize_logfmt_field_name,
 };
 
@@ -16,7 +16,7 @@ pub(crate) fn parse_configured_logfmt_fields(
                 if parser.pos <= previous_pos {
                     break;
                 }
-                insert_extracted_field(fields, &sanitize_logfmt_field_name(&key), value);
+                insert_raw_parsed_field(fields, &sanitize_logfmt_field_name(&key), value);
             }
             Ok(None) => break,
             Err(details) => {

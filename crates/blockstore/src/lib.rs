@@ -52,8 +52,8 @@ pub use compaction::{
     input_key_fingerprint, level_above, plan_compactions,
 };
 pub use erasure::{
-    ERASURE_REQUEST_PREFIX, ErasureRequest, has_erasure_requests, list_erasure_requests,
-    put_erasure_request,
+    ByteLabelMatcher, ERASURE_REQUEST_PREFIX, ErasureRequest, has_erasure_requests,
+    list_erasure_requests, put_erasure_request,
 };
 pub use error::{BlockReadFailure, BlockSkipReason, BlockStoreError, Result, SkippedBlock};
 pub use index::{

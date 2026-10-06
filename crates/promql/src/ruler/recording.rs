@@ -1,13 +1,15 @@
 use std::collections::BTreeMap;
 
-use krabka_blockstore::{Labels, TenantId};
+use krabka_blockstore::TenantId;
 use krabka_metrics::{SamplePayload, WalRecord};
 
 use super::{
     RecordingRuleWalSink,
     config::{yaml_optional_string, yaml_required_string, yaml_string_map},
 };
-use crate::{MetricStore, PromqlEngine, PromqlError, QueryResult, SampleValue};
+use crate::{
+    MetricStore, PromqlEngine, PromqlError, PromqlLabels as Labels, QueryResult, SampleValue,
+};
 
 mod evaluate_and_append_recording_rule;
 mod evaluate_and_append_recording_rule_group;

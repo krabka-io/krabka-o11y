@@ -30,6 +30,9 @@ pub struct QuerierState {
     /// each per-tenant read path, and every check below reads them from here.
     /// Before that resolution they are the provider's defaults.
     pub(crate) limits: Limits,
+    pub(crate) max_count_min_sketch_heap_size: usize,
+    /// Authorized tenants of this one federated metric request.
+    pub(crate) federated_metric_tenants: Option<Arc<[crate::TenantId]>>,
     /// Shared RED-metrics bundle. It is `None` for test routers that do not
     /// wire metrics. The binary threads a shared bundle in with
     /// [`QuerierState::with_metrics`].

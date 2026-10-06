@@ -15,7 +15,7 @@ pub(crate) fn tag_values_from_traces(traces: &[TraceSpans], tag: &str) -> Vec<Ty
                 trace_resource_attributes(trace)
                     .into_iter()
                     .filter(|(key, _)| key == attr_tag)
-                    .map(|(_, value)| typed_value_parts(&value)),
+                    .flat_map(|(_, value)| typed_value_parts(&value)),
             );
         }
         for span in &trace.spans {
@@ -27,7 +27,7 @@ pub(crate) fn tag_values_from_traces(traces: &[TraceSpans], tag: &str) -> Vec<Ty
                     span.attributes
                         .iter()
                         .filter(|(key, _)| key == attr_tag)
-                        .map(|(_, value)| typed_value_parts(value)),
+                        .flat_map(|(_, value)| typed_value_parts(value)),
                 );
             }
         }

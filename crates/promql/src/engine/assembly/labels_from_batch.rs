@@ -1,9 +1,9 @@
-use super::{Array, Labels, RecordBatch, StringArray, leaf};
+use super::{Array, BinaryArray, Labels, RecordBatch, StringArray, leaf};
 
 /// Reconstructs a [`Labels`] set from the string label columns of one row of a
 /// planner-path output batch.
 ///
-/// This function treats only `Utf8` columns as labels and skips the
+/// This function treats `Utf8` and `Binary` columns as labels and skips the
 /// `timestamp`/`value` columns.
 pub(crate) fn labels_from_batch(batch: &RecordBatch, row: usize) -> Labels {
     let mut labels = Labels::new();
@@ -13,6 +13,14 @@ pub(crate) fn labels_from_batch(batch: &RecordBatch, row: usize) -> Labels {
             || field.name() == leaf::SAMPLE_TIME_COLUMN
         {
             continue;
+        }
+        if let Some(column) = batch.column(index).as_any().downcast_ref::<BinaryArray>()
+            && !column.is_null(row)
+        {
+            labels.insert(
+                field.name().clone(),
+                crate::PromqlString::from(column.value(row).to_vec()),
+            );
         }
         if let Some(column) = batch.column(index).as_any().downcast_ref::<StringArray>() {
             // NULL -> the label is ABSENT (skip); a non-null value (including

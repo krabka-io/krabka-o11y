@@ -1,6 +1,6 @@
 use super::{
-    Arc, ArrayRef, Float64Array, Int64Array, LabeledSeries, PromqlError, RecordBatch, Result,
-    Schema, StringBuilder,
+    Arc, ArrayRef, BinaryBuilder, Float64Array, Int64Array, LabeledSeries, PromqlError,
+    RecordBatch, Result, Schema,
 };
 
 /// Builds the leaf batch for one window's worth of matched series.
@@ -19,9 +19,12 @@ pub(crate) fn build_leaf_batch(
         // `None` (NULL) for an ABSENT label; `Some("")` for a PRESENT-empty
         // label. The two must stay distinct so the reconstructed fingerprint
         // matches the original series identity.
-        let mut builder = StringBuilder::with_capacity(rows, rows);
+        let mut builder = BinaryBuilder::with_capacity(rows, rows);
         for one in series {
-            let value = one.labels.get(name);
+            let value = one
+                .labels
+                .get_value(name)
+                .map(crate::PromqlString::as_bytes);
             for _ in 0..one.samples.len() {
                 builder.append_option(value);
             }

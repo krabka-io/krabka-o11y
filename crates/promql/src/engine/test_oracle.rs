@@ -1,5 +1,4 @@
 use futures::{FutureExt, future::BoxFuture};
-use krabka_blockstore::Labels;
 use krabka_units::prelude::*;
 use promql_parser::parser::{
     AggregateExpr, BinaryExpr, Call, Expr, MatrixSelector, UnaryExpr, VectorSelector,
@@ -7,11 +6,10 @@ use promql_parser::parser::{
 };
 
 use super::{
-    AggregateOp, ExtendedSelectorExpr, ExtendedSelectorModifier, HistogramAccessor, InstantValue,
-    IrateFn, OuterRangeFn, OverTimeFn, PromqlEngine, RangeFn, apply_count_values_aggregate,
-    apply_histogram_accessor, apply_histogram_fraction, apply_histogram_quantile, apply_info,
-    apply_k_aggregate, apply_outer_range_fn, apply_quantile_aggregate, apply_simple_aggregate,
-    combine_instant_binary, emit_warning,
+    AggregateOp, HistogramAccessor, InstantValue, IrateFn, OuterRangeFn, OverTimeFn, PromqlEngine,
+    RangeFn, apply_count_values_aggregate, apply_histogram_accessor, apply_histogram_fraction,
+    apply_histogram_quantile, apply_info, apply_k_aggregate, apply_outer_range_fn,
+    apply_quantile_aggregate, apply_simple_aggregate, combine_instant_binary, emit_warning,
     info::parse_info_call,
     invalid_quantile_warning, is_valid_quantile, label_ops,
     labels::{absent_labels, labels_without_metric_name},
@@ -30,7 +28,7 @@ use super::{
     validate_smoothing_factor,
 };
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels,
     error::Result,
     planner::rate_range::RateUdfKind,
     result::{InstantSample, QueryResult, SampleValue},

@@ -15,7 +15,7 @@ pub(crate) fn one_to_one_binary_result_labels(
                 if !preserve_metadata && is_result_metadata_label(name) {
                     continue;
                 }
-                if let Some(value) = input.get(name) {
+                if let Some(value) = input.get_value(name) {
                     labels.insert(name, value);
                 }
             }

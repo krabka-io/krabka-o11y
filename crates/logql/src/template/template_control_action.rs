@@ -3,6 +3,7 @@ pub(crate) enum TemplateControlAction {
     If,
     Range,
     With,
+    Definition,
     Else,
     ElseIf,
     ElseWith,
@@ -16,6 +17,9 @@ pub(crate) fn template_control_action(expression: &str) -> TemplateControlAction
         "end" => TemplateControlAction::End,
         _ if expression.starts_with("if ") => TemplateControlAction::If,
         _ if expression.starts_with("range ") => TemplateControlAction::Range,
+        _ if expression.starts_with("define ") || expression.starts_with("block ") => {
+            TemplateControlAction::Definition
+        }
         _ if expression.starts_with("with ") => TemplateControlAction::With,
         _ if expression.starts_with("else if ") => TemplateControlAction::ElseIf,
         _ if expression.starts_with("else with ") => TemplateControlAction::ElseWith,

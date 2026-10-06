@@ -114,10 +114,10 @@ async fn shared_snapshots_survive_pruning_and_reach_http_queries() {
             == expected_records.iter().collect::<Vec<_>>()
     );
     let result = json!([
-        {"stream": {"app": "api", "detected_level": "unknown"}, "values": [["80", "line@80"]]},
-        {"stream": {"app": "api", "detected_level": "unknown", "request": "a"},
+        {"stream": {"app": "api"}, "values": [["80", "line@80"]]},
+        {"stream": {"app": "api", "request": "a"},
             "values": [["100", "first"], ["100", "first"]]},
-        {"stream": {"app": "api", "detected_level": "unknown", "request": "b"},
+        {"stream": {"app": "api", "request": "b"},
             "values": [["120", "second"]]}
     ]);
     let expected = expected_response(&result, 4);
@@ -173,8 +173,8 @@ async fn shared_snapshots_survive_pruning_and_reach_http_queries() {
             == expected_records.iter().collect::<Vec<_>>()
     );
     let fresh_result = json!([
-        {"stream": {"app": "api", "detected_level": "unknown"}, "values": [["90", "line@90"]]},
-        {"stream": {"app": "api", "detected_level": "unknown", "request": "b"},
+        {"stream": {"app": "api"}, "values": [["90", "line@90"]]},
+        {"stream": {"app": "api", "request": "b"},
             "values": [["120", "second"]]}
     ]);
     let fresh = execute_http_stream_query(

@@ -3,13 +3,14 @@ use std::{
     fmt::Write as _,
 };
 
-use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::NativeHistogram;
 use promql_parser::parser::LabelModifier;
 
 use super::{MomentReduction, QueryShardReducer, RankReduction};
 use crate::{
-    PromqlError, QueryResult, RangeSeries, SampleValue, engine::add_compatible_native_histogram,
+    PromqlError, PromqlLabels as Labels, QueryResult, RangeSeries, SampleValue,
+    engine::add_compatible_native_histogram,
 };
 
 mod aggregate_labels;

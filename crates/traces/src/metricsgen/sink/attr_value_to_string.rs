@@ -7,5 +7,6 @@ pub(crate) fn attr_value_to_string(value: &AttrValue) -> String {
         AttrValue::Double(value) => value.to_string(),
         AttrValue::Bool(value) => value.to_string(),
         AttrValue::Bytes(value) => hex::encode(value),
+        AttrValue::Array(_) | AttrValue::Unsupported(_) => value.otlp_json().to_string(),
     }
 }

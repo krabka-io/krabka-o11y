@@ -1,14 +1,14 @@
 use std::collections::BTreeMap;
 
 use arrow::{
-    array::{Array, Float64Array, Int64Array, StringArray},
+    array::{Array, BinaryArray, Float64Array, Int64Array, StringArray},
     record_batch::RecordBatch,
 };
-use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 
 use super::step_vectors::GridPoint;
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels,
     error::Result,
     planner::{
         StepGrid, aggregate::AGGREGATE_VALUE_COLUMN, leaf, over_time_range, rate_range, scalar_math,

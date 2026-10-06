@@ -23,7 +23,7 @@ pub(crate) fn range_matrix_json(series: Vec<RangeSeries>) -> Vec<Value> {
                 }
             }
             let mut object = Map::new();
-            object.insert("metric".to_string(), labels_json(&series.labels));
+            object.insert("metric".to_string(), labels_json(series.labels.iter()));
             if !values.is_empty() {
                 object.insert("values".to_string(), Value::Array(values));
             }

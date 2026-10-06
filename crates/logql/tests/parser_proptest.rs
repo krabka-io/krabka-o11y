@@ -23,13 +23,13 @@
 //! steers around both, so what remains green is the property, not a weakened
 //! version of it.
 
-use std::fmt::Write as _;
+use std::{collections::BTreeMap, fmt::Write as _};
 
 use assert2::assert;
 use krabka_logql::{
-    ComparisonOp, LogqlExpr, MetricBinarySetOp, MetricScalarArithmeticOp,
-    MetricVectorGroupModifier, MetricVectorMatching, parse_logql_expr, parse_metric_query,
-    parse_query,
+    ComparisonOp, LineFormat, LogqlExpr, MetricBinarySetOp, MetricScalarArithmeticOp,
+    MetricVectorGroupModifier, MetricVectorMatching, TemplateData, parse_logql_expr,
+    parse_metric_query, parse_query,
 };
 use proptest::prelude::*;
 
@@ -425,6 +425,7 @@ fn shape(expr: &LogqlExpr) -> String {
 
 fn write_shape(out: &mut String, expr: &LogqlExpr) {
     match expr {
+        LogqlExpr::Variants { variants, .. } => nest(out, "variants", variants.iter()),
         LogqlExpr::Stream { .. } => out.push_str("stream"),
         LogqlExpr::Metric { .. } => out.push_str("metric"),
         LogqlExpr::Aggregation { expr, .. } => nest(out, "aggregation", [expr.as_ref()]),
@@ -570,5 +571,40 @@ proptest! {
         let reparsed = parse_logql_expr(&once)
             .map_err(|error| TestCaseError::fail(format!("{once} does not reparse: {error}")))?;
         prop_assert_eq!(reparsed.to_string(), once);
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+
+    /// Compare the real template caller chain to a native byte-vector ledger.
+    /// Type assertions distinguish []uint8 slicing from Go string slicing;
+    /// invalid indexes must fail rather than return an empty string.
+    #[test]
+    fn byte_slice_index_slice_and_range_keep_bytes_and_go_types(
+        bytes in proptest::collection::vec(any::<u8>(), 0..33),
+        first in 0usize..65,
+        last in 0usize..65,
+    ) {
+        let lower = first.min(last).min(bytes.len());
+        let upper = first.max(last).min(bytes.len());
+        let variables = BTreeMap::from([("b".into(), TemplateData::ByteSlice(bytes.clone()))]);
+        let queries = BTreeMap::new();
+        let template = format!(r#"{{{{printf "%T|%x|" (slice $b {lower} {upper}) (slice $b {lower} {upper})}}}}{{{{range (slice $b {lower} {upper})}}}}{{{{printf "%T:%02x;" . .}}}}{{{{end}}}}"#);
+        let format = LineFormat::new(template).unwrap();
+        let actual = format.render_bytes_with_variables_and_queries(&variables, &queries).unwrap();
+        let selected = &bytes[lower..upper];
+        let hex = selected.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+        let ranged = selected.iter().map(|byte| format!("uint8:{byte:02x};")).collect::<String>();
+        prop_assert_eq!(actual, format!("[]uint8|{hex}|{ranged}").into_bytes());
+        for (index, byte) in bytes.iter().enumerate() {
+            let template = format!(r#"{{{{printf "%T:%d" (index $b {index}) (index $b {index})}}}}"#);
+            let actual = LineFormat::new(template).unwrap().render_bytes_with_variables_and_queries(&variables, &queries).unwrap();
+            prop_assert_eq!(actual, format!("uint8:{byte}").into_bytes());
+        }
+        let invalid_index = LineFormat::new(format!("{{{{index $b {}}}}}", bytes.len())).unwrap();
+        prop_assert!(invalid_index.render_bytes_with_variables_and_queries(&variables, &queries).is_err());
+        let invalid_slice = LineFormat::new(format!("{{{{slice $b 0 {}}}}}", bytes.len() + 1)).unwrap();
+        prop_assert!(invalid_slice.render_bytes_with_variables_and_queries(&variables, &queries).is_err());
     }
 }

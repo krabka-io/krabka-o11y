@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Extract pinned upstream query surfaces; validate their explicit evidence offline.
 
---refresh downloads the six pinned files and applies the reviewed registry to
+--refresh downloads the pinned primary-source files and applies the reviewed registry to
 the complete inventory. --check performs offline schema,
 provenance, graph, count, and evidence validation; it does not rerun upstream
 extraction or establish that mapped tests passed. --self-check tests extraction.
@@ -26,7 +26,14 @@ PINS = {
         "revision": "d7598b7141418fa35be2b5ec5d0fefb634199610",
         "license": "Apache-2.0",
         "feature_flags": ["promql-experimental-functions"],
+        "dependencies": [{
+            "path": "go/text/template/funcs.go",
+            "repository": "golang/go", "revision": "go1.25.8",
+            "sha256": "5280b9ba9d1167cc5c221a2c495e4409439a81349256747e88b097d66f4ff3db",
+            "upstream_path": "src/text/template/funcs.go",
+        }],
         "files": {
+            "template/template.go": "68eb1a56702a4ac7d97ff3828257b34b222af73780d508870fc7dec7a443d2d9",
             "promql/parser/functions.go": "07f80297bec01b10d2a982f461900b1025ea66af91c4905154a11a42b43aaf00",
             "promql/parser/generated_parser.y": "299268003cee3f5d1329294c894db7a769848e6d7b6c29bfc3eb231b738b350e",
         },
@@ -37,8 +44,15 @@ PINS = {
         "revision": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
         "license": "AGPL-3.0",
         "feature_flags": [],
+        "dependencies": [{
+            "path": "go/text/template/funcs.go",
+            "repository": "golang/go", "revision": "go1.26.5",
+            "sha256": "6cc9d22f1a20a993f38810128bcb21f0bdd2d1bf612f4a279107773b7e207f30",
+            "upstream_path": "src/text/template/funcs.go",
+        }],
         "files": {
             "pkg/logql/syntax/syntax.y": "cf3e7a35661a4301778efcc75b95616b3d35ed9bc80fa99e517acf681903ccd0",
+            "pkg/logql/log/fmt.go": "d8c54382530470b94a4ebc791ae5574f8ddb3e22b07e4247b40484eabe401830",
         },
     },
     "traceql": {
@@ -66,8 +80,8 @@ PINS = {
 # Canonical extracted structures for the exact source hashes above. Offline
 # validation must reject a smaller denominator even if its mappings also shrink.
 STRUCTURE_HASHES = {
-    "promql": "52d2d84ff13edf2f68677e7edcade8f6301daf87e33d2328bf0683859adbe106",
-    "logql": "422278af64ccf02dc1a697e64cec4af3ef2bf94d3497c533096e7f15e10f7e4e",
+    "promql": "f9c0f935bb7ea5c9a6e88e359415ebcdf535e90f8c65166b66dd77909b8da80c",
+    "logql": "74b36a691c0696fd1352571e36dc45d6e178d5b4e93be89794d935f39d333f8b",
     "traceql": "452475746dc23c55a214dda535e3c714dc66be07ed9276615d53c0c7438c8591",
     "pyroscope": "9331800b2cc8726153af87c8d20dc900e653dadedfdf683c1e9963d476e19d3d",
 }
@@ -217,6 +231,100 @@ def public_grammar(entry, terminals, productions):
     }
 
 
+def source_map_keys(text, anchor):
+    """Extract top-level map keys, excluding nested map/function bodies."""
+    masked = mask_comments_and_strings(text)
+    start = masked.index("{", masked.index(anchor))
+    depth = 1
+    end = start + 1
+    while end < len(masked) and depth:
+        depth += (masked[end] == "{") - (masked[end] == "}")
+        end += 1
+    if depth:
+        raise ValueError(f"unterminated source map: {anchor}")
+    keys = []
+    for match in re.finditer(r'(?m)^\s*"([^"\n]+)"\s*:', text[start + 1:end - 1]):
+        before = masked[start + 1:start + 1 + match.start()]
+        if before.count("{") == before.count("}"):
+            keys.append(match.group(1))
+    if not keys or len(keys) != len(set(keys)):
+        raise ValueError(f"empty/duplicate source map: {anchor}")
+    return keys
+
+
+def template_functions(loki, builtins):
+    explicit = source_map_keys(loki, "functionMap = template.FuncMap")
+    masked = mask_comments_and_strings(loki)
+    begin = masked.index("{", masked.index("templateFunctions = []string"))
+    end = masked.index("}", begin)
+    selected = re.findall(r'"([A-Za-z_]\w*)"', re.sub(r"//[^\n]*", "", loki[begin:end]))
+    if not selected or len(selected) != len(set(selected)):
+        raise ValueError("empty/duplicate selected Sprig functions")
+    deprecated = {"ToLower", "ToUpper", "Replace", "Trim", "TrimLeft", "TrimRight", "TrimPrefix", "TrimSuffix", "TrimSpace"}
+    if not deprecated.issubset(explicit) or "olds functions deprecated" not in loki:
+        raise ValueError("reviewed deprecated template functions changed")
+    entries = [{"name": name, "registration": "functionMap", "deprecated": name in deprecated}
+               for name in explicit]
+    entries += [{"name": name, "registration": "selected_sprig", "deprecated": False} for name in selected]
+    if not all(f'functions[{name}]' in loki for name in ("functionLineName", "functionTimestampName")):
+        raise ValueError("dynamic line/timestamp registrations absent")
+    entries += [{"name": name, "registration": "line_timestamp", "deprecated": False} for name in ("__line__", "__timestamp__")]
+    entries += [{"name": name, "registration": "go_builtin", "deprecated": False} for name in source_map_keys(builtins, "return FuncMap")]
+    names = [entry["name"] for entry in entries]
+    if len(names) != len(set(names)):
+        raise ValueError("template registrations overlap; precedence requires review")
+    return sorted(entries, key=lambda entry: entry["name"])
+
+
+
+def prometheus_template_functions(template, builtins):
+    explicit = source_map_keys(template, "funcMap: text_template.FuncMap")
+    entries = [{"name": name, "registration": "prometheus_funcMap", "deprecated": False}
+               for name in explicit]
+    entries += [{"name": name, "registration": "go_builtin", "deprecated": False}
+                for name in source_map_keys(builtins, "return FuncMap")]
+    if len(entries) != len({entry["name"] for entry in entries}):
+        raise ValueError("Prometheus template registrations overlap; precedence requires review")
+    return sorted(entries, key=lambda entry: entry["name"])
+
+
+def expected_provenance(pin):
+    files = [{"path": path, "sha256": digest,
+              "url": f"https://github.com/{pin['repository']}/blob/{pin['revision']}/{path}"}
+             for path, digest in pin["files"].items()]
+    files += [{"path": entry["path"], "sha256": entry["sha256"],
+               "url": f"https://github.com/{entry['repository']}/blob/{entry['revision']}/{entry['upstream_path']}"}
+              for entry in pin.get("dependencies", [])]
+    return files
+
+
+def availability(language, feature_id, surface):
+    status = {"present_in_pinned_source": True, "deprecation": "not_marked_in_inventory_source"}
+    if language == "promql" and feature_id.startswith("function."):
+        function = next(entry for entry in surface["functions"] if "function." + entry["name"] == feature_id)
+        status["configuration_gate"] = "promql-experimental-functions" if function["experimental"] else None
+        status["source"] = "promql/parser/functions.go"
+    elif language == "promql" and feature_id.startswith("template_function."):
+        function = next(entry for entry in surface["template_functions"] if "template_function." + entry["name"] == feature_id)
+        status["source"] = "go/text/template/funcs.go" if function["registration"] == "go_builtin" else "template/template.go"
+        status["configuration_gate"] = None
+    elif language == "logql" and feature_id.startswith("template_function."):
+        function = next(entry for entry in surface["template_functions"] if "template_function." + entry["name"] == feature_id)
+        status["source"] = "go/text/template/funcs.go" if function["registration"] == "go_builtin" else "pkg/logql/log/fmt.go"
+        if function["deprecated"]:
+            status["deprecation"] = "explicitly_deprecated"
+        if function["name"] == "call":
+            status["reachable_input"] = "requires_function_value_not_provided_by_pinned_loki_template_fields_or_helpers"
+    elif language == "pyroscope" and feature_id.startswith("rpc."):
+        status["source"] = "api/querier/v1/querier.proto"
+        if feature_id in ("rpc.SelectMergeSpanProfile", "rpc.SelectMergeProfile"):
+            status["deprecation"] = "explicitly_deprecated"
+            status["replacement"] = "SelectMergeStacktraces.span_selector" if feature_id.endswith("SpanProfile") else "SelectMergeStacktraces.PROFILE_FORMAT_PPROF"
+        if feature_id == "rpc.SelectHeatmap":
+            status["configuration_gate"] = "v2-storage"
+    return status
+
+
 def profile_requests(sources):
     messages = {}
     enums = {}
@@ -293,6 +401,7 @@ def feature_ids(surface):
     ids = []
     for function in surface.get("functions", []):
         ids.append("function." + function["name"])
+    ids.extend("template_function." + function["name"] for function in surface.get("template_functions", []))
     if "grammar" in surface:
         data = surface["grammar"]
         for kind, field in [
@@ -332,7 +441,13 @@ def build(download):
                     "url": f"https://github.com/{pin['repository']}/blob/{pin['revision']}/{path}",
                 }
             )
-        surface = {"pin": pin, "provenance": provenance}
+        for entry in pin.get("dependencies", []):
+            url = f"https://raw.githubusercontent.com/{entry['repository']}/{entry['revision']}/{entry['upstream_path']}"
+            content = download(url)
+            if hashlib.sha256(content).hexdigest() != entry["sha256"]:
+                raise ValueError(f"dependency source hash differs for {language}: {entry['path']}")
+            sources[entry["path"]] = content.decode("utf-8")
+        surface = {"pin": pin, "provenance": expected_provenance(pin)}
         if language == "pyroscope":
             surface["requests"] = profile_requests(sources)
         else:
@@ -340,10 +455,14 @@ def build(download):
             surface["grammar"] = grammar(sources[path], "expr" if language == "promql" else "root")
             if language == "promql":
                 surface["functions"] = functions(sources["promql/parser/functions.go"])
+                surface["template_functions"] = prometheus_template_functions(sources["template/template.go"], sources["go/text/template/funcs.go"])
+            elif language == "logql":
+                surface["template_functions"] = template_functions(sources["pkg/logql/log/fmt.go"], sources["go/text/template/funcs.go"])
         surface["features"] = [
             {
                 "id": name,
                 "status": "uncovered",
+                "availability": availability(language, name, surface),
                 "evidence": {"positive": [], "negative": [], "composition": []},
             }
             for name in feature_ids(surface)
@@ -351,7 +470,7 @@ def build(download):
         surfaces[language] = surface
     return {
         "schema_version": 1,
-        "scope": "Pinned public-query syntax, function signatures and profile query requests; evidence mappings do not establish passing execution.",
+        "scope": "Pinned public-query syntax, function signatures, Prometheus/Loki template functions and profile query requests; evidence mappings do not establish passing execution.",
         "surfaces": surfaces,
     }
 
@@ -369,19 +488,11 @@ def check(artifact):
         pin = PINS[language]
         if surface["pin"] != pin:
             raise ValueError(f"{language}: source pins differ")
-        expected_provenance = [
-            {
-                "path": path,
-                "sha256": digest,
-                "url": f"https://github.com/{pin['repository']}/blob/{pin['revision']}/{path}",
-            }
-            for path, digest in pin["files"].items()
-        ]
-        if surface["provenance"] != expected_provenance:
+        if surface["provenance"] != expected_provenance(pin):
             raise ValueError(f"{language}: source provenance differs")
         structure = {
             key: surface[key]
-            for key in ("grammar", "functions", "requests")
+            for key in ("grammar", "functions", "template_functions", "requests")
             if key in surface
         }
         digest = hashlib.sha256(
@@ -397,6 +508,8 @@ def check(artifact):
         if [feature["id"] for feature in features] != feature_ids(surface):
             raise ValueError(f"{language}: feature classifications omit or duplicate inventory entries")
         for feature in features:
+            if feature.get("availability") != availability(language, feature["id"], surface):
+                raise ValueError(f"{language}: availability/source classification differs for {feature['id']}")
             evidence = feature["evidence"]
             if set(evidence) != {"positive", "negative", "composition"} or not all(
                 isinstance(items, list)
@@ -431,6 +544,10 @@ child: REAL | OTHER { // fake: | }
 }
 fixture: UNUSED;
 '''
+    assert source_map_keys('''var functionMap = template.FuncMap{
+ "outer": func() { value := map[string]int{"nested": 1}; _ = value },
+ "second": value,
+}''', "functionMap = template.FuncMap") == ["outer", "second"]
     data = grammar(source, "root")
     assert data["query_nonterminals"] == ["child", "root"]
     assert data["query_named_terminals"] == ["OTHER", "REAL"]
@@ -461,6 +578,20 @@ message Response {
         artifact = json.loads(ARTIFACT.read_text())
         check(artifact)
         check_oracle_pins()
+        for mutation in ("namespace", "source"):
+            altered = json.loads(json.dumps(artifact))
+            feature = next(item for item in altered["surfaces"]["promql"]["features"]
+                           if item["id"] == "template_function.query")
+            if mutation == "namespace":
+                feature["id"] = "function.query"
+            else:
+                feature["availability"]["source"] = "pkg/logql/log/fmt.go"
+            try:
+                check(altered)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"Prometheus template {mutation} crossed source namespace")
         del artifact["surfaces"]["pyroscope"]["requests"]["rpcs"][0]
         try:
             check(artifact)

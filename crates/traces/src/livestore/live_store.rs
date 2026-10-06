@@ -256,7 +256,7 @@ impl LiveSource for LiveStore {
                         span.resource_attrs
                             .iter()
                             .filter(|attr| attr.key == attr_tag)
-                            .map(|attr| typed_value_parts(&attr.value)),
+                            .flat_map(|attr| typed_value_parts(&attr.value)),
                     );
                 }
                 if matches!(attr_scope, None | Some(krabka_traceql::TagScope::Span)) {
@@ -264,7 +264,7 @@ impl LiveSource for LiveStore {
                         span.span_attrs
                             .iter()
                             .filter(|attr| attr.key == attr_tag)
-                            .map(|attr| typed_value_parts(&attr.value)),
+                            .flat_map(|attr| typed_value_parts(&attr.value)),
                     );
                 }
                 collect_span_intrinsic_value(span, tag, &mut values);

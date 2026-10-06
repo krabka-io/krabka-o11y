@@ -2,14 +2,14 @@ use super::{
     NoExpand, Regex, TemplateRuntimeValue, epoch_template_timestamp,
     evaluate_common_string_function, evaluate_template_value_function, format_template_bytes,
     format_template_date, format_template_duration_seconds, format_template_float_fold,
-    format_template_float_min_max, format_template_float_product, format_template_float_round,
-    format_template_float_sum, format_template_float_unary, format_template_integer_binary,
-    format_template_integer_min_max, format_template_integer_product, format_template_integer_sum,
-    format_template_ordering, format_template_printf, format_template_to_date,
-    format_template_to_date_in_zone, indent_template_string, parse_template_float,
-    parse_template_integer, substring_template_string, title_template_string,
-    truncate_template_string, unix_to_template_timestamp, urldecode_template_string,
-    urlencode_template_string, urlquery_template_string,
+    format_template_float_min_max, format_template_float_round, format_template_float_unary,
+    format_template_integer_binary, format_template_integer_min_max,
+    format_template_integer_product, format_template_integer_sum, format_template_ordering,
+    format_template_printf, format_template_to_date, format_template_to_date_in_zone,
+    indent_template_string, parse_template_float, parse_template_integer,
+    substring_template_string, title_template_string, truncate_template_string,
+    unix_to_template_timestamp, urldecode_template_string, urlencode_template_string,
+    urlquery_template_string,
 };
 
 pub(crate) fn evaluate_template_function(
@@ -20,15 +20,80 @@ pub(crate) fn evaluate_template_function(
         return value;
     }
 
+    let integer = matches!(
+        name,
+        "add" | "sub" | "mul" | "div" | "mod" | "int" | "min" | "max"
+    );
+    let numeric = integer
+        || matches!(
+            name,
+            "addf"
+                | "subf"
+                | "mulf"
+                | "divf"
+                | "float64"
+                | "minf"
+                | "maxf"
+                | "ceil"
+                | "floor"
+                | "round"
+        );
     let args = args
         .iter()
-        .map(TemplateRuntimeValue::as_rendered_string)
+        .map(|value| {
+            if numeric {
+                value.as_numeric_string(integer)
+            } else {
+                value.as_rendered_string()
+            }
+        })
         .collect::<Vec<_>>();
-    let rendered = evaluate_common_string_function(name, &args)
-        .or_else(|| evaluate_prometheus_template_function(name, &args))
+    let rendered = render_template_function(name, &args);
+    if matches!(
+        name,
+        "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "contains" | "hasPrefix" | "hasSuffix"
+    ) {
+        return TemplateRuntimeValue::Json(serde_json::Value::Bool(rendered == "true"));
+    }
+    if matches!(
+        name,
+        "add" | "sub" | "mul" | "div" | "mod" | "int" | "min" | "max" | "len" | "count"
+    ) && let Ok(value) = rendered.parse::<i64>()
+    {
+        return if matches!(name, "int" | "count") {
+            TemplateRuntimeValue::Integer(value)
+        } else {
+            TemplateRuntimeValue::Integer64(value)
+        };
+    }
+    if matches!(
+        name,
+        "addf"
+            | "subf"
+            | "mulf"
+            | "divf"
+            | "float64"
+            | "minf"
+            | "maxf"
+            | "ceil"
+            | "floor"
+            | "round"
+            | "duration"
+            | "duration_seconds"
+            | "bytes"
+    ) && let Ok(value) = rendered.parse::<f64>()
+    {
+        return TemplateRuntimeValue::Float(value);
+    }
+    TemplateRuntimeValue::String(rendered)
+}
+
+fn render_template_function(name: &str, args: &[String]) -> String {
+    evaluate_common_string_function(name, args)
+        .or_else(|| evaluate_prometheus_template_function(name, args))
         .unwrap_or_else(|| match name {
-            "add" => format_template_integer_sum(&args),
-            "addf" => format_template_float_sum(&args),
+            "add" => format_template_integer_sum(args),
+            "addf" | "subf" | "mulf" | "divf" => format_template_float_fold(name, args),
             "ceil" => args.first().map_or_else(String::new, |value| {
                 format_template_float_unary(value, f64::ceil)
             }),
@@ -38,24 +103,22 @@ pub(crate) fn evaluate_template_function(
                 };
                 format_template_bytes(value)
             }
-            "date" => format_template_date(&args),
+            "date" => format_template_date(args),
             "duration" | "duration_seconds" => {
                 let Some(value) = args.first() else {
                     return String::new();
                 };
                 format_template_duration_seconds(value)
             }
-            "div" => format_template_integer_binary(&args, |left, right| {
-                (right != 0).then_some(left / right)
+            "div" => format_template_integer_binary(args, |left, right| {
+                (right != 0).then(|| left.wrapping_div(right))
             }),
-            "divf" => format_template_float_fold(&args, |left, right| {
-                (right != 0.0).then_some(left / right)
-            }),
+
             "eq" => {
                 if args.len() < 2 {
                     return "false".to_string();
                 }
-                (args[1] == args[0]).to_string()
+                args[1..].iter().any(|value| value == &args[0]).to_string()
             }
             "ne" => {
                 if args.len() < 2 {
@@ -63,10 +126,10 @@ pub(crate) fn evaluate_template_function(
                 }
                 (args[1] != args[0]).to_string()
             }
-            "lt" => format_template_ordering(&args, std::cmp::Ordering::is_lt),
-            "le" => format_template_ordering(&args, std::cmp::Ordering::is_le),
-            "gt" => format_template_ordering(&args, std::cmp::Ordering::is_gt),
-            "ge" => format_template_ordering(&args, std::cmp::Ordering::is_ge),
+            "lt" => format_template_ordering(args, std::cmp::Ordering::is_lt),
+            "le" => format_template_ordering(args, std::cmp::Ordering::is_le),
+            "gt" => format_template_ordering(args, std::cmp::Ordering::is_gt),
+            "ge" => format_template_ordering(args, std::cmp::Ordering::is_ge),
             "float64" => args
                 .first()
                 .map_or_else(String::new, |value| parse_template_float(value)),
@@ -94,21 +157,21 @@ pub(crate) fn evaluate_template_function(
                 };
                 indent_template_string(spaces, &args[1])
             }
-            "int" => args
-                .first()
-                .map_or_else(String::new, |value| parse_template_integer(value)),
+            "int" => args.first().map_or_else(String::new, |value| {
+                parse_template_integer(value).to_string()
+            }),
             "len" => args
                 .first()
                 .map_or_else(String::new, |value| value.len().to_string()),
-            "max" => format_template_integer_min_max(&args, Ord::max),
-            "maxf" => format_template_float_min_max(&args, f64::max),
-            "min" => format_template_integer_min_max(&args, Ord::min),
-            "minf" => format_template_float_min_max(&args, f64::min),
-            "mod" => format_template_integer_binary(&args, |left, right| {
-                (right != 0).then_some(left % right)
+            "max" => format_template_integer_min_max(args, Ord::max),
+            "maxf" => format_template_float_min_max(args, f64::max),
+            "min" => format_template_integer_min_max(args, Ord::min),
+            "minf" => format_template_float_min_max(args, f64::min),
+            "mod" => format_template_integer_binary(args, |left, right| {
+                (right != 0).then(|| left.wrapping_rem(right))
             }),
-            "mul" => format_template_integer_product(&args),
-            "mulf" => format_template_float_product(&args),
+            "mul" => format_template_integer_product(args),
+
             "repeat" => {
                 if args.len() < 2 {
                     return String::new();
@@ -147,7 +210,7 @@ pub(crate) fn evaluate_template_function(
                     .replace_all(&args[1], NoExpand(args[2].as_str()))
                     .into_owned()
             }
-            "round" => format_template_float_round(&args),
+            "round" => format_template_float_round(args),
             "trunc" => {
                 if args.len() < 2 {
                     return String::new();
@@ -166,8 +229,8 @@ pub(crate) fn evaluate_template_function(
                 };
                 substring_template_string(&args[2], start, end)
             }
-            "toDate" => format_template_to_date(&args),
-            "toDateInZone" => format_template_to_date_in_zone(&args),
+            "toDate" => format_template_to_date(args),
+            "toDateInZone" => format_template_to_date_in_zone(args),
             "trim" => args
                 .first()
                 .map_or_else(String::new, |value| value.trim().to_string()),
@@ -195,11 +258,12 @@ pub(crate) fn evaluate_template_function(
                     .unwrap_or(&args[1])
                     .to_string()
             }
-            "sub" => format_template_integer_binary(&args, |left, right| Some(left - right)),
-            "subf" => format_template_float_fold(&args, |left, right| Some(left - right)),
-            "unixEpoch" => epoch_template_timestamp(&args, 1_000_000_000),
-            "unixEpochMillis" => epoch_template_timestamp(&args, 1_000_000),
-            "unixEpochNanos" => epoch_template_timestamp(&args, 1),
+            "sub" => {
+                format_template_integer_binary(args, |left, right| Some(left.wrapping_sub(right)))
+            }
+            "unixEpoch" => epoch_template_timestamp(args, 1_000_000_000),
+            "unixEpochMillis" => epoch_template_timestamp(args, 1_000_000),
+            "unixEpochNanos" => epoch_template_timestamp(args, 1),
             "unixToTime" => args
                 .first()
                 .map_or_else(String::new, |value| unix_to_template_timestamp(value)),
@@ -213,8 +277,7 @@ pub(crate) fn evaluate_template_function(
                 .first()
                 .map_or_else(String::new, |value| urldecode_template_string(value)),
             _ => String::new(),
-        });
-    TemplateRuntimeValue::String(rendered)
+        })
 }
 
 fn evaluate_prometheus_template_function(name: &str, args: &[String]) -> Option<String> {

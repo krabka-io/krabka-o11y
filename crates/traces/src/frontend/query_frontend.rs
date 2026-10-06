@@ -504,8 +504,10 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     /// aggregates `min`, `max`, `avg` and `quantile_over_time`.
     ///
     /// A single unrestricted job lets one querier compute the full hot and cold
-    /// union correctly for every aggregate. This method applies only exemplar
-    /// limiting.
+    /// union correctly for every aggregate. The unrestricted HTTP job applies
+    /// pinned frontend label decoding before reduction and second stages;
+    /// this method then applies only exemplar limiting. Sharding metrics in
+    /// the future would require raw partial aggregates and a final combiner.
     ///
     /// The one querier is chosen by ownership of the query text, so repeated
     /// evaluations of the same query land on the same querier while the pool

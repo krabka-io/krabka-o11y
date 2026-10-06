@@ -16,10 +16,12 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use base64::Engine as _;
 use generated_differential::{CompareOp, TypedConstructor, TypedExpr};
 use http_body_util::BodyExt as _;
 use krabka_traceql::{
-    AttrValue as TraceqlAttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceqlEngine,
+    AttrValue as TraceqlAttrValue, EngineOpts, EventRef, InMemorySpanStore, InputSpan, LinkRef,
+    TraceqlEngine,
 };
 use krabka_traces::{
     AttrValue, Span, SpanRecord, TracesError,
@@ -35,7 +37,10 @@ use krabka_units::{
     convert::{ByteSizeExt as _, TimeExt as _},
 };
 use opentelemetry_proto::tonic::{
-    common::v1::{AnyValue, InstrumentationScope, KeyValue as OtlpKeyValue, any_value::Value},
+    common::v1::{
+        AnyValue, ArrayValue, InstrumentationScope, KeyValue as OtlpKeyValue, KeyValueList,
+        any_value::Value,
+    },
     resource::v1::Resource,
     trace::v1::{ResourceSpans, ScopeSpans, Span as OtlpSpan, Status as OtlpStatus, TracesData},
 };
@@ -85,6 +90,8 @@ live_store:
 storage:
   trace:
     backend: local
+    block:
+      version: vParquet5
     wal:
       path: /tmp/tempo/wal
     local:
@@ -390,6 +397,24 @@ async fn compare_generated_trace_queries(
                 0,
             )),
             TypedConstructor::TraceAnd(checkout.clone()),
+            TypedConstructor::TraceAnd(TypedExpr::trace_duration_field_compare(
+                "span:duration",
+                CompareOp::Gt,
+                "event:timeSinceStart",
+            )),
+            TypedConstructor::TraceAnd(TypedExpr::trace_duration_times_integer_compare(
+                "duration",
+                2,
+                CompareOp::Gt,
+                "duration",
+            )),
+            TypedConstructor::TraceAnd(TypedExpr::trace_field_compare(
+                "",
+                "span:name",
+                CompareOp::Eq,
+                "",
+                "event:name",
+            )),
             TypedConstructor::TraceOr(TypedExpr::trace_string_compare(
                 "",
                 "name",
@@ -494,7 +519,7 @@ async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult
     let query_start = trace_start_secs.saturating_sub(60);
     let query_end = trace_start_secs + 120;
     let query_range = format!("start={query_start}&end={query_end}");
-    let otlp_body = sample_otlp_body_at(trace_start_secs * 1_000_000_000);
+    let otlp_body = reservoir_otlp_body_at(trace_start_secs * 1_000_000_000);
     let krabka = start_krabka_pair(&otlp_body).await?;
 
     post_otlp(
@@ -522,6 +547,17 @@ async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult
     )
     .await?;
     assert_metric_totals_match(&tempo_metrics, &krabka_metrics);
+    let pipeline_result = compare_live_pipeline_hints(
+        &client,
+        &tempo_query,
+        &krabka.base_url,
+        &query_range,
+        trace_start_secs,
+    )
+    .await;
+    let instant_result =
+        compare_live_instant_bounds(&client, &tempo_query, &krabka.base_url, trace_start_secs)
+            .await;
     let numeric_result =
         compare_live_numeric_metrics(&client, &tempo_query, &krabka.base_url, &query_range).await;
     let exemplar_result = compare_live_singleton_exemplar(
@@ -534,12 +570,721 @@ async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult
     .await;
     let arithmetic_result =
         compare_live_field_arithmetic(&client, &tempo_query, &krabka.base_url, &query_range).await;
+    let supported_result =
+        compare_live_supported_scopes(&client, &tempo_query, &krabka.base_url, &query_range).await;
+    let output_result = compare_live_expression_outputs(
+        &client,
+        &tempo_query,
+        &krabka.base_url,
+        &query_range,
+        trace_start_secs,
+    )
+    .await;
+    let retrieval_result =
+        compare_live_retrieval_shapes(&client, &tempo_query, &krabka.base_url, &query_range).await;
+    let reservoir_result = compare_live_exemplar_reservoir(
+        &client,
+        &tempo_query,
+        &krabka.base_url,
+        &query_range,
+        trace_start_secs,
+    )
+    .await;
+    pipeline_result?;
+    instant_result?;
     numeric_result?;
     exemplar_result?;
     arithmetic_result?;
-
+    supported_result?;
+    reservoir_result?;
+    output_result?;
+    retrieval_result?;
     krabka.shutdown();
     Ok(())
+}
+
+async fn compare_live_instant_bounds(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    anchor: u64,
+) -> TestResult {
+    let end = anchor + 90;
+    let rows = [
+        ("default-since", format!("end={end}")),
+        ("empty-start", format!("start=&end={end}")),
+        ("explicit-since", format!("end={end}&since=2m")),
+        ("ignored-time", format!("end={end}&time=bogus")),
+        ("nanoseconds", format!("end={end}123456789")),
+        ("fractional-seconds", format!("end={end}.123456789")),
+        ("default-clock", "time=bogus".into()),
+        ("start-only", format!("start={}", anchor - 60)),
+        ("short-since", format!("end={end}&since=30s")),
+        ("rate", format!("end={end}&since=2m")),
+    ];
+    let mut cases = Vec::new();
+    let mut failures = Vec::new();
+    for (id, params) in rows {
+        let operation = if id == "rate" {
+            "rate"
+        } else {
+            "count_over_time"
+        };
+        let query = format!(
+            "{{ resource.service.name = \"checkout\" }} | {operation}() with(exemplars=false)"
+        );
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        // Three independently constructed checkout spans lie inside two-minute
+        // windows. Tempo retains its default zero count for the empty short window.
+        let value = if id == "rate" { 3.0 / 120.0 } else { 3.0 };
+        let expected = if id == "short-since" {
+            json!([{"labels":[{"key":"__name__","value":{"stringValue":operation}}]}])
+        } else {
+            json!([{
+                "labels":[{"key":"__name__","value":{"stringValue":operation}}],
+                "value":value,
+            }])
+        };
+        let suffix = format!("/api/metrics/query?q={encoded}&{params}");
+        let mut observations = Vec::new();
+        for (base, tenant) in [(oracle, None), (candidate, Some(TENANT))] {
+            let before = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+            let response = get_json(client, &format!("{base}{suffix}"), tenant).await;
+            let after = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+            let body = response
+                .as_ref()
+                .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+            let result = response.and_then(|body| {
+                let series = body.get("series").map_or(Ok(&[][..]), |value| {
+                    value
+                        .as_array()
+                        .map(Vec::as_slice)
+                        .ok_or("invalid instant series")
+                })?;
+                let expected_rows = expected.as_array().unwrap();
+                if series.len() != expected_rows.len() {
+                    return Err("instant series count differs".into());
+                }
+                for (actual, expected) in series.iter().zip(expected_rows) {
+                    let fields = actual.as_object().ok_or("invalid instant series")?;
+                    let actual_value = actual.get("value").map_or(Ok(0.0), |value| {
+                        value.as_f64().ok_or("invalid instant scalar")
+                    })?;
+                    let expected_value = expected
+                        .get("value")
+                        .and_then(JsonValue::as_f64)
+                        .unwrap_or(0.0);
+                    if fields.len() != expected.as_object().unwrap().len()
+                        || actual["labels"] != expected["labels"]
+                        || !actual_value.is_finite()
+                        || (actual_value - expected_value).abs() >= f64::EPSILON
+                    {
+                        return Err(
+                            "instant scalar series differs from independent span/window ledger"
+                                .into(),
+                        );
+                    }
+                }
+                Ok(())
+            });
+            if let Err(error) = &result {
+                failures.push(format!("{id}/{base}: {error}"));
+            }
+            observations.push(json!({"body":body,"clock_ms":[before,after],
+                "error":result.err().map(|error|error.to_string())}));
+        }
+        let matched = observations.iter().all(|value| value["error"].is_null());
+        cases.push(
+            json!({"stableid":format!("tempo-instant-{id}"),"query":query,
+            "request":{"params":params},"fixture_anchor":anchor,
+            "independent_expected":expected,
+            "upstream":observations[0],"krabka":observations[1],
+            "status":if matched {"matched"}else{"mismatch"}}),
+        );
+    }
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(output).join("tempo-instant-bounds-conformance.json"),
+            serde_json::to_vec_pretty(&json!({"planned":10,"cases":cases}))?,
+        )?;
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
+}
+
+async fn compare_live_pipeline_hints(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    range: &str,
+    anchor: u64,
+) -> TestResult {
+    let timestamp = |offset: i64| -> TestResult<i64> {
+        Ok(i64::try_from(anchor)?
+            .checked_add(offset)
+            .ok_or("fixture timestamp overflow")?
+            .checked_mul(1000)
+            .ok_or("fixture timestamp overflow")?)
+    };
+    let count = pipeline_count_expectation(anchor, (1.0, 2.0))?;
+    let zero = pipeline_count_expectation(anchor, (0.0, 0.0))?;
+    let occupied = |samples: JsonValue| json!({"series":[{"labels":[{"key":"__name__","value":{"stringValue":"count_over_time"}}],"samples":samples,"exemplars":[]}]});
+    let first = occupied(json!([{"timestampMs":timestamp(0)?.to_string(),"value":1.0}]));
+    let both = occupied(
+        json!([{"timestampMs":timestamp(0)?.to_string(),"value":1.0},{"timestampMs":timestamp(30)?.to_string(),"value":2.0}]),
+    );
+    let ranked = json!({"series":[
+        {"labels":[{"key":"name","value":{"stringValue":"GET /checkout"}}],"samples":[{"timestampMs":timestamp(0)?.to_string(),"value":0.5}],"exemplars":[]},
+        {"labels":[{"key":"name","value":{"stringValue":"charge card"}}],"samples":[{"timestampMs":timestamp(30)?.to_string(),"value":0.14}],"exemplars":[]}
+    ]});
+    let selector = "{ resource.service.name = \"checkout\" }";
+    let mut cases = Vec::new();
+    let mut failures = Vec::new();
+    for (id, pipeline, hints, expected) in [
+        (
+            "ordered-ranks",
+            "sum_over_time(duration) by(name) > 0 | topk(2) | bottomk(1)",
+            "exemplars=false",
+            ranked,
+        ),
+        (
+            "chained-filters",
+            "count_over_time() > 0 < 2",
+            "exemplars=false",
+            first,
+        ),
+        (
+            "scalar-before-metrics",
+            "count() > 2 | count_over_time()",
+            "exemplars=false",
+            count.clone(),
+        ),
+        (
+            "scalar-before-metrics-negative",
+            "count() > 3 | count_over_time()",
+            "exemplars=false",
+            zero.clone(),
+        ),
+        (
+            "group-filter-before-metrics",
+            "by(span.limit) | count() > 2 | count_over_time()",
+            "exemplars=false",
+            count.clone(),
+        ),
+        (
+            "group-filter-before-metrics-negative",
+            "by(name) | count() > 1 | count_over_time()",
+            "exemplars=false",
+            zero,
+        ),
+        (
+            "typed-unknown-hints",
+            "count_over_time()",
+            "exemplars=false, unused=\"opaque\", most_recent=5, timeout=1s",
+            count.clone(),
+        ),
+        (
+            "typed-float-hint",
+            "count_over_time()",
+            "exemplars=false, sample=1.0",
+            count,
+        ),
+        (
+            "scalar-rank-filter-composition",
+            "avg(span.limit) >= 3 | count_over_time() > 0 < 3 | topk(2) | bottomk(1)",
+            "exemplars=false, sample=0.0",
+            both,
+        ),
+    ] {
+        let query = format!("{selector} | {pipeline} with({hints})");
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
+        let upstream_result = get_json(client, &format!("{oracle}{suffix}"), None).await;
+        let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
+        let upstream = upstream_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let actual = actual_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let result = upstream_result.and_then(|upstream| {
+            actual_result.and_then(|actual| {
+                metric_series_match(&expected, &upstream)?;
+                metric_series_match(&expected, &actual)?;
+                metric_series_match(&upstream, &actual)
+            })
+        });
+        if let Err(error) = &result {
+            failures.push(format!("{id}: {error}"));
+        }
+        cases.push(json!({"stableid":format!("tempo-live-pipeline-{id}"), "query":query,"request":{"range":range,"step":"30s"},"expected_outcome":"query-result","comparison_kind":"exact-whole-series","independent_expected":expected,"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
+    }
+    compare_live_sampled_pipelines(
+        client,
+        oracle,
+        candidate,
+        range,
+        anchor,
+        (&mut cases, &mut failures),
+    )
+    .await?;
+    for (id, expression) in [
+        (
+            "aggregate-result-arithmetic-rejected",
+            "count() + sum(span.limit) > 10 | count_over_time()",
+        ),
+        (
+            "aggregate-result-comparison-rejected",
+            "count() > sum(span.limit) | count_over_time()",
+        ),
+        (
+            "dynamic-hint-rejected",
+            "count_over_time() with(sample=span.limit)",
+        ),
+    ] {
+        let query = format!("{selector} | {expression}");
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
+        let mut responses = Vec::new();
+        let mut rejected = true;
+        for (implementation, base, tenant) in [
+            ("upstream", oracle, None),
+            ("krabka", candidate, Some(TENANT)),
+        ] {
+            let mut request = client.get(format!("{base}{suffix}"));
+            if let Some(tenant) = tenant {
+                request = request.header("x-scope-orgid", tenant);
+            }
+            let response = request.send().await?;
+            let status = response.status().as_u16();
+            let body = response.text().await?;
+            // Unsupported aggregate-result shapes are rejected in the pinned
+            // validator before execution; unrelated transport errors cannot pass.
+            let error_code = if body.to_ascii_lowercase().contains("scalar filter") {
+                Some("unsupported-scalar-filter")
+            } else {
+                traceql_query_rejection_kind(status, &body)
+            };
+            let query_error = status == 400 && error_code.is_some();
+            rejected &= query_error;
+            responses.push(json!({"implementation":implementation,"http_status":status,"body":body,"query_rejection":query_error,"canonical":{"status":status,"error_code":error_code}}));
+        }
+        if !rejected {
+            failures.push(format!("{id}: expected pinned query rejection"));
+        }
+        cases.push(json!({"stableid":format!("tempo-live-pipeline-{id}"),"query":query,"request":{"range":range,"step":"30s"},"expected_outcome":"query-rejection","classification":"paired-expected-error","independent_expected":{"outcome":"query-rejection","http_status":400},"oracle":{"status":responses[0]["http_status"],"error_code":if responses[0]["query_rejection"] == json!(true){"query-rejection"}else{"unclassified-error"}},"candidate":{"status":responses[1]["http_status"],"error_code":if responses[1]["query_rejection"] == json!(true){"query-rejection"}else{"unclassified-error"}},"upstream_normalized":responses[0]["canonical"],"krabka_normalized":responses[1]["canonical"],"responses":responses,"status":if rejected{"matched"}else{"mismatch"}}));
+    }
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(output).join("tempo-pipeline-hint-conformance.json"),
+            serde_json::to_vec_pretty(
+                &json!({"planned":15,"upstream_source":{"repository":"grafana/tempo","version":"3.0.3","revision":"1900ed7bb5cad1a3edc285783d7d4ac4278337dc"},"cases":cases}),
+            )?,
+        )?;
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
+}
+
+fn pipeline_count_expectation(anchor: u64, occupied: (f64, f64)) -> TestResult<JsonValue> {
+    let anchor_ms = i64::try_from(anchor)?
+        .checked_mul(1000)
+        .ok_or("fixture timestamp overflow")?;
+    let samples = (-2_i64..=4).map(|index| json!({"timestampMs":(anchor_ms + index * 30_000).to_string(),"value":match index { 0 => occupied.0, 1 => occupied.1, _ => 0.0 }})).collect::<Vec<_>>();
+    Ok(
+        json!({"series":[{"labels":[{"key":"__name__","value":{"stringValue":"count_over_time"}}],"samples":samples,"exemplars":[]}]}),
+    )
+}
+
+fn sampled_pipeline_expectations(anchor: u64, traces: bool) -> TestResult<Vec<JsonValue>> {
+    // Nine spans: checkout has 3, and three reservoir traces have 2 each.
+    // A periodic span sampler admits 5 of 9, hence scales by 9/5. A trace
+    // sampler admits 2 of 4 complete traces and scales by 2. Physical storage
+    // order can decide whether the checkout root belongs to the admitted set.
+    let occupied = if traces {
+        [(0.0, 8.0), (2.0, 8.0)]
+    } else {
+        [(0.0, 9.0), (9.0 / 5.0, 4.0 * (9.0 / 5.0))]
+    };
+    occupied
+        .into_iter()
+        .map(|counts| pipeline_count_expectation(anchor, counts))
+        .collect()
+}
+
+fn sampled_average_expectations(anchor: u64) -> TestResult<Vec<JsonValue>> {
+    let anchor_ms = i64::try_from(anchor)?
+        .checked_mul(1000)
+        .ok_or("fixture timestamp overflow")?;
+    // Every one of the nine spans has value7. Sampling admits5 spans; the
+    // first bucket contains only the checkout root, the second the other8.
+    // Thus the second bucket is necessarily populated, independent of order.
+    Ok([false, true].into_iter().map(|root_admitted| {
+        let mut samples = Vec::new();
+        if root_admitted { samples.push(json!({"timestampMs":anchor_ms.to_string(), "value":7.0})); }
+        samples.push(json!({"timestampMs":(anchor_ms + 30_000).to_string(), "value":7.0}));
+        json!({"series":[{"labels":[{"key":"__name__","value":{"stringValue":"avg_over_time"}}],"samples":samples,"exemplars":[]}]})
+    }).collect())
+}
+
+fn check_sampled_pipeline_ledger(response: &JsonValue, allowed: &[JsonValue]) -> TestResult {
+    if allowed
+        .iter()
+        .any(|expected| metric_series_match(expected, response).is_ok())
+    {
+        Ok(())
+    } else {
+        Err("sampled output differs from independently enumerated complete sampling cohorts".into())
+    }
+}
+
+async fn compare_live_sampled_pipelines(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    range: &str,
+    anchor: u64,
+    (cases, failures): (&mut Vec<JsonValue>, &mut Vec<String>),
+) -> TestResult {
+    for (id, expression, traces, average) in [
+        (
+            "fractional-span-sampling",
+            "{} | count_over_time() with(sample=0.5, exemplars=false)",
+            false,
+            false,
+        ),
+        (
+            "fractional-trace-sampling",
+            "{} | count() > 1 | count_over_time() with(sample=0.5, exemplars=false)",
+            true,
+            false,
+        ),
+        (
+            "fractional-span-average",
+            "{} | avg_over_time(span.sample.constant) with(sample=0.5, exemplars=false)",
+            false,
+            true,
+        ),
+    ] {
+        let allowed = if average {
+            sampled_average_expectations(anchor)?
+        } else {
+            sampled_pipeline_expectations(anchor, traces)?
+        };
+        let encoded: String = url::form_urlencoded::byte_serialize(expression.as_bytes()).collect();
+        let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
+        let upstream_result = get_json(client, &format!("{oracle}{suffix}"), None).await;
+        let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
+        let upstream = upstream_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let actual = actual_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let result = upstream_result.and_then(|upstream| {
+            actual_result.and_then(|actual| {
+                check_sampled_pipeline_ledger(&upstream, &allowed)?;
+                check_sampled_pipeline_ledger(&actual, &allowed)
+            })
+        });
+        if let Err(error) = &result {
+            failures.push(format!("{id}: {error}"));
+        }
+        let mut independent = json!({"span_count":9,"trace_sizes":[3,2,2,2],"sampling_interval":2,"sampled_entries":if traces{2}else{5},"scaling_factor":if traces{2.0}else{9.0/5.0},"allowed_complete_outputs":allowed});
+        if average {
+            independent["constant_value"] = json!(7);
+            independent["average_value_multiplier"] = json!(1);
+        }
+        cases.push(json!({"stableid":format!("tempo-live-pipeline-{id}"),"query":expression,"request":{"range":range,"step":"30s"},"expected_outcome":"query-result","comparison_kind":"independent-sampling-domain","independent_expected":independent,"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
+    }
+    Ok(())
+}
+
+#[test]
+fn sampled_pipeline_ledger_rejects_partial_traces_wrong_scaling_and_wrong_buckets() {
+    let allowed = sampled_pipeline_expectations(300, true).unwrap();
+    check_sampled_pipeline_ledger(&allowed[0], &allowed).unwrap();
+    check_sampled_pipeline_ledger(&allowed[1], &allowed).unwrap();
+    let partial_trace = pipeline_count_expectation(300, (9.0 / 5.0, 4.0 * (9.0 / 5.0))).unwrap();
+    assert2::assert!(check_sampled_pipeline_ledger(&partial_trace, &allowed).is_err());
+    for (path, value) in [
+        ("/series/0/samples/3/value", json!(6)),
+        ("/series/0/samples/2/timestampMs", json!("300001")),
+        ("/series/0/labels/0/value", json!({"stringValue":"rate"})),
+    ] {
+        let mut wrong = allowed[1].clone();
+        *wrong.pointer_mut(path).unwrap() = value;
+        assert2::assert!(
+            check_sampled_pipeline_ledger(&wrong, &allowed).is_err(),
+            "{path}"
+        );
+    }
+    let span_allowed = sampled_pipeline_expectations(300, false).unwrap();
+    for valid in &span_allowed {
+        check_sampled_pipeline_ledger(valid, &span_allowed).unwrap();
+    }
+    assert2::assert!(check_sampled_pipeline_ledger(&allowed[1], &span_allowed).is_err());
+}
+
+#[test]
+fn sampled_average_domain_rejects_value_scaling_and_missing_mandatory_bucket() {
+    let allowed = sampled_average_expectations(300).unwrap();
+    for expected in &allowed {
+        check_sampled_pipeline_ledger(expected, &allowed).unwrap();
+        let mut scaled = expected.clone();
+        for sample in scaled["series"][0]["samples"].as_array_mut().unwrap() {
+            sample["value"] = json!(7.0 * (9.0 / 5.0));
+        }
+        assert2::assert!(check_sampled_pipeline_ledger(&scaled, &allowed).is_err());
+    }
+    let mut missing = allowed[1].clone();
+    missing["series"][0]["samples"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    assert2::assert!(check_sampled_pipeline_ledger(&missing, &allowed).is_err());
+}
+
+async fn compare_live_retrieval_shapes(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    query_range: &str,
+) -> TestResult {
+    let upstream_result = get_trace_by_id_until_found(client, oracle, None, query_range).await;
+    let actual_result = get_trace_by_id(client, candidate, Some(TENANT), query_range).await;
+    let upstream = upstream_result
+        .as_ref()
+        .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+    let actual = actual_result
+        .as_ref()
+        .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+    let upstream_protobuf = get_retrieval_protobuf(client, oracle, None, query_range).await;
+    let actual_protobuf =
+        get_retrieval_protobuf(client, candidate, Some(TENANT), query_range).await;
+    let upstream_v1 = upstream_protobuf.as_ref().map_or_else(
+        |error| json!({"error":error.to_string()}),
+        |(_, value)| value.clone(),
+    );
+    let actual_v1 = actual_protobuf.as_ref().map_or_else(
+        |error| json!({"error":error.to_string()}),
+        |(_, value)| value.clone(),
+    );
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        for (name, result) in [
+            ("upstream", &upstream_protobuf),
+            ("krabka", &actual_protobuf),
+        ] {
+            if let Ok((bytes, _)) = result {
+                std::fs::write(
+                    std::path::PathBuf::from(&output).join(format!("tempo-retrieval-{name}.pb")),
+                    bytes,
+                )?;
+            }
+        }
+    }
+    let mut cases = Vec::new();
+    let mut failures = Vec::new();
+    for (id, expected) in retrieval_expected_values() {
+        let key = format!("retrieval.{id}");
+        let result: TestResult = (|| {
+            let expected = canonical_metric_any_value(&expected)?;
+            let oracle_values = retrieval_values(&upstream, &key)?;
+            let candidate_values = retrieval_values(&actual, &key)?;
+            let independent = BTreeMap::from([
+                ("span", expected.clone()),
+                ("event", expected.clone()),
+                ("link", expected),
+            ]);
+            let oracle_v1 = retrieval_values(&upstream_v1, &key)?;
+            let candidate_v1 = retrieval_values(&actual_v1, &key)?;
+            if oracle_values != independent
+                || candidate_values != independent
+                || oracle_v1 != independent
+                || candidate_v1 != independent
+            {
+                return Err(format!("{key}: expected {independent:?}, TempoJSON {oracle_values:?}, KrabkaJSON {candidate_values:?}, TempoProtobuf {oracle_v1:?}, KrabkaProtobuf {candidate_v1:?}").into());
+            }
+            Ok(())
+        })();
+        if let Err(error) = &result {
+            failures.push(format!("{id}: {error}"));
+        }
+        cases.push(json!({"stableid":format!("tempo-live-retrieval-shape-{id}"),"request":{"path":format!("/api/v2/traces/{TRACE_ID_HEX}"),"range":query_range,"formats":["v2-json","v1-protobuf"]},"independent_expected":{"trace_id":TRACE_ID_HEX,"span_id":"0202020202020202","attribute_key":key,"locations":["span","event","link"],"value":expected},"upstream":upstream,"krabka":actual,"v1_protobuf":{"upstream":upstream_v1,"krabka":actual_v1,"upstream_artifact":"tempo-retrieval-upstream.pb","krabka_artifact":"tempo-retrieval-krabka.pb"},"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error:Box<dyn std::error::Error + Send + Sync>|error.to_string())}));
+    }
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(output).join("tempo-retrieval-shape-conformance.json"),
+            serde_json::to_vec_pretty(&json!({"planned":12,"cases":cases}))?,
+        )?;
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
+}
+
+async fn get_retrieval_protobuf(
+    client: &reqwest::Client,
+    endpoint: &str,
+    tenant: Option<&str>,
+    range: &str,
+) -> TestResult<(Vec<u8>, JsonValue)> {
+    let mut request = client
+        .get(format!("{endpoint}/api/traces/{TRACE_ID_HEX}?{range}"))
+        .header("Accept", "application/protobuf");
+    if let Some(tenant) = tenant {
+        request = request.header("x-scope-orgid", tenant);
+    }
+    let response = request.send().await?;
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let bytes = response.bytes().await?.to_vec();
+    if !status.is_success() || content_type != "application/protobuf" {
+        return Err(format!(
+            "trace protobuf {status}/{content_type}: {}",
+            String::from_utf8_lossy(&bytes)
+        )
+        .into());
+    }
+    let trace = TracesData::decode(bytes.as_slice())?;
+    let mut value = serde_json::to_value(&trace)?;
+    for (index, resource) in trace.resource_spans.iter().enumerate() {
+        let json = &mut value["resourceSpans"][index];
+        if let Some(resource) = &resource.resource {
+            restore_retrieval_attributes(&mut json["resource"], &resource.attributes);
+        }
+        for (index, scope) in resource.scope_spans.iter().enumerate() {
+            let json = &mut json["scopeSpans"][index];
+            if let Some(scope) = &scope.scope {
+                restore_retrieval_attributes(&mut json["scope"], &scope.attributes);
+            }
+            for (index, span) in scope.spans.iter().enumerate() {
+                let json = &mut json["spans"][index];
+                restore_retrieval_attributes(json, &span.attributes);
+                for (index, event) in span.events.iter().enumerate() {
+                    restore_retrieval_attributes(&mut json["events"][index], &event.attributes);
+                }
+                for (index, link) in span.links.iter().enumerate() {
+                    restore_retrieval_attributes(&mut json["links"][index], &link.attributes);
+                }
+            }
+        }
+    }
+    Ok((bytes, json!({"trace":value})))
+}
+
+fn restore_retrieval_attributes(owner: &mut JsonValue, attributes: &[OtlpKeyValue]) {
+    for (index, attribute) in attributes.iter().enumerate() {
+        if let Some(value) = &attribute.value {
+            owner["attributes"][index]["value"] = AttrValue::encode_otlp_json(value);
+        }
+    }
+}
+
+fn retrieval_values(
+    response: &JsonValue,
+    key: &str,
+) -> TestResult<BTreeMap<&'static str, JsonValue>> {
+    let spans = response["trace"]["resourceSpans"]
+        .as_array()
+        .ok_or("trace resources missing")?
+        .iter()
+        .flat_map(|resource| resource["scopeSpans"].as_array().into_iter().flatten())
+        .flat_map(|scope| scope["spans"].as_array().into_iter().flatten())
+        .filter(|span| span["name"] == "GET /checkout")
+        .collect::<Vec<_>>();
+    if spans.len() != 1 {
+        return Err("retrieval root span missing or duplicated".into());
+    }
+    let span = spans[0];
+    for (field, expected) in [("traceId", vec![1; 16]), ("spanId", vec![2; 8])] {
+        let value = span[field].as_str().ok_or("retrieval identity missing")?;
+        let decoded = if value.len() == expected.len() * 2
+            && value.bytes().all(|value| value.is_ascii_hexdigit())
+        {
+            hex::decode(value)?
+        } else {
+            base64::engine::general_purpose::STANDARD.decode(value)?
+        };
+        if decoded != expected {
+            return Err(format!("retrieval {field} differs").into());
+        }
+    }
+    let mut result = BTreeMap::new();
+    for (location, owner) in [
+        ("span", span),
+        ("event", &span["events"][0]),
+        ("link", &span["links"][0]),
+    ] {
+        let values = owner["attributes"]
+            .as_array()
+            .ok_or("retrieval attributes missing")?
+            .iter()
+            .filter(|attribute| attribute["key"] == key)
+            .collect::<Vec<_>>();
+        if values.len() != 1 {
+            return Err(format!("retrieval {key}/{location} missing or duplicated").into());
+        }
+        result.insert(location, canonical_metric_any_value(&values[0]["value"])?);
+    }
+    Ok(result)
+}
+
+fn retrieval_expected_values() -> Vec<(&'static str, JsonValue)> {
+    vec![
+        ("empty", json!({"arrayValue":{"values":[]}})),
+        ("empty-oneof", json!({"arrayValue":{"values":[{}]}})),
+        (
+            "singleton-int",
+            json!({"arrayValue":{"values":[{"intValue":"9223372036854775807"}]}}),
+        ),
+        (
+            "multi-int",
+            json!({"arrayValue":{"values":[{"intValue":"1"},{"intValue":"2"}]}}),
+        ),
+        (
+            "multi-float",
+            json!({"arrayValue":{"values":[{"doubleValue":1.5},{"doubleValue":2.5}]}}),
+        ),
+        (
+            "multi-string",
+            json!({"arrayValue":{"values":[{"stringValue":"one"},{"stringValue":"two"}]}}),
+        ),
+        (
+            "multi-bool",
+            json!({"arrayValue":{"values":[{"boolValue":true},{"boolValue":false}]}}),
+        ),
+        (
+            "mixed",
+            json!({"arrayValue":{"values":[{"intValue":"1"},{"stringValue":"1"}]}}),
+        ),
+        (
+            "nested",
+            json!({"arrayValue":{"values":[{"arrayValue":{"values":[{"intValue":"1"},{"intValue":"2"}]}}]}}),
+        ),
+        ("bytes", json!({"bytesValue":"AP8="})),
+        (
+            "kvlist",
+            json!({"kvlistValue":{"values":[{"key":"answer","value":{"intValue":"9223372036854775807"}}]}}),
+        ),
+        (
+            "nonfinite-mixed",
+            json!({"arrayValue":{"values":[{"doubleValue":"Infinity"},{"doubleValue":"-Infinity"},{"doubleValue":"NaN"},{"stringValue":"finite-decoy"}]}}),
+        ),
+    ]
 }
 
 async fn compare_live_numeric_metrics(
@@ -682,6 +1427,731 @@ async fn compare_live_field_arithmetic(
     }
 }
 
+async fn compare_live_expression_outputs(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    query_range: &str,
+    anchor: u64,
+) -> TestResult {
+    let checkout = "{ resource.service.name = \"checkout\" }";
+    let all_ids = ["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX];
+    let set = |ids: &[&str], attributes: JsonValue| json!({"span_ids":ids,"matched":ids.len(),"attributes":attributes});
+    let mut cases = Vec::new();
+    let mut failures = Vec::new();
+    for (id, expression, expected) in [
+        (
+            "aggregate-arithmetic",
+            "sum(span.limit + 1) > 10",
+            json!([set(
+                &all_ids,
+                json!([
+                    {"key":"sum(span.limit + 1)","value":{"intValue":"12"}}
+                ])
+            )]),
+        ),
+        (
+            "aggregate-average",
+            "avg(span.limit + 1) = 4",
+            json!([set(
+                &all_ids,
+                json!([
+                    {"key":"avg(span.limit + 1)","value":{"doubleValue":4.0}}
+                ])
+            )]),
+        ),
+        (
+            "boolean-group-filter",
+            "by(duration > 200ms) | count() > 1",
+            json!([set(
+                &all_ids[1..],
+                json!([
+                    {"key":"by(duration > 200ms)","value":{"boolValue":false}},
+                    {"key":"count()","value":{"intValue":"2"}}
+                ])
+            )]),
+        ),
+        (
+            "boolean-group-coalesce",
+            "by(duration > 200ms) | coalesce() | count() > 2",
+            json!([set(
+                &all_ids,
+                json!([
+                    {"key":"count()","value":{"intValue":"3"}}
+                ])
+            )]),
+        ),
+        (
+            "array-group-attributes",
+            "by(span.numbers)",
+            json!([
+                set(
+                    &all_ids[..1],
+                    json!([{"key":"by(span.numbers)","value":{"arrayValue":{"values":[{"intValue":"2"},{"intValue":"4"}]}}}])
+                ),
+                set(
+                    &all_ids[1..2],
+                    json!([{"key":"by(span.numbers)","value":{"arrayValue":{"values":[{"intValue":"1"},{"intValue":"2"}]}}}])
+                ),
+                set(
+                    &all_ids[2..],
+                    json!([{"key":"by(span.numbers)","value":{"arrayValue":{"values":[{"intValue":"6"},{"intValue":"8"}]}}}])
+                ),
+            ]),
+        ),
+    ] {
+        let query = format!("{checkout} | {expression}");
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let suffix = format!("/api/search?q={encoded}&{query_range}&limit=10&spss=10");
+        let upstream_result =
+            get_json_until_non_empty_traces(client, &format!("{oracle}{suffix}"), None).await;
+        let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
+        let upstream = upstream_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let actual = actual_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let expected = canonical_spanset_ledger(&expected)?;
+        let result = upstream_result.and_then(|upstream| {
+            actual_result.and_then(|actual| {
+                if search_spanset_ledger(&upstream)? != expected
+                    || search_spanset_ledger(&actual)? != expected
+                {
+                    return Err(format!(
+                        "{id}: spanset output differs from independent fixture ledger"
+                    )
+                    .into());
+                }
+                Ok(())
+            })
+        });
+        if let Err(error) = &result {
+            failures.push(error.to_string());
+        }
+        cases.push(json!({"stableid":format!("tempo-live-output-{id}"),"query":query,"request":{"range":query_range,"limit":10,"spss":10},"independent_expected":{"span_sets":expected},"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
+    }
+    compare_live_metric_label_outputs(
+        client,
+        oracle,
+        candidate,
+        query_range,
+        anchor,
+        (&mut cases, &mut failures),
+    )
+    .await?;
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(output).join("tempo-expression-output-conformance.json"),
+            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
+        )?;
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
+}
+
+async fn compare_live_metric_label_outputs(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    query_range: &str,
+    anchor: u64,
+    output: (&mut Vec<JsonValue>, &mut Vec<String>),
+) -> TestResult {
+    let (cases, failures) = output;
+    let checkout = "{ resource.service.name = \"checkout\" }";
+    for (id, field) in [
+        ("bare-name-label", "name"),
+        ("scoped-name-label", "span:name"),
+        ("array-metric-label", "span.numbers"),
+    ] {
+        let selector = if field == "span.numbers" {
+            // Keep the predicate to independently establish that arrays exist.
+            // Tempo 3.0.3 StaticFromAnyValue drops ArrayValue at its metric
+            // frontend, so the public result coalesces these labels to nil.
+            "{ resource.service.name = \"checkout\" && span.numbers != nil }"
+        } else {
+            checkout
+        };
+        if field == "span.numbers" {
+            record_array_metric_frontend_observation(
+                client,
+                oracle,
+                candidate,
+                query_range,
+                anchor,
+            )
+            .await?;
+        }
+        let query = format!("{selector} | count_over_time() by({field}) with(exemplars=false)");
+        let label_key = if field == "span:name" { "name" } else { field };
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let suffix = format!("/api/metrics/query_range?q={encoded}&{query_range}&step=30s");
+        let upstream_result =
+            get_json_until_positive_metric_total(client, &format!("{oracle}{suffix}"), None).await;
+        let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
+        let upstream = upstream_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let actual = actual_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let expected_values = if field == "span.numbers" {
+            json!([{"stringValue":"nil"}])
+        } else {
+            json!([{"stringValue":"GET /checkout"},{"stringValue":"SELECT cart"},{"stringValue":"charge card"}])
+        };
+        let expected_legends = if field == "span.numbers" {
+            vec![r#"{"span.numbers"="<nil>"}"#]
+        } else {
+            vec![
+                r#"{name="GET /checkout"}"#,
+                r#"{name="SELECT cart"}"#,
+                r#"{name="charge card"}"#,
+            ]
+        };
+        let independent_series = (field == "span.numbers")
+            .then(|| array_metric_frontend_expectation(anchor))
+            .transpose()?;
+        let each_total = if field == "span.numbers" { 3.0 } else { 1.0 };
+        let result = upstream_result.and_then(|upstream| {
+            actual_result.and_then(|actual| {
+                metric_series_match(&upstream, &actual)?;
+                if let Some(expected) = &independent_series {
+                    metric_series_match(expected, &upstream)?;
+                    metric_series_match(expected, &actual)?;
+                }
+                let mut legends = metric_prom_labels_list(&actual);
+                legends.sort();
+                if legends != expected_legends {
+                    return Err("metric legend differs from independent fixture".into());
+                }
+                for response in [&upstream, &actual] {
+                    let series = response["series"].as_array().ok_or("missing series")?;
+                    let mut values = Vec::new();
+                    for series in series {
+                        let labels = sorted_metric_labels(series)?;
+                        if labels.len() != 1 || labels[0]["key"] != label_key {
+                            return Err("group label key/arity differs".into());
+                        }
+                        if (metric_points_total(&json!({"series":[series]})) - each_total).abs()
+                            > f64::EPSILON
+                        {
+                            return Err("group count differs".into());
+                        }
+                        values.push(labels[0]["value"].clone());
+                    }
+                    values.sort_by_cached_key(JsonValue::to_string);
+                    let mut expected = expected_values.as_array().unwrap().clone();
+                    expected.sort_by_cached_key(JsonValue::to_string);
+                    if values != expected {
+                        return Err("typed group labels differ from independent fixture".into());
+                    }
+                }
+                Ok(())
+            })
+        });
+        if let Err(error) = &result {
+            failures.push(error.to_string());
+        }
+        cases.push(json!({"stableid":format!("tempo-live-output-{id}"),"query":query,"request":{"range":query_range,"step":"30s"},"independent_expected":{"label_key":label_key,"label_values":expected_values,"prom_labels":expected_legends,"group_count":expected_values.as_array().unwrap().len(),"each_total":each_total,"complete_series":independent_series},"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
+    }
+    Ok(())
+}
+
+fn array_metric_frontend_expectation(anchor: u64) -> TestResult<JsonValue> {
+    let mut expected = pipeline_count_expectation(anchor, (1.0, 2.0))?;
+    expected["series"][0]["labels"] = json!([{"key":"span.numbers","value":{"stringValue":"nil"}}]);
+    Ok(expected)
+}
+
+async fn record_array_metric_frontend_observation(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    query_range: &str,
+    anchor: u64,
+) -> TestResult {
+    let mut cases = Vec::new();
+    let mut failures = Vec::new();
+    // Three source spans occupy two buckets: root 500ms, children 150ms/140ms.
+    // Independent reducers pool the two child values after frontend nil decoding.
+    for (id, metric, values) in [
+        ("count", "count_over_time()", (1.0, 2.0)),
+        ("sum", "sum_over_time(duration)", (0.5, 0.29)),
+        ("avg", "avg_over_time(duration)", (0.5, 0.145)),
+        ("min", "min_over_time(duration)", (0.5, 0.14)),
+        ("max", "max_over_time(duration)", (0.5, 0.15)),
+        ("avg-filter", "avg_over_time(duration)", (0.5, 0.145)),
+    ] {
+        let stages = if id == "avg-filter" {
+            " > 0.14 < 0.2"
+        } else {
+            ""
+        };
+        let query = format!(
+            "{{ resource.service.name = \"checkout\" }} | {metric} by(span.numbers){stages} with(exemplars=false)"
+        );
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let suffix = format!("/api/metrics/query_range?q={encoded}&{query_range}&step=30s");
+        let upstream_result = get_json(client, &format!("{oracle}{suffix}"), None).await;
+        let actual_result = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
+        let upstream = upstream_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let actual = actual_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let mut expected = array_metric_frontend_expectation(anchor)?;
+        let samples = expected["series"][0]["samples"].as_array_mut().unwrap();
+        // Count fills the complete grid; other reducers omit empty buckets.
+        if id != "count" {
+            samples.retain(|sample| sample["value"].as_f64().unwrap() > 0.0);
+            samples[0]["value"] = json!(values.0);
+            samples[1]["value"] = json!(values.1);
+            if id == "avg-filter" {
+                samples.remove(0);
+            }
+        }
+        let result = upstream_result.and_then(|upstream| {
+            actual_result.and_then(|actual| {
+                metric_series_match(&expected, &upstream)?;
+                metric_series_match(&expected, &actual)
+            })
+        });
+        if let Err(error) = &result {
+            failures.push(format!("{id}: {error}"));
+        }
+        cases.push(json!({"stableid":format!("tempo-array-frontend-{id}"),"query":query,"request":{"range":query_range,"step":"30s"},"independent_expected":expected,"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
+    }
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(output).join("tempo-array-metric-frontend-conformance.json"),
+            serde_json::to_vec_pretty(
+                &json!({"planned":6,"cases":cases,"note":"Tempo 3.0.3 StaticFromAnyValue omits ArrayValue in metric frontend decoding. Raw arrays remain present in trace retrieval and span grouping. These public reducer witnesses do not establish distinct array metric labels."}),
+            )?,
+        )?;
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
+}
+
+fn search_spanset_ledger(response: &JsonValue) -> TestResult<JsonValue> {
+    let traces = response["traces"].as_array().ok_or("missing traces")?;
+    if traces.len() != 1
+        || canonical_hex_id(traces[0]["traceID"].as_str().ok_or("missing trace ID")?, 32)?
+            != TRACE_ID_HEX
+    {
+        return Err("unexpected trace identity/count".into());
+    }
+    let sets = traces[0]["spanSets"].as_array().ok_or("missing spansets")?;
+    let mut ledger = Vec::new();
+    for set in sets {
+        let spans = set["spans"].as_array().ok_or("missing spans")?;
+        let ids = spans
+            .iter()
+            .map(|span| canonical_hex_id(span["spanID"].as_str().ok_or("missing span ID")?, 16))
+            .collect::<TestResult<Vec<_>>>()?;
+        ledger.push(json!({"span_ids":ids,"matched":set["matched"],"attributes":set.get("attributes").cloned().unwrap_or_else(|| json!([]))}));
+    }
+    canonical_spanset_ledger(&json!(ledger))
+}
+
+fn canonical_spanset_ledger(ledger: &JsonValue) -> TestResult<JsonValue> {
+    let mut sets = ledger.as_array().ok_or("invalid spanset ledger")?.clone();
+    for set in &mut sets {
+        let ids = set["span_ids"].as_array_mut().ok_or("invalid span IDs")?;
+        ids.sort_by_cached_key(JsonValue::to_string);
+        let attrs = set["attributes"]
+            .as_array_mut()
+            .ok_or("invalid spanset attributes")?;
+        for attr in attrs.iter_mut() {
+            attr["value"] = canonical_metric_any_value(&attr["value"])?;
+        }
+        attrs.sort_by_cached_key(JsonValue::to_string);
+    }
+    sets.sort_by_cached_key(JsonValue::to_string);
+    Ok(json!(sets))
+}
+
+#[test]
+fn spanset_output_ledger_rejects_wrong_groups_attributes_and_counts() {
+    let expected = json!({"traces":[{"traceID":TRACE_ID_HEX,"spanSets":[{"matched":1,"spans":[{"spanID":CHILD_SPAN_ID_HEX}],"attributes":[{"key":"by(span.cost > 1)","value":{"boolValue":false}},{"key":"count()","value":{"intValue":"1"}}]}]}]});
+    let expected_ledger = search_spanset_ledger(&expected).unwrap();
+    for (path, value) in [
+        ("/traces/0/spanSets/0/matched", json!(2)),
+        (
+            "/traces/0/spanSets/0/attributes/0/value",
+            json!({"stringValue":"false"}),
+        ),
+        ("/traces/0/spanSets/0/attributes/1/key", json!("avg()")),
+        (
+            "/traces/0/spanSets/0/spans/0/spanID",
+            json!(ERROR_SPAN_ID_HEX),
+        ),
+    ] {
+        let mut corrupt = expected.clone();
+        *corrupt.pointer_mut(path).unwrap() = value;
+        assert2::assert!(
+            search_spanset_ledger(&corrupt).unwrap() != expected_ledger,
+            "{path}"
+        );
+    }
+}
+
+async fn compare_live_supported_scopes(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    query_range: &str,
+) -> TestResult {
+    let mut cases = Vec::new();
+    let mut failures = Vec::new();
+    for (stableid, predicate, expected_span_ids) in [
+        (
+            "event-arithmetic-types",
+            "event.cost + 1 = span.limit",
+            vec!["0202020202020202"],
+        ),
+        (
+            "event-field-comparison",
+            "event.peer = name",
+            vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+        ),
+        (
+            "instrumentation-event-composition",
+            "instrumentation.cost + event.cost > span.limit",
+            vec!["0202020202020202", CHILD_SPAN_ID_HEX],
+        ),
+        (
+            "instrumentation-intrinsic",
+            "instrumentation:name = instrumentation.peer",
+            vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+        ),
+        (
+            "event-time-intrinsic",
+            "event:timeSinceStart * 2 < duration && event:name = name",
+            vec!["0202020202020202", CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+        ),
+        (
+            "link-arithmetic",
+            "link.cost * 2 = span.limit + 1",
+            vec!["0202020202020202"],
+        ),
+        (
+            "id-intrinsic-composition",
+            "span:id = link:spanID && trace:id = link:traceID",
+            vec!["0202020202020202", CHILD_SPAN_ID_HEX],
+        ),
+        (
+            "trace-child-intrinsic",
+            "trace:duration >= duration && span:childCount + 1 > 2",
+            vec!["0202020202020202"],
+        ),
+        (
+            "trace-root-intrinsic",
+            "trace:rootName = name",
+            vec!["0202020202020202"],
+        ),
+        (
+            "integer-power-outside-range",
+            "span.exponent ^ span.base < 0",
+            vec!["0202020202020202", ERROR_SPAN_ID_HEX],
+        ),
+        (
+            "array-scalar-ordering",
+            "span.numbers > span.limit",
+            vec!["0202020202020202", ERROR_SPAN_ID_HEX],
+        ),
+        (
+            "scalar-array-ordering",
+            "span.limit < span.numbers && name != \"GET /checkout\"",
+            vec![ERROR_SPAN_ID_HEX],
+        ),
+    ] {
+        let query = format!("{{ resource.service.name = \"checkout\" && {predicate} }}");
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let suffix = format!("/api/search?q={encoded}&{query_range}&limit=10&spss=10");
+        let upstream_result =
+            get_json_until_non_empty_traces(client, &format!("{oracle}{suffix}"), None).await;
+        let candidate_result =
+            get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
+        let upstream = upstream_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let actual = candidate_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let expected_count = expected_span_ids.len();
+        let expected = BTreeMap::from([(
+            TRACE_ID_HEX.to_owned(),
+            expected_span_ids.into_iter().map(str::to_owned).collect(),
+        )]);
+        let result = upstream_result.and_then(|upstream| {
+            candidate_result.and_then(|actual| {
+                let upstream_ids = search_identities(&upstream)?;
+                let actual_ids = search_identities(&actual)?;
+                if upstream_ids != expected || actual_ids != expected {
+                    return Err(format!(
+                        "{query}: expected {expected:?}, upstream {upstream_ids:?}, Krabka {actual_ids:?}"
+                    ).into());
+                }
+                Ok(())
+            })
+        });
+        if let Err(error) = &result {
+            failures.push(format!("{stableid}: {error}"));
+        }
+        cases.push(
+            json!({"stableid":format!("tempo-live-supported-{stableid}"),"query":query,
+            "request":{"range":query_range,"limit":10,"spss":10},
+            "independent_expected":{"span_ids_by_trace":expected,"span_count":expected_count},
+            "upstream":upstream,"krabka":actual,
+            "status":if result.is_ok(){"matched"}else{"mismatch"},
+            "error":result.err().map(|error|error.to_string())}),
+        );
+    }
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(output).join("tempo-supported-scopes-conformance.json"),
+            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
+        )?;
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
+}
+
+async fn compare_live_exemplar_reservoir(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    range: &str,
+    anchor_secs: u64,
+) -> TestResult {
+    let mut cases = Vec::new();
+    let mut failures = Vec::new();
+    for (stableid, grouping) in [("ungrouped", ""), ("grouped", " by(span.lane)")] {
+        let query = format!(
+            "{{ resource.service.name = \"reservoir\" && span:id != \"\" }} | count_over_time(){grouping}"
+        );
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s&exemplars=100");
+        let upstream =
+            get_json_until_positive_metric_total(client, &format!("{oracle}{suffix}"), None)
+                .await?;
+        let actual = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await?;
+        // Identity is sampled independently by each implementation. Check the
+        // exact value payload and the independently known set of valid choices.
+        let mut upstream_values = upstream.clone();
+        let mut actual_values = actual.clone();
+        for response in [&mut upstream_values, &mut actual_values] {
+            for series in response["series"]
+                .as_array_mut()
+                .ok_or("missing metric series")?
+            {
+                series["exemplars"] = json!([]);
+            }
+        }
+        let result = metric_series_match(&upstream_values, &actual_values).and_then(|()| {
+            validate_reservoir_response(&upstream, anchor_secs, !grouping.is_empty())?;
+            validate_reservoir_response(&actual, anchor_secs, !grouping.is_empty())
+        });
+        if let Err(error) = &result {
+            failures.push(format!("{stableid}: {error}"));
+        }
+        cases.push(json!({"stableid":format!("tempo-live-exemplar-reservoir-{stableid}"),"query":query,
+            "request":{"range":range,"step":"30s","exemplars":100},
+            "independent_expected":{"span_count":6,"trace_count":3,"exemplar_count":2,"one_per_trace":true,"occupied_timestamp_ms":(anchor_secs+30)*1000,
+                "exemplar_timestamp_precision_ms":15000,
+                "valid_choices":(0_u8..6).map(|index|json!({"trace_id":format!("{:02x}",0xa1+index/2).repeat(16),"span_id":format!("{:02x}",0xb1+index).repeat(8),"span_start_ms":anchor_secs*1000+5000+u64::from(index),"timestamp_ms":(anchor_secs+15)*1000})).collect::<Vec<_>>()},
+            "upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
+    }
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(output).join("tempo-exemplar-reservoir-conformance.json"),
+            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
+        )?;
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
+}
+
+fn validate_reservoir_response(
+    response: &JsonValue,
+    anchor_secs: u64,
+    grouped: bool,
+) -> TestResult {
+    let series = response["series"]
+        .as_array()
+        .ok_or("missing metric series")?;
+    if series.len() != 1 {
+        return Err("reservoir fixture must have one metric series".into());
+    }
+    if (metric_points_total(response) - 6.0).abs() > f64::EPSILON {
+        return Err("reservoir metric count differs from six input spans".into());
+    }
+    let samples = series[0]["samples"]
+        .as_array()
+        .ok_or("missing metric samples")?;
+    let occupied = samples
+        .iter()
+        .filter_map(|sample| match metric_value(sample) {
+            Ok(value) if value.to_bits() == 0.0_f64.to_bits() => None,
+            result => Some(result.map(|value| (sample, value))),
+        })
+        .collect::<TestResult<Vec<_>>>()?;
+    if occupied.len() != 1
+        || occupied[0].1.to_bits() != 6.0_f64.to_bits()
+        || metric_timestamp(occupied[0].0)? != i64::try_from((anchor_secs + 30) * 1000)?
+    {
+        return Err(
+            "reservoir spans must occupy exactly the independently expected right-closed bucket"
+                .into(),
+        );
+    }
+    let exemplars = series[0]["exemplars"]
+        .as_array()
+        .ok_or("missing exemplars")?;
+    if exemplars.len() != 2 {
+        return Err(format!(
+            "two exemplars must fit the occupied time stratum; got {}",
+            exemplars.len()
+        )
+        .into());
+    }
+    let mut seen = BTreeSet::new();
+    for exemplar in exemplars {
+        let labels = exemplar["labels"]
+            .as_array()
+            .ok_or("missing exemplar labels")?;
+        let actual = labels
+            .iter()
+            .map(|label| {
+                Ok((
+                    label["key"]
+                        .as_str()
+                        .ok_or("missing exemplar label key")?
+                        .to_owned(),
+                    canonical_metric_any_value(&label["value"])?,
+                ))
+            })
+            .collect::<TestResult<BTreeMap<_, _>>>()?;
+        if actual.len() != labels.len() {
+            return Err("duplicate exemplar label keys".into());
+        }
+        let trace = actual
+            .get("trace:id")
+            .and_then(|value| value["stringValue"].as_str())
+            .ok_or("missing trace identity")?;
+        if !seen.insert(trace.to_owned()) {
+            return Err("reservoir selected two spans from one trace".into());
+        }
+        let span = actual
+            .get("span:id")
+            .and_then(|value| value["stringValue"].as_str())
+            .ok_or("missing span identity")?;
+        let timestamp = exemplar["timestampMs"]
+            .as_str()
+            .ok_or("missing exemplar timestamp")?
+            .parse::<u64>()?;
+        (0_u8..6)
+            .find(|index| {
+                format!("{:02x}", 0xa1 + index / 2).repeat(16) == trace
+                    && format!("{:02x}", 0xb1 + index).repeat(8) == span
+                    && (anchor_secs + 15) * 1000 == timestamp
+            })
+            .ok_or("exemplar does not identify an ingested span")?;
+        let mut expected = BTreeMap::from([
+            ("trace:id".into(), json!({"stringValue":trace})),
+            ("span:id".into(), json!({"stringValue":span})),
+            (
+                "resource.service.name".into(),
+                json!({"stringValue":"reservoir"}),
+            ),
+        ]);
+        if grouped {
+            expected.insert("span.lane".into(), json!({"stringValue":"main"}));
+        }
+        if actual != expected || metric_value(exemplar)?.to_bits() != 6.0_f64.to_bits() {
+            return Err(format!("invalid exemplar payload {exemplar}").into());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn reservoir_contract_rejects_duplicate_trace_foreign_span_and_payload_corruption() {
+    let exemplar = |trace: &str, span: &str, timestamp: &str| {
+        json!({
+            "labels":[
+                {"key":"trace:id","value":{"stringValue":trace}},
+                {"key":"span:id","value":{"stringValue":span}},
+                {"key":"resource.service.name","value":{"stringValue":"reservoir"}},
+            ],"timestampMs":timestamp,"value":6
+        })
+    };
+    let response = json!({"series":[{"samples":[{"timestampMs":"30000","value":6}],"exemplars":[
+        exemplar(&"a1".repeat(16), &"b1".repeat(8), "15000"),
+        exemplar(&"a2".repeat(16), &"b3".repeat(8), "15000"),
+    ]}]});
+    check!(validate_reservoir_response(&response, 0, false).is_ok());
+    for path in [
+        "trace",
+        "span",
+        "timestamp",
+        "value",
+        "extra-label",
+        "duplicate-label",
+        "sample-timestamp",
+        "sample-value",
+    ] {
+        let mut invalid = response.clone();
+        match path {
+            "sample-timestamp" => {
+                invalid["series"][0]["samples"][0]["timestampMs"] = json!("29999");
+            }
+            "sample-value" => invalid["series"][0]["samples"][0]["value"] = json!(5),
+            "trace" => {
+                invalid["series"][0]["exemplars"][1]["labels"][0]["value"]["stringValue"] =
+                    json!("a1".repeat(16));
+            }
+            "span" => {
+                invalid["series"][0]["exemplars"][1]["labels"][1]["value"]["stringValue"] =
+                    json!("ff".repeat(8));
+            }
+            "timestamp" => invalid["series"][0]["exemplars"][1]["timestampMs"] = json!("5003"),
+            "value" => invalid["series"][0]["exemplars"][1]["value"] = json!(5),
+            "extra-label" => invalid["series"][0]["exemplars"][1]["labels"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"key":"extra","value":{"stringValue":"x"}})),
+            _ => {
+                let label = invalid["series"][0]["exemplars"][1]["labels"][0].clone();
+                invalid["series"][0]["exemplars"][1]["labels"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(label);
+            }
+        }
+        check!(
+            validate_reservoir_response(&invalid, 0, false).is_err(),
+            "{path}"
+        );
+    }
+}
+
 async fn compare_live_singleton_exemplar(
     client: &reqwest::Client,
     oracle: &str,
@@ -690,7 +2160,9 @@ async fn compare_live_singleton_exemplar(
     trace_start_secs: u64,
 ) -> TestResult {
     // Tempo uses reservoir sampling within a trace. This selector contains one
-    // matching span, so its exact identity and timestamp are independent of RNG.
+    // matching span, so identity is independent of RNG. The aligned 30s metric
+    // fetch uses Tempo's pre-rounded 15s start column, whose right endpoint is
+    // 15s after this fixture's epoch-aligned anchor.
     let query = r#"{ name = "SELECT cart" } | count_over_time()"#;
     let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
     let suffix =
@@ -705,12 +2177,12 @@ async fn compare_live_singleton_exemplar(
     let expected_exemplar = json!({"labels": [
         {"key": "trace:id", "value": {"stringValue": TRACE_ID_HEX.trim_start_matches('0')}},
         {"key": "name", "value": {"stringValue": "SELECT cart"}},
-    ], "value": 1.0, "timestampMs": (trace_start_secs * 1000 + 100).to_string()});
+    ], "value": 1.0, "timestampMs": ((trace_start_secs + 15) * 1000).to_string()});
     let result = metric_series_match(&upstream, &actual).and_then(|()| {
         for response in [&upstream, &actual] {
             let exemplars = response["series"][0]["exemplars"].as_array().ok_or("singleton exemplar missing")?;
             if exemplars.len() != 1 || sorted_metric_labels(&exemplars[0])? != sorted_metric_labels(&expected_exemplar)?
-                || metric_timestamp(&exemplars[0])? != i64::try_from(trace_start_secs * 1000 + 100)?
+                || metric_timestamp(&exemplars[0])? != i64::try_from((trace_start_secs + 15) * 1000)?
                 || metric_value(&exemplars[0])?.to_bits() != 1.0_f64.to_bits()
             {
                 return Err(format!("singleton exemplar differs from fixture ledger: expected={expected_exemplar}, response={response}").into());
@@ -723,7 +2195,7 @@ async fn compare_live_singleton_exemplar(
         output.join("tempo-live-exemplar-conformance.json"),
         serde_json::to_vec_pretty(
             &json!({"cases":[{"stableid":"tempo-live-exemplar-singleton-count", "query": query, "request": {"range":query_range,"step":"30s","exemplars":100}, "upstream": upstream, "krabka": actual,
-            "independent_expected": expected_exemplar, "expected_trace_id": TRACE_ID_HEX, "expected_timestamp_ms": trace_start_secs * 1000 + 100,
+            "independent_expected": expected_exemplar, "expected_trace_id": TRACE_ID_HEX, "span_start_ms": trace_start_secs * 1000 + 100, "exemplar_timestamp_precision_ms":15000, "expected_timestamp_ms": (trace_start_secs + 15) * 1000,
             "status": if result.is_ok() {"matched"} else {"mismatch"}, "error":result.as_ref().err().map(ToString::to_string)}]}),
         )?,
     )?;
@@ -1311,18 +2783,63 @@ fn input_span(span: Span) -> InputSpan {
             .into_iter()
             .filter_map(|attr| Some((attr.key, traceql_attr(attr.value)?)))
             .collect(),
-        events: Vec::new(),
-        links: Vec::new(),
+        events: span
+            .events
+            .into_iter()
+            .map(|event| EventRef {
+                name: event.name,
+                time_since_start: Time::from_nanos(event.time_unix_nano - span.start_ns),
+                attributes: event
+                    .attrs
+                    .into_iter()
+                    .filter_map(|attr| Some((attr.key, traceql_attr(attr.value)?)))
+                    .collect(),
+            })
+            .collect(),
+        links: span
+            .links
+            .into_iter()
+            .map(|link| LinkRef {
+                trace_id: link.trace_id,
+                span_id: link.span_id,
+                attributes: link
+                    .attrs
+                    .into_iter()
+                    .filter_map(|attr| Some((attr.key, traceql_attr(attr.value)?)))
+                    .collect(),
+            })
+            .collect(),
     }
 }
 
 fn traceql_attr(value: AttrValue) -> Option<TraceqlAttrValue> {
+    if let AttrValue::Array(values) = &value
+        && values.iter().any(|element| {
+            matches!(
+                element,
+                AttrValue::Array(_) | AttrValue::Bytes(_) | AttrValue::Unsupported(_)
+            ) || values.first().is_some_and(|first| {
+                std::mem::discriminant(first) != std::mem::discriminant(element)
+            })
+        })
+    {
+        return Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()));
+    }
     match value {
+        AttrValue::Unsupported(value) => Some(TraceqlAttrValue::Unsupported(value)),
+        AttrValue::Array(values) => Some(TraceqlAttrValue::Array(
+            values
+                .into_iter()
+                .map(traceql_attr)
+                .collect::<Option<Vec<_>>>()?,
+        )),
         AttrValue::Str(value) => Some(TraceqlAttrValue::Str(value)),
         AttrValue::Int(value) => Some(TraceqlAttrValue::Int(value)),
         AttrValue::Double(value) => Some(TraceqlAttrValue::Float(value)),
         AttrValue::Bool(value) => Some(TraceqlAttrValue::Bool(value)),
-        AttrValue::Bytes(_) => None,
+        value @ AttrValue::Bytes(_) => {
+            Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()))
+        }
     }
 }
 
@@ -1370,7 +2887,7 @@ async fn start_grafana() -> TestResult<testcontainers::ContainerAsync<GenericIma
          which loads the digest-pinned image and sets this. To run one under \
          cargo, set it to that image's tag in //bazel/images/images.bzl.",
     );
-    Ok(tokio::time::timeout(
+    let container = tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
             .with_exposed_port(GRAFANA_HTTP_PORT.tcp())
@@ -1379,7 +2896,27 @@ async fn start_grafana() -> TestResult<testcontainers::ContainerAsync<GenericIma
             .with_host(DOCKER_HOST_ALIAS, Host::HostGateway)
             .start(),
     )
-    .await??)
+    .await??;
+    // HTTP health can precede registration of the bundled datasource plugins.
+    let base = mapped_base_url(&container, GRAFANA_HTTP_PORT).await?;
+    let client = reqwest::Client::new();
+    let deadline = Instant::now() + Duration::from_secs(90);
+    while Instant::now() < deadline {
+        let mut ready = true;
+        for plugin in ["tempo", "prometheus"] {
+            ready &= client
+                .get(format!("{base}/api/plugins/{plugin}/settings"))
+                .basic_auth("admin", Some("admin"))
+                .send()
+                .await
+                .is_ok_and(|response| response.status().is_success());
+        }
+        if ready {
+            return Ok(container);
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    Err(format!("timed out waiting for Grafana datasource plugins at {base}").into())
 }
 
 async fn mapped_base_url(
@@ -1584,11 +3121,9 @@ async fn get_json(
     let resp = req.send().await?;
     let status = resp.status();
     let body = resp.bytes().await?;
-    assert2::assert!(
-        status == ReqwestStatusCode::OK,
-        "{url}: {status}: {}",
-        String::from_utf8_lossy(&body)
-    );
+    if status != ReqwestStatusCode::OK {
+        return Err(format!("{url}: {status}: {}", String::from_utf8_lossy(&body)).into());
+    }
     Ok(serde_json::from_slice(&body)?)
 }
 
@@ -1805,6 +3340,18 @@ fn sorted_metric_labels(item: &JsonValue) -> TestResult<Vec<JsonValue>> {
 
 fn canonical_metric_any_value(value: &JsonValue) -> TestResult<JsonValue> {
     let mut canonical = value.clone();
+    if let Some(array) = value.get("arrayValue") {
+        let elements = array["values"]
+            .as_array()
+            .map_or_else(Vec::new, Clone::clone);
+        canonical["arrayValue"]["values"] = json!(
+            elements
+                .iter()
+                .map(canonical_metric_any_value)
+                .collect::<TestResult<Vec<_>>>()?
+        );
+    }
+
     if let Some(double) = value.get("doubleValue") {
         // ProtoJSON permits both 1 and 1.0 for a double. Normalize only that
         // field's numeric representation; retain its AnyValue discriminator.
@@ -1874,6 +3421,14 @@ fn metric_series_match(expected: &JsonValue, actual: &JsonValue) -> TestResult {
     }
     for (labels, expected_series) in expected {
         let actual_series = actual[&labels];
+        // Pinned SeriesSet::ToProto omits promLabels. When an oracle response
+        // carries it, require the exact legend; independent live ledgers also
+        // require the candidate legend when the pinned field is omitted.
+        if let Some(legend) = expected_series.get("promLabels")
+            && (!legend.is_string() || actual_series.get("promLabels") != Some(legend))
+        {
+            return Err(format!("{labels}: legend differs").into());
+        }
         for field in ["samples", "exemplars"] {
             let expected_items = metric_items(expected_series, field)?;
             let actual_items = metric_items(actual_series, field)?;
@@ -1954,6 +3509,7 @@ fn metrics_comparator_canonicalizes_double_spelling_without_erasing_label_types(
 fn metrics_comparator_rejects_labels_timestamps_cancelling_values_and_exemplars() {
     let expected = json!({"series": [{
         "labels": [{"key": "span.method", "value": {"stringValue": "GET"}}],
+        "promLabels": "{\"span.method\"=\"GET\"}",
         "samples": [{"timestampMs": "1000", "value": 1.0},
                     {"timestampMs": "2000", "value": 4.0}],
         "exemplars": [{"timestampMs": "1000", "value": 1.0,
@@ -1971,6 +3527,7 @@ fn metrics_comparator_rejects_labels_timestamps_cancelling_values_and_exemplars(
     metric_series_match(&expected, &reordered_labels).unwrap();
     for (path, replacement) in [
         ("/series/0/labels/0/value/stringValue", json!("POST")),
+        ("/series/0/promLabels", json!("{span_method=\"GET\"}")),
         ("/series/0/samples/0/timestampMs", json!("1001")),
         (
             "/series/0/exemplars/0/labels/0/value/stringValue",
@@ -2135,7 +3692,7 @@ fn sample_otlp_body() -> Vec<u8> {
 }
 
 fn sample_otlp_body_at(start_ns: u64) -> Vec<u8> {
-    TracesData {
+    let mut data = TracesData {
         resource_spans: vec![ResourceSpans {
             resource: Some(Resource {
                 attributes: vec![string_kv("service.name", "checkout")],
@@ -2189,8 +3746,233 @@ fn sample_otlp_body_at(start_ns: u64) -> Vec<u8> {
             }],
             ..ResourceSpans::default()
         }],
+    };
+    let scope = &mut data.resource_spans[0].scope_spans[0];
+    scope.scope.as_mut().unwrap().attributes.extend([
+        scalar_kv("cost", Value::IntValue(3)),
+        string_kv("peer", "krabka-differential"),
+    ]);
+    for (index, span) in scope.spans.iter_mut().enumerate() {
+        span.attributes.extend([
+            scalar_kv("limit", Value::IntValue(3)),
+            scalar_kv("exponent", Value::IntValue([63, 62, 1024][index])),
+            scalar_kv("base", Value::IntValue(2)),
+            scalar_kv(
+                "numbers",
+                Value::ArrayValue(ArrayValue {
+                    values: [[2, 4], [1, 2], [6, 8]][index]
+                        .into_iter()
+                        .map(|value| AnyValue {
+                            value: Some(Value::IntValue(value)),
+                        })
+                        .collect(),
+                }),
+            ),
+        ]);
+        span.events
+            .push(opentelemetry_proto::tonic::trace::v1::span::Event {
+                time_unix_nano: span.start_time_unix_nano + 1_000_000,
+                name: span.name.clone(),
+                attributes: vec![
+                    scalar_kv(
+                        "cost",
+                        if index == 2 {
+                            Value::StringValue("2".into())
+                        } else {
+                            Value::IntValue([2, 4][index])
+                        },
+                    ),
+                    string_kv("peer", &span.name),
+                ],
+                ..Default::default()
+            });
+        if index == 1 {
+            span.events
+                .push(opentelemetry_proto::tonic::trace::v1::span::Event {
+                    time_unix_nano: span.start_time_unix_nano + 2_000_000,
+                    name: "later-event-decoy".into(),
+                    attributes: vec![
+                        scalar_kv("cost", Value::IntValue(2)),
+                        string_kv("peer", "later-event-decoy"),
+                    ],
+                    ..Default::default()
+                });
+        }
+        span.links
+            .push(opentelemetry_proto::tonic::trace::v1::span::Link {
+                trace_id: span.trace_id.clone(),
+                span_id: if index == 2 {
+                    vec![9; 8]
+                } else {
+                    span.span_id.clone()
+                },
+                attributes: vec![scalar_kv(
+                    "cost",
+                    Value::IntValue(i64::try_from(index).unwrap() + 2),
+                )],
+                ..Default::default()
+            });
     }
-    .encode_to_vec()
+    data.encode_to_vec()
+}
+
+fn reservoir_otlp_body_at(start_ns: u64) -> Vec<u8> {
+    let mut data = TracesData::decode(sample_otlp_body_at(start_ns).as_slice()).unwrap();
+    let root = &mut data.resource_spans[0].scope_spans[0].spans[0];
+    let attributes = retrieval_otlp_attributes();
+    root.attributes.extend(attributes.clone());
+    root.events[0].attributes.extend(attributes.clone());
+    root.links[0].attributes.extend(attributes);
+    let spans = (0..6)
+        .map(|index| OtlpSpan {
+            trace_id: vec![0xa1 + index / 2; 16],
+            span_id: vec![0xb1 + index; 8],
+            name: format!("reservoir-{index}"),
+            start_time_unix_nano: start_ns + 5_000_000_000 + u64::from(index) * 1_000_000,
+            end_time_unix_nano: start_ns + 5_010_000_000 + u64::from(index) * 1_000_000,
+            attributes: vec![string_kv("lane", "main")],
+            ..OtlpSpan::default()
+        })
+        .collect();
+    data.resource_spans.push(ResourceSpans {
+        resource: Some(Resource {
+            attributes: vec![string_kv("service.name", "reservoir")],
+            ..Resource::default()
+        }),
+        scope_spans: vec![ScopeSpans {
+            spans,
+            ..ScopeSpans::default()
+        }],
+        ..ResourceSpans::default()
+    });
+    for resource in &mut data.resource_spans {
+        for scope in &mut resource.scope_spans {
+            for span in &mut scope.spans {
+                span.attributes
+                    .push(scalar_kv("sample.constant", Value::IntValue(7)));
+            }
+        }
+    }
+    data.encode_to_vec()
+}
+
+fn retrieval_otlp_attributes() -> Vec<OtlpKeyValue> {
+    let array = |values: Vec<Value>| {
+        Value::ArrayValue(ArrayValue {
+            values: values
+                .into_iter()
+                .map(|value| AnyValue { value: Some(value) })
+                .collect(),
+        })
+    };
+    vec![
+        scalar_kv("retrieval.empty", array(Vec::new())),
+        scalar_kv(
+            "retrieval.empty-oneof",
+            Value::ArrayValue(ArrayValue {
+                values: vec![AnyValue { value: None }],
+            }),
+        ),
+        scalar_kv(
+            "retrieval.singleton-int",
+            array(vec![Value::IntValue(i64::MAX)]),
+        ),
+        scalar_kv(
+            "retrieval.multi-int",
+            array(vec![Value::IntValue(1), Value::IntValue(2)]),
+        ),
+        scalar_kv(
+            "retrieval.multi-float",
+            array(vec![Value::DoubleValue(1.5), Value::DoubleValue(2.5)]),
+        ),
+        scalar_kv(
+            "retrieval.multi-string",
+            array(vec![
+                Value::StringValue("one".into()),
+                Value::StringValue("two".into()),
+            ]),
+        ),
+        scalar_kv(
+            "retrieval.multi-bool",
+            array(vec![Value::BoolValue(true), Value::BoolValue(false)]),
+        ),
+        scalar_kv(
+            "retrieval.mixed",
+            array(vec![Value::IntValue(1), Value::StringValue("1".into())]),
+        ),
+        scalar_kv(
+            "retrieval.nested",
+            array(vec![array(vec![Value::IntValue(1), Value::IntValue(2)])]),
+        ),
+        scalar_kv("retrieval.bytes", Value::BytesValue(vec![0, 255])),
+        scalar_kv(
+            "retrieval.kvlist",
+            Value::KvlistValue(KeyValueList {
+                values: vec![scalar_kv("answer", Value::IntValue(i64::MAX))],
+            }),
+        ),
+        scalar_kv(
+            "retrieval.nonfinite-mixed",
+            array(vec![
+                Value::DoubleValue(f64::INFINITY),
+                Value::DoubleValue(f64::NEG_INFINITY),
+                Value::DoubleValue(f64::NAN),
+                Value::StringValue("finite-decoy".into()),
+            ]),
+        ),
+    ]
+}
+
+#[test]
+fn retrieval_shape_ledger_rejects_type_collapse_order_and_nonfinite_corruption() {
+    assert2::assert!(
+        traceql_attr(AttrValue::Bytes(vec![0, 255]))
+            == Some(TraceqlAttrValue::Unsupported(
+                r#"{"bytesValue":"AP8="}"#.into()
+            ))
+    );
+    let attributes = retrieval_otlp_attributes();
+    let span = json!({"name":"GET /checkout","traceId": "01010101010101010101010101010101", "spanId":"0202020202020202",
+        "attributes": attributes.iter().map(|attribute|json!({"key":attribute.key,"value":AttrValue::encode_otlp_json(attribute.value.as_ref().unwrap())})).collect::<Vec<_>>()});
+    let mut span = span;
+    span["events"] = json!([{"attributes":span["attributes"]}]);
+    span["links"] = json!([{"attributes":span["attributes"]}]);
+    let response = json!({"trace":{"resourceSpans":[{"scopeSpans":[{"spans":[span]}]}]}});
+    for (id, expected) in retrieval_expected_values() {
+        let values = retrieval_values(&response, &format!("retrieval.{id}")).unwrap();
+        assert2::assert!(values.values().all(|value| value == &expected));
+    }
+    for (key, corrupted) in [
+        ("retrieval.empty", json!({"stringValue":"nil"})),
+        ("retrieval.empty-oneof", json!({"arrayValue":{"values":[]}})),
+        (
+            "retrieval.singleton-int",
+            json!({"intValue":"9223372036854775807"}),
+        ),
+        (
+            "retrieval.multi-int",
+            json!({"arrayValue":{"values":[{"intValue":"2"},{"intValue":"1"}]}}),
+        ),
+        (
+            "retrieval.mixed",
+            json!({"arrayValue":{"values":[{"intValue":"1"},{"intValue":"1"}]}}),
+        ),
+        (
+            "retrieval.nonfinite-mixed",
+            json!({"arrayValue":{"values":[{"doubleValue":null},{"doubleValue":"-Infinity"},{"doubleValue":"NaN"},{"stringValue":"finite-decoy"}]}}),
+        ),
+    ] {
+        let expected = retrieval_values(&response, key).unwrap();
+        let mut wrong = response.clone();
+        let attrs = wrong["trace"]["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"]
+            .as_array_mut()
+            .unwrap();
+        attrs
+            .iter_mut()
+            .find(|attribute| attribute["key"] == key)
+            .unwrap()["value"] = corrupted;
+        assert2::assert!(retrieval_values(&wrong, key).map_or(true, |values| values != expected));
+    }
 }
 
 fn forest_otlp_fixture() -> TracesData {
@@ -2244,6 +4026,14 @@ fn forest_otlp_fixture() -> TracesData {
             }],
             ..ResourceSpans::default()
         }],
+    }
+}
+
+fn scalar_kv(key: &str, value: Value) -> OtlpKeyValue {
+    OtlpKeyValue {
+        key: key.into(),
+        value: Some(AnyValue { value: Some(value) }),
+        ..OtlpKeyValue::default()
     }
 }
 

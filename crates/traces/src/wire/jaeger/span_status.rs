@@ -9,7 +9,9 @@ pub(crate) fn span_status(tags: &[KeyValue]) -> StatusCode {
                 AttrValue::Int(_)
                 | AttrValue::Double(_)
                 | AttrValue::Bool(false)
-                | AttrValue::Bytes(_) => false,
+                | AttrValue::Bytes(_)
+                | AttrValue::Array(_)
+                | AttrValue::Unsupported(_) => false,
             }
     }) {
         StatusCode::Error

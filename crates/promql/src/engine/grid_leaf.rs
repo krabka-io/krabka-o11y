@@ -16,7 +16,7 @@ use std::{
     sync::Arc,
 };
 
-use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 use krabka_units::prelude::*;
 use promql_parser::parser::{MatrixSelector, Offset, VectorSelector};
 
@@ -30,6 +30,7 @@ use super::{
     step_vectors::{GridVectors, LeafLookup, LeafMemo, RANGE_STEP_VECTORS, StepVectorCache},
 };
 use crate::{
+    PromqlLabels as Labels,
     error::Result,
     functions::OverTimeFamily,
     planner::{

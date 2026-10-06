@@ -11,7 +11,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use krabka_blockstore::{LabelMatcher, Labels};
+use krabka_blockstore::Labels;
 use krabka_metrics::{Limits, NativeHistogram, OverridesProvider, ResetHint};
 use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
 use tower::ServiceExt;
@@ -19,7 +19,7 @@ use tower::ServiceExt;
 use super::{request::unix_now_ms, *};
 use crate::{
     ExemplarScan, InMemoryMetricStore, LabelNameCardinality, LabelValueCardinality, MetadataScan,
-    ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
+    PromqlMatcher as LabelMatcher, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
 };
 
 // Every request reaches the handlers through the authentication layer, as it

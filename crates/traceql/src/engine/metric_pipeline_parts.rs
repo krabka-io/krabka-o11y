@@ -1,13 +1,9 @@
-use super::{
-    Aggregate, CompareSpec, Field, MetricFilter, Pipeline, RankLimit, Result, UnixNano,
-    metric_filter, rank_limit,
-};
+use super::{Aggregate, CompareSpec, Field, Pipeline, Result, UnixNano, metric_filter, rank_limit};
 
 pub(crate) struct MetricPipelineParts<'a> {
     pub(crate) aggregate: Option<&'a Aggregate>,
     pub(crate) by: Vec<Field>,
-    pub(crate) filter: Option<MetricFilter>,
-    pub(crate) rank: Option<RankLimit>,
+    pub(crate) stages: Vec<Pipeline>,
     pub(crate) compare: Option<CompareSpec>,
 }
 
@@ -16,18 +12,21 @@ pub(crate) fn metric_pipeline_parts(
 ) -> Result<Option<MetricPipelineParts<'_>>> {
     let mut aggregate = None;
     let mut by = None;
-    let mut filter = None;
-    let mut rank = None;
+    let mut stages = Vec::new();
     let mut compare = None;
     for stage in pipeline {
         match stage {
             Pipeline::Aggregate(value) if aggregate.is_none() => aggregate = Some(value),
-            Pipeline::By(value) if by.is_none() => by = Some(value.clone()),
-            Pipeline::Filter { op, value } if filter.is_none() => {
-                filter = Some(metric_filter(*op, *value)?);
+            Pipeline::By(value) if by.is_none() && compare.is_none() => by = Some(value.clone()),
+            Pipeline::Filter { op, value } if aggregate.is_some() && compare.is_none() => {
+                metric_filter(*op, *value)?;
+                stages.push(stage.clone());
             }
-            stage @ (Pipeline::TopK(_) | Pipeline::BottomK(_)) if rank.is_none() => {
-                rank = Some(rank_limit(stage)?);
+            stage @ (Pipeline::TopK(_) | Pipeline::BottomK(_))
+                if aggregate.is_some() && compare.is_none() =>
+            {
+                rank_limit(stage)?;
+                stages.push(stage.clone());
             }
             Pipeline::Compare {
                 selection,
@@ -52,8 +51,7 @@ pub(crate) fn metric_pipeline_parts(
     Ok(Some(MetricPipelineParts {
         aggregate,
         by: by.unwrap_or_default(),
-        filter,
-        rank,
+        stages,
         compare,
     }))
 }

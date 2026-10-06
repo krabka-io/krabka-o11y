@@ -97,6 +97,7 @@ pub(crate) fn format_pipeline_stage(stage: &PipelineStage) -> String {
         PipelineStage::KeepLabels(selections) => {
             format!("keep {}", format_label_selection_set(selections))
         }
+        PipelineStage::VariantBoundary => String::new(),
         PipelineStage::Distinct(labels) => format!("distinct {}", labels.join(", ")),
         PipelineStage::Unwrap(unwrap) => match unwrap.conversion() {
             UnwrapConversion::Raw => format!("unwrap {}", unwrap.label()),

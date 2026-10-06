@@ -433,6 +433,7 @@ query: { .svc = "x" }
             span_sets: vec![SpanSet {
                 spans: spans.into_iter().map(span).collect(),
                 matched: 0,
+                attributes: Vec::new(),
             }],
         };
         let resp = SearchResponse {

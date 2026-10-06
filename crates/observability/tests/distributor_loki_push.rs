@@ -68,15 +68,11 @@ async fn loki_push_endpoint_writes_tenant_scoped_wal_records() {
             == vec![
                 WalLogRecord {
                     tenant: "tenant-a".to_string(),
-                    labels: labels([
-                        ("app", "api"),
-                        ("detected_level", "error"),
-                        ("env", "prod"),
-                        ("service_name", "api"),
-                    ]),
+                    labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
                     timestamp_ns: 19,
                     line: "api error".to_string(),
                     structured_metadata: BTreeMap::from([
+                        ("detected_level".to_string(), "error".to_string()),
                         ("status".to_string(), "500".to_string()),
                         ("trace_id".to_string(), "abc".to_string()),
                     ]),
@@ -87,7 +83,10 @@ async fn loki_push_endpoint_writes_tenant_scoped_wal_records() {
                     labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
                     timestamp_ns: 20,
                     line: "api ok".to_string(),
-                    structured_metadata: BTreeMap::new(),
+                    structured_metadata: BTreeMap::from([(
+                        "detected_level".to_string(),
+                        "unknown".to_string()
+                    )]),
                     position: None,
                 },
             ]
@@ -136,7 +135,10 @@ async fn loki_push_endpoint_accepts_incomplete_json_value_as_empty_line() {
                 labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
                 timestamp_ns: 19,
                 line: String::new(),
-                structured_metadata: BTreeMap::new(),
+                structured_metadata: BTreeMap::from([(
+                    "detected_level".to_string(),
+                    "unknown".to_string()
+                )]),
                 position: None,
             }]
     );
@@ -180,14 +182,13 @@ async fn loki_push_endpoint_ignores_extra_json_value_fields_like_loki() {
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("app", "api"),
-                    ("detected_level", "error"),
-                    ("service_name", "api"),
-                ]),
+                labels: labels([("app", "api"), ("service_name", "api")]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
+                structured_metadata: BTreeMap::from([
+                    ("detected_level".to_string(), "error".to_string()),
+                    ("trace_id".to_string(), "abc".to_string())
+                ]),
                 position: None,
             }]
     );
@@ -234,7 +235,10 @@ async fn loki_push_endpoint_decodes_empty_json_value_as_zero_timestamp_empty_lin
                 labels: labels([("app", "api"), ("service_name", "api")]),
                 timestamp_ns: 0,
                 line: String::new(),
-                structured_metadata: BTreeMap::new(),
+                structured_metadata: BTreeMap::from([(
+                    "detected_level".to_string(),
+                    "unknown".to_string()
+                )]),
                 position: None,
             }]
     );
@@ -790,15 +794,13 @@ async fn loki_push_endpoint_accepts_gzipped_json_payloads() {
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("app", "api"),
-                    ("detected_level", "error"),
-                    ("env", "prod"),
-                    ("service_name", "api"),
-                ]),
+                labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
+                structured_metadata: BTreeMap::from([
+                    ("detected_level".to_string(), "error".to_string()),
+                    ("trace_id".to_string(), "abc".to_string())
+                ]),
                 position: None,
             }]
     );
@@ -870,15 +872,13 @@ async fn loki_push_endpoint_accepts_deflated_json_payloads() {
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("app", "api"),
-                    ("detected_level", "error"),
-                    ("env", "prod"),
-                    ("service_name", "api"),
-                ]),
+                labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
+                structured_metadata: BTreeMap::from([
+                    ("detected_level".to_string(), "error".to_string()),
+                    ("trace_id".to_string(), "abc".to_string())
+                ]),
                 position: None,
             }]
     );
@@ -1060,14 +1060,13 @@ async fn loki_push_endpoint_accepts_json_content_type_parameters() {
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("app", "api"),
-                    ("detected_level", "error"),
-                    ("service_name", "api"),
-                ]),
+                labels: labels([("app", "api"), ("service_name", "api")]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
-                structured_metadata: BTreeMap::new(),
+                structured_metadata: BTreeMap::from([(
+                    "detected_level".to_string(),
+                    "error".to_string()
+                )]),
                 position: None,
             }]
     );
@@ -1112,15 +1111,13 @@ async fn deprecated_api_prom_push_endpoint_writes_wal_records() {
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("app", "api"),
-                    ("detected_level", "error"),
-                    ("env", "prod"),
-                    ("service_name", "api"),
-                ]),
+                labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
-                structured_metadata: BTreeMap::new(),
+                structured_metadata: BTreeMap::from([(
+                    "detected_level".to_string(),
+                    "error".to_string()
+                )]),
                 position: None,
             }]
     );
@@ -1177,15 +1174,11 @@ async fn loki_push_endpoint_accepts_snappy_protobuf_payloads() {
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("app", "api"),
-                    ("detected_level", "error"),
-                    ("env", "prod"),
-                    ("service_name", "api"),
-                ]),
+                labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
                 structured_metadata: BTreeMap::from([
+                    ("detected_level".to_string(), "error".to_string()),
                     ("status".to_string(), "500".to_string()),
                     ("trace_id".to_string(), "abc".to_string()),
                 ]),
@@ -1236,13 +1229,13 @@ async fn loki_push_endpoint_accepts_empty_protobuf_labels_with_unknown_service()
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("detected_level", "error"),
-                    ("service_name", "unknown_service"),
-                ]),
+                labels: labels([("service_name", "unknown_service")]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
-                structured_metadata: BTreeMap::new(),
+                structured_metadata: BTreeMap::from([(
+                    "detected_level".to_string(),
+                    "error".to_string()
+                )]),
                 position: None,
             }]
     );
@@ -1290,13 +1283,13 @@ async fn loki_push_endpoint_accepts_empty_string_protobuf_labels_with_unknown_se
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("detected_level", "error"),
-                    ("service_name", "unknown_service"),
-                ]),
+                labels: labels([("service_name", "unknown_service")]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
-                structured_metadata: BTreeMap::new(),
+                structured_metadata: BTreeMap::from([(
+                    "detected_level".to_string(),
+                    "error".to_string()
+                )]),
                 position: None,
             }]
     );
@@ -1516,14 +1509,13 @@ async fn loki_push_endpoint_accepts_duplicate_protobuf_structured_metadata_using
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("app", "api"),
-                    ("detected_level", "error"),
-                    ("service_name", "api"),
-                ]),
+                labels: labels([("app", "api"), ("service_name", "api")]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([("trace_id".to_string(), "def".to_string())]),
+                structured_metadata: BTreeMap::from([
+                    ("detected_level".to_string(), "error".to_string()),
+                    ("trace_id".to_string(), "def".to_string())
+                ]),
                 position: None,
             }]
     );
@@ -1574,14 +1566,13 @@ async fn loki_push_endpoint_accepts_invalid_protobuf_structured_metadata_name() 
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("app", "api"),
-                    ("detected_level", "error"),
-                    ("service_name", "api"),
-                ]),
+                labels: labels([("app", "api"), ("service_name", "api")]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([("9bad".to_string(), "metadata".to_string())]),
+                structured_metadata: BTreeMap::from([
+                    ("detected_level".to_string(), "error".to_string()),
+                    ("9bad".to_string(), "metadata".to_string())
+                ]),
                 position: None,
             }]
     );
@@ -2090,14 +2081,19 @@ async fn loki_push_endpoint_accepts_duplicate_json_labels_using_last_value() {
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
-    assert!(records.len() == 1);
     assert!(
-        records[0].labels
-            == labels([
-                ("app", "worker"),
-                ("detected_level", "error"),
-                ("service_name", "worker"),
-            ])
+        records
+            == vec![WalLogRecord {
+                tenant: "tenant-a".to_string(),
+                labels: labels([("app", "worker"), ("service_name", "worker")]),
+                timestamp_ns: 19,
+                line: "api error".to_string(),
+                structured_metadata: BTreeMap::from([(
+                    "detected_level".to_string(),
+                    "error".to_string()
+                )]),
+                position: None,
+            }]
     );
 }
 
@@ -2133,13 +2129,19 @@ async fn loki_push_endpoint_accepts_empty_json_labels_with_unknown_service() {
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
-    assert!(records.len() == 1);
     assert!(
-        records[0].labels
-            == labels([
-                ("detected_level", "info"),
-                ("service_name", "unknown_service"),
-            ])
+        records
+            == vec![WalLogRecord {
+                tenant: "tenant-a".to_string(),
+                labels: labels([("service_name", "unknown_service")]),
+                timestamp_ns: 19,
+                line: "api info".to_string(),
+                structured_metadata: BTreeMap::from([(
+                    "detected_level".to_string(),
+                    "info".to_string()
+                )]),
+                position: None,
+            }]
     );
 }
 
@@ -2181,14 +2183,13 @@ async fn loki_push_endpoint_accepts_invalid_json_structured_metadata_name() {
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("app", "api"),
-                    ("detected_level", "error"),
-                    ("service_name", "api"),
-                ]),
+                labels: labels([("app", "api"), ("service_name", "api")]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([("9bad".to_string(), "metadata".to_string())]),
+                structured_metadata: BTreeMap::from([
+                    ("detected_level".to_string(), "error".to_string()),
+                    ("9bad".to_string(), "metadata".to_string())
+                ]),
                 position: None,
             }]
     );
@@ -2238,14 +2239,13 @@ async fn loki_push_endpoint_accepts_duplicate_json_structured_metadata_using_las
         records
             == vec![WalLogRecord {
                 tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("app", "api"),
-                    ("detected_level", "error"),
-                    ("service_name", "api"),
-                ]),
+                labels: labels([("app", "api"), ("service_name", "api")]),
                 timestamp_ns: 19,
                 line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([("trace_id".to_string(), "def".to_string())]),
+                structured_metadata: BTreeMap::from([
+                    ("detected_level".to_string(), "error".to_string()),
+                    ("trace_id".to_string(), "def".to_string())
+                ]),
                 position: None,
             }]
     );

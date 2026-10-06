@@ -22,6 +22,10 @@ pub(crate) fn selector_sql_with_parent_table(
                  WHERE {predicate}"
             ));
         }
+        if fe.has_field_comparison() {
+            let predicate = field_expr_to_sql(fe)?;
+            return Ok(format!("SELECT * FROM {table} WHERE {predicate}"));
+        }
         return Ok(format!("SELECT * FROM {table}"));
     }
     if has_parent_scope(fe) {

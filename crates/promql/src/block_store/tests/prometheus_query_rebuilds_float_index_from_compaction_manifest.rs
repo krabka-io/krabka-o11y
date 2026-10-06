@@ -41,7 +41,7 @@ pub(crate) async fn prometheus_query_rebuilds_float_index_from_compaction_manife
         &block_meta,
         vec![CompactionSeriesLabels {
             fingerprint: fp,
-            labels: series_labels.clone(),
+            labels: series_labels.clone().into(),
         }],
     );
 
@@ -59,7 +59,7 @@ pub(crate) async fn prometheus_query_rebuilds_float_index_from_compaction_manife
     assert2::assert!(
         samples
             == vec![InstantSample {
-                labels: series_labels,
+                labels: series_labels.into(),
                 ts_ms: 1_000,
                 value: SampleValue::Float(1.0),
                 drop_name: false,
@@ -86,7 +86,7 @@ async fn composed_queries_survive_compaction_publication_deletion_and_reload() {
             tenant: tenant.to_string(),
             series_labels: std::collections::BTreeMap::from([(
                 series.fingerprint(),
-                series.clone(),
+                series.clone().into(),
             )]),
             float_rows: samples
                 .into_iter()
@@ -217,7 +217,7 @@ async fn composed_queries_survive_compaction_publication_deletion_and_reload() {
                 assert2::assert!(
                     actual
                         == QueryResult::InstantVector(vec![InstantSample {
-                            labels: Labels::new(),
+                            labels: Labels::new().into(),
                             ts_ms: 90_000,
                             value: SampleValue::Float(expected),
                             drop_name: false

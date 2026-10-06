@@ -1,4 +1,5 @@
 //! The instant query endpoint over metric queries and their binary operators.
+//! Fixture blocks contain raw stored rows without ingest-time level metadata.
 
 mod support;
 
@@ -44,7 +45,6 @@ async fn query_endpoint_returns_metric_query_as_loki_vector_json() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [19, "1"]
@@ -235,7 +235,6 @@ async fn query_endpoint_applies_metric_vector_set_and_on_modifier() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [19, "1"]
@@ -309,7 +308,6 @@ async fn query_endpoint_applies_metric_query_scalar_arithmetic() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [19, "2"]
@@ -381,9 +379,7 @@ async fn query_endpoint_applies_vector_metric_arithmetic_group_right_modifier() 
                     "resultType": "vector",
                     "result": [
                         {
-                            "metric": {
-                                "detected_level": "unknown"
-                            },
+                            "metric": {},
                             "value": [19, "2"]
                         }
                     ],
@@ -420,7 +416,6 @@ async fn query_endpoint_applies_scalar_metric_query_arithmetic() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [19, "1"]
@@ -459,7 +454,6 @@ async fn query_endpoint_applies_parenthesized_metric_query_scalar_arithmetic() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [19, "2"]
@@ -498,7 +492,6 @@ async fn query_endpoint_applies_parenthesized_metric_operand_scalar_arithmetic()
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [19, "2"]
@@ -537,7 +530,6 @@ async fn query_endpoint_applies_metric_binary_arithmetic() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [19, "2"]
@@ -576,7 +568,6 @@ async fn query_endpoint_applies_metric_binary_arithmetic_ignoring_modifier() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [25, "2"]
@@ -693,7 +684,6 @@ async fn query_endpoint_filters_metric_binary_comparison() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [19, "2"]
@@ -732,7 +722,6 @@ async fn query_endpoint_applies_metric_binary_comparison_on_modifier() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [25, "1"]
@@ -810,7 +799,6 @@ async fn query_endpoint_applies_metric_binary_set_and() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [19, "2"]
@@ -849,7 +837,6 @@ async fn query_endpoint_applies_metric_binary_set_on_modifier() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [25, "2"]
@@ -918,7 +905,6 @@ async fn query_endpoint_filters_scalar_metric_query_comparison() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "value": [19, "1"]
@@ -957,7 +943,6 @@ async fn query_endpoint_accepts_label_replace_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "service": "api-api"
                             },
@@ -997,7 +982,6 @@ async fn query_endpoint_accepts_parenthesized_label_replace_metric_query() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "service": "api-api"
                             },
@@ -1037,7 +1021,6 @@ async fn query_endpoint_accepts_label_replace_metric_binary_expression() {
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "service": "api-api"
                             },
@@ -1077,7 +1060,6 @@ async fn query_endpoint_applies_metric_binary_arithmetic_with_label_replace_oper
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "service": "api-api"
                             },
@@ -1117,7 +1099,6 @@ async fn query_endpoint_applies_metric_binary_arithmetic_with_label_replace_scal
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "service": "api-api"
                             },
@@ -1157,7 +1138,6 @@ async fn query_endpoint_applies_metric_binary_comparison_with_label_replace_oper
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "service": "api-api"
                             },
@@ -1197,7 +1177,6 @@ async fn query_endpoint_applies_metric_binary_set_with_label_replace_operands() 
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "service": "api-api"
                             },

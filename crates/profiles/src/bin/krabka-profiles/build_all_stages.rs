@@ -114,6 +114,7 @@ pub(crate) async fn build_all_stages(
         .with_admin_store(Arc::clone(&store))
         .with_query_architecture(cli.query_architecture)
         .with_async_queries_enabled(cli.async_queries_enabled)
+        .with_query_analysis_series_enabled(cli.query_analysis_series_enabled)
         .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
         .with_metrics(metrics.clone()),
     );
@@ -122,6 +123,7 @@ pub(crate) async fn build_all_stages(
             .with_admin_store(Arc::clone(&store))
             .with_query_architecture(cli.query_architecture)
             .with_async_queries_enabled(cli.async_queries_enabled)
+            .with_query_analysis_series_enabled(cli.query_analysis_series_enabled)
             .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
             .with_metrics(metrics.clone()),
     );
@@ -143,17 +145,30 @@ pub(crate) async fn build_all_stages(
     // public door is exactly how a distributor stops writing to the WAL, and
     // the block builder behind it then drains a topic nothing is adding to.
     let door = krabka_profiles::distributor::router(distributor)
-        .merge(krabka_profiles::query::router(frontend_state))
+        .merge(krabka_profiles::query::router(Arc::clone(&frontend_state)))
         .merge(krabka_observability::readiness_router(readiness.clone()));
     let (bound, door_stage) =
         bind_all_stage_server(cli.listen, door, "profiles all-in-one", &security.server).await?;
+    let door_stage: AllStage = Box::new(move |token| {
+        Box::pin(async move {
+            let server = door_stage(token.clone());
+            tokio::pin!(server);
+            tokio::select! {
+                () = token.cancelled() => {
+                    frontend_state.shutdown_async_queries().await;
+                    server.await;
+                }
+                () = &mut server => frontend_state.shutdown_async_queries().await,
+            }
+        })
+    });
     tracing::info!(%bound, "profiles all-in-one ingest and query listening");
 
     // The plain querier binds a loopback port so `--target all` still exercises
     // the standalone role. The frontend fans range shards through the shared
     // execution pipeline over the common read store, so it needs no duplicate
     // HTTP hop in this single-process composition.
-    let querier_app = krabka_profiles::query::router(querier_state)
+    let querier_app = krabka_profiles::query::router(Arc::clone(&querier_state))
         .merge(krabka_observability::readiness_router(readiness.clone()));
     let (loopback, loopback_stage) = bind_all_stage_server(
         SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
@@ -162,6 +177,19 @@ pub(crate) async fn build_all_stages(
         &security.server,
     )
     .await?;
+    let loopback_stage: AllStage = Box::new(move |token| {
+        Box::pin(async move {
+            let server = loopback_stage(token.clone());
+            tokio::pin!(server);
+            tokio::select! {
+                () = token.cancelled() => {
+                    querier_state.shutdown_async_queries().await;
+                    server.await;
+                }
+                () = &mut server => querier_state.shutdown_async_queries().await,
+            }
+        })
+    });
     tracing::info!(%loopback, "profiles querier listening");
 
     let mut stages: BTreeMap<RoleKind, AllStage> = BTreeMap::new();

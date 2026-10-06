@@ -20,7 +20,7 @@ impl QueryShard {
         LabelMatcher {
             name: QUERY_SHARD_LABEL.to_string(),
             op: MatchOp::Eq,
-            value: self.selector_value(),
+            value: self.selector_value().into(),
         }
     }
 }

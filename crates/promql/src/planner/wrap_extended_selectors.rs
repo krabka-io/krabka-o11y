@@ -8,6 +8,19 @@ pub(crate) fn wrap_extended_selectors(expr: Expr, modifier: ExtendedSelectorModi
                 children: vec![expr],
             }),
         }),
+        Expr::Extension(ref extension)
+            if extension
+                .expr
+                .as_any()
+                .is::<super::byte_selector_expr::ByteSelectorExpr>() =>
+        {
+            Expr::Extension(Extension {
+                expr: Arc::new(ExtendedSelectorExpr {
+                    modifier,
+                    children: vec![expr],
+                }),
+            })
+        }
         Expr::Call(mut call) => {
             call.args.args = call
                 .args

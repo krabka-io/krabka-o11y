@@ -17,7 +17,11 @@ pub(crate) fn remote_read_matchers(
                     )));
                 }
             };
-            Ok(LabelMatcher::new(&matcher.name, op, &matcher.value))
+            Ok(LabelMatcher::new(
+                &matcher.name,
+                op,
+                crate::PromqlString::from(matcher.value.clone()),
+            ))
         })
         .collect()
 }

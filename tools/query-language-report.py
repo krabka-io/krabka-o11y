@@ -6,11 +6,13 @@ import collections
 import copy
 import hashlib
 import json
+import math
 import pathlib
 import re
 import runpy
 import tempfile
 import subprocess
+import urllib.parse
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -20,8 +22,14 @@ REQUIRED = {
     "promql-http-compliance-summary.json",
     "loki-remote-range.json",
     "loki-remote-instant.json",
+    "loki-supported-template-functions.json",
+    "loki-experimental-query-conformance.json",
+    "tempo-pipeline-hint-conformance.json",
     "tempo-forest-conformance.json",
     "pyroscope-populated-rpcs.json", "pyroscope-v2-fields.json",
+    "tempo-supported-scopes-conformance.json", "tempo-expression-output-conformance.json",
+    "tempo-array-metric-frontend-conformance.json", "tempo-instant-bounds-conformance.json",
+    "tempo-retrieval-shape-conformance.json", "tempo-exemplar-reservoir-conformance.json",
     "pyroscope-v1-aggregation.json", "pyroscope-v2-async-disabled.json",
     "tempo-numeric-metric-conformance.json", "tempo-live-exemplar-conformance.json", "tempo-typed-group-conformance.json", "tempo-field-arithmetic-conformance.json",
     *{f"tempo-metric-result-{ordinal}.json" for ordinal in range(4)},
@@ -75,7 +83,7 @@ def paired_rejection(case):
 
 def case_verdict(case):
     if case.get("classification") == "paired-expected-error":
-        return "matched" if case.get("status") in ("matched", "pass", "passed") and paired_rejection(case) else "invalid-rejection"
+        return "matched" if case.get("status") in ("matched", "pass", "passed", "paired-expected-error") and paired_rejection(case) else "invalid-rejection"
     status = case.get("status", "uncovered")
     return case.get("classification", status) if status in ("matched", "pass", "passed", "confirmed-unimplemented") else status
 
@@ -112,14 +120,23 @@ PINNED_COUNTS = {
     "promql-http-compliance-summary.json": 539,
     "loki-remote-range.json": 104,
     "loki-remote-instant.json": 81,
+    "loki-supported-template-functions.json": 171,
+    "loki-experimental-query-conformance.json": 40,
+    "tempo-pipeline-hint-conformance.json": 15,
     "tempo-forest-conformance.json": 8,
     "tempo-numeric-metric-conformance.json": 6,
     "tempo-live-exemplar-conformance.json": 1,
     "tempo-typed-group-conformance.json": 2,
     "tempo-field-arithmetic-conformance.json": 4,
-    "pyroscope-populated-rpcs.json": 89,
-    "pyroscope-v2-fields.json": 91,
-    "pyroscope-v1-aggregation.json": 2,
+    "tempo-supported-scopes-conformance.json": 12,
+    "tempo-expression-output-conformance.json": 8,
+    "tempo-array-metric-frontend-conformance.json": 6,
+    "tempo-instant-bounds-conformance.json": 10,
+    "tempo-retrieval-shape-conformance.json": 12,
+    "tempo-exemplar-reservoir-conformance.json": 2,
+    "pyroscope-populated-rpcs.json": 113,
+    "pyroscope-v2-fields.json": 100,
+    "pyroscope-v1-aggregation.json": 4,
     "pyroscope-v2-async-disabled.json": 2,
     "metrics-v1-query-transitions.json": 26,
     "metrics-v2-query-transitions.json": 26,
@@ -192,7 +209,7 @@ def pyroscope_binding_errors(name, report):
     if report.get("suite") != name.removesuffix(".json") or report.get("status") != "passed":
         errors.append("Pyroscope suite did not declare complete successful execution")
     if name == "pyroscope-populated-rpcs.json":
-        if upstream.get("storage") != "v1" or upstream.get("query_analysis_series_enabled") is not True:
+        if upstream.get("storage") != "v1" or upstream.get("query_analysis_series_enabled") is not True or upstream.get("candidate_query_analysis_series_enabled") is not True or upstream.get("self_profiling_disable_push") is not True:
             errors.append("Pyroscope v1 storage/query-analysis configuration differs from fixture")
     elif name == "pyroscope-v2-fields.json":
         expected = {"oracle": {"query-frontend.async-queries-enabled": True},
@@ -202,7 +219,8 @@ def pyroscope_binding_errors(name, report):
     else:
         architecture = "v1" if name == "pyroscope-v1-aggregation.json" else "v2"
         expected = {"query_architecture": architecture,
-                    "oracle_async_enabled": False, "candidate_async_enabled": False}
+                    "oracle_async_enabled": False, "candidate_async_enabled": False,
+                    "oracle_query_analysis_series_enabled": False, "candidate_query_analysis_series_enabled": False}
         if not EVIDENCE_TYPED_EQUAL(expected, report.get("settings")):
             errors.append("Pyroscope architecture control configuration differs from fixture")
     return errors
@@ -240,6 +258,96 @@ def promql_corpus_queries():
     return result
 
 
+def loki_template_cases():
+    # The reviewed fixture is a table of literal Rust string triples, not a
+    # search for names in arbitrary queries. Bind every ID to its whole query.
+    source = (ROOT / "crates/logql/tests/support/template_functions.rs").read_text()
+    pattern = r'r(?P<h>#+)"(?P<raw>[\s\S]*?)"(?P=h)|(?P<normal>"(?:\\.|[^"\\])*")'
+    literals = [match["raw"] if match["raw"] is not None else json.loads(match["normal"])
+                for match in re.finditer(pattern, source)]
+    if len(literals) % 3:
+        raise ValueError("Loki template fixture literal triples changed")
+    cases = {}
+    for name, expression, line in zip(literals[::3], literals[1::3], literals[2::3]):
+        if name in cases:
+            raise ValueError("duplicate Loki template fixture ID")
+        query = '{app="api",format="logfmt"} | line_format ' + json.dumps("{{ " + expression + " }}", ensure_ascii=False, separators=(",", ":"))
+        cases[name] = (expression, query, line)
+    return cases
+
+
+
+def loki_template_seed():
+    # Parse the reviewed literal seed, not an oracle response. These sixteen
+    # identities define the independent timestamp/line ledger for every case.
+    source = (ROOT / "crates/observability/tests/loki_differential.rs").read_text()
+    parser_streams = source.partition("const PARSER_STREAMS:")[2]
+    stream = re.search(r'labels:\s*&\[\("app", "api"\), \("env", "prod"\), \("format", "logfmt"\)\],\s*entries:\s*&\[(.*?)\n        \],', parser_streams, re.S)
+    if stream is None:
+        raise ValueError("reviewed Loki logfmt seed absent")
+    literal = r'r(?P<h>#+)"(?P<raw>[\s\S]*?)"(?P=h)|(?P<normal>"(?:\\.|[^"\\])*")'
+    entries = []
+    for entry in re.finditer(r'SeedEntry\s*\{\s*offset_secs:\s*(?P<offset>\d+),\s*line:\s*(?:' + literal + r'),\s*metadata:\s*&\[\],\s*\}', stream[1]):
+        text = entry["raw"]
+        if text is None:
+            quoted = re.sub(r'\\u\{([0-9A-Fa-f]+)\}', lambda match: json.dumps(chr(int(match[1], 16)))[1:-1], entry["normal"])
+            text = json.loads(quoted)
+        offset = int(entry["offset"])
+        # Pinned distributor/field_detection.go::extractLogLevelFromLogLine
+        # falls back to bounded word detection without a severity field. The
+        # fixture's only level words are error at offsets eight and twelve.
+        level = "error" if offset in (8, 12) else "unknown"
+        if ("error" in text) != (level == "error"):
+            raise ValueError("reviewed Loki seed level words changed")
+        entries.append((offset, text, level))
+    if [offset for offset, _, _ in entries] != [2, 3, 4, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 20, 21, 22]:
+        raise ValueError("reviewed Loki template sixteen-entry seed changed")
+    return entries
+
+
+def loki_template_expected(case_id, golden, base_ns):
+    streams = []
+    for level in ("error", "unknown"):
+        values = [[str(base_ns + offset * 1_000_000_000), text if case_id == "line" else golden]
+                  for offset, text, entry_level in loki_template_seed() if entry_level == level]
+        streams.append({"stream":{"app":"api", "env":"prod", "format":"logfmt", "service_name":"api", "detected_level":level}, "values":values})
+    return {"status":200, "body":{"status":"success", "data":{"resultType":"streams", "result":streams}}}
+
+
+def loki_template_binding_errors(report):
+    if not isinstance(report, dict):
+        return ["Loki template report must be an object"]
+    expected = loki_template_cases()
+    rows = report.get("cases")
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        return ["Loki template cases must be an array of objects"]
+    ids = [row.get("id") for row in rows]
+    if len(ids) != len(expected) or any(not isinstance(value, str) for value in ids) or set(ids) != set(expected):
+        return ["Loki template fixture requires every source-bound case exactly once"]
+    errors = []
+    base_ns = report.get("timeline_base_ns")
+    if type(base_ns) is not int or base_ns < 0:
+        return ["Loki template fixture requires its source-created integer timeline_base_ns"]
+    if report.get("upstream_source") != "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da":
+        errors.append("Loki template source revision differs from pin")
+    for row in rows:
+        expression, query, line = expected[row["id"]]
+        request = row.get("request")
+        required_request = {"method":"GET", "path":"/loki/api/v1/query_range", "tenant":"parsers", "query":query}
+        if row.get("name") != row["id"] or row.get("expression") != expression or not EVIDENCE_TYPED_EQUAL(request, required_request):
+            errors.append("Loki template exact expression/request differs from source fixture")
+        ledger = row.get("independent_expected")
+        if not isinstance(ledger, dict) or any(not EVIDENCE_TYPED_EQUAL(row.get(side), ledger) for side in ("oracle", "candidate")):
+            errors.append("Loki template responses differ from independent stream ledger")
+        for side in ("raw_oracle", "raw_candidate"):
+            response = row.get(side)
+            if not isinstance(response, dict) or type(response.get("status")) is not int or response.get("status") != 200 or not isinstance(response.get("body"), dict):
+                errors.append("Loki template positive query lacks successful raw HTTP response")
+        if not EVIDENCE_TYPED_EQUAL(ledger, loki_template_expected(row["id"], line, base_ns)):
+            errors.append("Loki template independent result differs from exact sixteen-entry grouped fixture golden")
+    return errors
+
+
 def promql_case_binding_errors(report):
     expected = promql_corpus_queries()
     files = report.get("files")
@@ -264,6 +372,287 @@ def promql_case_binding_errors(report):
         for case in cases:
             if case.get("query") != queries[case["ordinal"] - 1]:
                 errors.append(f"PromQL corpus query differs: {file['name']}/{case['ordinal']}")
+    return errors
+
+
+def experimental_query_binding_errors(name, report):
+    """Require real exchanges and the independent ledgers of the new suites."""
+    language = {"loki-experimental-query-conformance.json": "logql",
+                "tempo-pipeline-hint-conformance.json": "traceql"}.get(name)
+    if language is None:
+        return []
+    if not isinstance(report, dict):
+        return ["experimental query report must be an object"]
+    pin = json.loads((ROOT / "qualification/query-language-inventory.json").read_text())["surfaces"][language]["pin"]
+    expected_source = ({key:pin[key] for key in ("repository", "version", "revision")}
+                       if language == "traceql" else pin["revision"])
+    errors = []
+    if not EVIDENCE_TYPED_EQUAL(report.get("upstream_source"), expected_source):
+        errors.append("experimental query source differs from pin")
+    rows = report.get("cases")
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        return errors + ["experimental query cases must be objects"]
+    for row in rows:
+        request, ledger = row.get("request"), row.get("independent_expected")
+        outcome = row.get("expected_outcome")
+        if not isinstance(request, dict) or ledger is None or outcome not in ("query-result", "query-rejection"):
+            errors.append("experimental query lacks request, ledger or explicit outcome")
+            continue
+        if outcome == "query-rejection":
+            if not paired_rejection(row) or row.get("classification") != "paired-expected-error":
+                errors.append("experimental rejection lacks matching HTTP error contract")
+            if language == "traceql":
+                responses = row.get("responses", [])
+                if (not isinstance(responses, list) or any(not isinstance(item, dict) for item in responses)
+                        or len(responses) != 2 or {item.get("implementation") for item in responses} != {"upstream", "krabka"}
+                        or any(item.get("http_status") != 400 or item.get("query_rejection") is not True
+                               or not isinstance(item.get("body"), str) or not item["body"] for item in responses)
+                        or ledger != {"outcome":"query-rejection", "http_status":400}):
+                    errors.append("Tempo rejection lacks both classified raw HTTP diagnostics")
+            else:
+                for side in ("oracle", "candidate"):
+                    raw = row.get("raw_" + side, {})
+                    normalized = row.get(side, {})
+                    if (not isinstance(raw, dict) or not isinstance(normalized, dict)
+                            or raw.get("status") != row.get("expected_status") or raw.get("status") != normalized.get("status")
+                            or not isinstance(raw.get("text"), str) or raw["text"].rstrip("\n") != ledger
+                            or normalized.get("error") != ledger):
+                        errors.append("Loki rejection differs from raw exchange or exact diagnostic ledger")
+        elif language == "logql":
+            discovery = row.get("id")
+            if discovery in ("discovery/disabled-does-not-synthesize-unknown", "discovery/custom-logfmt-field",
+                             "discovery/bounded-json-depth", "discovery/unlimited-json-depth"):
+                try:
+                    empty = discovery in ("discovery/disabled-does-not-synthesize-unknown", "discovery/bounded-json-depth")
+                    instant = dict(request["params"])["time"]
+                    # The fixtures use Loki's integer form: at most ten
+                    # characters means seconds, otherwise nanoseconds.
+                    integer = int(instant)
+                    if not -(1 << 63) <= integer < (1 << 63):
+                        raise ValueError("instant is outside Loki's signed timestamp range")
+                    timestamp = float(integer) if len(instant) <= 10 else integer / 1_000_000_000
+                    expected_discovery = {"samples":[] if empty else [{"metric":{}, "points":[[timestamp, "1"]]}], "warnings":[]}
+                    if not math.isfinite(timestamp) or not EVIDENCE_TYPED_EQUAL(ledger, expected_discovery):
+                        errors.append("Loki discovery differs from its independent eligible-entry count")
+                except (KeyError, ValueError, TypeError):
+                    errors.append("Loki discovery lacks its bound instant timestamp")
+            if row.get("expected_status") != 200 or not EVIDENCE_TYPED_EQUAL(row.get("oracle"), row.get("candidate")):
+                errors.append("Loki positive query lacks matching complete normalized responses")
+            for side in ("oracle", "candidate"):
+                raw = row.get("raw_" + side, {})
+                body = raw.get("body", {}) if isinstance(raw, dict) else {}
+                if not isinstance(raw, dict) or raw.get("status") != 200 or not isinstance(body, dict) or body.get("status") != "success":
+                    errors.append("Loki positive query lacks successful raw HTTP response")
+                if not EVIDENCE_TYPED_EQUAL(loki_experimental_normalized(body), row.get(side)):
+                    errors.append("Loki complete normalized response differs from its raw exchange")
+                if not EVIDENCE_TYPED_EQUAL(row.get(side + "_semantic"), ledger):
+                    errors.append("Loki positive query differs from independent sample/warning ledger")
+                if not EVIDENCE_TYPED_EQUAL(loki_experimental_semantic(body), ledger):
+                    errors.append("Loki raw response differs from independent sample/warning ledger")
+        else:
+            if not isinstance(ledger, dict):
+                errors.append("Tempo positive metric ledger must be an object")
+                continue
+            if row.get("stableid") in ("tempo-live-pipeline-scalar-before-metrics-negative",
+                                       "tempo-live-pipeline-group-filter-before-metrics-negative"):
+                try:
+                    bounds = urllib.parse.parse_qs(request["range"], strict_parsing=True)
+                    start, end = int(bounds["start"][0]), int(bounds["end"][0])
+                    zero = {"series":[{"labels":[{"key":"__name__", "value":{"stringValue":"count_over_time"}}],
+                                       "samples":[{"timestampMs":str(timestamp * 1000), "value":0.0}
+                                                  for timestamp in range(start, end + 1, 30)], "exemplars":[]}]}
+                    if request.get("step") != "30s" or end - start != 180 or not EVIDENCE_TYPED_EQUAL(ledger, zero):
+                        errors.append("Tempo rejected spansets lack the independent complete zero-count grid")
+                except (KeyError, ValueError, TypeError):
+                    errors.append("Tempo zero-count grid lacks valid request bounds")
+            expected = ledger.get("allowed_complete_outputs") if row.get("comparison_kind") == "independent-sampling-domain" else [ledger]
+            if not isinstance(expected, list) or not expected:
+                errors.append("Tempo sampling query lacks complete independently enumerated cohorts")
+                continue
+            for side in ("upstream", "krabka"):
+                actual = row.get(side)
+                if not isinstance(actual, dict) or not isinstance(actual.get("series"), list):
+                    errors.append("Tempo positive query lacks successful metric-series response")
+                elif not any(tempo_pipeline_metrics_match(cohort, actual) for cohort in expected):
+                    errors.append("Tempo positive query differs from complete independent metric ledger")
+            if row.get("comparison_kind") not in ("exact-whole-series", "independent-sampling-domain"):
+                errors.append("Tempo query lacks its explicit comparison contract")
+    return errors
+
+
+def loki_experimental_normalized(body):
+    try:
+        value = copy.deepcopy(body)
+        data = value["data"]
+        data.pop("stats", None)
+        if data["resultType"] not in ("matrix", "vector"):
+            return None
+        for row in data["result"]:
+            points = row["values"] if data["resultType"] == "matrix" else [row["value"]]
+            for point in points:
+                number = point[1]
+                if isinstance(number, str) and number not in ("NaN", "+Inf", "-Inf"):
+                    point[1] = format(float(number), ".6f")
+        data["result"].sort(key=lambda row: json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+        return value
+    except (KeyError, TypeError, ValueError, AttributeError, IndexError):
+        return None
+
+
+def loki_experimental_semantic(body):
+    try:
+        rows = []
+        for row in body["data"]["result"]:
+            metric = {key:value for key, value in row["metric"].items()
+                      if key in ("app", "__variant__", "__tenant_id__")}
+            points = row.get("values", [row.get("value")])
+            rows.append({"metric":metric, "points":[[float(point[0]), point[1]] for point in points]})
+        rows.sort(key=lambda row: json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+        return {"samples":rows, "warnings":body.get("warnings", [])}
+    except (KeyError, TypeError, ValueError, AttributeError, IndexError):
+        return None
+
+
+def tempo_pipeline_metrics_match(expected, actual):
+    """These fixtures disable exemplars; keep labels, every point and its order."""
+    def canonical(response):
+        indexed = {}
+        for series in response["series"]:
+            labels = sorted(series["labels"], key=lambda label: json.dumps(label, sort_keys=True))
+            key = json.dumps(labels, sort_keys=True)
+            if key in indexed or series.get("exemplars", []):
+                raise ValueError("duplicate series or unexpected exemplar")
+            points = []
+            for point in series.get("samples", []):
+                timestamp, value = point.get("timestampMs", 0), point.get("value", 0.0)
+                if type(timestamp) not in (int, str) or type(value) not in (int, float):
+                    raise ValueError("invalid timestamp or sample value")
+                points.append((int(timestamp), float(value)))
+            indexed[key] = points
+        return indexed
+    try:
+        left, right = canonical(expected), canonical(actual)
+        return (left.keys() == right.keys()
+                and all(len(points) == len(right[key]) and all(
+                    timestamp == actual_timestamp and (value == actual_value
+                        or math.isnan(value) and math.isnan(actual_value)
+                        or math.isfinite(value) and math.isfinite(actual_value)
+                           and abs(value - actual_value) < 2.220446049250313e-16)
+                    for (timestamp, value), (actual_timestamp, actual_value) in zip(points, right[key]))
+                    for key, points in left.items()))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+
+
+def tempo_array_metric_binding_errors(report):
+    """Bind the public frontend's actual nil label to its complete fixture grid."""
+    if not isinstance(report, dict) or not isinstance(report.get("cases"), list):
+        return ["Tempo expression output report lacks cases"]
+    rows = [row for row in report["cases"] if isinstance(row, dict)
+            and row.get("stableid") == "tempo-live-output-array-metric-label"]
+    if len(rows) != 1:
+        return ["Tempo array metric frontend witness must occur exactly once"]
+    row = rows[0]
+    query = '{ resource.service.name = "checkout" && span.numbers != nil } | count_over_time() by(span.numbers) with(exemplars=false)'
+    request = row.get("request")
+    if row.get("query") != query or not isinstance(request, dict) or request.get("step") != "30s":
+        return ["Tempo array metric witness differs from its existence predicate, grouping or step"]
+    try:
+        bounds = urllib.parse.parse_qs(request["range"], strict_parsing=True)
+        if set(bounds) != {"start", "end"} or any(len(values) != 1 for values in bounds.values()):
+            raise ValueError("duplicate or additional bounds")
+        start, end = int(bounds["start"][0]), int(bounds["end"][0])
+        if start < 0 or end - start != 180 or end * 1000 > 2**63 - 1:
+            raise ValueError("invalid fixture window")
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return ["Tempo array metric witness lacks its valid 180-second request window"]
+    # The three checkout spans occur at anchor and anchor+1 second. The public
+    # count grid is anchored at request start+60, with the latter pair in +30s.
+    anchor = start + 60
+    complete = {"series":[{
+        "labels":[{"key":"span.numbers", "value":{"stringValue":"nil"}}],
+        "samples":[{"timestampMs":str((anchor + index * 30) * 1000),
+                    "value":1.0 if index == 0 else 2.0 if index == 1 else 0.0}
+                   for index in range(-2, 5)],
+        "exemplars":[],
+    }]}
+    legend = '{"span.numbers"="<nil>"}'
+    ledger = {"label_key":"span.numbers", "label_values":[{"stringValue":"nil"}],
+              "prom_labels":[legend], "group_count":1, "each_total":3.0,
+              "complete_series":complete}
+    errors = []
+    if not EVIDENCE_TYPED_EQUAL(row.get("independent_expected"), ledger):
+        errors.append("Tempo array metric ledger differs from independently derived nil-label grid")
+    for side in ("upstream", "krabka"):
+        actual = row.get(side)
+        if not tempo_pipeline_metrics_match(complete, actual):
+            errors.append(f"Tempo array metric {side} differs from actual typed nil labels and complete count grid")
+            continue
+        # promLabels is optional on the public wire. When supplied, nil's
+        # Static.String legend is <nil>, distinct from AsAnyValue's string nil.
+        series = actual["series"][0]
+        if "promLabels" in series and series["promLabels"] != legend:
+            errors.append(f"Tempo array metric {side} legend differs from independent label identity")
+    return errors
+
+
+def tempo_instant_requests(anchor):
+    end = anchor + 90
+    return {
+        "default-since": f"end={end}",
+        "empty-start": f"start=&end={end}",
+        "explicit-since": f"end={end}&since=2m",
+        "ignored-time": f"end={end}&time=bogus",
+        "nanoseconds": f"end={end}123456789",
+        "fractional-seconds": f"end={end}.123456789",
+        "default-clock": "time=bogus",
+        "start-only": f"start={anchor - 60}",
+        "short-since": f"end={end}&since=30s",
+        "rate": f"end={end}&since=2m",
+    }
+
+
+def tempo_instant_binding_errors(report):
+    errors = []
+    rows = report.get("cases", [])
+    if ({row.get("stableid") for row in rows} != {f"tempo-instant-{name}" for name in tempo_instant_requests(0)}
+            or len(rows) != 10):
+        errors.append("Tempo instant bounds witness identities differ")
+    for row in rows:
+        try:
+            anchor = row["fixture_anchor"]
+            if type(anchor) is not int or anchor < 60 or anchor * 1000 > 2**63 - 100000:
+                raise ValueError("invalid anchor")
+            name = row["stableid"].removeprefix("tempo-instant-")
+            params = tempo_instant_requests(anchor)[name]
+            operation = "rate" if name == "rate" else "count_over_time"
+            query = f'{{ resource.service.name = "checkout" }} | {operation}() with(exemplars=false)'
+            value = 3.0 / 120.0 if name == "rate" else 3.0
+            expected = [{"labels":[{"key":"__name__","value":{"stringValue":operation}}]}] if name == "short-since" else [{
+                "labels":[{"key":"__name__","value":{"stringValue":operation}}],"value":value}]
+            if (row["query"] != query or row["request"] != {"params":params}
+                    or not EVIDENCE_TYPED_EQUAL(row["independent_expected"], expected)):
+                raise ValueError("request or independent scalar ledger differs")
+            for side in ("upstream", "krabka"):
+                observed = row[side]
+                before, after = observed["clock_ms"]
+                if (observed["error"] is not None or type(before) is not int
+                        or type(after) is not int or before > after):
+                    raise ValueError("invalid execution clock or error")
+                # InstantSeries has only labels and value. In particular, its
+                # removed prom_labels field and range samples are not retained.
+                series = observed["body"].get("series", [])
+                if not isinstance(series, list) or len(series) != len(expected):
+                    raise ValueError("instant series count differs from independent window ledger")
+                for actual, wanted in zip(series, expected):
+                    if (set(actual) != set(wanted)
+                            or not EVIDENCE_TYPED_EQUAL(actual["labels"], wanted["labels"])
+                            or type(actual.get("value", 0.0)) not in (int, float)
+                            or not math.isfinite(actual.get("value", 0.0))
+                            or abs(actual.get("value", 0.0) - wanted.get("value", 0.0)) >= 2.220446049250313e-16):
+                        raise ValueError("complete instant scalar differs from independent span/window ledger")
+        except (KeyError, TypeError, ValueError, AttributeError, IndexError) as error:
+            errors.append(f"Tempo instant witness invalid: {error}")
     return errors
 
 
@@ -293,6 +682,13 @@ def qualification_counts(name, report, generated_count=None):
         return collections.Counter(uncovered=1), ["case counts must be nonnegative integers"]
     expected = PINNED_COUNTS.get(name)
     errors.extend(pyroscope_binding_errors(name, report))
+    errors.extend(experimental_query_binding_errors(name, report))
+    if name == "tempo-instant-bounds-conformance.json":
+        errors.extend(tempo_instant_binding_errors(report))
+    if name == "tempo-expression-output-conformance.json":
+        errors.extend(tempo_array_metric_binding_errors(report))
+    if name == "loki-supported-template-functions.json":
+        errors.extend(loki_template_binding_errors(report))
     if name == "promql-3.14.0-qualification.json" and report.get("enable_type_and_unit_labels") is not False:
         errors.append("PromQL corpus engine type/unit-label flag differs from pinned test engine")
     if name == "promql-3.14.0-qualification.json":
@@ -557,6 +953,217 @@ def usable_evidence(reference, kind, executed, rejected_cases):
 
 
 def self_check():
+    anchor = 1700000000
+    instant_rows = []
+    for name, params in tempo_instant_requests(anchor).items():
+        clock = (anchor + 180) * 1000
+        operation = "rate" if name == "rate" else "count_over_time"
+        value = 3.0 / 120.0 if name == "rate" else 3.0
+        expected = [{"labels":[{"key":"__name__","value":{"stringValue":operation}}]}] if name == "short-since" else [{
+            "labels":[{"key":"__name__","value":{"stringValue":operation}}],"value":value}]
+        observation = {"body":{"series":copy.deepcopy(expected)},
+                       "clock_ms":[clock - 1, clock + 1],"error":None}
+        instant_rows.append({"stableid":f"tempo-instant-{name}",
+            "query":f'{{ resource.service.name = "checkout" }} | {operation}() with(exemplars=false)',
+            "request":{"params":params},"fixture_anchor":anchor,"independent_expected":expected,
+            "upstream":copy.deepcopy(observation),"krabka":copy.deepcopy(observation),"status":"matched"})
+    instant_report = {"planned":10,"cases":instant_rows}
+    assert not tempo_instant_binding_errors(instant_report)
+    for mutation in ("both-counts", "range-samples", "wrong-label", "rate-window", "short-window", "params", "ledger", "missing"):
+        altered = copy.deepcopy(instant_report)
+        row = altered["cases"][0]
+        if mutation == "both-counts":
+            for side in ("upstream", "krabka"):
+                row[side]["body"]["series"][0]["value"] = 4
+        elif mutation == "range-samples":
+            row["krabka"]["body"]["series"][0]["samples"] = [{"timestampMs":"1","value":3}]
+        elif mutation == "wrong-label":
+            row["upstream"]["body"]["series"][0]["labels"][0]["value"] = {"stringValue":"rate"}
+        elif mutation == "rate-window":
+            altered["cases"][9]["krabka"]["body"]["series"][0]["value"] = 3.0 / (120.0 + 1e-9)
+        elif mutation == "short-window":
+            altered["cases"][8]["upstream"]["body"]["series"] = copy.deepcopy(row["upstream"]["body"]["series"])
+        elif mutation == "params":
+            row["request"]["params"] += "&start=1"
+        elif mutation == "ledger":
+            row["independent_expected"][0]["value"] = 4
+        else:
+            altered["cases"].pop()
+        assert tempo_instant_binding_errors(altered), mutation
+    array_metrics = {"series":[{
+        "labels":[{"key":"span.numbers", "value":{"stringValue":"nil"}}],
+        "samples":[{"timestampMs":str(timestamp * 1000), "value":value}
+                   for timestamp, value in [(300, 0.0), (330, 0.0), (360, 1.0),
+                                            (390, 2.0), (420, 0.0), (450, 0.0), (480, 0.0)]],
+        "exemplars":[],
+    }]}
+    array_report = {"cases":[{
+        "stableid":"tempo-live-output-array-metric-label",
+        "query":'{ resource.service.name = "checkout" && span.numbers != nil } | count_over_time() by(span.numbers) with(exemplars=false)',
+        "request":{"range":"start=300&end=480", "step":"30s"},
+        "independent_expected":{"label_key":"span.numbers", "label_values":[{"stringValue":"nil"}],
+                                "prom_labels":['{"span.numbers"="<nil>"}'], "group_count":1,
+                                "each_total":3.0, "complete_series":copy.deepcopy(array_metrics)},
+        "upstream":copy.deepcopy(array_metrics), "krabka":copy.deepcopy(array_metrics),
+    }]}
+    assert not tempo_array_metric_binding_errors(array_report)
+    array_report["cases"][0]["krabka"]["series"][0]["promLabels"] = '{"span.numbers"="<nil>"}'
+    assert not tempo_array_metric_binding_errors(array_report)
+    for mutation in ("missing-case", "duplicate-case", "predicate", "step", "window", "duplicate-bound",
+                     "missing-series", "duplicate-series", "wrong-label", "array-label", "missing-point",
+                     "duplicate-point", "wrong-grid", "cancelling-values", "exemplar", "legend", "null-legend",
+                     "ledger-and-responses-wrong-counts"):
+        altered = copy.deepcopy(array_report)
+        row = altered["cases"][0]
+        series = row["krabka"]["series"][0]
+        if mutation == "missing-case":
+            altered["cases"] = []
+        elif mutation == "duplicate-case":
+            altered["cases"].append(copy.deepcopy(row))
+        elif mutation == "predicate":
+            row["query"] = row["query"].replace("span.numbers != nil", "span.numbers = nil")
+        elif mutation == "step":
+            row["request"]["step"] = "60s"
+        elif mutation == "window":
+            row["request"]["range"] = "start=300&end=450"
+        elif mutation == "duplicate-bound":
+            row["request"]["range"] += "&start=300"
+        elif mutation == "missing-series":
+            row["krabka"]["series"] = []
+        elif mutation == "duplicate-series":
+            row["krabka"]["series"].append(copy.deepcopy(series))
+        elif mutation == "wrong-label":
+            series["labels"][0]["value"] = {"stringValue":"<nil>"}
+        elif mutation == "array-label":
+            series["labels"][0]["value"] = {"arrayValue":{"values":[{"intValue":"1"}]}}
+        elif mutation == "missing-point":
+            series["samples"].pop()
+        elif mutation == "duplicate-point":
+            series["samples"][1] = copy.deepcopy(series["samples"][0])
+        elif mutation == "wrong-grid":
+            series["samples"][0]["timestampMs"] = "300001"
+        elif mutation == "cancelling-values":
+            series["samples"][2]["value"] = 2.0
+            series["samples"][3]["value"] = 1.0
+        elif mutation == "exemplar":
+            series["exemplars"] = [{"value":1.0}]
+        elif mutation in ("legend", "null-legend"):
+            series["promLabels"] = '{"span.numbers"="nil"}' if mutation == "legend" else None
+        else:
+            row["independent_expected"]["each_total"] = 9.0
+            for response in (row["independent_expected"]["complete_series"], row["upstream"], row["krabka"]):
+                response["series"][0]["samples"][2]["value"] = 4.0
+                response["series"][0]["samples"][3]["value"] = 5.0
+        assert tempo_array_metric_binding_errors(altered), mutation
+    corrupted_oracle = copy.deepcopy(array_report)
+    corrupted_oracle["cases"][0]["upstream"]["series"][0]["labels"][0]["value"] = {"stringValue":"array"}
+    assert tempo_array_metric_binding_errors(corrupted_oracle)
+    metrics = {"series":[{"labels":[{"key":"name", "value":{"stringValue":"checkout"}}],
+                         "samples":[{"timestampMs":"30", "value":2.0}], "exemplars":[]}]}
+    report = {"upstream_source":{"repository":"grafana/tempo", "version":"3.0.3",
+              "revision":"1900ed7bb5cad1a3edc285783d7d4ac4278337dc"}, "cases":[{
+        "request":{"range":"start=0&end=60", "step":"30s"}, "expected_outcome":"query-result",
+        "comparison_kind":"exact-whole-series", "independent_expected":metrics,
+        "upstream":metrics, "krabka":metrics}]}
+    assert not experimental_query_binding_errors("tempo-pipeline-hint-conformance.json", report)
+    zero = copy.deepcopy(report)
+    zero_metrics = {"series":[{"labels":[{"key":"__name__", "value":{"stringValue":"count_over_time"}}],
+                              "samples":[{"timestampMs":str(timestamp * 1000), "value":0.0}
+                                         for timestamp in range(0, 181, 30)], "exemplars":[]}]}
+    zero["cases"][0].update(stableid="tempo-live-pipeline-scalar-before-metrics-negative",
+                             request={"range":"start=0&end=180", "step":"30s"},
+                             independent_expected=zero_metrics, upstream=zero_metrics, krabka=zero_metrics)
+    assert not experimental_query_binding_errors("tempo-pipeline-hint-conformance.json", zero)
+    for mutation in ("empty", "missing-bucket", "nonzero", "wrong-label"):
+        altered = copy.deepcopy(zero)
+        changed = altered["cases"][0]["independent_expected"]
+        if mutation == "empty":
+            changed["series"] = []
+        elif mutation == "missing-bucket":
+            changed["series"][0]["samples"].pop()
+        elif mutation == "nonzero":
+            changed["series"][0]["samples"][0]["value"] = 1.0
+        else:
+            changed["series"][0]["labels"][0]["value"] = {"stringValue":"rate"}
+        altered["cases"][0].update(upstream=changed, krabka=changed)
+        assert experimental_query_binding_errors("tempo-pipeline-hint-conformance.json", altered)
+    assert tempo_pipeline_metrics_match(metrics, metrics)
+    for field, wrong in [("upstream_source", "wrong"), ("comparison_kind", "unbounded"),
+                         ("expected_outcome", "query-rejection"), ("independent_expected", {"series":[]})]:
+        altered = copy.deepcopy(report)
+        (altered if field == "upstream_source" else altered["cases"][0])[field] = wrong
+        assert experimental_query_binding_errors("tempo-pipeline-hint-conformance.json", altered)
+    for path, wrong in [("timestampMs", "31"), ("value", 3.0)]:
+        altered = copy.deepcopy(metrics)
+        altered["series"][0]["samples"][0][path] = wrong
+        assert not tempo_pipeline_metrics_match(metrics, altered)
+    altered = copy.deepcopy(metrics)
+    altered["series"][0]["labels"][0]["value"] = {"intValue":"2"}
+    assert not tempo_pipeline_metrics_match(metrics, altered)
+    sampled = copy.deepcopy(report)
+    sampled["cases"][0].update(comparison_kind="independent-sampling-domain",
+                               independent_expected={"allowed_complete_outputs":[metrics]})
+    assert not experimental_query_binding_errors("tempo-pipeline-hint-conformance.json", sampled)
+    sampled["cases"][0]["krabka"] = {"series":[]}
+    assert experimental_query_binding_errors("tempo-pipeline-hint-conformance.json", sampled)
+    average = copy.deepcopy(report)
+    average_metrics = copy.deepcopy(metrics)
+    average_metrics["series"][0]["samples"][0]["value"] = 7.0
+    average["cases"][0].update(comparison_kind="independent-sampling-domain",
+                               independent_expected={"allowed_complete_outputs":[average_metrics]},
+                               upstream=average_metrics, krabka=copy.deepcopy(average_metrics))
+    assert not experimental_query_binding_errors("tempo-pipeline-hint-conformance.json", average)
+    average["cases"][0]["krabka"]["series"][0]["samples"][0]["value"] *= 9.0 / 5.0
+    assert experimental_query_binding_errors("tempo-pipeline-hint-conformance.json", average)
+    body = {"status":"success", "data":{"resultType":"vector", "result":[{
+        "metric":{"app":"api", "service_name":"api"}, "value":[40, "3"]}]}}
+    ledger = {"samples":[{"metric":{"app":"api"}, "points":[[40.0, "3"]]}], "warnings":[]}
+    row = {"request":{"method":"GET", "path":"/loki/api/v1/query"}, "expected_outcome":"query-result",
+           "expected_status":200, "independent_expected":ledger,
+           "oracle":loki_experimental_normalized(body), "candidate":loki_experimental_normalized(body),
+           "oracle_semantic":ledger, "candidate_semantic":ledger,
+           "raw_oracle":{"status":200, "body":body}, "raw_candidate":{"status":200, "body":body}}
+    report = {"upstream_source":"7a40404f32b3e6464c9cfc6cc7dd75a40f3931da", "cases":[row]}
+    assert not experimental_query_binding_errors("loki-experimental-query-conformance.json", report)
+    discovery = copy.deepcopy(report)
+    discovered = {"status":"success", "data":{"resultType":"vector", "result":[{"metric":{}, "value":[40, "1"]}]}}
+    changed = discovery["cases"][0]
+    changed.update(id="discovery/custom-logfmt-field", request={"params":[["time", "40"]]},
+                   independent_expected=loki_experimental_semantic(discovered))
+    for side in ("oracle", "candidate"):
+        changed[side] = loki_experimental_normalized(discovered)
+        changed[side + "_semantic"] = changed["independent_expected"]
+        changed["raw_" + side] = {"status":200, "body":discovered}
+    assert not experimental_query_binding_errors("loki-experimental-query-conformance.json", discovery)
+    nanos_discovery = copy.deepcopy(discovery)
+    nanos_case = nanos_discovery["cases"][0]
+    nanos_case["request"]["params"] = [["time", "1791287680000000000"]]
+    nanos_case["independent_expected"]["samples"][0]["points"][0][0] = 1791287680.0
+    for side in ("oracle", "candidate"):
+        nanos_case[side]["data"]["result"][0]["value"][0] = 1791287680
+        nanos_case["raw_" + side]["body"]["data"]["result"][0]["value"][0] = 1791287680
+    assert not experimental_query_binding_errors("loki-experimental-query-conformance.json", nanos_discovery)
+    for wrong in ("1791287681000000000", "nan", "", "9" * 500):
+        altered = copy.deepcopy(nanos_discovery)
+        altered["cases"][0]["request"]["params"] = [["time", wrong]]
+        assert experimental_query_binding_errors("loki-experimental-query-conformance.json", altered)
+    changed["independent_expected"]["samples"][0]["points"][0][1] = "2"
+    for side in ("oracle", "candidate"):
+        changed[side]["data"]["result"][0]["value"][1] = "2.000000"
+        changed["raw_" + side]["body"]["data"]["result"][0]["value"][1] = "2"
+    assert experimental_query_binding_errors("loki-experimental-query-conformance.json", discovery)
+    for mutation in ("raw-count", "claimed-count", "raw-status", "non-ledger-label"):
+        altered = copy.deepcopy(report)
+        changed = altered["cases"][0]
+        if mutation == "raw-count":
+            changed["raw_candidate"]["body"]["data"]["result"][0]["value"][1] = "4"
+        elif mutation == "claimed-count":
+            changed["independent_expected"]["samples"][0]["points"][0][1] = "4"
+        elif mutation == "non-ledger-label":
+            changed["raw_candidate"]["body"]["data"]["result"][0]["metric"]["service_name"] = "corrupted"
+        else:
+            changed["raw_candidate"]["status"] = 500
+        assert experimental_query_binding_errors("loki-experimental-query-conformance.json", altered)
     complete_artifacts = [{"name": name} for name in REQUIRED]
     complete_artifacts += [{"name": "promql-3.14.0-qualification.json", "configuration": mode}
                            for mode in ("default", "experimental")]
@@ -626,7 +1233,7 @@ def self_check():
     assert partial == {"matched":1, "not_run":1} and not is_complete(partial)
     counts, errors = qualification_counts("pyroscope-populated-rpcs.json", {
         "suite": "pyroscope-populated-rpcs", "planned": 1, "cases": [{"status": "matched"}]})
-    assert counts == {"matched": 1, "uncovered": 88} and not is_complete(counts)
+    assert counts == {"matched": 1, "uncovered": 112} and not is_complete(counts)
     for name, mode, total in [("loki-remote-range.json", "range", 104), ("loki-remote-instant.json", "instant", 81)]:
         loki = {"mode": mode, "planned": total, "success": True,
                 "passed_count": total, "failed_count": 0, "skipped_count": 0, "not_run_count": 0,
@@ -711,12 +1318,18 @@ def self_check():
                            ("target", "//crates/profiles:pyroscope_differential_docker_test"),
                            ("run-profile.txt", profile), ("source-sha256.txt", sources),
                            ("oracle-images.bzl", (ROOT / "bazel/images/images.bzl").read_text()),
-                           ("test.log", "executed fixture\n"), ("raw/report.json", "{}")]:
+                           ("test.log", "executed fixture\n"), ("raw/report.json", "{}"),
+                           ("raw/SHA256SUMS", "nested upstream manifest\n")]:
             (directory / name).write_text(body)
         files = sorted(path for path in directory.rglob("*") if path.is_file())
         manifest = "".join(f"{digest(path)}  ./{path.relative_to(directory)}\n" for path in files)
         (directory / "SHA256SUMS").write_text(manifest)
         assert not verify_manifest(directory)
+        without_nested_manifest = "\n".join(line for line in manifest.splitlines()
+                                              if not line.endswith("./raw/SHA256SUMS")) + "\n"
+        (directory / "SHA256SUMS").write_text(without_nested_manifest)
+        assert any("omitted" in error for error in verify_manifest(directory))
+        (directory / "SHA256SUMS").write_text(manifest)
         assert generated_case_count(directory) == 512
         # Rehash altered metadata: integrity alone must not accept a wrong
         # source revision, configuration, failed run, or cached execution.
@@ -799,17 +1412,66 @@ def self_check():
                 pass
             else:
                 raise AssertionError("rehashed image with another source revision accepted")
+    template_rows = []
+    for case_id, (expression, query, golden) in loki_template_cases().items():
+        ledger = loki_template_expected(case_id, golden, 1_000_000_000)
+        template_rows.append({"id":case_id, "name":case_id, "expression":expression, "request":{"method":"GET", "path":"/loki/api/v1/query_range", "tenant":"parsers", "query":query}, "oracle":ledger, "candidate":ledger, "independent_expected":ledger, "raw_oracle":ledger, "raw_candidate":ledger, "status":"matched"})
+    template_report = {"planned":len(template_rows), "timeline_base_ns":1_000_000_000, "upstream_source":"7a40404f32b3e6464c9cfc6cc7dd75a40f3931da", "cases":template_rows}
+    assert not loki_template_binding_errors(template_report)
+    for mutation in ("duplicate", "query", "expression", "ledger", "http-float", "http-bool", "missing-seed", "duplicate-seed", "wrong-level", "wrong-timestamp", "wrong-raw-line", "missing-anchor", "float-anchor"):
+
+        changed = copy.deepcopy(template_report)
+        row = changed["cases"][0]
+        if mutation == "duplicate":
+            changed["cases"][-1] = copy.deepcopy(row)
+        elif mutation in ("query", "expression"):
+            if mutation == "query":
+                row["request"]["query"] = "{}"
+            else:
+                row["expression"] = "missing"
+        elif mutation == "ledger":
+            row["independent_expected"]["body"]["data"]["result"][0]["values"][0][1] = "wrong"
+        elif mutation in ("http-float", "http-bool"):
+            row["raw_candidate"]["status"] = 200.0 if mutation == "http-float" else True
+        elif mutation in ("missing-anchor", "float-anchor"):
+            if mutation == "missing-anchor":
+                del changed["timeline_base_ns"]
+            else:
+                changed["timeline_base_ns"] = 1_000_000_000.0
+        else:
+            if mutation == "wrong-raw-line":
+                row = next(item for item in changed["cases"] if item["id"] == "line")
+            ledger = row["independent_expected"]
+            streams = ledger["body"]["data"]["result"]
+            if mutation == "missing-seed":
+                streams[1]["values"].pop()
+            elif mutation == "duplicate-seed":
+                streams[1]["values"][-1] = list(streams[1]["values"][0])
+            elif mutation == "wrong-level":
+                streams[0]["stream"]["detected_level"] = "unknown"
+            elif mutation == "wrong-timestamp":
+                streams[0]["values"][0][0] = str(int(streams[0]["values"][0][0]) + 1)
+            else:
+                streams[0]["values"][0][1] = "wrong"
+            # Corrupt all three compared responses identically: pairwise
+            # equality alone must never satisfy the independent fixture.
+            row["oracle"] = copy.deepcopy(ledger)
+            row["candidate"] = copy.deepcopy(ledger)
+        assert loki_template_binding_errors(changed), mutation
+
     upstream = {"image_tag": image_pin[3], "image_id": image_pin[4]}
     revision = json.loads((ROOT / "qualification/query-language-inventory.json").read_text())["surfaces"]["pyroscope"]["pin"]["revision"]
     for name, settings in [
         ("pyroscope-v2-fields.json", {"oracle": {"query-frontend.async-queries-enabled": True}, "candidate": {"query_architecture": "v2", "async_queries_enabled": True}}),
-        ("pyroscope-v1-aggregation.json", {"query_architecture": "v1", "oracle_async_enabled": False, "candidate_async_enabled": False}),
-        ("pyroscope-v2-async-disabled.json", {"query_architecture": "v2", "oracle_async_enabled": False, "candidate_async_enabled": False}),
+        ("pyroscope-v1-aggregation.json", {"query_architecture": "v1", "oracle_async_enabled": False, "candidate_async_enabled": False,
+                    "oracle_query_analysis_series_enabled": False, "candidate_query_analysis_series_enabled": False}),
+        ("pyroscope-v2-async-disabled.json", {"query_architecture": "v2", "oracle_async_enabled": False, "candidate_async_enabled": False,
+                    "oracle_query_analysis_series_enabled": False, "candidate_query_analysis_series_enabled": False}),
         ("pyroscope-populated-rpcs.json", None),
     ]:
         report = {"suite": name.removesuffix(".json"), "status": "passed", "upstream": dict(upstream), "upstream_revision": revision, "storage": "v2", "settings": settings}
         if settings is None:
-            report["upstream"].update(source_revision=revision, storage="v1", query_analysis_series_enabled=True)
+            report["upstream"].update(source_revision=revision, storage="v1", query_analysis_series_enabled=True, candidate_query_analysis_series_enabled=True, self_profiling_disable_push=True)
         assert not pyroscope_binding_errors(name, report)
         for image_id in image_ids:
             assert not pyroscope_binding_errors(name, dict(report, upstream={**report["upstream"], "image_id": image_id}))
@@ -995,7 +1657,7 @@ def main():
                         record_executed(f"logql/{report['mode']}/{name}", status,
                                         metadata[name], path.name, report, path)
             elif "cases" in report:
-                namespace = f"storage/transitions/{path.stem}" if path.name.endswith("-query-transitions.json") else f"traceql/metrics/{path.stem}" if metric_result or path.name.startswith("tempo-numeric-") or path.name.startswith("tempo-live-exemplar-") or path.name.startswith("tempo-typed-group-") or path.name.startswith("tempo-field-arithmetic-") else "pyroscope/v2" if path.name == "pyroscope-v2-fields.json" else "pyroscope/v1-aggregation" if path.name == "pyroscope-v1-aggregation.json" else "pyroscope/v2-async-disabled" if path.name == "pyroscope-v2-async-disabled.json" else {"diff_mimir-report.json":"promql/mimir", "diff_prometheus-report.json":"promql/prometheus", "backup-query-invariance.json":"storage/restore"}.get(path.name, "pyroscope/rpc")
+                namespace = f"storage/transitions/{path.stem}" if path.name.endswith("-query-transitions.json") else f"traceql/metrics/{path.stem}" if metric_result or path.name.startswith("tempo-numeric-") or path.name.startswith("tempo-live-exemplar-") or path.name.startswith("tempo-typed-group-") or path.name.startswith("tempo-field-arithmetic-") else "pyroscope/v2" if path.name == "pyroscope-v2-fields.json" else "pyroscope/v1-aggregation" if path.name == "pyroscope-v1-aggregation.json" else "pyroscope/v2-async-disabled" if path.name == "pyroscope-v2-async-disabled.json" else {"loki-experimental-query-conformance.json":"logql/experimental", "tempo-pipeline-hint-conformance.json":"traceql/pipeline", "tempo-instant-bounds-conformance.json":"traceql/instant", "diff_mimir-report.json":"promql/mimir", "diff_prometheus-report.json":"promql/prometheus", "backup-query-invariance.json":"storage/restore"}.get(path.name, "pyroscope/rpc")
                 for ordinal, case in enumerate(report["cases"], 1):
                     identity = case.get("stableid", case.get("id", ordinal))
                     reference = f"{namespace}/{identity}"
@@ -1040,6 +1702,9 @@ def main():
             "qualification/query-language-pyroscope-*.json",
         ) for path in sorted(ROOT.glob(pattern))},
         "features": features,
+        "source_availability": {language: {feature["id"]: feature["availability"]
+                                             for feature in surface["features"]}
+                                for language, surface in inventory["surfaces"].items()},
         "feature_execution": {language: {
             feature["id"]: {role: {"reviewed": len(references),
                                      "matched": sum(usable_evidence(reference, role, executed, rejected_cases) for reference in references),

@@ -14,6 +14,8 @@ use super::{
     planned::PlannedInstant,
     with_histogram_stats,
 };
+#[cfg(feature = "experimental-functions")]
+use crate::PromqlError;
 use crate::{
     error::Result,
     result::{InstantSample, QueryResult},
@@ -110,6 +112,12 @@ impl<S: MetricStore> PromqlEngine<S> {
         let Some(label_name) = string_literal_value(call, 1) else {
             return Ok(None);
         };
+        let label_name = label_name
+            .utf8()
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                PromqlError::Exec("invalid label name in histogram_quantiles".to_owned())
+            })?;
         let mut quantiles = Vec::with_capacity(call.args.args.len() - 2);
         for index in 2..call.args.args.len() {
             let QueryResult::Scalar { value, .. } = self
@@ -127,7 +135,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             return Ok(None);
         };
         Ok(Some(PlannedInstant::Precomputed(
-            apply_histogram_quantiles(samples, &label_name, &quantiles, time_ms)?,
+            apply_histogram_quantiles(samples, label_name, &quantiles, time_ms)?,
         )))
     }
 

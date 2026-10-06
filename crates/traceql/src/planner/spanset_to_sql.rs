@@ -21,6 +21,8 @@ pub(crate) fn spanset_to_sql(
             let nested_table = selector::ident(table_name);
             if selector::has_parent_scope(fe) {
                 selector::selector_sql_with_parent_table(&nested_table, table, fe)
+            } else if fe.has_field_comparison() {
+                selector::selector_sql(&nested_table, fe)
             } else {
                 Ok(format!("SELECT * FROM {nested_table}"))
             }

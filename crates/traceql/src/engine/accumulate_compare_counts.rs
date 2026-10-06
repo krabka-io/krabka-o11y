@@ -42,8 +42,12 @@ pub(crate) fn accumulate_compare_counts(
             if ts < range.scan_start || ts > range.scan_end {
                 continue;
             }
-            let bucket = usize::try_from((ts.0 - range.scan_start.0) / range.step.0)
-                .map_err(|e| TraceqlError::Exec(e.to_string()))?;
+            let bucket = if range.instant {
+                0
+            } else {
+                usize::try_from((ts.0 - range.scan_start.0) / range.step.0)
+                    .map_err(|e| TraceqlError::Exec(e.to_string()))?
+            };
             let compare_row = compare_row(batch, row, ts)?;
             let selected_by_plan = if let Some(selected) = selected_spans {
                 Some(selected.contains(&(

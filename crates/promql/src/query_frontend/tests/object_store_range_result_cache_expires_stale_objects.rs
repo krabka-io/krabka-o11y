@@ -17,7 +17,7 @@ pub(crate) async fn object_store_range_result_cache_expires_stale_objects() {
     let result = unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
         drop_name: false,
         start_timestamps_ms: std::collections::BTreeMap::new(),
-        labels: labels(&[("__name__", "up")]),
+        labels: labels(&[("__name__", "up")]).into(),
         samples: vec![(0, SampleValue::Float(1.0))],
     }]));
 

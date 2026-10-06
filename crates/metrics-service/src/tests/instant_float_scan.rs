@@ -7,12 +7,13 @@ use std::{
 };
 
 use assert2::assert;
-use krabka_blockstore::{BlockStore, LabelMatcher, Labels, MatchOp, TenantId};
+use krabka_blockstore::{BlockStore, MatchOp, TenantId};
 use krabka_metrics::{
     BucketSpan, LimitError, NativeHistogram, ObjectStoreCompactionIndexSink, ResetHint,
 };
 use krabka_promql::{
-    EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine, PromqlError, QueryResult, WalHead,
+    EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine, PromqlError,
+    PromqlLabels as Labels, PromqlMatcher as LabelMatcher, QueryResult, WalHead,
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};

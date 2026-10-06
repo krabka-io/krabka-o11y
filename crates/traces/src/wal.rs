@@ -9,6 +9,9 @@ use crate::{error::TracesError, span::Span};
 #[cfg(test)]
 mod tests {
 
+    use opentelemetry_proto::tonic::common::v1::{AnyValue, ArrayValue, any_value::Value};
+    use prost::Message as _;
+
     use super::*;
     use crate::span::{AttrValue, KeyValue, SpanKind, StatusCode};
 
@@ -44,6 +47,63 @@ mod tests {
         let bytes = rec.encode().unwrap();
         let back = SpanRecord::decode(&bytes).unwrap();
         assert2::assert!(back == rec);
+    }
+
+    #[test]
+    fn wal_preserves_nested_array_shape_and_double_bits() {
+        let nan = f64::from_bits(0x7ff8_0000_0000_0042);
+        let mut native = span([7; 16]);
+        native.span_attrs.push(KeyValue {
+            key: "nested".into(),
+            value: AttrValue::Array(vec![
+                AttrValue::Unsupported("{}".into()),
+                AttrValue::Array(vec![
+                    AttrValue::Double(nan),
+                    AttrValue::Double(-0.0),
+                    AttrValue::Int(i64::MAX),
+                ]),
+                AttrValue::Bytes(vec![0xff, 0]),
+            ]),
+        });
+        let record = SpanRecord {
+            tenant: "t1".into(),
+            span: native,
+        };
+        let restored = SpanRecord::decode(&record.encode().unwrap()).unwrap();
+        let expected = AnyValue {
+            value: Some(Value::ArrayValue(ArrayValue {
+                values: vec![
+                    AnyValue { value: None },
+                    AnyValue {
+                        value: Some(Value::ArrayValue(ArrayValue {
+                            values: vec![
+                                AnyValue {
+                                    value: Some(Value::DoubleValue(nan)),
+                                },
+                                AnyValue {
+                                    value: Some(Value::DoubleValue(-0.0)),
+                                },
+                                AnyValue {
+                                    value: Some(Value::IntValue(i64::MAX)),
+                                },
+                            ],
+                        })),
+                    },
+                    AnyValue {
+                        value: Some(Value::BytesValue(vec![0xff, 0])),
+                    },
+                ],
+            })),
+        };
+        assert2::check!(
+            restored.span.span_attrs[0]
+                .value
+                .otlp_value()
+                .encode_to_vec()
+                == expected.encode_to_vec()
+        );
+        assert2::check!(restored.tenant == "t1");
+        assert2::check!(restored.span.trace_id == [7; 16]);
     }
 
     #[test]

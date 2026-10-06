@@ -69,7 +69,6 @@ pub(crate) fn a_tail_frame_carries_the_encoding_the_tail_request_asked_for() {
                                 "api error",
                                 {
                                     "structuredMetadata": {
-                                        "detected_level": "unknown",
                                         "trace_id": "abc"
                                     }
                                 }

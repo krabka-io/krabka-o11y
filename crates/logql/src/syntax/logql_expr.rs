@@ -1,12 +1,20 @@
 use super::{
-    ComparisonOp, MetricBinarySetOp, MetricQuery, MetricScalarArithmeticOp, MetricVectorMatching,
-    Quoted, StreamQuery, VectorAggregation, arithmetic_text, comparison_text, fmt, format_matching,
-    set_text,
+    ComparisonOp, DurationNanos, MetricBinarySetOp, MetricQuery, MetricScalarArithmeticOp,
+    MetricVectorMatching, OffsetNanos, Quoted, StreamQuery, VectorAggregation, arithmetic_text,
+    comparison_text, fmt, format_matching, set_text,
 };
 
 /// A recursively composable `LogQL` expression.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LogqlExpr {
+    /// Experimental sample variants sharing one input log range.
+    Variants {
+        variants: Vec<LogqlExpr>,
+        stream: StreamQuery,
+        range_ns: DurationNanos,
+        offset_ns: OffsetNanos,
+        source: String,
+    },
     Stream {
         query: StreamQuery,
         source: String,
@@ -71,8 +79,27 @@ impl LogqlExpr {
     #[must_use]
     pub fn source(&self) -> Option<&str> {
         match self {
-            Self::Stream { source, .. } | Self::Metric { source, .. } => Some(source),
+            Self::Stream { source, .. }
+            | Self::Metric { source, .. }
+            | Self::Variants { source, .. } => Some(source),
             _ => None,
+        }
+    }
+    pub(crate) fn contains_variants(&self) -> bool {
+        match self {
+            Self::Variants { .. } => true,
+            Self::Aggregation { expr, .. }
+            | Self::Vector(expr)
+            | Self::LabelReplace { expr, .. }
+            | Self::LabelJoin { expr, .. }
+            | Self::Sort { expr, .. }
+            | Self::Selection { expr, .. } => expr.contains_variants(),
+            Self::Arithmetic { left, right, .. }
+            | Self::Comparison { left, right, .. }
+            | Self::Set { left, right, .. } => {
+                left.contains_variants() || right.contains_variants()
+            }
+            Self::Stream { .. } | Self::Metric { .. } | Self::Scalar(_) => false,
         }
     }
     pub(crate) fn is_scalar(&self) -> bool {
@@ -136,6 +163,7 @@ impl LogqlExpr {
             Self::Stream { source, .. }
             | Self::Metric { source, .. }
             | Self::Aggregation { source, .. }
+            | Self::Variants { source, .. }
             | Self::Scalar(source) => {
                 write!(f, "{}", source.trim())?;
             }

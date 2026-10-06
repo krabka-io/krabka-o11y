@@ -31,7 +31,7 @@ pub(crate) async fn tsdb_blocks_reports_compaction_manifest_blocks() {
         &block_meta,
         vec![CompactionSeriesLabels {
             fingerprint: fp,
-            labels: series_labels,
+            labels: series_labels.into(),
         }],
     );
 

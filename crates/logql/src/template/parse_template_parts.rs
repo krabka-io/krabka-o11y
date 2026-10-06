@@ -31,6 +31,50 @@ pub(crate) fn parse_template_parts(template: &str) -> Result<Vec<TemplatePart>, 
 
         let action = parse_template_action(template, open)?;
         let expression = action.expression;
+        if let Some(named) = expression
+            .strip_prefix("define ")
+            .or_else(|| expression.strip_prefix("block "))
+            .or_else(|| expression.strip_prefix("template "))
+        {
+            let tokens = super::tokenize_template_command(named)?;
+            let name = tokens
+                .first()
+                .and_then(|token| super::quoted_template_token_value(token).ok().flatten())
+                .ok_or_else(|| template_parse_error("expected quoted template name"))?;
+            let argument = if tokens.len() > 1 {
+                Some(TemplateExpression::parse(&tokens[1..].join(" "))?)
+            } else {
+                None
+            };
+            if expression.starts_with("template ") {
+                parts.push(TemplatePart::Invocation { name, argument });
+                pos = action.next_pos;
+                continue;
+            }
+            if expression.starts_with("define ") && argument.is_some() {
+                return Err(template_parse_error("unexpected definition argument"));
+            }
+            if expression.starts_with("block ") && argument.is_none() {
+                return Err(template_parse_error("expected block argument"));
+            }
+            let (end, control, next_pos) =
+                super::find_template_control_action(template, action.next_pos)?
+                    .ok_or_else(|| template_parse_error("expected template end action"))?;
+            if control != "end" {
+                return Err(template_parse_error("unexpected definition control action"));
+            }
+            let body = parse_template_parts(&template[action.next_pos..end])?;
+            parts.push(TemplatePart::Definition {
+                name: name.clone(),
+                parts: body,
+                block: expression.starts_with("block "),
+            });
+            if expression.starts_with("block ") {
+                parts.push(TemplatePart::Invocation { name, argument });
+            }
+            pos = next_pos;
+            continue;
+        }
         if let Some(condition) = expression.strip_prefix("if ") {
             let (conditional, next_pos) =
                 parse_template_conditional(template, action.next_pos, condition.trim())?;
@@ -53,6 +97,15 @@ pub(crate) fn parse_template_parts(template: &str) -> Result<Vec<TemplatePart>, 
         }
         if is_template_comment_action(expression) {
             parts.push(TemplatePart::Comment);
+            pos = action.next_pos;
+            continue;
+        }
+        if matches!(expression, "break" | "continue") {
+            parts.push(if expression == "break" {
+                TemplatePart::Break
+            } else {
+                TemplatePart::Continue
+            });
             pos = action.next_pos;
             continue;
         }
