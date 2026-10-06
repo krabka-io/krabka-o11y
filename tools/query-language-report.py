@@ -80,6 +80,8 @@ def verdicts(report):
 
 
 PINNED_COUNTS = {
+    "diff_mimir-report.json": 1795,
+    "diff_prometheus-report.json": 1795,
     "promql-3.14.0-qualification.json": 2195,
     "promql-http-compliance-summary.json": 539,
     "loki-remote-range.json": 104,
@@ -103,6 +105,15 @@ PROVENANCE_SOURCES = (
     "MODULE.bazel", "bazel/images/images.bzl", "rust-toolchain.toml",
     "tools/build-query-runners.py",
 )
+
+CURATED_ADAPTER_EXCLUSIONS = {
+    "aggregators.test:426", "aggregators.test:430",
+    "extended_vectors.test:443", "extended_vectors.test:446", "extended_vectors.test:449",
+    "functions.test:426", "functions.test:430", "functions.test:435", "functions.test:440",
+    "functions.test:899", "functions.test:908", "functions.test:917", "functions.test:930",
+    "info.test:108", "native_histograms.test:1233", "native_histograms.test:1237",
+    "native_histograms.test:1243", "limit.test",
+}
 
 
 def pyroscope_image_binding(image):
@@ -236,6 +247,22 @@ def qualification_counts(name, report, generated_count=None):
         counts = verdicts(report)
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         return collections.Counter(uncovered=1), [str(error)]
+    if name in ("diff_mimir-report.json", "diff_prometheus-report.json"):
+        cases = report.get("cases", [])
+        excluded = [case for case in cases if case.get("status") == "skipped"]
+        ids = [case.get("id") for case in cases]
+        if (report.get("suite") != name.removesuffix("-report.json")
+                or any(not isinstance(case_id, str) or not case_id for case_id in ids)
+                or len(ids) != len(set(ids))
+                or {case.get("id") for case in excluded} != CURATED_ADAPTER_EXCLUSIONS
+                or any(not isinstance(case.get("detail"), str) or not case["detail"].strip() for case in excluded)
+                or report.get("run") != len(cases) - len(excluded)
+                or report.get("skipped") != len(excluded)):
+            errors.append("curated adapter case ledger or declared exclusions changed")
+        # These exclusions belong to the historical, time-shifted HTTP adapter.
+        # They stay gaps in strict qualification, independently of execution.
+        counts["adapter-excluded"] = counts.pop("skipped", 0)
+        counts["expected-divergence"] = counts.pop("expected_divergence", 0)
     if any(type(count) is not int or count < 0 for count in counts.values()):
         return collections.Counter(uncovered=1), ["case counts must be nonnegative integers"]
     expected = PINNED_COUNTS.get(name)
@@ -447,6 +474,7 @@ def verify_runner_binding(directory, name, pin):
     try:
         provenance = json.loads(provenance_path.read_text())
         invocation = json.loads(invocation_path.read_text())
+        target = (directory / "target").read_text().strip()
     except (OSError, ValueError) as error:
         return [f"missing or invalid runner provenance/invocation: {error}"]
     if not isinstance(provenance, dict) or not isinstance(invocation, dict):
@@ -470,10 +498,11 @@ def verify_runner_binding(directory, name, pin):
             or runner.get("provenance_sha256") != digest(provenance_path)):
         errors.append("invoked runner does not match provenance hashes")
     command = invocation.get("command", [])
-    target = "//crates/metrics-service:diff_prometheus_docker_test" if name == "promql" else "//crates/observability:loki_differential_docker_test"
+    allowed_targets = {"//crates/metrics-service:diff_prometheus_docker_test",
+                       "//crates/metrics-service:diff_prometheus_previous_docker_test"} if name == "promql" else {"//crates/observability:loki_differential_docker_test"}
     flag = "KRABKA_PROMQL_COMPLIANCE_BIN" if name == "promql" else "KRABKA_LOKI_CORRECTNESS_BIN"
     binary_flags = [argument for argument in command if isinstance(argument, str) and argument.startswith(f"--test_env={flag}=")] if isinstance(command, list) else []
-    if (not isinstance(command, list) or any(not isinstance(argument, str) for argument in command) or command[:2] != ["bazel", "test"] or target not in command
+    if (target not in allowed_targets or not isinstance(command, list) or any(not isinstance(argument, str) for argument in command) or command[:2] != ["bazel", "test"] or target not in command
             or not isinstance(runner.get("binary"), str) or not binary_flags
             or binary_flags[-1] != f"--test_env={flag}={runner.get('binary')}"):
         errors.append("invocation command does not bind suite and runner executable")
@@ -487,7 +516,7 @@ def is_complete(counts):
 
 
 def valid_execution_evidence(report, allow_partial=False):
-    allowed = {"matched", "pass", "passed", "feature_disabled", "expected-divergence", "unsupported-oracle"}
+    allowed = {"matched", "pass", "passed", "feature_disabled", "expected-divergence", "unsupported-oracle", "adapter-excluded"}
     return (
         bool(report["integrity_errors_checked"]) and not report["dirty_checkout"]
         and (allow_partial or not report["missing_suites"])
@@ -515,8 +544,30 @@ def self_check():
                          ("runner_binding_errors", {"runner": ["error"]})]:
         assert not valid_execution_evidence(dict(bound, **{field: wrong}))
     assert valid_execution_evidence(dict(bound, missing_suites=["other-suite"]), allow_partial=True)
-    for status in ("failed", "mismatch", "not_run", "uncovered", "invalid-rejection"):
+    for status in ("failed", "mismatch", "not_run", "uncovered", "invalid-rejection", "skipped"):
         assert not valid_execution_evidence(dict(bound, artifacts=[{"counts": {"matched": 88, status: 1}}]), allow_partial=True)
+    curated = {"suite": "diff_mimir", "run": 1777, "skipped": 18, "cases": [
+        *[{"id": f"executed:{ordinal}", "status": "matched"} for ordinal in range(1776)],
+        {"id": "declared-version-difference", "status": "expected_divergence"},
+        *[{"id": case_id, "status": "skipped", "detail": "declared adapter exclusion"} for case_id in sorted(CURATED_ADAPTER_EXCLUSIONS)],
+    ]}
+    counts, errors = qualification_counts("diff_mimir-report.json", curated)
+    assert not errors and counts == {"matched": 1776, "expected-divergence": 1, "adapter-excluded": 18}
+    assert not is_complete(counts)
+    assert valid_execution_evidence(dict(bound, artifacts=[{"counts": counts}]), allow_partial=True)
+    for change in ("extra-exclusion", "missing-case", "duplicate-case", "missing-reason"):
+        altered = copy.deepcopy(curated)
+        if change == "extra-exclusion":
+            altered["cases"][0].update(status="skipped", detail="unexpected omission")
+            altered.update(run=1776, skipped=19)
+        elif change == "missing-case":
+            altered["cases"].pop(0)
+            altered["run"] -= 1
+        elif change == "duplicate-case":
+            altered["cases"][0]["id"] = altered["cases"][1]["id"]
+        else:
+            altered["cases"][-1]["detail"] = ""
+        assert qualification_counts("diff_mimir-report.json", altered)[1]
     for status in ("failed", "transport_error", "not_run", "uncovered"):
         failed = {"cases": [{"classification": "matched", "status": status}]}
         assert verdicts(failed) == {status: 1} and not is_complete(verdicts(failed))
@@ -760,7 +811,18 @@ def self_check():
                                                "provenance_sha256": digest(provenance_path)}}}
         invocation_path = directory / "query-runner-invocation.json"
         invocation_path.write_text(json.dumps(invocation))
+        target_path = directory / "target"
+        target_path.write_text(invocation["command"][2])
         assert not verify_runner_binding(directory, "promql", pin)
+        previous = "//crates/metrics-service:diff_prometheus_previous_docker_test"
+        target_path.write_text(previous)
+        assert verify_runner_binding(directory, "promql", pin)
+        invocation_path.write_text(json.dumps(dict(invocation, command=["bazel", "test", previous, invocation["command"][3]])))
+        assert not verify_runner_binding(directory, "promql", pin)
+        target_path.write_text("//crates/metrics-service:diff_prometheus_fake_docker_test")
+        assert verify_runner_binding(directory, "promql", pin)
+        target_path.write_text(invocation["command"][2])
+        invocation_path.write_text(json.dumps(invocation))
         for field, value in [("revision", "other"), ("toolchain", "other"), ("builder_sha256", "b" * 64)]:
             provenance_path.write_text(json.dumps(dict(provenance, **{field: value})))
             assert verify_runner_binding(directory, "promql", pin)
