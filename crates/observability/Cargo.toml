@@ -17,7 +17,9 @@ keywords = ["observability", "loki", "logs", "krabka"]
 categories = ["command-line-utilities"]
 
 [features]
-heap-profiling = ["krabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
+default = ["jemalloc"]
+jemalloc = ["dep:tikv-jemallocator"]
+heap-profiling = ["krabka-telemetry/heap-profiling", "jemalloc"]
 
 [dependencies]
 async-trait = { workspace = true }
