@@ -25,6 +25,7 @@ mod tests;
 
 mod default_retention;
 mod exemplar_row;
+mod float_head_summary;
 mod float_row;
 mod hist_row;
 mod in_memory_metric_store;
@@ -42,3 +43,5 @@ pub use partition_watermark::PartitionWatermark;
 pub use prune_stats::PruneStats;
 use row_chunk_len::ROW_CHUNK_LEN;
 use row_chunks::RowChunks;
+
+use self::float_head_summary::FloatHeadSummary;

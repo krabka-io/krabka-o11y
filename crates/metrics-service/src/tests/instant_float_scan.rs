@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use assert2::assert;
@@ -759,4 +762,141 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
             .collect::<Vec<_>>()
             == expected_labels.iter().collect::<Vec<_>>()
     );
+}
+
+#[tokio::test]
+async fn latest_scan_keeps_retained_history_boundary_labels_and_historical_values() {
+    let fixture = fixture(&[]).await;
+    let boundary = Labels::from_pairs([("__name__", "up"), ("job", "float-boundary")]);
+    let histogram = Labels::from_pairs([("__name__", "up"), ("job", "hist-boundary")]);
+    fixture.head.update(|hot| {
+        hot.push_float("tenant-a", labels(), 1_000, 1.0);
+        hot.push_float("tenant-a", boundary.clone(), 8_000, 40.0);
+        hot.push_float("tenant-a", boundary.clone(), 9_000, 42.0);
+        hot.push_float(
+            "tenant-a",
+            Labels::from_pairs([("__name__", "down"), ("job", "future")]),
+            13_000,
+            99.0,
+        );
+        hot.push_histogram(
+            "tenant-a",
+            histogram.clone(),
+            9_000,
+            NativeHistogram {
+                schema: 0,
+                is_float: false,
+                reset_hint: ResetHint::No,
+                zero_threshold: 1e-128,
+                zero_count: 0.0,
+                count: 2.0,
+                sum: 3.0,
+                positive_spans: vec![BucketSpan {
+                    offset: 0,
+                    length: 1,
+                }],
+                positive_counts: vec![2.0],
+                negative_spans: Vec::new(),
+                negative_counts: Vec::new(),
+                custom_values: None,
+                start_timestamp_ms: None,
+            },
+        );
+    });
+    let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
+    let captured = fixture
+        .store
+        .try_latest_float_scan("tenant-a", &matchers, 9_000, 9_001, 12_000, 5)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(captured.samples == vec![(labels().fingerprint(), 11_000, 7.0, Some(5_000))]);
+    assert!(
+        captured
+            .labels
+            .iter()
+            .map(|(fp, labels)| (*fp, labels.as_ref().clone()))
+            .collect::<BTreeMap<_, _>>()
+            == [labels(), boundary, histogram]
+                .into_iter()
+                .map(|labels| (labels.fingerprint(), labels))
+                .collect::<BTreeMap<_, _>>()
+    );
+
+    // Retained old rows and duplicate timestamps can exceed the summary's
+    // upper bound while the ordinary in-window scan still fits the limit.
+    let tenant = TenantId::new("tenant-a").unwrap();
+    let opts = EngineOpts {
+        lookback_delta: secs(3),
+        max_samples: 3,
+        ..EngineOpts::default()
+    };
+    let engine = PromqlEngine::new(Arc::clone(&fixture.store), opts);
+    let expected: QueryResult = serde_json::from_value(serde_json::json!({
+        "InstantVector": [{"labels": {"__name__": "up", "job": "api"},
+            "ts_ms": 12_000, "value": {"Float": 7.0}}]
+    }))
+    .unwrap();
+    assert!(engine.query_instant(&tenant, "up", 12_000).await.unwrap() == expected);
+    // Aggregates' full scan counts the inclusive label boundary. Preserve
+    // the original latest hot-row path when a summary bound exceeds the cap.
+    let aggregate: QueryResult = serde_json::from_value(serde_json::json!({
+        "InstantVector": [{"labels": {}, "ts_ms": 12_000,
+            "value": {"Float": 7.0}}]
+    }))
+    .unwrap();
+    for query in ["sum(up)", "avg(up)"] {
+        assert!(engine.query_instant(&tenant, query, 12_000).await.unwrap() == aggregate);
+    }
+    let limited = PromqlEngine::new(
+        Arc::clone(&fixture.store),
+        EngineOpts {
+            max_fetched_series: 2,
+            ..opts
+        },
+    );
+    assert!(matches!(
+        limited.query_instant(&tenant, "up", 12_000).await,
+        Err(PromqlError::Limit(
+            LimitError::SeriesPerQueryExceeded { .. }
+        ))
+    ));
+
+    // A matching future row cannot cause the historical in-window value to
+    // disappear. The earlier unmatched future series does not affect it.
+    fixture
+        .head
+        .update(|hot| hot.push_float("tenant-a", labels(), 13_000, 99.0));
+    assert!(engine.query_instant(&tenant, "up", 12_000).await.unwrap() == expected);
+    let historical = fixture
+        .store
+        .try_latest_float_scan("tenant-a", &matchers, 9_000, 9_001, 12_000, 5)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(historical.samples == captured.samples && historical.labels == captured.labels);
+    assert!(fixture.reads.load(Ordering::SeqCst) == 0);
+
+    // The combined hot/cold bound can exceed the cap even when the original
+    // hot-row count plus the selected cold block count still fits exactly.
+    let cold_fixture = self::fixture(&[("api", 10_000)]).await;
+    cold_fixture
+        .head
+        .update(|hot| hot.push_float("tenant-a", labels(), 1_000, 1.0));
+    let exact = cold_fixture
+        .store
+        .try_latest_float_scan("tenant-a", &matchers, 9_000, 9_001, 12_000, 4)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(exact.samples == vec![(labels().fingerprint(), 11_000, 7.0, Some(5_000))]);
+    assert!(
+        exact
+            .labels
+            .iter()
+            .map(|(fp, labels)| (*fp, labels.as_ref().clone()))
+            .collect::<BTreeMap<_, _>>()
+            == BTreeMap::from([(labels().fingerprint(), labels())])
+    );
+    assert!(cold_fixture.reads.load(Ordering::SeqCst) == 0);
 }
