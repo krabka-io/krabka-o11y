@@ -341,14 +341,50 @@ fn spawn_query<S: ProfileStore + 'static>(
                 }
             }
         };
-        tokio::select! {
-            biased;
-            () = runtime_state.async_runtime.stop.cancelled() => {},
-            result = persist_result(&runtime_state, &tenant, &id, &response) => if let Err(error) = result { tracing::error!(?error, "failed to persist async query outcome"); },
-        }
-        release(&runtime_state, &tenant, &id).await;
+        finish_query(&runtime_state, &tenant, &id, &response).await;
     })
 }
+// Once the backend has produced an outcome, shutdown joins its publication.
+// Cancellation must not discard an answer or an in-flight ownership CAS.
+async fn finish_query<S: ProfileStore>(
+    state: &QuerierState<S>,
+    tenant: &TenantId,
+    id: &str,
+    response: &SelectMergeStacktracesResponse,
+) {
+    let failed = match tokio::time::timeout(
+        state.async_runtime.policy.lease_timeout,
+        persist_result(state, tenant, id, response),
+    )
+    .await
+    {
+        Ok(Ok(())) => false,
+        Ok(Err(error)) => {
+            tracing::error!(?error, "failed to persist async query outcome");
+            true
+        }
+        Err(error) => {
+            tracing::error!(%error, "async query publication timed out");
+            true
+        }
+    };
+    if failed {
+        match tokio::time::timeout(
+            state.async_runtime.policy.lease_timeout,
+            relinquish_lease(state, tenant, id),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(?error, "failed to relinquish unpublished async query")
+            }
+            Err(error) => tracing::warn!(%error, "unpublished async query lease will expire"),
+        }
+    }
+    release(state, tenant, id).await;
+}
+
 // A timed-out backend write may still commit. Retry a lost generation CAS
 // while we own the lease; adoption and terminal publication remain fences.
 async fn relinquish_lease<S: ProfileStore>(
@@ -816,6 +852,7 @@ mod tests {
         inner: Arc<dyn object_store::ObjectStore>,
         location: Path,
         armed: std::sync::atomic::AtomicBool,
+        fail_put: bool,
         entered: tokio::sync::Notify,
         resume: tokio::sync::Notify,
     }
@@ -839,6 +876,12 @@ mod tests {
             {
                 self.entered.notify_one();
                 self.resume.notified().await;
+                if self.fail_put {
+                    return Err(object_store::Error::Generic {
+                        store: "suspended conditional put",
+                        source: Box::new(std::io::Error::other("injected publication failure")),
+                    });
+                }
             }
             self.inner.put_opts(location, payload, options).await
         }
@@ -909,6 +952,7 @@ mod tests {
                     completed_path(&tenant, id, 2)
                 },
                 armed: std::sync::atomic::AtomicBool::new(true),
+                fail_put: false,
                 entered: tokio::sync::Notify::new(),
                 resume: tokio::sync::Notify::new(),
             });
@@ -1105,6 +1149,159 @@ mod tests {
         check!(record::load(&state, &tenant, id).await.unwrap_err().code() == Code::NotFound);
     }
 
+    async fn owned_pending(state: &QuerierState, tenant: &TenantId, id: &str) -> record::Record {
+        publish_pending(state, tenant, id, record::now_ms(), 0).await;
+        let (mut metadata, version) = record::load(state, tenant, id).await.unwrap();
+        metadata.owner.clone_from(&state.async_runtime.owner);
+        check!(
+            record::write(state, &metadata, PutMode::Update(version))
+                .await
+                .unwrap()
+        );
+        record::load(state, tenant, id).await.unwrap().0
+    }
+
+    fn prepared_success(id: &str) -> SelectMergeStacktracesResponse {
+        let mut response = pending_response(id);
+        response.r#async.as_mut().unwrap().status = AsyncQueryStatus::Success as i32;
+        response
+            .flamegraph
+            .get_or_insert_with(Default::default)
+            .total = 11;
+        response
+    }
+
+    #[tokio::test]
+    async fn prepared_outcomes_are_published_after_shutdown_is_cancelled() {
+        let tenant: TenantId = "tenant-a".parse().unwrap();
+        let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        for response in [
+            prepared_success(id),
+            failed_response(id, "backend failed".into()),
+        ] {
+            let backend = Arc::new(object_store::memory::InMemory::new());
+            let state = Arc::new(QuerierState::empty().with_admin_store(backend.clone()));
+            owned_pending(&state, &tenant, id).await;
+            check!(reserve(&state, &tenant, id).await);
+            state.async_runtime.stop.cancel();
+            finish_query(&state, &tenant, id, &response).await;
+            check!(state.async_query_slots.lock().await.is_empty());
+            let reopened = Arc::new(QuerierState::empty().with_admin_store(backend));
+            check!(
+                async_stacktrace_query(Arc::clone(&reopened), tenant.clone(), request(id))
+                    .await
+                    .unwrap()
+                    == response
+            );
+            let terminal = record::load(&reopened, &tenant, id).await.unwrap().0;
+            check!(terminal.generation == 2);
+            check!(terminal.adoptions == 0);
+            maintenance::adopt(&reopened).await.unwrap();
+            check!(record::load(&reopened, &tenant, id).await.unwrap().0 == terminal);
+            reopened.shutdown_async_queries().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_joins_suspended_publication_and_relinquishes_failed_publication() {
+        let tenant: TenantId = "tenant-a".parse().unwrap();
+        let id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        for (gate_metadata, fail_put) in [(false, false), (true, false), (false, true)] {
+            let directory = tempfile::tempdir().unwrap();
+            let backend: Arc<dyn object_store::ObjectStore> = Arc::new(
+                object_store::local::LocalFileSystem::new_with_prefix(directory.path()).unwrap(),
+            );
+            let gate = Arc::new(SuspendedPutStore {
+                inner: Arc::clone(&backend),
+                location: if gate_metadata {
+                    record::metadata_path(&tenant, id, 2)
+                } else {
+                    completed_path(&tenant, id, 2)
+                },
+                armed: std::sync::atomic::AtomicBool::new(true),
+                fail_put,
+                entered: tokio::sync::Notify::new(),
+                resume: tokio::sync::Notify::new(),
+            });
+            let state = Arc::new(QuerierState::empty().with_admin_store(gate.clone()));
+            let initial = owned_pending(&state, &tenant, id).await;
+            check!(reserve(&state, &tenant, id).await);
+            let expected = prepared_success(id);
+            check!(state.async_runtime.spawn({
+                let state = Arc::clone(&state);
+                let tenant = tenant.clone();
+                let response = expected.clone();
+                async move { finish_query(&state, &tenant, id, &response).await }
+            }));
+            tokio::time::timeout(Duration::from_secs(5), gate.entered.notified())
+                .await
+                .unwrap();
+            // A staged blob is invisible until the terminal generation commits.
+            check!(
+                async_stacktrace_query(Arc::clone(&state), tenant.clone(), request(id))
+                    .await
+                    .unwrap()
+                    == pending_response(id)
+            );
+            let joining = tokio::spawn({
+                let state = Arc::clone(&state);
+                async move { state.shutdown_async_queries().await }
+            });
+            state.async_runtime.stop.cancelled().await;
+            gate.resume.notify_one();
+            tokio::time::timeout(Duration::from_secs(5), joining)
+                .await
+                .unwrap()
+                .unwrap();
+            check!(state.async_query_slots.lock().await.is_empty());
+            let reopened = Arc::new(QuerierState::empty().with_admin_store(Arc::new(
+                object_store::local::LocalFileSystem::new_with_prefix(directory.path()).unwrap(),
+            )));
+            if fail_put {
+                let mut relinquished = initial;
+                relinquished.generation = 2;
+                relinquished.heartbeat_ms = 1;
+                check!(record::load(&reopened, &tenant, id).await.unwrap().0 == relinquished);
+                check!(
+                    async_stacktrace_query(Arc::clone(&reopened), tenant.clone(), request(id))
+                        .await
+                        .unwrap()
+                        == pending_response(id)
+                );
+                maintenance::adopt(&reopened).await.unwrap();
+                let replayed = completed(Arc::clone(&reopened), &tenant, id).await;
+                check!(
+                    replayed.r#async
+                        == Some(AsyncQueryResponse {
+                            request_id: id.into(),
+                            status: AsyncQueryStatus::Success as i32,
+                            error_message: String::new(),
+                        })
+                );
+                check!(replayed.flamegraph.unwrap().total == 0);
+                check!(
+                    record::load(&reopened, &tenant, id)
+                        .await
+                        .unwrap()
+                        .0
+                        .adoptions
+                        == 1
+                );
+            } else {
+                check!(
+                    async_stacktrace_query(Arc::clone(&reopened), tenant.clone(), request(id))
+                        .await
+                        .unwrap()
+                        == expected
+                );
+                let terminal = record::load(&reopened, &tenant, id).await.unwrap().0;
+                maintenance::adopt(&reopened).await.unwrap();
+                check!(record::load(&reopened, &tenant, id).await.unwrap().0 == terminal);
+            }
+            reopened.shutdown_async_queries().await;
+        }
+    }
+
     #[tokio::test]
     async fn shutdown_joins_tasks_and_prevents_late_dispatch() {
         let state = Arc::new(QuerierState::empty());
@@ -1229,6 +1426,7 @@ mod tests {
             inner: Arc::new(object_store::memory::InMemory::new()),
             location: record::metadata_path(&tenant, id, 1),
             armed: std::sync::atomic::AtomicBool::new(true),
+            fail_put: false,
             entered: tokio::sync::Notify::new(),
             resume: tokio::sync::Notify::new(),
         });
