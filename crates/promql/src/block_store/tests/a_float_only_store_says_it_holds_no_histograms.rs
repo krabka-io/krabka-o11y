@@ -14,10 +14,10 @@ pub(crate) async fn a_float_only_store_says_it_holds_no_histograms() {
         1.0,
     )
     .await;
-    let matchers = [krabka_blockstore::LabelMatcher {
+    let matchers = [crate::PromqlMatcher {
         name: "__name__".to_string(),
         op: krabka_blockstore::MatchOp::Eq,
-        value: "up".to_string(),
+        value: "up".to_string().into(),
     }];
 
     // `None` is a store built without a histogram block store, and an empty

@@ -7,7 +7,7 @@ pub(crate) fn exemplars_json(exemplars: Vec<ExemplarRecord>) -> Vec<Value> {
     let mut groups = BTreeMap::<String, (Labels, Vec<Value>)>::new();
     for exemplar in exemplars {
         let key = labels_key(&exemplar.series_labels);
-        let labels_json = labels_json(&exemplar.labels);
+        let labels_json = labels_json(exemplar.labels.iter());
         let value = json!({
             "labels": labels_json,
             "value": sample_string(exemplar.value),
@@ -24,7 +24,7 @@ pub(crate) fn exemplars_json(exemplars: Vec<ExemplarRecord>) -> Vec<Value> {
         .into_values()
         .map(|(series_labels, exemplars)| {
             json!({
-                "seriesLabels": labels_json(&series_labels),
+                "seriesLabels": labels_json(series_labels.iter()),
                 "exemplars": exemplars,
             })
         })

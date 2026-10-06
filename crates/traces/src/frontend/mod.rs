@@ -113,6 +113,7 @@ mod orch_tests {
                         attributes: vec![],
                     }],
                     matched: 1,
+                    attributes: Vec::new(),
                 }],
             }],
             metrics: Metrics {

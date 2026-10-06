@@ -23,7 +23,7 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use arrow::{
-    array::{ArrayRef, Float64Array, Int64Array, StringArray},
+    array::{ArrayRef, BinaryArray, Float64Array, Int64Array},
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
@@ -32,11 +32,10 @@ use datafusion::{
     logical_expr::{Expr, LogicalPlan, LogicalPlanBuilder, col, lit},
     prelude::SessionContext,
 };
-use krabka_blockstore::Labels;
 
 use crate::{
-    PromqlError, error::Result, extension::planner::prom_session_context, functions::ScalarMathOp,
-    planner::leaf::leaf_scan,
+    PromqlError, PromqlLabels as Labels, error::Result, extension::planner::prom_session_context,
+    functions::ScalarMathOp, planner::leaf::leaf_scan,
 };
 
 #[cfg(test)]
@@ -78,7 +77,7 @@ mod tests {
                 .column_by_name("l")
                 .unwrap()
                 .as_any()
-                .downcast_ref::<StringArray>()
+                .downcast_ref::<BinaryArray>()
                 .unwrap();
             let value = batch
                 .column_by_name(VALUE_COLUMN)
@@ -87,7 +86,10 @@ mod tests {
                 .downcast_ref::<Float64ArrayT>()
                 .unwrap();
             for row in 0..batch.num_rows() {
-                got.push((l.value(row).to_string(), value.value(row)));
+                got.push((
+                    std::str::from_utf8(l.value(row)).unwrap().to_owned(),
+                    value.value(row),
+                ));
             }
         }
         got.sort_by(|a, b| a.0.cmp(&b.0));

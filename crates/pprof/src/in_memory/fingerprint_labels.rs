@@ -8,6 +8,18 @@ pub(crate) fn fingerprint_labels(labels: &[(String, String)]) -> u64 {
     canonical.fingerprint()
 }
 
+/// Metadata-series identity excludes the per-profile association label.
+/// Keep the full storage fingerprint for scans, statistics and profile lookup.
+pub(crate) fn queried_series_fingerprint(labels: &[(String, String)]) -> u64 {
+    let mut canonical = Labels::new();
+    for (name, value) in labels {
+        if name != "__profile_id__" {
+            canonical.insert(name.clone(), value.clone());
+        }
+    }
+    canonical.fingerprint()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::in_memory::InMemoryProfileStore;

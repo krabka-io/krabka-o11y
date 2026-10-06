@@ -76,7 +76,6 @@ async fn query_endpoint_fans_out_pipe_separated_tenant_header() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -86,7 +85,6 @@ async fn query_endpoint_fans_out_pipe_separated_tenant_header() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "stage"
                             },
                             "values": [
@@ -345,7 +343,6 @@ async fn query_endpoint_merges_cold_blocks_with_hot_wal_tail() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -409,7 +406,6 @@ async fn query_endpoint_uses_updated_shared_compaction_frontier_for_hot_tail() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -464,7 +460,6 @@ async fn query_endpoint_applies_limit_to_stream_results() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -519,7 +514,6 @@ async fn query_endpoint_applies_backward_direction_before_limit() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [
@@ -574,7 +568,6 @@ async fn query_endpoint_defaults_to_backward_direction_before_limit() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod"
                             },
                             "values": [

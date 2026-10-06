@@ -44,7 +44,7 @@ pub(crate) async fn series_dispatch<S: MetricStore>(
     }
     let mut series = by_key
         .into_values()
-        .map(|labels| labels_json(&labels))
+        .map(|labels| labels_json(labels.iter()))
         .collect::<Vec<_>>();
     if let Err(error) = enforce_selected_series_limit(state, &tenant, series.len()) {
         return error.into_response();

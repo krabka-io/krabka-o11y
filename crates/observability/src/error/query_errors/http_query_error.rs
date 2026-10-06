@@ -78,8 +78,14 @@ pub(crate) enum HttpQueryError {
     QuerySeriesTooLarge { series: usize, max_series: usize },
     #[error("query frontend overloaded; retry after {retry_after_seconds}s")]
     QueryOverloaded { retry_after_seconds: u64 },
+    #[error("multi variant queries are disabled for this instance")]
+    VariantsDisabled,
+    #[error("{0}")]
+    VariantUnsupported(String),
     #[error("approx_topk is not enabled. See -limits.shard_aggregations")]
     ApproxTopKDisabled,
+    #[error("count min sketches are only supported on instant queries")]
+    ApproxTopKRangeQuery,
     #[error("parse error at line 1, col 1: syntax error: unexpected IDENTIFIER")]
     CountValuesQuery,
     #[error("{0}")]

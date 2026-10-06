@@ -195,9 +195,8 @@ impl KrabkaSpanStore {
         let batches = deduplicate_scan_batches(batches)?;
         let batches = recompute_scan_nested_sets(batches, self.scan_concat_max)?;
         let batches = filter_batches_by_matchers(batches, matchers)?;
-        let mut expansion_matchers = matchers.to_vec();
-        expansion_matchers.extend(options.projection_matchers.clone());
-        let batches = add_nested_intrinsic_columns(batches, &expansion_matchers)?;
+        let batches =
+            add_nested_intrinsic_columns(batches, matchers, &options.projection_matchers)?;
         let batches = add_span_attr_columns(batches, &options.projection_matchers)?;
 
         let schema = batches

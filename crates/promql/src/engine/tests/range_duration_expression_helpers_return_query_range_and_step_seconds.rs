@@ -102,7 +102,7 @@ async fn nested_duration_extrema_select_the_requested_windows_and_offsets() {
 
 #[cfg(feature = "experimental-functions")]
 #[tokio::test]
-async fn duration_extrema_propagate_nan_from_either_operand() {
+async fn duration_extrema_reject_literal_division_by_zero_in_either_operand() {
     let engine = PromqlEngine::new(Arc::new(InMemoryMetricStore::new()), EngineOpts::default());
     for query in [
         "sum_over_time(duration_probe[min_of(1m, 0/0)])",
@@ -121,6 +121,9 @@ async fn duration_extrema_propagate_nan_from_either_operand() {
             .await
             .unwrap_err();
         assert2::assert!(matches!(error, PromqlError::Parse(_)), "{query}: {error}");
-        assert2::assert!(error.to_string().contains("NaN"), "{query}: {error}");
+        assert2::assert!(
+            error.to_string().contains("division by zero"),
+            "{query}: {error}"
+        );
     }
 }

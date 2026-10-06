@@ -48,7 +48,6 @@ expr: up > 0
         resolved_sink.alerts()
             == vec![super::super::AlertmanagerAlert {
                 labels: BTreeMap::from([
-                    ("__name__".to_string(), "up".to_string()),
                     ("alertname".to_string(), "InstanceUp".to_string()),
                     ("job".to_string(), "api".to_string()),
                 ]),

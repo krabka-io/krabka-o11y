@@ -1,4 +1,4 @@
-use super::Time;
+use super::{SpanAttr, Time};
 
 /// One nested span event.
 ///
@@ -8,5 +8,5 @@ use super::Time;
 pub struct SpanEvent {
     pub name: String,
     pub time_since_start: Time,
-    pub attrs: Vec<(String, String)>,
+    pub attrs: Vec<SpanAttr>,
 }

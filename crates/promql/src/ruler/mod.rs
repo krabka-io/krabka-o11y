@@ -12,7 +12,12 @@ mod evaluation;
 mod recording;
 mod schedule;
 
-pub(crate) use alerting::evaluate_and_persist_alerting_rule_with_state_and_wal;
+#[cfg(test)]
+pub(crate) use alerting::expand_alert_label_map;
+pub(crate) use alerting::{
+    alert_template_variables, evaluate_and_persist_alerting_rule_with_state_and_wal,
+    expand_alert_label_map_async, template_sample_value,
+};
 pub use alerting::{
     evaluate_and_dispatch_alerting_rule, evaluate_and_dispatch_alerting_rule_group,
     evaluate_and_dispatch_alerting_rule_with_state, evaluate_and_persist_alerting_rule_group,

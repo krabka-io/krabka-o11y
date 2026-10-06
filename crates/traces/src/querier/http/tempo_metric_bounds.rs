@@ -47,16 +47,35 @@ pub(crate) fn tempo_metric_bounds(
 }
 
 impl TempoMetricBounds {
-    /// Move sample timestamps to right boundaries; exemplar times identify spans.
+    /// Move samples to right boundaries and use Tempo's aligned fetch precision.
     pub(crate) fn shift_points(
         &self,
         response: &mut TraceMetricsResponse,
     ) -> Result<(), &'static str> {
+        let step_ns = self.sample_shift + 1;
+        // Pinned vParquet5 selects the least precise start column whose
+        // granularity divides the aligned query step. Reconstructed exemplar
+        // times are the right boundary of that stored interval.
+        let precision = [3600_i64, 300, 60, 15]
+            .into_iter()
+            .map(|seconds| seconds * 1_000_000_000)
+            .find(|precision| step_ns % precision == 0);
         for series in &mut response.series {
             for (timestamp, _) in &mut series.points {
                 *timestamp = timestamp
                     .checked_add(self.sample_shift)
                     .ok_or("metric sample timestamp overflow")?;
+            }
+            if let Some(precision) = precision {
+                for exemplar in &mut series.exemplars {
+                    let remainder = exemplar.timestamp_ns.rem_euclid(precision);
+                    if remainder != 0 {
+                        exemplar.timestamp_ns = exemplar
+                            .timestamp_ns
+                            .checked_add(precision - remainder)
+                            .ok_or("metric exemplar timestamp overflow")?;
+                    }
+                }
             }
         }
         Ok(())
@@ -186,5 +205,39 @@ mod tests {
         assert!(response == expected);
         response.series[0].points[0].0 = i64::MAX;
         assert!(bounds.shift_points(&mut response).is_err());
+    }
+
+    #[test]
+    fn exemplar_precision_uses_supported_step_divisors_and_right_boundaries() {
+        for (step_seconds, timestamp, expected) in [
+            (30, 100_000_000_i64, 15_000_000_000),
+            (30, 15_000_000_000, 15_000_000_000),
+            (30, 15_000_000_001, 30_000_000_000),
+            (30, -1, 0),
+            (30, -15_000_000_001, -15_000_000_000),
+            (60, 100_000_000, 60_000_000_000),
+            (300, 100_000_000, 300_000_000_000),
+            (3600, 100_000_000, 3_600_000_000_000),
+            (31, 100_000_000, 100_000_000),
+        ] {
+            let step = step_seconds * 1_000_000_000;
+            let bounds = tempo_metric_bounds(step + 1, step * 3 - 1, step)
+                .unwrap()
+                .unwrap();
+            let mut response = TraceMetricsResponse {
+                series: vec![serde_json::from_value(json!({
+                    "labels": [], "points": [], "exemplars":[{"labels": [["trace:id", "01"]], "value": 3.0, "timestamp_ns": timestamp}]
+                })).unwrap()],
+            };
+            let mut expected_response = response.clone();
+            expected_response.series[0].exemplars[0].timestamp_ns = expected;
+            bounds.shift_points(&mut response).unwrap();
+            assert!(
+                response == expected_response,
+                "step={step}, timestamp={timestamp}"
+            );
+            response.series[0].exemplars[0].timestamp_ns = i64::MAX;
+            assert!(bounds.shift_points(&mut response).is_err() == (step_seconds != 31));
+        }
     }
 }

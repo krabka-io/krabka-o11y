@@ -1,10 +1,9 @@
 use super::{
     DistributorError, Limits, LokiProtoPushRequest, TenantId, WalLogRecord,
-    discover_service_name_label, loki_missing_proto_timestamp_error,
-    loki_proto_label_pairs_to_labels, loki_proto_timestamp_ns, loki_push_entry_labels,
-    parse_loki_proto_labels, truncate_loki_line, validate_loki_line_size,
-    validate_loki_stream_labels, validate_loki_timestamp_window,
-    validate_structured_metadata_limits,
+    discover_detected_level_label, discover_service_name_label, loki_missing_proto_timestamp_error,
+    loki_proto_label_pairs_to_labels, loki_proto_timestamp_ns, parse_loki_proto_labels,
+    truncate_loki_line, validate_loki_line_size, validate_loki_stream_labels,
+    validate_loki_timestamp_window, validate_structured_metadata_limits,
 };
 
 pub(crate) fn normalize_loki_proto_push(
@@ -39,9 +38,16 @@ pub(crate) fn normalize_loki_proto_push(
             validate_loki_timestamp_window(timestamp_ns, &stream_labels, limits)?;
             truncate_loki_line(&mut entry.line, limits);
             validate_loki_line_size(&entry.line, &stream_labels, limits)?;
-            let labels = loki_push_entry_labels(&stream_labels, &entry.line);
-            let structured_metadata = loki_proto_label_pairs_to_labels(&entry.structured_metadata);
+            let labels = stream_labels.clone();
+            let mut structured_metadata =
+                loki_proto_label_pairs_to_labels(&entry.structured_metadata);
             validate_structured_metadata_limits(&structured_metadata, &stream_labels, limits)?;
+            discover_detected_level_label(
+                &stream_labels,
+                &mut structured_metadata,
+                &entry.line,
+                limits,
+            );
             records.push(WalLogRecord {
                 tenant: tenant.to_owned(),
                 labels,

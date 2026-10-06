@@ -1,7 +1,7 @@
 use super::{
     Arc, BTreeMap, BlockStoreError, BlockWriter, ByteSize, COL_FINGERPRINT, COL_TIMESTAMP,
     CompactionIndexManifest, CompactionIndexSink, CompactionObjectPlan, CompactionSeriesLabels,
-    Labels, MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, MetricCompactionError, MetricCompactionJob,
+    MERGE_BATCH_ROWS, MERGE_READ_BATCH_ROWS, MetricCompactionError, MetricCompactionJob,
     ObjectStore, SortedMerge, SummaryColumns, compacted_metric_object_key, compaction_index_key,
     deduplicate_series_timestamp_runs, open_block_stream, series_block_schema,
     versioned_compaction_key,
@@ -140,7 +140,7 @@ where
             .unwrap_or_default(),
         row_count: meta.row_count,
     };
-    let series: BTreeMap<u64, Labels> = inputs
+    let series: BTreeMap<u64, crate::MetricLabels> = inputs
         .iter()
         .flat_map(|input| input.series.iter())
         .map(|series| (series.fingerprint, series.labels.clone()))

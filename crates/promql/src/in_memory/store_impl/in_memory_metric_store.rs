@@ -106,11 +106,11 @@ impl MetricStore for InMemoryMetricStore {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<krabka_metrics::MetricString>> {
         let mut values = BTreeSet::new();
         for labels in self.matched_series(tenant, matchers, start_ms, end_ms)? {
-            if let Some(value) = labels.get(name) {
-                values.insert(value.to_string());
+            if let Some(value) = labels.get_value(name) {
+                values.insert(value.clone());
             }
         }
         Ok(values.into_iter().collect())
@@ -231,7 +231,8 @@ impl MetricStore for InMemoryMetricStore {
     }
 
     async fn cardinality_label_values(&self, tenant: &str) -> Result<Vec<LabelValueCardinality>> {
-        let mut by_value = BTreeMap::<(String, String), BTreeSet<SeriesFingerprint>>::new();
+        let mut by_value =
+            BTreeMap::<(String, crate::PromqlString), BTreeSet<SeriesFingerprint>>::new();
         if let Some(rows) = self.floats.get(tenant) {
             for row in rows.iter() {
                 for (name, value) in row.labels.iter() {
@@ -258,7 +259,7 @@ impl MetricStore for InMemoryMetricStore {
             .map(
                 |((label_name, label_value), fingerprints)| LabelValueCardinality {
                     label_name,
-                    label_value,
+                    label_value: label_value.as_str().to_owned(),
                     series_count: fingerprints.len(),
                 },
             )
@@ -346,7 +347,7 @@ impl MetricStore for InMemoryMetricStore {
                 label_values_by_name
                     .entry(name.clone())
                     .or_default()
-                    .insert(value.clone());
+                    .insert(value.as_str().to_owned());
                 *memory_by_name.entry(name.clone()).or_default() += name.len() + value.len();
                 *by_label_pair.entry(format!("{name}={value}")).or_default() += 1;
             }

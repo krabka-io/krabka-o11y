@@ -28,16 +28,16 @@ async fn source_labels_preserve_distinct_and_both_tail_encodings() {
     };
     let frontier = CompactionFrontier::new(0);
     let folded = json!([
-        {"stream":{"app":"api","method":"GET","detected_level":"unknown","status":"200"},"values":[["10","line-10"]]},
-        {"stream":{"app":"api","method":"GET","detected_level":"unknown","status":"500"},"values":[["20","line-20"]]},
-        {"stream":{"app":"web","method":"GET","detected_level":"unknown","status":"200"},"values":[["30","line-30"]]}
+        {"stream":{"app":"api","method":"GET","status":"200"},"values":[["10","line-10"]]},
+        {"stream":{"app":"api","method":"GET","status":"500"},"values":[["20","line-20"]]},
+        {"stream":{"app":"web","method":"GET","status":"200"},"values":[["30","line-30"]]}
     ]);
     let categorized = json!([
         {"stream":{"app":"api","method":"GET"},"values":[
-            ["10","line-10",{"structuredMetadata":{"detected_level":"unknown","status":"200"}}],
-            ["20","line-20",{"structuredMetadata":{"detected_level":"unknown","status":"500"}}]]},
+            ["10","line-10",{"structuredMetadata":{"status":"200"}}],
+            ["20","line-20",{"structuredMetadata":{"status":"500"}}]]},
         {"stream":{"app":"web","method":"GET"},"values":[
-            ["30","line-30",{"structuredMetadata":{"detected_level":"unknown","status":"200"}}]]}
+            ["30","line-30",{"structuredMetadata":{"status":"200"}}]]}
     ]);
     for (encoding, expected) in [
         (LokiStreamEncoding::Folded, folded.clone()),
@@ -92,16 +92,16 @@ async fn source_labels_preserve_distinct_and_both_tail_encodings() {
         (
             LokiStreamEncoding::Folded,
             json!([
-                {"stream":{"app":"same","method":"GET","detected_level":"unknown","status":"200"},"values":[["10","line-10"],["30","line-30"]]},
-                {"stream":{"app":"same","method":"GET","detected_level":"unknown","status":"500"},"values":[]}
+                {"stream":{"app":"same","method":"GET","status":"200"},"values":[["10","line-10"],["30","line-30"]]},
+                {"stream":{"app":"same","method":"GET","status":"500"},"values":[]}
             ]),
         ),
         (
             LokiStreamEncoding::CategorizeLabels,
             json!([
                 {"stream":{"method":"GET"},"values":[
-                    ["10","line-10",{"structuredMetadata":{"detected_level":"unknown","status":"200"},"parsed":{"app":"same"}}],
-                    ["30","line-30",{"structuredMetadata":{"detected_level":"unknown","status":"200"},"parsed":{"app":"same"}}]]}
+                    ["10","line-10",{"structuredMetadata":{"status":"200"},"parsed":{"app":"same"}}],
+                    ["30","line-30",{"structuredMetadata":{"status":"200"},"parsed":{"app":"same"}}]]}
             ]),
         ),
     ] {

@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::{NativeHistogram, SamplePayload, WalRecord};
 use krabka_units::prelude::*;
 
@@ -12,6 +12,7 @@ use super::{
     PruneStats,
 };
 use crate::{
+    PromqlLabels as Labels,
     ids::{Offset, PartitionIndex},
     store::{MetadataRecord, TsdbBlock},
 };
@@ -75,14 +76,14 @@ impl InMemoryMetricStore {
 
     /// Appends a float sample.
     ///
-    /// `labels` is taken as `impl Into<Arc<Labels>>` so a caller that already
+    /// `labels` is taken as `impl krabka_metrics::IntoMetricLabelsArc` so a caller that already
     /// holds the series' shared label set -- as
     /// [`InMemoryMetricStore::apply_wal_record`] does -- hands it over instead
     /// of building a second copy per sample.
     pub fn push_float(
         &mut self,
         tenant: &str,
-        labels: impl Into<Arc<Labels>>,
+        labels: impl krabka_metrics::IntoMetricLabelsArc,
         ts_ms: i64,
         value: f64,
     ) {
@@ -93,13 +94,13 @@ impl InMemoryMetricStore {
     pub fn push_float_with_start_timestamp(
         &mut self,
         tenant: &str,
-        labels: impl Into<Arc<Labels>>,
+        labels: impl krabka_metrics::IntoMetricLabelsArc,
         ts_ms: i64,
         value: f64,
         start_timestamp_ms: Option<i64>,
     ) {
         self.observe_sample_timestamp(ts_ms);
-        let (fp, labels) = self.intern_series_labels(tenant, labels.into());
+        let (fp, labels) = self.intern_series_labels(tenant, labels.into_metric_labels_arc());
         let row = FloatRow {
             fp,
             labels,
@@ -123,12 +124,12 @@ impl InMemoryMetricStore {
     pub fn push_histogram(
         &mut self,
         tenant: &str,
-        labels: impl Into<Arc<Labels>>,
+        labels: impl krabka_metrics::IntoMetricLabelsArc,
         ts_ms: i64,
         hist: impl Into<Arc<NativeHistogram>>,
     ) {
         self.observe_sample_timestamp(ts_ms);
-        let (fp, labels) = self.intern_series_labels(tenant, labels.into());
+        let (fp, labels) = self.intern_series_labels(tenant, labels.into_metric_labels_arc());
         self.hists
             .entry(tenant.to_string())
             .or_default()
@@ -145,19 +146,20 @@ impl InMemoryMetricStore {
     pub fn push_exemplar(
         &mut self,
         tenant: &str,
-        series_labels: impl Into<Arc<Labels>>,
-        labels: impl Into<Arc<Labels>>,
+        series_labels: impl krabka_metrics::IntoMetricLabelsArc,
+        labels: impl krabka_metrics::IntoMetricLabelsArc,
         ts_ms: i64,
         value: f64,
     ) {
         self.observe_sample_timestamp(ts_ms);
-        let (_, series_labels) = self.intern_series_labels(tenant, series_labels.into());
+        let (_, series_labels) =
+            self.intern_series_labels(tenant, series_labels.into_metric_labels_arc());
         self.exemplars
             .entry(tenant.to_string())
             .or_default()
             .push(ExemplarRow {
                 series_labels,
-                labels: labels.into(),
+                labels: labels.into_metric_labels_arc(),
                 ts_ms,
                 value,
             });

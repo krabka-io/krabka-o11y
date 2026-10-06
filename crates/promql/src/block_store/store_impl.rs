@@ -2,16 +2,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use arrow::array::{Array, Float64Array, Int64Array, MapArray, StringArray, UInt64Array};
 use datafusion::prelude::SessionContext;
-use krabka_blockstore::{
-    BlockSkipReason, LabelMatcher, Labels, ScanReport, ScanTableRequest, SeriesFingerprint,
-};
+use krabka_blockstore::{BlockSkipReason, ScanReport, ScanTableRequest, SeriesFingerprint};
 use krabka_metrics::{
     exemplar_schema, float_sample_schema, metadata_schema, native_histogram_schema,
 };
 
 use super::MetricBlockStore;
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher,
     error::Result,
     store::{
         ExemplarRecord, ExemplarScan, LabelNameCardinality, LabelValueCardinality, MetadataRecord,

@@ -14,10 +14,13 @@ impl CompiledLabelMatchers {
     /// is the precompiled equivalent of `labels_match`.
     pub(crate) fn matches(&self, labels: &Labels) -> bool {
         for matcher in &self.matchers {
+            let bytes = labels
+                .get_value(&matcher.name)
+                .map_or(&[][..], crate::PromqlString::as_bytes);
             let value = labels.get(&matcher.name).unwrap_or("");
             let is_match = match matcher.op {
-                MatchOp::Eq => value == matcher.value,
-                MatchOp::Neq => value != matcher.value,
+                MatchOp::Eq => bytes == matcher.value.as_bytes(),
+                MatchOp::Neq => bytes != matcher.value.as_bytes(),
                 MatchOp::Re | MatchOp::Nre => {
                     let regex_matches = matcher
                         .regex

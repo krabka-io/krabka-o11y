@@ -842,7 +842,7 @@ pub mod testkit {
     ) -> Result<()> {
         if let QueryResult::Str { value, .. } = result {
             let expected = expect_single_string(expect)?;
-            if value == expected {
+            if value.as_bytes() == expected.as_bytes() {
                 return Ok(());
             }
             return Err(PromqlError::Exec(format!(
@@ -862,7 +862,7 @@ pub mod testkit {
         let actual = match result {
             QueryResult::InstantVector(samples) => samples
                 .into_iter()
-                .map(|sample| (labels_key(&sample.labels), sample.value))
+                .map(|sample| (labels_key(sample.labels.iter()), sample.value))
                 .collect::<Vec<_>>(),
             other => {
                 return Err(PromqlError::Exec(format!(
@@ -874,7 +874,7 @@ pub mod testkit {
         let mut expected = Vec::with_capacity(expect.len());
         let mut seen = BTreeSet::new();
         for line in expect {
-            let key = labels_key(&metric_to_labels(&line.metric));
+            let key = labels_key(metric_to_labels(&line.metric).iter());
             let value = expect_single_instant_value(line)?;
             // Two `expect` lines collapsing to the same labelset would make one
             // of them unreachable and weaken the count check below; reject the
@@ -948,7 +948,33 @@ pub mod testkit {
 
     /// Renders one labelset key on a single line, for a failure message.
     fn describe_labels_key(key: &str) -> String {
-        key.trim_end_matches('\n').replace('\n', ", ")
+        let fields = key
+            .strip_suffix('/')
+            .unwrap_or(key)
+            .split('/')
+            .collect::<Vec<_>>();
+        fields
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| {
+                let decode = |hex: &str| {
+                    (0..hex.len())
+                        .step_by(2)
+                        .map(|index| {
+                            u8::from_str_radix(&hex[index..index + 2], 16)
+                                .expect("label key contains hex")
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let name = String::from_utf8(decode(pair[0])).expect("label names are UTF8");
+                let value = decode(pair[1]);
+                let value = std::str::from_utf8(&value)
+                    .map_or_else(|_| krabka_logql::quote_go_bytes(&value), str::to_owned);
+                format!("{name}={value}")
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Renders the labelsets of an instant vector in their result order.
@@ -975,7 +1001,7 @@ pub mod testkit {
                         .into_iter()
                         .map(|(timestamp, value)| Ok((timestamp, value)))
                         .collect::<Result<Vec<_>>>()?;
-                    Ok((labels_key(&series.labels), samples))
+                    Ok((labels_key(series.labels.iter()), samples))
                 })
                 .collect::<Result<BTreeMap<_, _>>>()?,
             other => {
@@ -989,7 +1015,7 @@ pub mod testkit {
             .iter()
             .map(|line| {
                 Ok((
-                    labels_key(&metric_to_labels(&line.metric)),
+                    labels_key(metric_to_labels(&line.metric).iter()),
                     expected_range_samples(line, start_ms, step)?,
                 ))
             })
@@ -1229,15 +1255,16 @@ pub mod testkit {
             .ok_or_else(|| PromqlError::Exec("sample timestamp overflow".to_string()))
     }
 
-    fn labels_key(labels: &Labels) -> String {
-        let mut key = String::new();
-        for (name, value) in labels.iter() {
-            key.push_str(name);
-            key.push('=');
-            key.push_str(value);
-            key.push('\n');
-        }
-        key
+    fn labels_key<'a, V: AsRef<[u8]> + 'a>(
+        labels: impl Iterator<Item = (&'a String, &'a V)>,
+    ) -> String {
+        crate::PromqlLabels::from_pairs(labels.map(|(name, value)| {
+            (
+                name.clone(),
+                crate::PromqlString::from(value.as_ref().to_vec()),
+            )
+        }))
+        .order_key()
     }
 
     fn stale_nan() -> f64 {
@@ -1315,7 +1342,7 @@ pub mod testkit {
             let matrix = |values: &[f64]| {
                 QueryResult::RangeMatrix(vec![crate::RangeSeries {
                     drop_name: false,
-                    labels: metric_to_labels(r#"up{job="api"}"#),
+                    labels: metric_to_labels(r#"up{job="api"}"#).into(),
                     start_timestamps_ms: BTreeMap::new(),
                     samples: values
                         .iter()
@@ -1386,7 +1413,7 @@ pub mod testkit {
             let matrix = |value: f64| {
                 QueryResult::RangeMatrix(vec![crate::RangeSeries {
                     drop_name: false,
-                    labels: metric_to_labels(r#"up{job="api"}"#),
+                    labels: metric_to_labels(r#"up{job="api"}"#).into(),
                     start_timestamps_ms: BTreeMap::new(),
                     samples: vec![(0, SampleValue::Float(value))],
                 }])
@@ -1617,7 +1644,7 @@ eval instant at 2m down{job="api"}
         #[test]
         fn an_ordered_expectation_compares_an_instant_vector_by_position() {
             let sample = |metric: &str, value: f64| crate::InstantSample {
-                labels: metric_to_labels(metric),
+                labels: metric_to_labels(metric).into(),
                 ts_ms: 0,
                 value: SampleValue::Float(value),
                 drop_name: false,

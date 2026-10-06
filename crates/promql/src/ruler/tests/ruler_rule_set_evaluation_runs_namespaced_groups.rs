@@ -85,8 +85,8 @@ rules:
                 WalRecord {
                     tenant: "tenant-a".to_string(),
                     labels: vec![
-                        ("__name__".to_string(), "job:up:current".to_string()),
-                        ("job".to_string(), "api".to_string()),
+                        ("__name__".to_string(), "job:up:current".into()),
+                        ("job".to_string(), "api".into()),
                     ],
                     payload: SamplePayload::Float {
                         timestamp_ms: 60_000,
@@ -98,8 +98,8 @@ rules:
                 WalRecord {
                     tenant: "tenant-a".to_string(),
                     labels: vec![
-                        ("__name__".to_string(), "job:up:current".to_string()),
-                        ("job".to_string(), "api".to_string()),
+                        ("__name__".to_string(), "job:up:current".into()),
+                        ("job".to_string(), "api".into()),
                     ],
                     payload: SamplePayload::Float {
                         timestamp_ms: 360_000,
@@ -114,9 +114,8 @@ rules:
         alert_sink.alerts()
             == vec![super::super::AlertmanagerAlert {
                 labels: BTreeMap::from([
-                    ("__name__".to_string(), "up".to_string()),
-                    ("alertname".to_string(), "InstanceUp".to_string()),
-                    ("job".to_string(), "api".to_string()),
+                    ("alertname".to_string(), "InstanceUp".into()),
+                    ("job".to_string(), "api".into()),
                 ]),
                 annotations: BTreeMap::new(),
                 starts_at_ms: 60_000,

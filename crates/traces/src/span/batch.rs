@@ -255,6 +255,69 @@ mod tests {
     }
 
     #[test]
+    fn explicit_arrays_keep_empty_and_singleton_identity_in_blocks() {
+        let mut value = span(1, None, "api");
+        value.span_attrs = vec![
+            KeyValue {
+                key: "empty".into(),
+                value: AttrValue::Array(Vec::new()),
+            },
+            KeyValue {
+                key: "one".into(),
+                value: AttrValue::Array(vec![AttrValue::Int(7)]),
+            },
+            KeyValue {
+                key: "many".into(),
+                value: AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
+            },
+            KeyValue {
+                key: "scalar".into(),
+                value: AttrValue::Int(7),
+            },
+            KeyValue {
+                key: "mixed".into(),
+                value: AttrValue::Array(vec![AttrValue::Int(7), AttrValue::Str("seven".into())]),
+            },
+        ];
+        let attrs = span_attrs(&value);
+        check!(
+            attrs.iter().find(|attr| attr.key == "empty").unwrap().value
+                == BlockAttrValue::Str(Vec::new())
+        );
+        check!(
+            attrs.iter().find(|attr| attr.key == "one").unwrap().value
+                == BlockAttrValue::Int(vec![7])
+        );
+        check!(
+            attrs.iter().find(|attr| attr.key == "many").unwrap().value
+                == BlockAttrValue::Bool(vec![true, false])
+        );
+        let mixed = attrs.iter().find(|attr| attr.key == "mixed").unwrap();
+        let BlockAttrValue::Unsupported(raw) = &mixed.value else {
+            panic!("mixed arrays must retain an opaque payload")
+        };
+        let reconstructed: opentelemetry_proto::tonic::common::v1::AnyValue =
+            serde_json::from_str(raw).unwrap();
+        check!(reconstructed == value.span_attrs[4].value.otlp_value());
+        check!(!mixed.is_array);
+        let batch = span_batch(&[value]).unwrap();
+        let keys = col::<ListArray>(&batch, SCOL_ATTR_KEYS).value(0);
+        let keys = keys.as_any().downcast_ref::<StringArray>().unwrap();
+        let flags = col::<ListArray>(&batch, SCOL_ATTR_IS_ARRAY).value(0);
+        let flags = flags.as_any().downcast_ref::<BooleanArray>().unwrap();
+        for (key, expected) in [
+            ("empty", true),
+            ("one", true),
+            ("many", true),
+            ("scalar", false),
+            ("mixed", false),
+        ] {
+            let index = keys.iter().position(|value| value == Some(key)).unwrap();
+            check!(flags.value(index) == expected, "{key}");
+        }
+    }
+
+    #[test]
     fn carries_events_and_links_through_schema() {
         let mut s = span(1, None, "api");
         s.events.push(EventRecord {
@@ -294,7 +357,6 @@ mod block_attr_value;
 mod block_kind;
 mod block_status;
 mod child_counts;
-mod event_attr_value;
 mod event_attrs;
 mod extend_block_attr_value;
 mod push_span_attr;
@@ -314,7 +376,6 @@ use block_attr_value::block_attr_value;
 use block_kind::block_kind;
 use block_status::block_status;
 use child_counts::child_counts;
-use event_attr_value::event_attr_value;
 use event_attrs::event_attrs;
 use extend_block_attr_value::extend_block_attr_value;
 use push_span_attr::push_span_attr;

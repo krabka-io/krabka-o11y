@@ -1,3 +1,9 @@
+#[path = "support/prometheus_template_functions.rs"]
+mod prometheus_template_functions;
+
+#[path = "support/template_functions.rs"]
+mod template_functions;
+
 use std::{
     collections::BTreeMap,
     time::{SystemTime, UNIX_EPOCH},
@@ -10,7 +16,7 @@ use krabka_logql::{
     LabelSelection, LabelSelectionSet, LineFilter, LineFilterOp, LineFormat, LogfmtExtraction,
     LogfmtParserConfig, MatchOp, MetricQuery, OffsetNanos, ParserStage, PatternParser,
     PipelineStage, Quantile, QuantileDenominator, QuantileNumerator, RangeAggregation,
-    RegexpParser, SourceLabel, StreamQuery, UnwrapExpression, VectorAggregation,
+    RegexpParser, SourceLabel, StreamQuery, TemplateData, UnwrapExpression, VectorAggregation,
     VectorAggregationOp, VectorGrouping, parse_logql_expr, parse_metric_binary_arithmetic_query,
     parse_metric_binary_comparison_query, parse_metric_binary_set_query,
     parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
@@ -568,7 +574,7 @@ fn query_evaluator_line_format_formats_current_timestamp_with_date_helper() {
 #[test]
 fn query_evaluator_line_format_converts_epoch_strings_with_unix_to_time_helper() {
     let query = parse_query(
-        r#"{app="api"} | logfmt | line_format `{{ .day | unixToTime | date "2006-01-02" }} {{ .seconds | unixToTime | date "2006-01-02T15:04:05" }} {{ .millis | unixToTime | unixEpoch }} {{ .micros | unixToTime | unixEpochMillis }} {{ .nanos | unixToTime | unixEpochNanos }} {{ .invalid | unixToTime | date "2006" }}` |= "2023-01-16 2023-03-23T13:13:35 1679577215 1679577215000 1679577215000000000 ""#,
+        r#"{app="api"} | logfmt | line_format `{{ .day | unixToTime | date "2006-01-02" }} {{ .seconds | unixToTime | date "2006-01-02T15:04:05" }} {{ .millis | unixToTime | unixEpoch }} {{ .micros | unixToTime | unixEpochMillis }} {{ .nanos | unixToTime | unixEpochNanos }}` |= "2023-01-16 2023-03-23T13:13:35 1679577215 1679577215000 1679577215000000000""#,
     )
     .unwrap();
     let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
@@ -586,7 +592,7 @@ fn query_evaluator_line_format_converts_epoch_strings_with_unix_to_time_helper()
 #[test]
 fn query_evaluator_line_format_parses_dates_with_to_date_helpers() {
     let query = parse_query(
-        r#"{app="api"} | logfmt | line_format `{{ .day | toDate "2006-01-02" | unixEpoch }} {{ .stamp | toDateInZone "2006-01-02T15:04:05.999999999Z" "UTC" | unixEpochNanos }} {{ .day | toDateInZone "2006-01-02" "America/New_York" | unixEpoch }} {{ .bad | toDateInZone "2006-01-02" "UTC" | unixEpoch }}` |= "1635811200 1635867930123456789 1635825600 ""#,
+        r#"{app="api"} | logfmt | line_format `{{ .day | toDate "2006-01-02" | unixEpoch }} {{ .stamp | toDateInZone "2006-01-02T15:04:05.999999999Z" "UTC" | unixEpochNanos }} {{ .day | toDateInZone "2006-01-02" "America/New_York" | unixEpoch }} {{ .bad | toDateInZone "2006-01-02" "UTC" | unixEpoch }}` |= "1635811200 1635867930123456789 1635825600 -62135596800""#,
     )
     .unwrap();
     let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
@@ -746,13 +752,13 @@ fn query_evaluator_line_format_applies_go_template_index_and_slice_helpers() {
         )
         .unwrap();
 
-    check!(result.line == r#"worker|200|bcd|[{"name":"api"}]"#);
+    check!(result.line == r#"worker|200|bcd|[map[name:api]]"#);
 }
 
 #[test]
 fn query_evaluator_line_format_applies_integer_math_template_helpers() {
     let query = parse_query(
-        r#"{app="api"} | logfmt | line_format `{{ add 3 2 5 }} {{ sub 5 2 }} {{ mul 5 2 3 }} {{ div 10 2 }} {{ mod 10 3 }} {{ max 1 2 3 }} {{ min 1 2 3 }} {{ .count | int | add 2 }} {{ .bad | int }}` |= "10 3 30 5 1 3 1 10 ""#,
+        r#"{app="api"} | logfmt | line_format `{{ add 3 2 5 }} {{ sub 5 2 }} {{ mul 5 2 3 }} {{ div 10 2 }} {{ mod 10 3 }} {{ max 1 2 3 }} {{ min 1 2 3 }} {{ .count | int | add 2 }} {{ .bad | int }}` |= "10 3 30 5 1 3 1 10 0""#,
     )
     .unwrap();
     let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
@@ -764,7 +770,7 @@ fn query_evaluator_line_format_applies_integer_math_template_helpers() {
 #[test]
 fn query_evaluator_line_format_applies_float_math_template_helpers() {
     let query = parse_query(
-        r#"{app="api"} | logfmt | line_format `{{ addf 3.5 2 5 }} {{ subf 5.5 2 1.5 }} {{ mulf 5.5 2 2.5 }} {{ divf 10 2 4 }} {{ maxf 1 2.5 3 }} {{ minf 1.5 2.5 3 }} {{ ceil 123.001 }} {{ floor 123.9999 }} {{ round 123.555555 3 }} {{ .ratio | float64 | addf 1.25 }} {{ .bad | float64 }}` |= "10.5 2 27.5 1.25 3 1.5 124 123 123.556 4.75 ""#,
+        r#"{app="api"} | logfmt | line_format `{{ addf 3.5 2 5 }} {{ subf 5.5 2 1.5 }} {{ mulf 5.5 2 2.5 }} {{ divf 10 2 4 }} {{ maxf 1 2.5 3 }} {{ minf 1.5 2.5 3 }} {{ ceil 123.001 }} {{ floor 123.9999 }} {{ round 123.555555 3 }} {{ .ratio | float64 | addf 1.25 }} {{ .bad | float64 }}` |= "10.5 2 27.5 1.25 3 1.5 124 123 123.556 4.75 0""#,
     )
     .unwrap();
     let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
@@ -795,18 +801,18 @@ fn query_evaluator_line_format_does_not_split_pipeline_inside_backtick_strings()
 #[test]
 fn query_evaluator_line_format_applies_additional_template_string_helpers() {
     let query = parse_query(
-        r#"{app="api"} | logfmt | line_format `{{ .raw | trim | trimPrefix "/" | trimSuffix "/" | title }} {{ .raw | trimAll " /" }} {{ .path | substr 1 10 }} {{ .path | substr 5 -1 }} {{ .path | substr -1 4 }} {{ .query | urlencode }} {{ .encoded | urldecode }}` |= "Checkout checkout api/items items /api a%3D1%20b%3Dtwo a=1 b=two""#,
+        r#"{app="api"} | logfmt | line_format `{{ .raw | trim | trimPrefix "/" | trimSuffix "/" | title }} {{ .raw | trimAll " /" }} {{ .path | substr 1 10 }} {{ .path | substr 5 -1 }} {{ .path | substr -1 4 }} {{ .query | urlencode }} {{ .encoded | urldecode }}` |= "Checkout checkout api/items items /api a%3D1+b%3Dtwo a=1 b=two""#,
     )
     .unwrap();
     let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
 
     check!(query.matches(
         &labels,
-        r#"raw=" /checkout/ " path=/api/items query="a=1 b=two" encoded="a%3D1%20b%3Dtwo""#
+        r#"raw=" /checkout/ " path=/api/items query="a=1 b=two" encoded="a%3D1+b%3Dtwo""#
     ));
     check!(!query.matches(
         &labels,
-        r#"raw=" /health/ " path=/api/items query="a=1 b=two" encoded="a%3D1%20b%3Dtwo""#
+        r#"raw=" /health/ " path=/api/items query="a=1 b=two" encoded="a%3D1+b%3Dtwo""#
     ));
 }
 
@@ -831,13 +837,13 @@ fn query_evaluator_line_format_applies_base64_template_helpers() {
 #[test]
 fn query_evaluator_line_format_applies_measurement_template_helpers() {
     let query = parse_query(
-        r#"{app="api"} | logfmt | line_format `{{ .latency | duration }} {{ .latency | duration_seconds }} {{ .size | bytes }} {{ .invalid | bytes }}` |= "90 90 1572864 ""#,
+        r#"{app="api"} | logfmt | line_format `{{ .latency | duration }} {{ .latency | duration_seconds }} {{ .size | bytes }}` |= "90 90 1.572864e+06""#,
     )
     .unwrap();
     let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
 
-    check!(query.matches(&labels, r"latency=1m30s size=1.5MiB invalid=soon"));
-    check!(!query.matches(&labels, r"latency=250ms size=1.5MiB invalid=soon"));
+    check!(query.matches(&labels, r"latency=1m30s size=1.5MiB"));
+    check!(!query.matches(&labels, r"latency=250ms size=1.5MiB"));
 }
 
 #[test]
@@ -947,7 +953,7 @@ fn query_evaluator_line_format_applies_ne_template_helper() {
 #[test]
 fn query_evaluator_line_format_applies_ordering_template_helpers() {
     let query = parse_query(
-        r#"{app="api"} | logfmt | line_format `{{ if gt .status 499 }}server{{ else }}ok{{ end }} {{ ge .status 500 }} {{ lt 2 10 }} {{ le .status 500 }}`"#,
+        r#"{app="api"} | logfmt | line_format `{{ if gt (int .status) 499 }}server{{ else }}ok{{ end }} {{ ge (int .status) 500 }} {{ lt 2 10 }} {{ le (int .status) 500 }}`"#,
     )
     .unwrap();
     let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
@@ -1034,7 +1040,7 @@ fn query_evaluator_line_format_applies_json_template_truthiness() {
 
     check!(
         result.line
-            == "empty-array|empty-object|empty-null|empty-bool|empty-number|GET|true|true|false"
+            == "empty-array|empty-object|empty-null|empty-bool|empty-number|GET|true|map[x:1]|0"
     );
 }
 
@@ -1151,8 +1157,8 @@ fn query_evaluator_line_format_reassigns_template_variables() {
 
 #[test]
 fn query_evaluator_line_format_preserves_bare_values_ending_with_parenthesis() {
-    let format = LineFormat::new("{{ status) }}").unwrap();
-
+    check!(LineFormat::new("{{ status) }}").is_err());
+    let format = LineFormat::new(r#"{{ "status)" }}"#).unwrap();
     check!(format.render("raw", &BTreeMap::new()) == "status)");
 }
 
@@ -1310,36 +1316,49 @@ fn query_evaluator_line_format_applies_regex_template_helpers() {
 
 #[test]
 fn public_template_renderer_supports_prometheus_alert_variables_and_functions() {
-    let template = LineFormat::new(
+    let template = LineFormat::new_prometheus(
         r#"{{ if $labels.job }}{{ title $labels.job }} {{ printf "%.1f" $value }} {{ humanize 1500 }} {{ humanizeDuration 90 }} {{ humanizePercentage $value }} {{ humanize1024 2048 }} {{ reReplaceAll "a.+" "service" $externalLabels.cluster }} {{ $externalURL }} {{ label "job" (first $samples) }}={{ value (first $samples) }}{{ end }}"#,
     )
     .unwrap();
+    let sample = TemplateData::Sample(std::sync::Arc::new(BTreeMap::from([
+        (
+            "Labels".into(),
+            TemplateData::Labels(BTreeMap::from([("job".into(), "worker".into())])),
+        ),
+        ("Value".into(), TemplateData::Float(7.0)),
+    ])));
     let variables = BTreeMap::from([
-        ("value".to_string(), serde_json::json!(0.125)),
-        ("labels".to_string(), serde_json::json!({"job": "api"})),
+        ("value".to_string(), TemplateData::Float(0.125)),
+        (
+            "labels".to_string(),
+            TemplateData::Labels(BTreeMap::from([("job".into(), "api".into())])),
+        ),
         (
             "externalLabels".to_string(),
-            serde_json::json!({"cluster": "alpha"}),
+            TemplateData::Labels(BTreeMap::from([("cluster".into(), "alpha".into())])),
         ),
         (
             "externalURL".to_string(),
-            serde_json::json!("https://prom.example"),
+            TemplateData::String("https://prom.example".into()),
         ),
         (
             "samples".to_string(),
-            serde_json::json!([{"Labels": {"job": "worker"}, "Value": 7}]),
+            TemplateData::QueryResult(vec![sample].into()),
         ),
     ]);
 
     assert2::assert!(
-        template.render_with_variables("", &BTreeMap::new(), &variables)
-            == "Api 0.1 1.5k 1m 30s 12.5% 2ki service https://prom.example worker=7"
+        template
+            .render_bytes_with_variables_and_queries(&variables, &BTreeMap::new())
+            .unwrap()
+            == b"Api 0.1 1.5k 1m 30s 12.5% 2ki service https://prom.example worker=7"
     );
 }
 
 #[test]
 fn prometheus_humanizers_preserve_integer_trailing_zeros() {
-    let template = LineFormat::new("{{ humanize1024 1000 }} {{ humanizePercentage 12 }}").unwrap();
+    let template =
+        LineFormat::new_prometheus("{{ humanize1024 1000 }} {{ humanizePercentage 12 }}").unwrap();
 
     assert2::assert!(template.render("", &BTreeMap::new()) == "1000 1200%");
 }
@@ -3521,5 +3540,740 @@ fn nested_vector_aggregations_preserve_metric_children_and_grouping() {
             "sum by (app) (max(avg_over_time({app=\"checkout\"} | unwrap size [1m])))"
         )
         .is_ok()
+    );
+}
+
+#[test]
+fn template_logic_preserves_types_and_operand_values() {
+    let cases = [
+        (
+            r#"{{ if "false" }}yes{{ else }}no{{ end }}|{{ if "0" }}yes{{ else }}no{{ end }}"#,
+            "yes|yes",
+        ),
+        (
+            r#"{{ if false }}yes{{ else }}no{{ end }}|{{ if true }}yes{{ else }}no{{ end }}"#,
+            "no|yes",
+        ),
+        (
+            r#"{{ and "left" "right" }}|{{ and "left" "" }}|{{ or "" "fallback" }}"#,
+            "right||fallback",
+        ),
+        (
+            r#"{{ and 1 0 }}|{{ or 0 2 }}|{{ "last" | and "first" }}|{{ "last" | or "first" }}"#,
+            "0|2|last|first",
+        ),
+        (
+            r#"{{ if contains "x" "no" }}bad{{ else }}no{{ end }}|{{ if not false }}yes{{ end }}"#,
+            "no|yes",
+        ),
+        (
+            r#"{{ eq "b" "a" "b" }}|{{ if eq "b" "a" }}bad{{ else }}no{{ end }}"#,
+            "true|no",
+        ),
+        (
+            r#"{{ default "fallback" false }}|{{ default "fallback" 0 }}|{{ default "fallback" "0" }}"#,
+            "fallback|fallback|0",
+        ),
+        (
+            r#"{{ if sub 2 2 }}bad{{ else }}zero{{ end }}|{{ if addf 1 -1 }}bad{{ else }}zero{{ end }}"#,
+            "zero|zero",
+        ),
+        (
+            r#"{{ lt "3" "10" }}|{{ lt 3 10 }}|{{ eq true false true }}"#,
+            "false|true|true",
+        ),
+        (
+            r#"{{ len (fromJson "[1,2]") }}|{{ len (fromJson "{\"a\":1}") }}"#,
+            "2|1",
+        ),
+        (r#"{{ or (fromJson "[]") (fromJson "[1,2]") }}"#, "[1 2]"),
+        (
+            r#"{{ with or "" "chosen" }}{{ . | upper }}{{ else }}bad{{ end }}"#,
+            "CHOSEN",
+        ),
+    ];
+    for (template, expected) in cases {
+        let format = LineFormat::new(template).unwrap();
+        check!(
+            format.render("raw", &BTreeMap::new()) == expected,
+            "{template}"
+        );
+    }
+}
+
+#[test]
+fn template_runtime_errors_keep_input_and_can_be_filtered() {
+    let labels = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    for action in [
+        r#"regexReplaceAll "[" __line__ "x""#,
+        r#"count "[" __line__"#,
+        "div 1 0",
+        r#"contains "x""#,
+        "eq .app 1",
+        "len 1",
+        "call nil",
+        r#"bytes "soon""#,
+        r#"bytes "18446744073709551616""#,
+        r#"duration "1d""#,
+        r#"duration "9223372036854775808ns""#,
+        r#"contains 1 "one""#,
+        r#"indent (add 1 2) "x""#,
+        r#"index "abc" 3"#,
+        r#"index "abc" "1""#,
+        r#"slice "abc" 2 1"#,
+        r#"slice "abc" 0 1 3"#,
+    ] {
+        let expression = format!("{{app=\"api\"}} | line_format `prefix{{{{ {action} }}}}`");
+        let query = parse_query(&expression).unwrap();
+        let result = query
+            .evaluate_with_fields(&labels, "raw", &BTreeMap::new())
+            .unwrap();
+        check!(result.line == "raw");
+        check!(result.fields.get("__error__").map(String::as_str) == Some("TemplateFormatErr"));
+        let filtered = parse_query(&format!(r#"{expression} | __error__ = """#)).unwrap();
+        check!(!filtered.matches(&labels, "raw"));
+    }
+    let short_circuit = parse_query(
+        r#"{app="api"} | line_format `{{ or "chosen" (div 1 0) }}|{{ and "" (div 1 0) }}`"#,
+    )
+    .unwrap();
+    let result = short_circuit
+        .evaluate_with_fields(&labels, "raw", &BTreeMap::new())
+        .unwrap();
+    check!(result.line == "chosen|");
+    check!(!result.fields.contains_key("__error__"));
+    let label_query = parse_query(r#"{app="api"} | label_format result=`{{ div 1 0 }}`"#).unwrap();
+    let result = label_query
+        .evaluate_with_fields(&labels, "raw", &BTreeMap::new())
+        .unwrap();
+    check!(!result.fields.contains_key("result"));
+    check!(result.fields.get("__error__").map(String::as_str) == Some("TemplateFormatErr"));
+}
+
+#[test]
+fn template_variables_reassign_outer_bindings_without_leaking_declarations() {
+    let cases = [
+        (
+            r#"{{ $sum := 0 }}{{ range $n := fromJson "[1,2,3]" }}{{ $sum = add $sum $n }}{{ . }}{{ end }}|{{ $sum }}"#,
+            "123|6",
+        ),
+        (
+            r#"{{ $v := "outer" }}{{ if true }}{{ $v := "inner" }}{{ $v }}{{ end }}|{{ $v }}"#,
+            "inner|outer",
+        ),
+        (
+            r#"{{ $v := "outer" }}{{ with "inner" }}{{ $v = . }}{{ end }}|{{ $v }}"#,
+            "|inner",
+        ),
+        (
+            r#"{{ range $i, $v := fromJson "[\"a\",\"b\"]" }}{{ $i }}={{ . }}={{ $v }};{{ end }}"#,
+            "0=a=a;1=b=b;",
+        ),
+    ];
+    for (template, expected) in cases {
+        let format = LineFormat::new(template).unwrap();
+        check!(
+            format.render("raw", &BTreeMap::new()) == expected,
+            "{template}"
+        );
+    }
+}
+
+#[test]
+fn template_range_supports_integer_counts_and_nested_flow() {
+    let cases = [
+        (
+            r#"{{ range 3 }}{{ . }}{{ end }}|{{ range 0 }}bad{{ else }}empty{{ end }}"#,
+            "012|empty",
+        ),
+        (
+            r#"{{ range 5 }}{{ if eq . 2 }}{{ break }}{{ end }}{{ . }}{{ end }}done"#,
+            "01done",
+        ),
+        (
+            r#"{{ range 4 }}{{ if eq . 1 }}{{ continue }}{{ end }}{{ . }}{{ end }}done"#,
+            "023done",
+        ),
+        (
+            r#"{{ range $v := fromJson "[\"a\",\"b\"]" }}{{ range 3 }}{{ if eq . 1 }}{{ break }}{{ end }}{{ . }}{{ end }}{{ $v }}{{ end }}"#,
+            "0a0b",
+        ),
+        (
+            r#"{{ range $i, $v := fromJson "{\"a\":1,\"b\":2,\"c\":3}" }}{{ if eq $i "b" }}{{ continue }}{{ end }}{{ $i }};{{ end }}"#,
+            "a;c;",
+        ),
+    ];
+    for (template, expected) in cases {
+        let format = LineFormat::new(template).unwrap();
+        check!(
+            format.render("raw", &BTreeMap::new()) == expected,
+            "{template}"
+        );
+    }
+    for template in [
+        "{{ break }}",
+        "{{ continue }}",
+        "{{ if true }}{{ break }}{{ end }}",
+    ] {
+        check!(LineFormat::new(template).is_err());
+    }
+}
+
+#[test]
+fn template_definitions_reset_dot_root_and_variable_scope() {
+    let cases = [
+        (
+            r#"{{ template "suffix" "chosen" }}{{ define "suffix" }}{{ . | upper }}={{ $ }}{{ end }}"#,
+            "CHOSEN=chosen",
+        ),
+        (
+            r#"{{ block "body" "fallback" }}{{ . }}{{ end }}"#,
+            "fallback",
+        ),
+        (
+            r#"{{ define "item" }}{{ .name }}{{ end }}{{ range fromJson "[{\"name\":\"a\"},{\"name\":\"b\"}]" }}{{ template "item" . }};{{ end }}"#,
+            "a;b;",
+        ),
+        (
+            r#"{{ define "tree" }}{{ .name }}{{ range .children }}{{ template "tree" . }}{{ end }}{{ end }}{{ template "tree" (fromJson "{\"name\":\"a\",\"children\":[{\"name\":\"b\"}]}") }}"#,
+            "ab",
+        ),
+        (
+            r#"{{ with fromJson "{}" }}bad{{ else }}{{ template "item" "chosen" }}{{ end }}{{ define "item" }}{{ . }}{{ end }}"#,
+            "chosen",
+        ),
+    ];
+    for (template, expected) in cases {
+        let format = LineFormat::new(template).unwrap();
+        check!(
+            format.render("raw", &BTreeMap::new()) == expected,
+            "{template}"
+        );
+    }
+    let query =
+        parse_query(r#"{app="api"} | line_format `{{ template "missing" . }}` | __error__ = """#)
+            .unwrap();
+    check!(!query.matches(
+        &BTreeMap::from([("app".to_string(), "api".to_string())]),
+        "raw"
+    ));
+    check!(LineFormat::new(r#"{{ define "a" }}x{{ end }}{{ define "a" }}y{{ end }}"#).is_err());
+    check!(LineFormat::new(r#"{{ if true }}{{ define "a" }}x{{ end }}{{ end }}"#).is_err());
+    let format = LineFormat::new(r#"{{ define "a" }} {{ end }}{{ define "a" }}x{{ end }}{{ define "a" }}{{/* empty */}}{{ end }}{{ template "a" }}"#).unwrap();
+    check!(format.render("raw", &BTreeMap::new()) == "x");
+}
+
+#[test]
+fn supported_template_function_catalog_matches_independent_values() {
+    for (name, expression, expected) in template_functions::CASES {
+        let format = LineFormat::new(format!("{{{{ {expression} }}}}")).unwrap();
+        check!(
+            format.render("raw", &BTreeMap::new()) == *expected,
+            "{name}: {expression}"
+        );
+    }
+}
+
+#[test]
+fn printf_keeps_go_types_through_nested_functions_pipelines_and_json() {
+    let format = LineFormat::new(
+        r#"{{ printf "%#08x/%d/%T/%T/%T" 42 (add 3 4) 1 (add 1 2) (index "abc" 1) }}|{{ printf "%[1]*.[2]*[3]f" 6 2 1.25 }}|{{ "λx" | printf "%.1s" }}|{{ printf "%.1x/%+q" "λx" "é" }}|{{ printf "%e/%.3g/%x/%b" 1.25 12345.0 1.25 1.25 }}|{{ printf "%#v" (fromJson "{\"a\":true,\"b\":[1,\"x\"]}") }}|{{ printf "%f" "1.25" }}|{{ printf "%d %d" 3 }}"#,
+    )
+    .unwrap();
+    let rendered = format.render("raw", &BTreeMap::new());
+    check!(
+        rendered
+            == "0x0000002a/7/int/int64/uint8|  1.25|λ|ce/\"\\u00e9\"|1.250000e+00/1.23e+04/0x1.4p+00/5629499534213120p-52|map[string]interface {}{\"a\":true, \"b\":[]interface {}{1, \"x\"}}|%!f(string=1.25)|3 %!d(MISSING)"
+    );
+    let query = parse_query(
+        r#"{app="api"} | line_format `{{ .status | printf "%d" }}` |= "%!d(string=200)""#,
+    )
+    .unwrap();
+    let labels = BTreeMap::from([
+        ("app".into(), "api".into()),
+        ("status".into(), "200".into()),
+    ]);
+    check!(query.matches(&labels, "raw"));
+    let wrong = BTreeMap::from([
+        ("app".into(), "api".into()),
+        ("status".into(), "404".into()),
+    ]);
+    check!(!query.matches(&wrong, "raw"));
+}
+
+#[test]
+fn template_action_delimiters_inside_strings_and_comments_are_literal() {
+    for (template, expected) in [
+        (r#"{{ printf "%s" "}}" }}"#, "}}"),
+        (r#"{{/* }} ignored */}}ok"#, "ok"),
+        (r#"{{ if true }}{{ printf "%s" "}}" }}{{ end }}"#, "}}"),
+    ] {
+        let format = LineFormat::new(template).unwrap();
+        check!(format.render("raw", &BTreeMap::new()) == expected);
+    }
+}
+
+#[test]
+fn typed_time_functions_compose_layouts_zones_printf_and_wrapping_epochs() {
+    let labels = BTreeMap::from([("app".into(), "api".into())]);
+    for (template, expected) in [
+        (
+            r#"{{ printf "%T" (__timestamp__) }}|{{ date "January Mon _2 3:04:05PM MST" (__timestamp__) }}"#,
+            "time.Time|January Tue  2 12:04:05PM UTC",
+        ),
+        (
+            r#"{{ toDateInZone "2006-01-02 15:04:05" "America/New_York" "2024-03-10 02:30:00" | printf "%s" }}"#,
+            "2024-03-10 01:30:00 -0500 EST",
+        ),
+        (
+            r#"{{ toDateInZone "2006-01-02 15:04:05" "Europe/Berlin" "2024-10-27 02:30:00" | date "15:04 MST" }}"#,
+            "01:30 UTC",
+        ),
+        (
+            r#"{{ toDate "2006-01-02" "invalid" | unixEpoch }}|{{ toDate "2006-01-02" "invalid" | printf "%#v" }}"#,
+            "-62135596800|time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC)",
+        ),
+        (
+            r#"{{ toDateInZone "15:04:05.000" "UTC" "12:34:56,123" | unixEpochNanos }}|{{ toDateInZone "15:04:05.000" "UTC" "12:34:56,123" | printf "%s" }}"#,
+            "-6826941682748345152|0000-01-01 12:34:56.123 +0000 UTC",
+        ),
+        (
+            r#"{{ unixToTime "9999999999999" | unixEpochNanos }}|{{ date "2006-01-02T15:04:05" 1 }}|{{ date "2006-01-02T15:04:05" (add 1 1) }}"#,
+            "-8446744073710551616|1970-01-01T00:00:01|1970-01-01T00:00:02",
+        ),
+        (
+            r#"{{ toDateInZone "15:04 MST" "America/New_York" "12:00 EST" | printf "%s" }}"#,
+            "0000-01-01 12:03:58 -0456 LMT",
+        ),
+    ] {
+        let query = parse_query(&format!(r#"{{app="api"}} | line_format `{template}`"#)).unwrap();
+        let result = query
+            .evaluate_with_fields_at(
+                &labels,
+                "original",
+                &BTreeMap::new(),
+                1_704_197_045_123_456_789,
+            )
+            .unwrap();
+        check!(result.line == expected);
+        check!(!result.fields.contains_key("__error__"));
+    }
+    let query = parse_query(r#"{app="api"} | line_format `{{ unixToTime "soon" | date "2006" }}`"#)
+        .unwrap();
+    let result = query
+        .evaluate_with_fields(&labels, "original", &BTreeMap::new())
+        .unwrap();
+    check!(result.fields.get("__error__").map(String::as_str) == Some("TemplateFormatErr"));
+    check!(result.line == "original");
+}
+
+#[test]
+fn rule_template_bytes_survive_variables_queries_and_control_flow() {
+    let variables = BTreeMap::from([(
+        "labels".into(),
+        TemplateData::ByteLabels(BTreeMap::from([
+            ("a".into(), vec![0xff]),
+            ("b".into(), vec![0xfe]),
+        ])),
+    )]);
+    let queries = BTreeMap::from([(
+        "up".into(),
+        TemplateData::QueryResult(
+            vec![TemplateData::Sample(std::sync::Arc::new(BTreeMap::from([
+                (
+                    "Labels".into(),
+                    TemplateData::ByteLabels(BTreeMap::from([("raw".into(), vec![0xe2, 0x82])])),
+                ),
+                ("Value".into(), TemplateData::Float(7.0)),
+            ])))]
+            .into(),
+        ),
+    )]);
+    let format = LineFormat::new_prometheus(r#"{{ $x := $labels.a }}{{ if ne $x $labels.b }}{{ $x }}{{ end }}{{ range $k,$v := $labels }}{{ $k }}={{ $v }};{{ end }}{{ label "raw" (first (query "up")) }}|{{ value (first (query "up")) }}|{{ printf "%x" (slice (label "raw" (first (query "up"))) 0 1) }}"#).unwrap();
+    check!(
+        format
+            .render_bytes_with_variables_and_queries(&variables, &queries)
+            .unwrap()
+            == vec![
+                0xff, b'a', b'=', 0xff, b';', b'b', b'=', 0xfe, b';', 0xe2, 0x82, b'|', b'7', b'|',
+                b'e', b'2'
+            ]
+    );
+    let invalid = LineFormat::new(r#"{{ index $labels "a" 3 }}"#).unwrap();
+    check!(
+        invalid
+            .render_bytes_with_variables_and_queries(&variables, &queries)
+            .is_err()
+    );
+}
+
+#[test]
+fn go_numeric_constants_keep_float_complex_and_execution_overflow_semantics() {
+    let labels = BTreeMap::from([("app".into(), "api".into())]);
+    for (template, expected) in [
+        (
+            r#"{{printf "%T|%v|%f|%x" .5 .5 .5 .5}}"#,
+            "float64|0.5|0.500000|0x1p-01",
+        ),
+        (
+            r#"{{printf "%T|%v|%f" 0x_1.fp2 0x_1.fp2 0x_1.fp2}}"#,
+            "float64|7.75|7.750000",
+        ),
+        (
+            r#"{{printf "%T|%v" 1e0 1e0}}|{{printf "%T|%v" 0755 0755}}"#,
+            "float64|1|int|493",
+        ),
+        (
+            r#"{{printf "%T|%v|%f|%x" 1+2i 1+2i 1+2i 1+2i}}"#,
+            "complex128|(1+2i)|(1.000000+2.000000i)|(0x1p+00+0x1p+01i)",
+        ),
+        (
+            r#"{{if 0i}}bad{{else}}zero{{end}}|{{eq 1+2i 1+2i}}|{{ne 1+2i 2i}}|{{printf "%d" 2i}}"#,
+            "zero|true|true|%!d(complex128=(0+2i))",
+        ),
+        (
+            r#"{{float64 "0x1.fp2"}}|{{addf "0x1p2" 1}}|{{float64 2i}}|{{int 2i}}|{{float64 "1e400"}}"#,
+            "7.75|5|0|0|0",
+        ),
+        (r#"{{printf "%T" now}}|{{repeat 2.0 "x"}}"#, "time.Time|xx"),
+    ] {
+        let query = parse_query(&format!(r#"{{app="api"}} | line_format `{template}`"#)).unwrap();
+        let result = query
+            .evaluate_with_fields(&labels, "original", &BTreeMap::new())
+            .unwrap();
+        check!(result.line == expected);
+        check!(!result.fields.contains_key("__error__"));
+    }
+    for template in [
+        "{{unknown}}",
+        "{{08}}",
+        "{{1e309}}",
+        "{{18446744073709551616}}",
+        "{{1__2}}",
+    ] {
+        check!(parse_query(&format!(r#"{{app="api"}} | line_format `{template}`"#)).is_err());
+    }
+    for template in [
+        "{{9223372036854775808}}",
+        "{{printf \"%v\" 18446744073709551615}}",
+        "{{lt 2i 3i}}",
+    ] {
+        let query = parse_query(&format!(r#"{{app="api"}} | line_format `{template}`"#)).unwrap();
+        let result = query
+            .evaluate_with_fields(&labels, "original", &BTreeMap::new())
+            .unwrap();
+        check!(result.fields.get("__error__").map(String::as_str) == Some("TemplateFormatErr"));
+        check!(result.line == "original");
+    }
+}
+
+#[test]
+fn template_execution_uses_go_depth_and_range_assignment_semantics() {
+    let recursive = LineFormat::new(r#"{{ define "down" }}{{ if gt . 0 }}{{ range 1 }}{{ template "down" (sub $ 1) }}{{ end }}{{ else }}done{{ end }}{{ end }}{{ template "down" 2000 }}"#).unwrap();
+    check!(
+        recursive
+            .render_bytes_with_variables_and_queries(&BTreeMap::new(), &BTreeMap::new())
+            .unwrap()
+            == b"done"
+    );
+    let overflow = LineFormat::new(
+        r#"{{ define "loop" }}{{ template "loop" . }}{{ end }}{{ template "loop" . }}"#,
+    )
+    .unwrap();
+    check!(
+        overflow
+            .render_bytes_with_variables_and_queries(&BTreeMap::new(), &BTreeMap::new())
+            .unwrap_err()
+            .contains("depth")
+    );
+    for (template, expected) in [
+        (
+            r#"{{$i := 9}}{{$v := "before"}}{{range $i, $v = fromJson "[10,20]"}}{{$i}}={{$v}};{{end}}|{{$i}}:{{$v}}"#,
+            "0=10;1=20;|1:20",
+        ),
+        (r#"{{$v := 9}}{{range $v = 3}}{{.}}{{end}}|{{$v}}"#, "012|2"),
+        (
+            r#"{{range $v := fromJson "[]"}}bad{{else}}{{len $v}}{{end}}|{{range (fromJson "null")}}bad{{else}}nil{{end}}"#,
+            "0|nil",
+        ),
+        (
+            r#"{{range 2}}{{range 0}}bad{{else}}{{continue}}{{end}}bad{{end}}done"#,
+            "done",
+        ),
+    ] {
+        let format = LineFormat::new(template).unwrap();
+        check!(
+            format
+                .render_bytes_with_variables_and_queries(&BTreeMap::new(), &BTreeMap::new())
+                .unwrap()
+                == expected.as_bytes(),
+            "{template}"
+        );
+    }
+    for template in [
+        r#"{{range "abc"}}bad{{else}}bad{{end}}"#,
+        r#"{{range true}}bad{{end}}"#,
+        r#"{{range $i, $v := 3}}bad{{end}}"#,
+        r#"{{range $missing = 1}}bad{{end}}"#,
+    ] {
+        check!(
+            LineFormat::new(template)
+                .unwrap()
+                .render_bytes_with_variables_and_queries(&BTreeMap::new(), &BTreeMap::new())
+                .is_err(),
+            "{template}"
+        );
+    }
+}
+
+#[test]
+fn template_query_dependencies_survive_parenthesized_result_paths() {
+    let format = LineFormat::new_prometheus(r#"{{ (index (query "counter") 0).Value }}|{{ printf "%d" (index (query "counter") 0).Value }}"#).unwrap();
+    check!(format.query_calls().into_iter().collect::<Vec<_>>() == vec!["counter"]);
+    let queries = BTreeMap::from([(
+        "counter".into(),
+        TemplateData::QueryResult(
+            vec![TemplateData::Sample(std::sync::Arc::new(BTreeMap::from([
+                ("Value".into(), TemplateData::Integer64(7)),
+            ])))]
+            .into(),
+        ),
+    )]);
+    check!(
+        format
+            .render_bytes_with_variables_and_queries(&BTreeMap::new(), &queries)
+            .unwrap()
+            == b"7|7"
+    );
+}
+
+#[test]
+fn typed_time_methods_compose_with_chains_named_values_and_byte_results() {
+    // Independent Go1.26.5 time.Time/template fixture, not derived from the Rust model.
+    for (suffix, expected) in [
+        (
+            r#"{{$t.Format "2006"}}|{{$t.Unix}}|{{($t).Year}}|{{$t.YearDay}}|{{printf "%T:%v:%s:%d:%#v" $t.Month $t.Month $t.Month $t.Month $t.Month}}"#,
+            "2024|1709211845|2024|60|time.Month:February:February:2:2",
+        ),
+        (
+            r#"{{printf "%T:%v:%d" $t.Weekday $t.Weekday $t.Weekday}}"#,
+            "time.Weekday:Thursday:4",
+        ),
+        (
+            r#"{{($t.AddDate 1 1 -2).Format "2006-01-02 15:04:05.999999999 MST"}}"#,
+            "2025-03-27 13:04:05.123456789 UTC",
+        ),
+        (
+            r#"{{$t.Add 1500000000}}"#,
+            "2024-02-29 13:04:06.623456789 +0000 UTC",
+        ),
+        (
+            r#"{{$d := $t.Sub ($t.Add -1500000000)}}{{printf "%T:%v:%.6f" $d $d $d.Seconds}}|{{$d.Abs.Nanoseconds}}"#,
+            "time.Duration:1.5s:1.500000|1500000000",
+        ),
+        (
+            r#"{{printf "%T:%x" $t.MarshalBinary $t.MarshalBinary}}"#,
+            "[]uint8:010000000edd7277c5075bcd15ffff",
+        ),
+        (
+            r#"{{printf "%T:%s" $t.MarshalText $t.MarshalText}}|{{printf "%s" $t.MarshalJSON}}"#,
+            "[]uint8:2024-02-29T13:04:05.123456789Z|\"2024-02-29T13:04:05.123456789Z\"",
+        ),
+        (
+            r#"{{printf "%T:%v" $t.Location $t.Location}}|{{$t.Before ($t.Add 1)}}|{{$t.Equal $t.UTC}}"#,
+            "*time.Location:UTC|true|true",
+        ),
+        (
+            r#"{{len ($t.AppendText nil)}}|{{printf "%x" (slice $t.MarshalBinary 0 3)}}|{{printf "%T" (index $t.MarshalBinary 0)}}"#,
+            "30|010000|uint8",
+        ),
+        (
+            r#"{{printf "%x" ($t.Format "2006\xff01")}}"#,
+            "32303234ff3032",
+        ),
+    ] {
+        let template = format!(
+            r#"{{{{$t := toDate "2006-01-02T15:04:05.999999999Z07:00" "2024-02-29T13:04:05.123456789Z"}}}}{suffix}"#
+        );
+        let output = LineFormat::new(template)
+            .unwrap()
+            .render_bytes_with_variables_and_queries(&BTreeMap::new(), &BTreeMap::new())
+            .unwrap();
+        check!(output == expected.as_bytes(), "{suffix}");
+    }
+    for template in [
+        "{{nil}}",
+        "{{range nil}}bad{{end}}",
+        r#"{{(unixToTime "0000000000").Date}}"#,
+        r#"{{(unixToTime "0000000000").Zone}}"#,
+        r#"{{$n := 1}}{{(unixToTime "0000000000").Add $n}}"#,
+        r#"{{(unixToTime "0000000000").Unix 1}}"#,
+        r#"{{(unixToTime "0000000000").MarshalText.Error}}"#,
+    ] {
+        check!(
+            LineFormat::new(template)
+                .unwrap()
+                .render_bytes_with_variables_and_queries(&BTreeMap::new(), &BTreeMap::new())
+                .is_err(),
+            "{template}"
+        );
+    }
+}
+
+#[test]
+fn go_rune_byte_escapes_are_integer_constants_and_multi_escape_runes_fail() {
+    let format =
+        LineFormat::new(r#"{{printf "%T:%d:%d:%d" '\xff' '\xff' '\377' '\xe2'}}"#).unwrap();
+    check!(format.render("", &BTreeMap::new()) == "int:255:255:226");
+    check!(LineFormat::new(r#"{{'\xc3\xa9'}}"#).is_err());
+    check!(
+        LineFormat::new("{{`a\rb`}}")
+            .unwrap()
+            .render("", &BTreeMap::new())
+            == "ab"
+    );
+}
+
+#[test]
+fn prometheus_template_function_profile_matches_pinned_expander() {
+    let sample = |job: &str, value: f64, strvalue: Option<&str>| {
+        let mut labels = BTreeMap::from([("job".into(), job.as_bytes().to_vec())]);
+        if let Some(value) = strvalue {
+            labels.insert("__value__".into(), value.as_bytes().to_vec());
+        }
+        TemplateData::Sample(std::sync::Arc::new(BTreeMap::from([
+            ("Labels".into(), TemplateData::ByteLabels(labels)),
+            ("Value".into(), TemplateData::Float(value)),
+        ])))
+    };
+    let vector = TemplateData::QueryResult(
+        vec![
+            sample("b", 7.0, Some("raw")),
+            sample("a", 2.0, None),
+            sample("b", 9.0, None),
+        ]
+        .into(),
+    );
+    let variables = BTreeMap::from([(
+        "externalURL".into(),
+        TemplateData::String("https://prom.example/x%20y?arg=a%2Bb".into()),
+    )]);
+    for (name, expression, expected, rejected) in prometheus_template_functions::CASES {
+        let format = LineFormat::new_prometheus(format!("{{{{ {expression} }}}}")).unwrap();
+        let query = match *name {
+            "first_empty" => TemplateData::QueryResult(Vec::new().into()),
+            "query_error" => TemplateData::QueryError("backend unavailable".into()),
+            _ => vector.clone(),
+        };
+        let result =
+            format.render_prometheus_bytes(&variables, &[query.clone(), query], 1709211845123);
+        if *rejected {
+            check!(result.is_err(), "{name}: {expression}");
+        } else {
+            check!(
+                result.unwrap() == expected.as_bytes(),
+                "{name}: {expression}"
+            );
+        }
+    }
+    // A first() pointer cloned from a cached result retains identity, while
+    // two source executions return separately allocated sample pointers.
+    let same =
+        LineFormat::new_prometheus(r#"{{$q := query "metric"}}{{eq (first $q) (first $q)}}"#)
+            .unwrap();
+    check!(
+        same.render_prometheus_bytes(&variables, std::slice::from_ref(&vector), 0)
+            .unwrap()
+            == b"true"
+    );
+    let distinct =
+        LineFormat::new_prometheus(r#"{{eq (first (query "metric")) (first (query "metric"))}}"#)
+            .unwrap();
+    let other = TemplateData::QueryResult(vec![sample("b", 7.0, Some("raw"))].into());
+    check!(
+        distinct
+            .render_prometheus_bytes(&variables, &[vector, other], 0)
+            .unwrap()
+            == b"false"
+    );
+}
+
+#[test]
+fn prometheus_query_errors_keep_the_backend_cause_through_consumers() {
+    for template in [
+        r#"{{ value (first (query "metric")) }}"#,
+        r#"{{ range query "metric" }}bad{{ end }}"#,
+        r#"{{ and (query "metric") true }}"#,
+    ] {
+        let format = LineFormat::new_prometheus(template).unwrap();
+        let error = format
+            .render_prometheus_bytes(
+                &BTreeMap::new(),
+                &[TemplateData::QueryError("backend unavailable".into())],
+                0,
+            )
+            .unwrap_err();
+        check!(
+            error.to_string().contains("backend unavailable"),
+            "{template}: {error}"
+        );
+    }
+}
+
+#[test]
+fn template_nested_pipelines_preserve_quotes_and_reject_unbalanced_groups() {
+    let format = LineFormat::new_prometheus(
+        r#"{{ printf "%s" (print "a|b" | printf "[%s]") | printf "<%s>" }}"#,
+    )
+    .unwrap();
+    check!(
+        format
+            .render_prometheus_bytes(&BTreeMap::new(), &[], 0)
+            .unwrap()
+            == b"<[a|b]>"
+    );
+    for template in [
+        r#"{{ print (print "x" |) }}"#,
+        r#"{{ print ("x" }}"#,
+        r#"{{ print "x" | }}"#,
+        r#"{{ print ) }}"#,
+    ] {
+        check!(LineFormat::new_prometheus(template).is_err(), "{template}");
+    }
+}
+
+#[test]
+fn json_parser_preserves_physical_key_order_duplicate_keys_and_numeric_text() {
+    let query = parse_query(r#"{app="api"} | json"#).unwrap();
+    let labels = BTreeMap::from([("app".into(), "api".into())]);
+    for (line, expected) in [
+        (r#"{"a-b":"first","a_b":"second"}"#, "first"),
+        (r#"{"a_b":"second","a-b":"first"}"#, "second"),
+        (r#"{"a":{"b":"nested"},"a_b":"flat"}"#, "nested"),
+        (r#"{"a_b":"flat","a":{"b":"nested"}}"#, "flat"),
+        (r#"{"a_b":"first","a_b":"last"}"#, "first"),
+        (r#"{"a_b":"first"} trailing"#, "first"),
+        (r#"{"a_b":"one�two\uFFFDthree"}"#, "one two three"),
+    ] {
+        let evaluation = query
+            .evaluate_with_fields(&labels, line, &BTreeMap::new())
+            .unwrap();
+        check!(
+            evaluation.fields.get("a_b").map(String::as_str) == Some(expected),
+            "{line}"
+        );
+    }
+    let evaluation = query.evaluate_with_fields(&labels,
+        r#"{"exponent":1e3,"decimal":1.00,"large":123456789012345678901234567890,"nothing":null,"array":[1,2],"flag":true}"#,
+        &BTreeMap::new()).unwrap();
+    check!(
+        evaluation.fields
+            == BTreeMap::from([
+                ("app".into(), "api".into()),
+                ("exponent".into(), "1e3".into()),
+                ("decimal".into(), "1.00".into()),
+                ("large".into(), "123456789012345678901234567890".into()),
+                ("flag".into(), "true".into()),
+            ])
     );
 }

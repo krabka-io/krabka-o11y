@@ -1,4 +1,3 @@
-use krabka_blockstore::Labels;
 use krabka_units::prelude::*;
 use promql_parser::parser::{Call, Expr};
 
@@ -11,7 +10,7 @@ use super::{
     selector::timestamp_seconds,
 };
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels,
     error::Result,
     result::{InstantSample, QueryResult, SampleValue},
     store::MetricStore,

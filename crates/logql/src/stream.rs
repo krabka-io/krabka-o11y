@@ -151,8 +151,6 @@ mod tests {
 
 mod anchored_regex_pattern;
 mod decolorize_line;
-mod field_value_to_string;
-mod flatten_json_field;
 mod insert_extracted_field;
 mod insert_json_parser_error;
 mod insert_logfmt_parser_error;
@@ -179,12 +177,12 @@ mod sanitize_logfmt_field_name;
 mod selected_json_value_to_string;
 mod stream_query;
 mod unpack_json_line;
+mod variant_metadata;
 
 pub(crate) use anchored_regex_pattern::anchored_regex_pattern;
 use decolorize_line::decolorize_line;
-use field_value_to_string::field_value_to_string;
-use flatten_json_field::flatten_json_field;
 pub(crate) use insert_extracted_field::insert_extracted_field;
+use insert_extracted_field::insert_raw_parsed_field;
 use insert_json_parser_error::insert_json_parser_error;
 use insert_logfmt_parser_error::insert_logfmt_parser_error;
 use insert_pattern_parser_error::insert_pattern_parser_error;

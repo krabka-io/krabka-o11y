@@ -1,7 +1,9 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::FloatSampleRow;
+
+use crate::PromqlLabels as Labels;
 
 /// Latest instant samples and the labels resolved over their label window.
 ///

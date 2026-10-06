@@ -25,8 +25,8 @@ use std::fmt::Write as _;
 
 use assert2::assert;
 use krabka_traceql::{
-    Aggregate, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query, Scope, SpansetExpr,
-    StructuralOp, Value, parse,
+    Aggregate, ArithmeticOp, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query,
+    ScalarAggregate, ScalarExpr, Scope, SpansetExpr, StructuralOp, Value, parse,
 };
 use proptest::prelude::*;
 
@@ -254,7 +254,6 @@ fn arb_attribute_field() -> impl Strategy<Value = Field> {
             Scope::Both,
             Scope::Span,
             Scope::Resource,
-            Scope::Parent,
             Scope::Event,
             Scope::Link,
             Scope::Instrumentation,
@@ -268,9 +267,9 @@ fn arb_attribute_field() -> impl Strategy<Value = Field> {
 }
 
 fn arb_intrinsic_field() -> impl Strategy<Value = Field> {
-    prop::sample::select(INTRINSICS).prop_map(|(_, key, intrinsic)| Field {
+    prop::sample::select(INTRINSICS).prop_map(|(scope, key, intrinsic)| Field {
         scope: Scope::Intrinsic(intrinsic),
-        key: key.to_owned(),
+        key: format!("{scope}:{key}"),
     })
 }
 
@@ -278,13 +277,25 @@ fn arb_field() -> impl Strategy<Value = Field> {
     prop_oneof![3 => arb_attribute_field(), 2 => arb_intrinsic_field()]
 }
 
+// Parent scope supports the legacy constant selector extension, but not
+// field-to-field comparisons, Boolean fields, grouping, or arithmetic.
+fn arb_constant_comparison_field() -> impl Strategy<Value = Field> {
+    prop_oneof![
+        5 => arb_field(),
+        1 => prop::sample::select(ATTRIBUTE_KEYS).prop_map(|key| Field {
+            scope: Scope::Parent,
+            key: key.to_owned(),
+        }),
+    ]
+}
+
 /// A duration field, which is the only left-hand side that gives a bare
 /// duration literal on the right the type [`Value::Duration`].
 fn arb_duration_field() -> impl Strategy<Value = Field> {
     prop::sample::select(&[
-        (Intrinsic::Duration, "duration"),
-        (Intrinsic::TraceDuration, "duration"),
-        (Intrinsic::EventTimeSinceStart, "timeSinceStart"),
+        (Intrinsic::Duration, "span:duration"),
+        (Intrinsic::TraceDuration, "trace:duration"),
+        (Intrinsic::EventTimeSinceStart, "event:timeSinceStart"),
     ])
     .prop_map(|(intrinsic, key)| Field {
         scope: Scope::Intrinsic(intrinsic),
@@ -324,7 +335,12 @@ fn arb_comparison() -> impl Strategy<Value = FieldExpr> {
     ]);
     prop_oneof![
         // A duration literal only keeps its type on a duration field.
-        4 => (arb_field(), op.clone(), arb_value())
+        4 => (arb_constant_comparison_field(), op.clone(), arb_value())
+            .prop_filter("pinned intrinsics and resource.service.name cannot be nil", |(lhs, op, rhs)| {
+                !(*op == ComparisonOp::Eq && matches!(rhs, Value::Nil)
+                    && (matches!(lhs.scope, Scope::Intrinsic(_))
+                        || lhs.scope == Scope::Resource && lhs.key == "service.name"))
+            })
             .prop_map(|(lhs, op, rhs)| FieldExpr::Comparison { lhs, op, rhs }),
         1 => (arb_duration_field(), op, 0_i64..1_000_000_000_000)
             .prop_map(|(lhs, op, nanos)| FieldExpr::Comparison {
@@ -332,7 +348,7 @@ fn arb_comparison() -> impl Strategy<Value = FieldExpr> {
                 op,
                 rhs: Value::Duration(nanos),
             }),
-        1 => (arb_field(), prop::sample::select(&[ComparisonOp::Re, ComparisonOp::Nre]),
+        1 => (arb_constant_comparison_field(), prop::sample::select(&[ComparisonOp::Re, ComparisonOp::Nre]),
               prop::sample::select(&["a", "", "known.*", "a\\b", "a\"b"]))
             .prop_map(|(lhs, op, pattern)| FieldExpr::Comparison {
                 lhs, op, rhs: Value::Str(pattern.to_owned()),
@@ -346,7 +362,7 @@ fn arb_field_expr() -> impl Strategy<Value = FieldExpr> {
     prop_oneof![
         4 => arb_comparison(),
         2 => (arb_attribute_field(), prop::sample::select(&[ComparisonOp::Eq, ComparisonOp::Neq, ComparisonOp::Lt, ComparisonOp::Lte, ComparisonOp::Gt, ComparisonOp::Gte]), arb_attribute_field()).prop_map(|(lhs, op, rhs)| FieldExpr::FieldComparison {lhs, op, rhs}),
-        1 => arb_field().prop_map(FieldExpr::Field),
+        1 => arb_attribute_field().prop_map(FieldExpr::Field),
         1 => any::<bool>().prop_map(FieldExpr::Const),
     ]
     .prop_recursive(3, 12, 2, |inner| {
@@ -401,6 +417,16 @@ fn arb_spanset() -> impl Strategy<Value = SpansetExpr> {
 
 fn arb_aggregate() -> impl Strategy<Value = Aggregate> {
     prop_oneof![
+        (
+            prop::sample::select(&[
+                ScalarAggregate::Sum,
+                ScalarAggregate::Avg,
+                ScalarAggregate::Min,
+                ScalarAggregate::Max
+            ]),
+            arb_scalar_arithmetic()
+        )
+            .prop_map(|(function, expr)| Aggregate::Expression { function, expr }),
         Just(Aggregate::Count),
         Just(Aggregate::Rate),
         Just(Aggregate::CountOverTime),
@@ -409,10 +435,10 @@ fn arb_aggregate() -> impl Strategy<Value = Aggregate> {
         arb_field().prop_map(Aggregate::MinOverTime),
         arb_field().prop_map(Aggregate::MaxOverTime),
         arb_field().prop_map(Aggregate::HistogramOverTime),
-        arb_field().prop_map(Aggregate::Sum),
-        arb_field().prop_map(Aggregate::Avg),
-        arb_field().prop_map(Aggregate::Max),
-        arb_field().prop_map(Aggregate::Min),
+        arb_numeric_field().prop_map(Aggregate::Sum),
+        arb_numeric_field().prop_map(Aggregate::Avg),
+        arb_numeric_field().prop_map(Aggregate::Max),
+        arb_numeric_field().prop_map(Aggregate::Min),
         (
             arb_field(),
             prop::collection::vec(
@@ -429,6 +455,7 @@ fn arb_aggregate() -> impl Strategy<Value = Aggregate> {
 fn arb_leading_stage() -> impl Strategy<Value = Pipeline> {
     prop_oneof![
         6 => arb_aggregate().prop_map(Pipeline::Aggregate),
+        1 => arb_scalar_arithmetic().prop_map(Pipeline::Group),
         1 => prop::collection::vec(arb_field(), 1..3).prop_map(Pipeline::By),
         1 => prop::collection::vec(arb_field(), 1..3).prop_map(Pipeline::Select),
         1 => (0_usize..1000).prop_map(Pipeline::TopK),
@@ -651,14 +678,7 @@ fn render_field(out: &mut String, field: &Field) {
         Scope::Instrumentation => {
             let _ = write!(out, "instrumentation.{}", field.key);
         }
-        Scope::Intrinsic(intrinsic) => {
-            let scope = INTRINSICS
-                .iter()
-                .find(|(_, key, candidate)| candidate == intrinsic && *key == field.key)
-                .map(|(scope, _, _)| *scope)
-                .expect("the generator only builds intrinsics from the table");
-            let _ = write!(out, "{scope}:{}", field.key);
-        }
+        Scope::Intrinsic(_) => out.push_str(&field.key),
     }
 }
 
@@ -696,6 +716,7 @@ fn render_value(out: &mut String, value: &Value) {
             let _ = write!(out, "{value}");
         }
         Value::Nil => out.push_str("nil"),
+        Value::Array(_) => unreachable!("generator creates scalar literals"),
     }
 }
 
@@ -710,6 +731,11 @@ fn render_pipeline_stage(out: &mut String, stage: &Pipeline) {
     match stage {
         Pipeline::Filter { .. } => unreachable!("handled above"),
         Pipeline::Aggregate(aggregate) => render_aggregate(out, aggregate),
+        Pipeline::Group(expr) => {
+            out.push_str("by(");
+            render_scalar_expr(out, expr);
+            out.push(')');
+        }
         Pipeline::By(fields) => {
             out.push_str("by(");
             render_field_list(out, fields);
@@ -766,6 +792,17 @@ fn render_field_list(out: &mut String, fields: &[Field]) {
 
 fn render_aggregate(out: &mut String, aggregate: &Aggregate) {
     match aggregate {
+        Aggregate::Expression { function, expr } => {
+            let name = match function {
+                ScalarAggregate::Sum => "sum",
+                ScalarAggregate::Avg => "avg",
+                ScalarAggregate::Min => "min",
+                ScalarAggregate::Max => "max",
+            };
+            let _ = write!(out, "{name}(");
+            render_scalar_expr(out, expr);
+            out.push(')');
+        }
         Aggregate::Count => out.push_str("count()"),
         Aggregate::Rate => out.push_str("rate()"),
         Aggregate::CountOverTime => out.push_str("count_over_time()"),
@@ -837,6 +874,55 @@ fn the_seed_queries_are_valid_traceql() {
     }
 }
 
+#[test]
+fn parent_constants_and_scoped_group_filters_round_trip_without_invalid_parent_expressions() {
+    let field = |scope, key: &str| Field {
+        scope,
+        key: key.into(),
+    };
+    let mut expected = parse("{}").unwrap();
+    expected.root = SpansetExpr::Or(
+        Box::new(SpansetExpr::Selector(Box::new(FieldExpr::Comparison {
+            lhs: field(Scope::Parent, "_a"),
+            op: ComparisonOp::Lt,
+            rhs: Value::Int(15),
+        }))),
+        Box::new(SpansetExpr::Selector(Box::new(
+            FieldExpr::FieldComparison {
+                lhs: field(Scope::Instrumentation, "_a"),
+                op: ComparisonOp::Gt,
+                rhs: field(Scope::Event, "service.name"),
+            },
+        ))),
+    );
+    expected.pipeline = vec![
+        Pipeline::Select(vec![field(Scope::Both, "svc")]),
+        Pipeline::By(vec![
+            field(Scope::Both, "http.method"),
+            field(Scope::Intrinsic(Intrinsic::LinkTraceId), "link:traceID"),
+        ]),
+        Pipeline::Filter {
+            op: ComparisonOp::Eq,
+            value: -428.018,
+        },
+        Pipeline::Aggregate(Aggregate::Rate),
+        Pipeline::By(vec![field(Scope::Event, "ok")]),
+        Pipeline::Filter {
+            op: ComparisonOp::Eq,
+            value: -68.971,
+        },
+    ];
+    assert!(parse(&render_query(&expected)).unwrap() == expected);
+    for rejected in [
+        "{ parent._a < span._a }",
+        "{ parent._a }",
+        "{} | by(parent._a)",
+        "{} | sum(parent._a + 1)",
+    ] {
+        assert!(parse(rejected).is_err(), "{rejected}");
+    }
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1024))]
 
@@ -863,4 +949,68 @@ proptest! {
         // to say which text it rendered to.
         prop_assert!(reparsed == query, "`{rendered}` reparsed to a different query");
     }
+}
+
+fn render_scalar_expr(out: &mut String, expr: &ScalarExpr) {
+    match expr {
+        ScalarExpr::Field(field) => render_field(out, field),
+        ScalarExpr::Literal(value) => render_value(out, value),
+        ScalarExpr::Predicate(expr) => render_field_expr(out, expr, 0),
+        ScalarExpr::Negate(inner) => {
+            out.push_str("-(");
+            render_scalar_expr(out, inner);
+            out.push(')');
+        }
+        ScalarExpr::Binary { lhs, op, rhs } => {
+            out.push('(');
+            render_scalar_expr(out, lhs);
+            out.push_str(match op {
+                ArithmeticOp::Add => " + ",
+                ArithmeticOp::Sub => " - ",
+                ArithmeticOp::Mul => " * ",
+                ArithmeticOp::Div => " / ",
+                ArithmeticOp::Mod => " % ",
+                ArithmeticOp::Pow => " ^ ",
+            });
+            render_scalar_expr(out, rhs);
+            out.push(')');
+        }
+    }
+}
+
+fn arb_numeric_field() -> impl Strategy<Value = Field> {
+    prop_oneof![
+        arb_attribute_field(),
+        arb_duration_field(),
+        prop::sample::select(&[
+            (Intrinsic::ChildCount, "span:childCount"),
+            (Intrinsic::NestedSetLeft, "span:nestedSetLeft"),
+            (Intrinsic::NestedSetRight, "span:nestedSetRight"),
+            (Intrinsic::NestedSetParent, "span:nestedSetParent")
+        ])
+        .prop_map(|(intrinsic, key)| Field {
+            scope: Scope::Intrinsic(intrinsic),
+            key: key.into()
+        })
+    ]
+}
+
+fn arb_scalar_arithmetic() -> impl Strategy<Value = ScalarExpr> {
+    (
+        arb_numeric_field(),
+        prop::sample::select(&[
+            ArithmeticOp::Add,
+            ArithmeticOp::Sub,
+            ArithmeticOp::Mul,
+            ArithmeticOp::Div,
+            ArithmeticOp::Mod,
+            ArithmeticOp::Pow,
+        ]),
+        1_i64..100,
+    )
+        .prop_map(|(field, op, value)| ScalarExpr::Binary {
+            lhs: Box::new(ScalarExpr::Field(field)),
+            op,
+            rhs: Box::new(ScalarExpr::Literal(Value::Int(value))),
+        })
 }

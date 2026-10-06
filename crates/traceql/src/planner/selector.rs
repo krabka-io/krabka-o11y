@@ -293,9 +293,10 @@ mod tests {
     }
 
     #[test]
-    fn field_expr_to_sql_bare_field_is_presence_check() {
+    fn field_expr_to_sql_bare_field_requires_typed_boolean_evaluation() {
         let sql = field_expr_to_sql(&selector("{ .a }")).unwrap();
-        assert!(sql == "\"attr.a\" IS NOT NULL");
+        assert!(sql.contains("__traceql_field_comparison_Field"));
+        assert!(!sql.contains("IS NOT NULL"));
     }
 
     // ---- selector_sql variants: span-only, parent-join, nested ----
@@ -357,7 +358,11 @@ mod tests {
 
     #[test]
     fn parent_predicate_bare_parent_field_is_presence() {
-        let fe = selector("{ parent.a }");
+        assert!(matches!(
+            parse("{ parent.a }"),
+            Err(TraceqlError::Unsupported(_))
+        ));
+        let fe = FieldExpr::Field(attr_field(Scope::Parent, "a"));
         let pred = parent_field_expr_to_sql_qualified(&fe, "s", "p")
             .unwrap()
             .unwrap();
@@ -433,7 +438,6 @@ mod tests {
                 "(p.\"attr.a\" = 1 OR s.\"attr.b\" = 2)",
             ),
             ("{ !(parent.a = 1) }", "(NOT p.\"attr.a\" = 1)"),
-            ("{ parent.a }", "p.\"attr.a\" IS NOT NULL"),
         ] {
             let sql = field_expr_to_sql_qualified(&selector(query), "s", "p").unwrap();
             assert!(sql == expected, "{query} -> {sql}");
@@ -742,14 +746,14 @@ mod tests {
     // ---- matcher_from_field_expr & friends: scope / cmp / value mapping ----
 
     #[test]
-    fn matcher_from_bare_field_is_presence_neq_nil() {
+    fn matcher_from_bare_field_requires_boolean_true() {
         let m = matcher_from_field_expr(&selector("{ resource.region }")).unwrap();
         assert!(
             m == SpanMatcher {
                 scope: MatchScope::Resource,
                 key: "region".into(),
-                op: MatchCmp::Neq,
-                value: MatchValue::Nil,
+                op: MatchCmp::Eq,
+                value: MatchValue::Bool(true),
                 negated: false,
             }
         );

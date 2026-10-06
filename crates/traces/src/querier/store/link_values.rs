@@ -30,7 +30,8 @@ pub(crate) fn link_values(batch: &RecordBatch, row: usize) -> Result<Vec<LinkRef
         out.push(LinkRef {
             trace_id: fixed_array_value::<16>(trace_ids, idx, SCOL_LINKS)?,
             span_id: fixed_array_value::<8>(span_ids, idx, SCOL_LINKS)?,
-            attributes: nested_string_attrs(attr_keys, attr_values, idx)?,
+            attributes: super::event_values::nested_typed_attrs(row_links, idx)?
+                .unwrap_or(nested_string_attrs(attr_keys, attr_values, idx)?),
         });
     }
     Ok(out)

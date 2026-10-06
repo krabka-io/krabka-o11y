@@ -30,11 +30,23 @@ pub(crate) fn is_extended_range_fold_call(call: &Call) -> bool {
         // An `anchored`/`smoothed` extended selector wraps a `MatrixSelector`
         // child (`anchored(m[5m])`), so the interpreter's `eval_range_arg` can
         // build its windowed range vector.
+        Expr::Extension(extension)
+            if extension
+                .expr
+                .as_any()
+                .is::<crate::planner::byte_selector_expr::ByteSelectorExpr>() =>
+        {
+            true
+        }
         Expr::Extension(extension) => extension
             .expr
             .as_any()
             .downcast_ref::<ExtendedSelectorExpr>()
-            .is_some_and(|extended| matches!(extended.child(), Some(Expr::MatrixSelector(_)))),
+            .is_some_and(|extended| {
+                extended.child().is_some_and(|child| {
+                    child.value_type() == promql_parser::parser::value::ValueType::Matrix
+                })
+            }),
         _ => false,
     }
 }

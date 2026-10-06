@@ -16,7 +16,7 @@ async fn write_blocks(object_store: &Arc<dyn ObjectStore>, offsets: &[i64]) {
             tenant: "tenant-a".to_string(),
             series_labels: std::collections::BTreeMap::from([(
                 series.fingerprint(),
-                series.clone(),
+                series.clone().into(),
             )]),
             float_rows: vec![FloatRow {
                 fingerprint: series.fingerprint(),
@@ -77,7 +77,7 @@ pub(crate) async fn a_block_deleted_after_the_manifest_listing_is_skipped_and_wa
             (result, annotations)
                 == (
                     QueryResult::InstantVector(vec![InstantSample {
-                        labels: Labels::new(),
+                        labels: Labels::new().into(),
                         ts_ms: 100_000,
                         value: SampleValue::Float(1.0),
                         drop_name: false,

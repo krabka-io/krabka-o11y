@@ -6,7 +6,6 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use krabka_blockstore::LabelMatcher;
 use num_traits::ToPrimitive;
 use serde_json::{Map, Value, json};
 use url::form_urlencoded;
@@ -15,7 +14,7 @@ use super::{
     ApiError, Extension, Principal, PrometheusApiState, authorized_tenant_from_headers,
     selector_matchers, timestamp_ms,
 };
-use crate::MetricStore;
+use crate::{MetricStore, PromqlMatcher as LabelMatcher};
 
 const DEFAULT_LIMIT: usize = 100;
 const DEFAULT_BATCH_SIZE: usize = 100;
@@ -65,7 +64,7 @@ struct SearchParams {
 }
 
 struct SearchResult {
-    value: String,
+    value: crate::PromqlString,
     score: f64,
 }
 
@@ -226,12 +225,11 @@ async fn search<S: MetricStore>(
                     )
                     .await
             }
-            SearchKind::LabelNames => {
-                state
-                    .store
-                    .label_names(tenant.as_str(), matchers, params.start_ms, params.end_ms)
-                    .await
-            }
+            SearchKind::LabelNames => state
+                .store
+                .label_names(tenant.as_str(), matchers, params.start_ms, params.end_ms)
+                .await
+                .map(|values| values.into_iter().map(Into::into).collect()),
             SearchKind::LabelValues => {
                 state
                     .store
@@ -326,11 +324,14 @@ fn search_record(
         SearchKind::LabelValues => "value",
     };
     let mut record = Map::new();
-    record.insert(field.into(), Value::String(result.value.clone()));
+    record.insert(
+        field.into(),
+        Value::String(result.value.as_str().to_owned()),
+    );
     if params.include_score {
         record.insert("score".into(), json!(result.score));
     }
-    if let Some(metadata) = metadata.get(&result.value) {
+    if let Some(metadata) = metadata.get(result.value.as_str()) {
         if !metadata.metric_type.is_empty() {
             record.insert("type".into(), Value::String(metadata.metric_type.clone()));
         }

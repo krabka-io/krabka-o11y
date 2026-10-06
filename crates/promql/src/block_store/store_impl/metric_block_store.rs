@@ -25,22 +25,59 @@ impl MetricBlockStore {
         tenant: &str,
         matchers: &[LabelMatcher],
     ) -> Result<BTreeMap<SeriesFingerprint, Labels>> {
+        self.matching_series_in_stores(
+            tenant,
+            matchers,
+            std::iter::once(&self.floats).chain(self.histograms.iter()),
+        )
+    }
+
+    fn matching_series_in_stores<'a>(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        stores: impl Iterator<Item = &'a krabka_blockstore::BlockStore>,
+    ) -> Result<BTreeMap<SeriesFingerprint, Labels>> {
         let mut by_fp = BTreeMap::<SeriesFingerprint, Labels>::new();
-        for labels in self
-            .floats
-            .index()
-            .series(tenant, matchers)
-            .map_err(blockstore_error)?
+        let index_matchers = matchers
+            .iter()
+            .map(LabelMatcher::index_matcher)
+            .collect::<Option<Vec<_>>>();
+        if !self.metric_labels.keys().any(|(owner, _)| owner == tenant)
+            && let Some(index_matchers) = index_matchers
         {
-            by_fp.insert(labels.fingerprint(), labels);
+            for store in stores {
+                for labels in store
+                    .index()
+                    .series(tenant, &index_matchers)
+                    .map_err(blockstore_error)?
+                {
+                    by_fp.insert(labels.fingerprint(), labels.into());
+                }
+            }
+            return Ok(by_fp);
         }
-        if let Some(histograms) = &self.histograms {
-            for labels in histograms
-                .index()
-                .series(tenant, matchers)
+        let prepared = crate::in_memory::prepare_matchers(matchers)?;
+        for store in stores {
+            let index = store.index();
+            for fp in index
+                .matching_fingerprints(tenant, &[])
                 .map_err(blockstore_error)?
             {
-                by_fp.insert(labels.fingerprint(), labels);
+                let labels = if let Some(labels) = self.metric_labels.get(&(tenant.to_owned(), fp))
+                {
+                    labels.clone()
+                } else {
+                    let projection =
+                        index.series_for_fingerprints(tenant, &BTreeSet::from([fp]), &[]);
+                    let Some(labels) = projection.into_iter().next() else {
+                        continue;
+                    };
+                    Labels::from_pairs(labels)
+                };
+                if crate::in_memory::matcher::all_match(fp, &labels, &prepared) {
+                    by_fp.insert(fp, labels);
+                }
             }
         }
         Ok(by_fp)
@@ -72,21 +109,39 @@ impl MetricStore for MetricBlockStore {
         end_ms: i64,
     ) -> Result<ScanResult> {
         let ctx = SessionContext::new();
+        let byte_labels = self.metric_labels.keys().any(|(owner, _)| owner == tenant)
+            || matchers
+                .iter()
+                .any(|matcher| matcher.value.utf8().is_none());
+        let index_matchers = if byte_labels {
+            Vec::new()
+        } else {
+            matchers
+                .iter()
+                .filter_map(LabelMatcher::index_matcher)
+                .collect::<Vec<_>>()
+        };
+        let fingerprints = self
+            .matching_series(tenant, matchers)?
+            .into_iter()
+            .map(|labels| labels.fingerprint())
+            .collect::<BTreeSet<_>>();
         // The index names blocks that deletion can remove between the snapshot
         // and the read, so a query answers around an absent object and reports
         // it. `missing_block_warnings` keeps every other fault an error.
         let float_report = self
             .floats
-            .register_scan_table_skipping_unreadable(
+            .register_scan_table_for_fingerprints_skipping_unreadable(
                 &ctx,
                 ScanTableRequest {
                     table_name: FLOAT_TABLE,
                     tenant,
-                    matchers,
+                    matchers: &index_matchers,
                     min_ts: start_ms,
                     max_ts: end_ms,
                     schema: float_sample_schema(),
                 },
+                &fingerprints,
             )
             .await
             .map_err(blockstore_error)?;
@@ -94,16 +149,17 @@ impl MetricStore for MetricBlockStore {
         let has_float = float_report.registered;
         let has_histograms = if let Some(histograms) = &self.histograms {
             let histogram_report = histograms
-                .register_scan_table_skipping_unreadable(
+                .register_scan_table_for_fingerprints_skipping_unreadable(
                     &ctx,
                     ScanTableRequest {
                         table_name: HISTOGRAM_TABLE,
                         tenant,
-                        matchers,
+                        matchers: &index_matchers,
                         min_ts: start_ms,
                         max_ts: end_ms,
                         schema: native_histogram_schema(),
                     },
+                    &fingerprints,
                 )
                 .await
                 .map_err(blockstore_error)?;
@@ -138,10 +194,27 @@ impl MetricStore for MetricBlockStore {
         let Some(histograms) = &self.histograms else {
             return Ok(false);
         };
-        let fingerprints = histograms
-            .index()
-            .resolve(tenant, matchers)
-            .map_err(blockstore_error)?;
+        let fingerprints = if self.metric_labels.keys().any(|(owner, _)| owner == tenant)
+            || matchers
+                .iter()
+                .any(|matcher| matcher.value.utf8().is_none())
+        {
+            self.matching_series(tenant, matchers)?
+                .into_iter()
+                .map(|labels| labels.fingerprint())
+                .collect()
+        } else {
+            histograms
+                .index()
+                .resolve(
+                    tenant,
+                    &matchers
+                        .iter()
+                        .filter_map(LabelMatcher::index_matcher)
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(blockstore_error)?
+        };
         Ok(!histograms
             .index()
             .candidate_blocks(tenant, &fingerprints, start_ms, end_ms)
@@ -169,11 +242,11 @@ impl MetricStore for MetricBlockStore {
         matchers: &[LabelMatcher],
         _start_ms: i64,
         _end_ms: i64,
-    ) -> Result<Vec<String>> {
+    ) -> Result<Vec<krabka_metrics::MetricString>> {
         let mut values = BTreeSet::new();
         for labels in self.matching_series(tenant, matchers)? {
-            if let Some(value) = labels.get(name) {
-                values.insert(value.to_string());
+            if let Some(value) = labels.get_value(name) {
+                values.insert(value.clone());
             }
         }
         Ok(values.into_iter().collect())
@@ -199,29 +272,26 @@ impl MetricStore for MetricBlockStore {
         let Some(exemplars) = &self.exemplars else {
             return Ok(ExemplarScan::default());
         };
-        let series_by_fp = exemplars
-            .index()
-            .series(tenant, matchers)
-            .map_err(blockstore_error)?
-            .into_iter()
-            .map(|labels| (labels.fingerprint(), labels))
-            .collect::<BTreeMap<_, _>>();
+        let series_by_fp =
+            self.matching_series_in_stores(tenant, matchers, std::iter::once(exemplars))?;
         if series_by_fp.is_empty() {
             return Ok(ExemplarScan::default());
         }
 
+        let fingerprints = series_by_fp.keys().copied().collect::<BTreeSet<_>>();
         let ctx = SessionContext::new();
         let report = exemplars
-            .register_scan_table_skipping_unreadable(
+            .register_scan_table_for_fingerprints_skipping_unreadable(
                 &ctx,
                 ScanTableRequest {
                     table_name: EXEMPLAR_TABLE,
                     tenant,
-                    matchers,
+                    matchers: &[],
                     min_ts: start_ms,
                     max_ts: end_ms,
                     schema: exemplar_schema(),
                 },
+                &fingerprints,
             )
             .await
             .map_err(blockstore_error)?;
@@ -255,14 +325,14 @@ impl MetricStore for MetricBlockStore {
         };
         let matchers = metric.map_or_else(
             || {
-                vec![LabelMatcher {
+                vec![krabka_blockstore::LabelMatcher {
                     name: "__name__".to_string(),
                     op: krabka_blockstore::MatchOp::Re,
                     value: ".+".to_string(),
                 }]
             },
             |metric| {
-                vec![LabelMatcher {
+                vec![krabka_blockstore::LabelMatcher {
                     name: "__name__".to_string(),
                     op: krabka_blockstore::MatchOp::Eq,
                     value: metric.to_string(),
@@ -352,7 +422,8 @@ impl MetricStore for MetricBlockStore {
     }
 
     async fn cardinality_label_values(&self, tenant: &str) -> Result<Vec<LabelValueCardinality>> {
-        let mut by_value = BTreeMap::<(String, String), BTreeSet<SeriesFingerprint>>::new();
+        let mut by_value =
+            BTreeMap::<(String, crate::PromqlString), BTreeSet<SeriesFingerprint>>::new();
         for (fp, labels) in self.matching_series_by_fp(tenant, &[])? {
             for (name, value) in labels.iter() {
                 by_value
@@ -366,7 +437,7 @@ impl MetricStore for MetricBlockStore {
             .map(
                 |((label_name, label_value), fingerprints)| LabelValueCardinality {
                     label_name,
-                    label_value,
+                    label_value: label_value.as_str().to_owned(),
                     series_count: fingerprints.len(),
                 },
             )
@@ -399,7 +470,7 @@ impl MetricStore for MetricBlockStore {
                 label_values_by_name
                     .entry(name.clone())
                     .or_default()
-                    .insert(value.clone());
+                    .insert(value.as_str().to_owned());
                 *memory_by_name.entry(name.clone()).or_default() += name.len() + value.len();
                 *by_label_pair.entry(format!("{name}={value}")).or_default() += 1;
             }

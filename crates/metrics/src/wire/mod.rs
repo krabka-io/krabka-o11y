@@ -6,6 +6,7 @@ mod clocks;
 mod decoded;
 mod histogram;
 mod remote_read;
+pub mod remote_read_pb;
 mod v1;
 mod v2;
 

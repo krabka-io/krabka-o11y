@@ -2,6 +2,7 @@ use super::{
     Expr, T_AVG, T_COUNT, T_SUM, TokenType, expr_contains_aggregate,
     expr_supports_frontend_sharding,
 };
+use crate::format_promql_expr;
 
 pub(crate) fn avg_partial_queries(expr: &Expr) -> Option<(String, String)> {
     match expr {
@@ -16,8 +17,8 @@ pub(crate) fn avg_partial_queries(expr: &Expr) -> Option<(String, String)> {
             let mut count_aggregate = aggregate.clone();
             count_aggregate.op = TokenType::new(T_COUNT);
             Some((
-                Expr::Aggregate(sum_aggregate).to_string(),
-                Expr::Aggregate(count_aggregate).to_string(),
+                format_promql_expr(&Expr::Aggregate(sum_aggregate)),
+                format_promql_expr(&Expr::Aggregate(count_aggregate)),
             ))
         }
         Expr::Paren(paren) => avg_partial_queries(&paren.expr),

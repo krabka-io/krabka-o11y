@@ -287,25 +287,118 @@ impl ProfileStore for ColdProfileStore {
         end_ms: i64,
     ) -> Result<ProfileQueryStats, ProfileError> {
         let index = self.current_index();
-        let fingerprints = index
-            .select_fingerprints(tenant, profile_type, matchers)
-            .map_err(|err| ProfileError::Store(err.to_string()))?;
-        let blocks =
-            index.candidate_block_metas_for_series(tenant, &fingerprints, start_ms, end_ms);
-        let active = blocks
-            .iter()
-            .flat_map(|block| block.fingerprints.iter().copied())
-            .filter(|fingerprint| fingerprints.contains(fingerprint))
+        let selected = if profile_type.is_empty() {
+            index.matching_fingerprints(tenant, matchers)
+        } else {
+            index.select_fingerprints(tenant, profile_type, matchers)
+        }
+        .map_err(|error| ProfileError::Store(error.to_string()))?;
+        // Planning is time and tenant scoped. The selector controls queried
+        // series, while physical cost includes each complete planned block.
+        let blocks: Vec<_> = index
+            .all_blocks()
+            .into_iter()
+            .filter(|block| {
+                block.tenant == tenant && block.min_ts <= end_ms && block.max_ts >= start_ms
+            })
             .collect();
-        let rows = blocks.iter().fold(0_u64, |total, block| {
-            total.saturating_add(block.row_count as u64)
-        });
-        Ok(ProfileQueryStats {
+        let mut stats = ProfileQueryStats::default();
+        let mut queried_storage_fingerprints = BTreeSet::new();
+        let mut scope = krabka_pprof::ProfileQueryScope {
+            component_type: "Long term storage",
+            component_count: u64::from(!blocks.is_empty()),
             block_count: blocks.len() as u64,
-            fingerprints: active,
-            profile_count: rows,
-            sample_count: rows,
-        })
+            ..Default::default()
+        };
+        for block in blocks {
+            let bytes = self
+                .store
+                .get(&Path::from(block.object_key.clone()))
+                .await
+                .map_err(|error| ProfileError::Store(error.to_string()))?
+                .bytes()
+                .await
+                .map_err(|error| ProfileError::Store(error.to_string()))?;
+            if bytes.len() < 8 {
+                return Err(ProfileError::Store("invalid profile Parquet footer".into()));
+            }
+            let footer_length = u64::from(u32::from_le_bytes(
+                bytes[bytes.len() - 8..bytes.len() - 4].try_into().map_err(
+                    |error: std::array::TryFromSliceError| ProfileError::Store(error.to_string()),
+                )?,
+            )) + 8;
+            let body_length = (bytes.len() as u64)
+                .checked_sub(footer_length)
+                .ok_or_else(|| {
+                    ProfileError::Store("invalid profile Parquet footer length".into())
+                })?;
+            scope.index_bytes = scope.index_bytes.saturating_add(footer_length);
+            scope.profile_bytes = scope.profile_bytes.saturating_add(body_length);
+            scope.symbol_bytes = scope.symbol_bytes.saturating_add(
+                self.store
+                    .head(&Path::from(format!("{}.symdb", block.object_key)))
+                    .await
+                    .map_err(|error| ProfileError::Store(error.to_string()))?
+                    .size,
+            );
+            let reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+                .map_err(|error| ProfileError::Store(error.to_string()))?
+                .build()
+                .map_err(|error| ProfileError::Store(error.to_string()))?;
+            let mut block_series = BTreeSet::new();
+            let mut block_profiles = BTreeSet::new();
+            for batch in reader {
+                let batch = batch.map_err(|error| ProfileError::Store(error.to_string()))?;
+                let fingerprints = batch
+                    .column_by_name(krabka_blockstore::COL_FINGERPRINT)
+                    .ok_or_else(|| ProfileError::Store("missing fingerprint".into()))?
+                    .as_primitive::<UInt64Type>();
+                let timestamps = batch
+                    .column_by_name("timestamp")
+                    .ok_or_else(|| ProfileError::Store("missing timestamp".into()))?
+                    .as_primitive::<Int64Type>();
+                let types = arrow::compute::cast(
+                    batch
+                        .column_by_name("profile_type")
+                        .ok_or_else(|| ProfileError::Store("missing profile type".into()))?,
+                    &arrow::datatypes::DataType::Utf8,
+                )
+                .map_err(|error| ProfileError::Store(error.to_string()))?;
+                let types = types.as_string::<i32>();
+                for row in 0..batch.num_rows() {
+                    let fp = fingerprints.value(row);
+                    block_series.insert(fp);
+                    block_profiles.insert((
+                        fp,
+                        types.value(row).to_string(),
+                        timestamps.value(row),
+                    ));
+                    if selected.contains(&fp) {
+                        queried_storage_fingerprints.insert(fp);
+                    }
+                }
+                scope.sample_count = scope.sample_count.saturating_add(batch.num_rows() as u64);
+            }
+            scope.series_count = scope.series_count.saturating_add(block_series.len() as u64);
+            scope.profile_count = scope
+                .profile_count
+                .saturating_add(block_profiles.len() as u64);
+            stats.deduplication_needed |= !stats.profiles.is_disjoint(&block_profiles);
+            stats.profiles.extend(block_profiles);
+        }
+        for labels in index.series_for_fingerprints(tenant, &queried_storage_fingerprints, &[]) {
+            let labels = krabka_blockstore::Labels::from_pairs(
+                labels
+                    .into_iter()
+                    .filter(|(name, _)| name != "__profile_id__"),
+            );
+            stats.fingerprints.insert(labels.fingerprint());
+        }
+        stats.block_count = scope.block_count;
+        stats.profile_count = scope.profile_count;
+        stats.sample_count = scope.sample_count;
+        stats.scopes.push(scope);
+        Ok(stats)
     }
 
     async fn label_names(

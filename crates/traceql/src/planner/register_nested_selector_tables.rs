@@ -24,6 +24,7 @@ pub(crate) async fn register_nested_selector_tables<S: SpanStore>(
                 &ctx.scan_options,
             )
             .await?;
+        super::register_field_comparison_columns(&scan.ctx, &scan.span_table, &[&selector]).await?;
         let batches = collect_table(&scan.ctx, &scan.span_table).await?;
         register_batches(target_ctx, &table_name, batches)?;
         tables.push((selector, table_name));

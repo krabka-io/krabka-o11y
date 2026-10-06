@@ -94,7 +94,6 @@ use series_per_query_exceeded::series_per_query_exceeded;
 #[cfg(test)]
 use crate::extension::is_stale_nan;
 #[cfg(test)]
-use crate::planner::ExtendedSelectorExpr;
 #[cfg(test)]
 use crate::planner::label_ops;
 use crate::{
@@ -128,6 +127,7 @@ mod range_eval;
 pub use check_resolution_points::check_resolution_points;
 use current_at_modifier_bounds::current_at_modifier_bounds;
 pub use engine_opts::EngineOpts;
+pub(crate) use histogram::{standard_histogram_bound, template_histogram_value};
 pub use max_resolution_points::MAX_RESOLUTION_POINTS;
 pub use promql_engine::PromqlEngine;
 #[cfg(feature = "experimental-functions")]

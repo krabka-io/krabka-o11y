@@ -84,6 +84,53 @@ pub struct ServiceConfig {
     #[arg(long, env = "KRABKA_OBSERVABILITY_MAX_QUERY_SERIES")]
     pub max_query_series: Option<usize>,
 
+    /// Discover log levels during ingestion. Default: enabled.
+    #[arg(
+        long,
+        env = "KRABKA_OBSERVABILITY_DISCOVER_LOG_LEVELS",
+        action = clap::ArgAction::Set,
+        default_value_t = true
+    )]
+    pub discover_log_levels: bool,
+
+    /// Ordered log-level field names, separated by commas.
+    #[arg(
+        long,
+        env = "KRABKA_OBSERVABILITY_LOG_LEVEL_FIELDS",
+        value_delimiter = ',',
+        default_values_t = crate::Limits::default().log_level_fields
+    )]
+    pub log_level_fields: Vec<String>,
+
+    /// JSON levels searched for log levels; zero or negative means unlimited.
+    #[arg(
+        long,
+        env = "KRABKA_OBSERVABILITY_LOG_LEVEL_FROM_JSON_MAX_DEPTH",
+        default_value_t = 2,
+        allow_hyphen_values = true
+    )]
+    pub log_level_from_json_max_depth: i64,
+
+    /// Enable Loki's experimental multi-variant queries.
+    #[arg(long, env = "KRABKA_OBSERVABILITY_ENABLE_MULTI_VARIANT_QUERIES")]
+    pub enable_multi_variant_queries: bool,
+
+    /// Aggregations enabled for sharded execution, such as `approx_topk`.
+    #[arg(
+        long,
+        env = "KRABKA_OBSERVABILITY_SHARD_AGGREGATIONS",
+        value_delimiter = ','
+    )]
+    pub shard_aggregations: Vec<String>,
+
+    /// Maximum heap entries used by Loki count-min-sketch queries.
+    #[arg(
+        long,
+        env = "KRABKA_OBSERVABILITY_MAX_COUNT_MIN_SKETCH_HEAP_SIZE",
+        default_value_t = 10_000
+    )]
+    pub max_count_min_sketch_heap_size: usize,
+
     /// Ceiling on the summed size of the blocks a query plans to read, as
     /// `512MiB`.
     #[arg(
@@ -349,6 +396,12 @@ impl Default for ServiceConfig {
             query_end_ns: None,
             max_query_range: None,
             max_query_series: None,
+            discover_log_levels: true,
+            log_level_fields: crate::Limits::default().log_level_fields,
+            log_level_from_json_max_depth: 2,
+            enable_multi_variant_queries: false,
+            shard_aggregations: Vec::new(),
+            max_count_min_sketch_heap_size: 10_000,
             max_query_read: None,
             max_query_string_bytes: None,
             retention_period: None,

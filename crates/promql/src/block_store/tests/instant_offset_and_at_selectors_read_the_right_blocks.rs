@@ -55,7 +55,12 @@ pub(crate) async fn instant_offset_and_at_selectors_read_the_right_blocks() {
             .map(|sample| (sample.labels, sample.ts_ms, sample.value))
             .collect::<Vec<_>>();
         check!(
-            samples == vec![(expected_labels, 600_000, SampleValue::Float(expected_value))],
+            samples
+                == vec![(
+                    crate::PromqlLabels::from(expected_labels),
+                    600_000,
+                    SampleValue::Float(expected_value)
+                )],
             "{query}"
         );
     }

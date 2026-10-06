@@ -11,6 +11,9 @@ pub(crate) fn format_stream_query(query: &StreamQuery) -> String {
             .join(", ")
     );
     for stage in &query.pipeline {
+        if matches!(stage, PipelineStage::VariantBoundary) {
+            continue;
+        }
         if matches!(stage, PipelineStage::LineFilter(_)) {
             formatted.push(' ');
         } else {

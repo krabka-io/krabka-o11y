@@ -10,8 +10,11 @@ pub(crate) async fn plan_query<S: SpanStore>(
 ) -> Result<PlannedSpanset> {
     // A single conjunction is evaluated against packed attribute values by
     // the store and needs no SQL attribute columns.
-    if q.pipeline.is_empty()
+    if ctx.scan_options.sample_fraction.is_none()
+        && ctx.scan_options.trace_sample_fraction.is_none()
+        && q.pipeline.is_empty()
         && let SpansetExpr::Selector(fields) = &q.root
+        && !fields.has_field_comparison()
         && !selector::has_nested_scope(fields)
         && !selector::has_parent_scope(fields)
         && selector::field_expr_to_matcher_disjuncts(fields)
@@ -29,7 +32,10 @@ pub(crate) async fn plan_query<S: SpanStore>(
         end_ns: ctx.end_ns,
         scan_options: options,
     };
-    if !q.pipeline.is_empty() {
+    if !q.pipeline.is_empty()
+        || ctx.scan_options.sample_fraction.is_some()
+        || ctx.scan_options.trace_sample_fraction.is_some()
+    {
         return plan_spanset_sql(store, ctx, &q.root, &q.pipeline).await;
     }
     match &q.root {
@@ -53,6 +59,7 @@ fn project_spanset_fields(expr: &SpansetExpr, options: &mut ScanOptions) {
 }
 
 fn project_selector_fields(expr: &FieldExpr, options: &mut ScanOptions) {
+    options.include_raw_attributes |= expr.has_field_comparison();
     match expr {
         FieldExpr::ExpressionComparison { lhs, rhs, .. } => {
             options.include_raw_attributes = true;
@@ -71,7 +78,7 @@ fn project_selector_fields(expr: &FieldExpr, options: &mut ScanOptions) {
         // Nested fields expand event/link rows using their predicates. Keep
         // those dependencies local to each selector disjunct, rather than
         // combining mutually exclusive branches into one scan predicate.
-        FieldExpr::Comparison { .. } | FieldExpr::Field(_) if selector::has_nested_scope(expr) => {}
+        FieldExpr::Comparison { .. } if selector::has_nested_scope(expr) => {}
         FieldExpr::Comparison { .. } => {
             for mut matcher in selector::field_expr_to_matchers(expr) {
                 if matcher.scope == MatchScope::Parent {
@@ -91,6 +98,17 @@ fn project_selector_fields(expr: &FieldExpr, options: &mut ScanOptions) {
                 && !options.projection_matchers.contains(&matcher)
             {
                 options.projection_matchers.push(matcher);
+            }
+            if field.scope == Scope::Both {
+                for scope in [Scope::Event, Scope::Link, Scope::Instrumentation] {
+                    project_selector_fields(
+                        &FieldExpr::Field(crate::ast::Field {
+                            scope,
+                            key: field.key.clone(),
+                        }),
+                        options,
+                    );
+                }
             }
         }
         FieldExpr::And(lhs, rhs) | FieldExpr::Or(lhs, rhs) => {

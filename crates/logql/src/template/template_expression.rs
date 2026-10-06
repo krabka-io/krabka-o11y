@@ -20,10 +20,6 @@ impl TemplateExpression {
         Ok(Self { commands })
     }
 
-    pub(crate) fn render(&self, context: &TemplateRenderContext<'_>) -> String {
-        self.evaluate(context).into_rendered_string()
-    }
-
     pub(crate) fn evaluate(&self, context: &TemplateRenderContext<'_>) -> TemplateRuntimeValue {
         let mut input = None;
         for command in &self.commands {

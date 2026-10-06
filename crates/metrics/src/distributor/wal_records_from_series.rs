@@ -54,7 +54,7 @@ pub fn wal_records_from_series(tenant: &str, series: &[DecodedSeries]) -> Vec<Wa
                 tenant: tenant.to_string(),
                 labels: metadata_labels
                     .iter()
-                    .map(|(name, value)| (name.clone(), value.clone()))
+                    .map(|(name, value)| (name.clone(), value.clone().into()))
                     .collect(),
                 payload: SamplePayload::Metadata {
                     metric_family_name: metadata.metric_family_name.clone(),

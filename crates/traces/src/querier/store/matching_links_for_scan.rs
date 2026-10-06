@@ -26,6 +26,7 @@ pub(crate) fn matching_links_for_scan(
                 .iter()
                 .all(|matcher| link_matcher_matches_link(link, matcher))
         })
+        .take(1)
         .map(Some)
         .collect())
 }

@@ -761,12 +761,18 @@ impl<'a> Parser<'a> {
         &mut self,
         op: &mut VectorAggregationOp,
     ) -> Result<(), ParseError> {
+        let approximate = matches!(op, VectorAggregationOp::ApproxTopK(_));
         match op {
             VectorAggregationOp::TopK(parameter)
             | VectorAggregationOp::BottomK(parameter)
             | VectorAggregationOp::ApproxTopK(parameter) => {
                 self.skip_ws();
                 *parameter = self.parse_u64_scalar()?;
+                if approximate && *parameter == 0 {
+                    return Err(
+                        self.error("invalid parameter (must be greater than 0) approx_topk(0")
+                    );
+                }
                 self.skip_ws();
                 self.expect(',')?;
                 Ok(())

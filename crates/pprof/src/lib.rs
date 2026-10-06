@@ -49,7 +49,7 @@ pub use samples::{
 pub use series::{
     Series, SeriesAgg, fold_bucket, series_bucket_ms, step_bucket_ms, step_from_secs,
 };
-pub use store::{ProfileQueryStats, ProfileScan, ProfileStats, ProfileStore};
+pub use store::{ProfileQueryScope, ProfileQueryStats, ProfileScan, ProfileStats, ProfileStore};
 pub use symbol_db::{
     FunctionRec, LineRec, LocationRec, MappingRec, MappingSymbolization, RawLocation, SymbolDb,
 };

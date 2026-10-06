@@ -12,12 +12,9 @@ pub(crate) fn apply_metric_filter(
         .filter_map(|mut series| {
             series
                 .points
-                .retain(|(_, value)| metric_filter_passes(*value, filter));
+                .retain(|(_, value)| !value.is_nan() && metric_filter_passes(*value, filter));
             series.exemplars.retain(|exemplar| {
-                series
-                    .points
-                    .iter()
-                    .any(|(ts, _)| *ts == exemplar.timestamp_ns)
+                !exemplar.value.is_nan() && metric_filter_passes(exemplar.value, filter)
             });
             if series.points.is_empty() {
                 None

@@ -5,10 +5,12 @@ use super::{
     apply_metric_binary_comparison_to_loki_result, apply_metric_binary_set_to_loki_result,
     apply_metric_selection, apply_nested_vector_aggregation,
     apply_scalar_arithmetic_to_loki_result, apply_scalar_comparison_to_loki_result,
-    execute_http_metric_query, execute_http_stream_query, loki_instant_scalar_or_vector_response,
-    loki_range_vector_response, merge_loki_query_stats, resolved_range_step,
-    retain_metric_binary_on_labels, scalar_vector_expression_result, sort_loki_vector_result,
+    execute_federated_metric_query, execute_http_metric_query, execute_http_stream_query,
+    execute_http_variants, loki_instant_scalar_or_vector_response, loki_range_vector_response,
+    merge_loki_query_stats, resolved_range_step, retain_metric_binary_on_labels,
+    scalar_vector_expression_result, sort_loki_vector_result,
 };
+use crate::http::params_format::aggregation_formatting::apply_approx_metric_selection;
 
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
@@ -47,7 +49,35 @@ pub(crate) async fn execute_http_logql_expr(
             .await
             .map(add_loki_query_stats)
         }
+        LogqlExpr::Variants {
+            variants,
+            stream,
+            range_ns,
+            offset_ns,
+            ..
+        } => {
+            execute_http_variants(
+                state,
+                tenant,
+                time_range,
+                step,
+                kind,
+                (variants, stream, *range_ns, *offset_ns),
+            )
+            .await
+        }
         LogqlExpr::Metric { query, .. } => {
+            if state.federated_metric_tenants.is_some() {
+                return execute_federated_metric_query(
+                    state,
+                    time_range,
+                    step,
+                    kind,
+                    query.clone(),
+                    None,
+                )
+                .await;
+            }
             execute_http_metric_query(state, tenant, time_range, step, kind, query.clone()).await
         }
         LogqlExpr::Scalar(_) | LogqlExpr::Vector(_) => {
@@ -104,10 +134,34 @@ pub(crate) async fn execute_http_logql_expr(
             expr,
             limit,
             largest,
-            ..
+            approximate,
         } => {
+            if *approximate {
+                if is_scalar_vector_only(expr) {
+                    // Loki's unshardable rewrite resolves index statistics for
+                    // selector {}, before checking flags or the query kind.
+                    return Err(HttpQueryError::LokiPlainParse(
+                        "parse error : queries require at least one regexp or equality matcher that does not have an empty-compatible value. For instance, app=~\".*\" does not meet this requirement, but app=~\".+\" will".to_string(),
+                    ));
+                }
+                if !state
+                    .limits
+                    .shard_aggregations
+                    .iter()
+                    .any(|name| name == "approx_topk")
+                {
+                    return Err(HttpQueryError::ApproxTopKDisabled);
+                }
+                if matches!(kind, QueryKind::Range) {
+                    return Err(HttpQueryError::ApproxTopKRangeQuery);
+                }
+            }
+            let mut query_state = state.clone();
+            if *approximate {
+                query_state.limits.max_query_series = u64::MAX;
+            }
             let mut value = Box::pin(execute_http_logql_expr(
-                state,
+                &query_state,
                 tenant,
                 time_range,
                 step,
@@ -118,11 +172,16 @@ pub(crate) async fn execute_http_logql_expr(
                 full_query,
             ))
             .await?;
-            apply_metric_selection(
-                &mut value,
-                usize::try_from(*limit).unwrap_or(usize::MAX),
-                *largest,
-            );
+            let limit = usize::try_from(*limit).unwrap_or(usize::MAX);
+            if *approximate {
+                apply_approx_metric_selection(
+                    &mut value,
+                    limit,
+                    state.max_count_min_sketch_heap_size,
+                );
+            } else {
+                apply_metric_selection(&mut value, limit, *largest);
+            }
             Ok(value)
         }
         LogqlExpr::LabelReplace {
@@ -366,15 +425,17 @@ fn is_scalar_vector_only(expression: &LogqlExpr) -> bool {
         LogqlExpr::Scalar(_) | LogqlExpr::Vector(_) => true,
         LogqlExpr::Aggregation { expr, .. }
         | LogqlExpr::Sort { expr, .. }
-        | LogqlExpr::Selection { expr, .. }
         | LogqlExpr::LabelReplace { expr, .. }
         | LogqlExpr::LabelJoin { expr, .. } => is_scalar_vector_only(expr),
+        LogqlExpr::Selection {
+            expr, approximate, ..
+        } => !approximate && is_scalar_vector_only(expr),
         LogqlExpr::Arithmetic { left, right, .. }
         | LogqlExpr::Comparison { left, right, .. }
         | LogqlExpr::Set { left, right, .. } => {
             is_scalar_vector_only(left) && is_scalar_vector_only(right)
         }
-        LogqlExpr::Stream { .. } | LogqlExpr::Metric { .. } => false,
+        LogqlExpr::Stream { .. } | LogqlExpr::Metric { .. } | LogqlExpr::Variants { .. } => false,
     }
 }
 

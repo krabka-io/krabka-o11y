@@ -182,7 +182,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     return Ok(None);
                 };
                 let out =
-                    label_ops::apply_label_replace(samples, &dst, &replacement, &src, &regex)?;
+                    label_ops::apply_byte_label_replace(samples, &dst, &replacement, &src, &regex)?;
                 Ok(Some(PlannedInstant::Precomputed(out)))
             }
             LabelOpsKind::LabelJoin => {
@@ -210,7 +210,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 else {
                     return Ok(None);
                 };
-                let out = label_ops::apply_label_join(samples, &dst, &separator, &src_labels);
+                let out = label_ops::apply_byte_label_join(samples, &dst, &separator, &src_labels)?;
                 Ok(Some(PlannedInstant::Precomputed(out)))
             }
             LabelOpsKind::Sort(order) => {
@@ -240,7 +240,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     let Some(label) = super::string_literal_value(call, index) else {
                         return Ok(None);
                     };
-                    label_names.push(label);
+                    label_names.push(label.utf8().unwrap_or("").to_owned());
                 }
                 let Some(samples) = self
                     .label_ops_inner_vector(tenant, &call.args.args[0], time_ms)

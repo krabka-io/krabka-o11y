@@ -1,7 +1,7 @@
 use super::{
     AppState, HeaderMap, IntoResponse, Json, Principal, Response, SpanStore, StatusCode, Uri,
-    exemplar_selection, filter_metrics_exemplars, instant_metric_bounds, instant_metrics_response,
-    metrics_query_param, request_tenant, scan_options_param, trace_metrics_json,
+    instant_metric_bounds, metrics_query_param, request_tenant, scan_options_param,
+    trace_metrics_instant_json,
 };
 
 pub(crate) async fn query_instant_inner<S>(
@@ -20,15 +20,18 @@ where
     let Some(query) = metrics_query_param(&uri) else {
         return (StatusCode::BAD_REQUEST, "missing query parameter q").into_response();
     };
-    let (start_ns, end_ns, step_ns, point_ns) = match instant_metric_bounds(&uri) {
+    let (start_ns, end_ns, step_ns, _) = match instant_metric_bounds(&uri) {
         Ok(bounds) => bounds,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let exemplar_selection = exemplar_selection(&uri);
-    let scan_options = match scan_options_param(&uri) {
+    let mut scan_options = match scan_options_param(&uri) {
         Ok(value) => value,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
+    // The public frontend dispatches one unrestricted job, so reduction can
+    // apply final label decoding without merging already reduced averages.
+    scan_options.tempo_frontend_labels = scan_options.job.is_none();
+    scan_options.tempo_instant_metrics = true;
 
     match state
         .engine
@@ -42,11 +45,7 @@ where
         )
         .await
     {
-        Ok(resp) => Json(trace_metrics_json(
-            &filter_metrics_exemplars(instant_metrics_response(resp, point_ns), exemplar_selection),
-            &query,
-        ))
-        .into_response(),
+        Ok(resp) => Json(trace_metrics_instant_json(&resp, &query)).into_response(),
         Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
     }
 }

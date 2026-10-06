@@ -1063,12 +1063,7 @@ async fn detected_fields_stops_scanning_at_the_line_limit() {
         json_body(response).await
             == json!({
                 "fields": [
-                    {
-                        "label": "detected_level",
-                        "type": "string",
-                        "cardinality": 1,
-                        "parsers": null
-                    },
+
                     {
                         "label": "ok",
                         "type": "boolean",
@@ -1161,12 +1156,7 @@ async fn detected_fields_endpoint_discovers_json_logfmt_and_structured_metadata(
                         "cardinality": 1,
                         "parsers": ["logfmt"]
                     },
-                    {
-                        "label": "detected_level",
-                        "type": "string",
-                        "cardinality": 2,
-                        "parsers": null
-                    },
+
                     {
                         "label": "duration",
                         "type": "duration",
@@ -1519,12 +1509,7 @@ async fn detected_fields_endpoint_derives_start_from_since_when_start_is_omitted
         json_body(response).await
             == json!({
                 "fields": [
-                    {
-                        "label": "detected_level",
-                        "type": "string",
-                        "cardinality": 1,
-                        "parsers": null
-                    },
+
                     {
                         "label": "new_field",
                         "type": "string",
@@ -1773,7 +1758,7 @@ async fn analytics_endpoints_read_entries_still_in_the_hot_tail() {
             "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&limit=10",
             json!({
                 "fields": [
-                    {"label": "detected_level", "type": "string", "cardinality": 2, "parsers": null},
+
                     {"label": "pod", "type": "string", "cardinality": 1, "parsers": null},
                     {
                         "label": "status",

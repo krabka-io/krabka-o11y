@@ -31,7 +31,7 @@ pub(crate) async fn exemplars_reads_compacted_exemplar_sidecar_blocks() {
         &block_meta,
         vec![CompactionSeriesLabels {
             fingerprint: fp,
-            labels: series_labels.clone(),
+            labels: series_labels.clone().into(),
         }],
     );
 
@@ -40,10 +40,10 @@ pub(crate) async fn exemplars_reads_compacted_exemplar_sidecar_blocks() {
     let exemplars = store
         .exemplars(
             "tenant-a",
-            &[krabka_blockstore::LabelMatcher {
+            &[crate::PromqlMatcher {
                 name: "job".to_string(),
                 op: krabka_blockstore::MatchOp::Eq,
-                value: "api".to_string(),
+                value: "api".to_string().into(),
             }],
             10_000,
             11_000,

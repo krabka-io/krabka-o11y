@@ -17,6 +17,11 @@ pub(crate) fn limits_for_config(config: &ServiceConfig) -> Limits {
             .map_or(defaults.max_query_series, |series| {
                 u64::try_from(series).unwrap_or(u64::MAX)
             }),
+        discover_log_levels: config.discover_log_levels,
+        log_level_fields: config.log_level_fields.clone(),
+        log_level_from_json_max_depth: config.log_level_from_json_max_depth,
+        enable_multi_variant_queries: config.enable_multi_variant_queries,
+        shard_aggregations: config.shard_aggregations.clone(),
         max_query_read: config.max_query_read.unwrap_or(defaults.max_query_read),
         max_query_string_bytes: config
             .max_query_string_bytes

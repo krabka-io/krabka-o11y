@@ -823,7 +823,8 @@ fn alert_state_record(tenant: &str) -> RulerAlertStateRecord {
         labels: BTreeMap::from([
             ("alertname".to_string(), "BackupProbe".to_string()),
             ("job".to_string(), "checkout".to_string()),
-        ]),
+        ])
+        .into(),
         active_since_ms: Some(BASE_MS),
         keep_firing_until_ms: None,
     }

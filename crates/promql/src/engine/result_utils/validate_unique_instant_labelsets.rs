@@ -1,6 +1,5 @@
-use krabka_blockstore::Labels;
-
 use super::{BTreeSet, PromqlError, QueryResult, Result, labels_key};
+use crate::PromqlLabels as Labels;
 
 pub(crate) fn validate_unique_instant_labelsets(result: &QueryResult) -> Result<()> {
     match result {

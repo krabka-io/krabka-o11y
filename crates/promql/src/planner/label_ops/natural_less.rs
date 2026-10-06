@@ -11,16 +11,23 @@ use super::natural_chunks;
 /// This answers only "does `left` precede `right`", the one question
 /// `natsort.Compare` answers, so that the caller can reproduce
 /// `funcSortByLabel`'s ordering exactly, quirks included.
-pub(crate) fn natural_less(left: &str, right: &str) -> bool {
+pub(crate) fn natural_less(left: &[u8], right: &[u8]) -> bool {
     let left = natural_chunks(left);
     let right = natural_chunks(right);
     for (index, chunk) in left.iter().enumerate() {
         let Some(other) = right.get(index) else {
             return false;
         };
-        match (chunk.parse::<i64>(), other.parse::<i64>()) {
-            (Ok(chunk), Ok(other)) if chunk != other => return chunk < other,
-            (Ok(_), Ok(_)) => {}
+        match (
+            std::str::from_utf8(chunk)
+                .ok()
+                .and_then(|chunk| chunk.parse::<i64>().ok()),
+            std::str::from_utf8(other)
+                .ok()
+                .and_then(|other| other.parse::<i64>().ok()),
+        ) {
+            (Some(chunk), Some(other)) if chunk != other => return chunk < other,
+            (Some(_), Some(_)) => {}
             _ if chunk != other => return chunk < other,
             _ => {}
         }

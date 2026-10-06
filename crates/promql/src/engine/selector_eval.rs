@@ -30,6 +30,17 @@ impl<S: MetricStore> PromqlEngine<S> {
         selector: &VectorSelector,
         time_ms: i64,
     ) -> Result<QueryResult> {
+        self.eval_instant_selector_with_matchers(tenant, selector, time_ms, None)
+            .await
+    }
+
+    pub(super) async fn eval_instant_selector_with_matchers(
+        &self,
+        tenant: &str,
+        selector: &VectorSelector,
+        time_ms: i64,
+        typed_matchers: Option<&[Vec<crate::PromqlMatcher>]>,
+    ) -> Result<QueryResult> {
         let eval_time_ms = apply_selector_time_modifier(
             time_ms,
             selector.at.as_ref(),
@@ -37,9 +48,10 @@ impl<S: MetricStore> PromqlEngine<S> {
             current_at_modifier_bounds(),
         )?;
         let start_ms = eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64());
-        let matcher_sets = label_matcher_sets(selector);
+        let default_matchers = label_matcher_sets(selector);
+        let matcher_sets = typed_matchers.unwrap_or(&default_matchers);
         if let Some(series) = self
-            .latest_labeled_series(tenant, &matcher_sets, start_ms, eval_time_ms)
+            .latest_labeled_series(tenant, matcher_sets, start_ms, eval_time_ms)
             .await?
         {
             // Sum and average use this evaluator to preserve compensated
@@ -61,14 +73,15 @@ impl<S: MetricStore> PromqlEngine<S> {
                 .collect();
             return Ok(QueryResult::InstantVector(samples));
         }
+
         let labels_by_fp = self
-            .labels_by_fingerprint_sets(tenant, &matcher_sets, start_ms, eval_time_ms)
+            .labels_by_fingerprint_sets(tenant, matcher_sets, start_ms, eval_time_ms)
             .await?;
         let rows = self
-            .scan_float_row_sets(tenant, &matcher_sets, start_ms, eval_time_ms)
+            .scan_float_row_sets(tenant, matcher_sets, start_ms, eval_time_ms)
             .await?;
         let mut hist_rows = self
-            .scan_histogram_row_sets(tenant, &matcher_sets, start_ms, eval_time_ms)
+            .scan_histogram_row_sets(tenant, matcher_sets, start_ms, eval_time_ms)
             .await?;
         recompute_histogram_stats(&mut hist_rows);
 
@@ -117,11 +130,12 @@ impl<S: MetricStore> PromqlEngine<S> {
         Ok(QueryResult::InstantVector(samples))
     }
 
-    pub(super) async fn eval_smoothed_instant_selector(
+    pub(super) async fn eval_smoothed_instant_selector_with_matchers(
         &self,
         tenant: &str,
         selector: &VectorSelector,
         time_ms: i64,
+        typed_matchers: Option<&[Vec<crate::PromqlMatcher>]>,
     ) -> Result<QueryResult> {
         let eval_time_ms = apply_selector_time_modifier(
             time_ms,
@@ -131,16 +145,17 @@ impl<S: MetricStore> PromqlEngine<S> {
         )?;
         let scan_start_ms = eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64());
         let scan_end_ms = eval_time_ms.saturating_add(self.opts.lookback_delta.millis_i64());
-        let matcher_sets = label_matcher_sets(selector);
+        let default_matchers = label_matcher_sets(selector);
+        let matcher_sets = typed_matchers.unwrap_or(&default_matchers);
         let labels_by_fp = self
-            .labels_by_fingerprint_sets(tenant, &matcher_sets, scan_start_ms, scan_end_ms)
+            .labels_by_fingerprint_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
             .await?;
         let rows = self
-            .scan_float_row_sets(tenant, &matcher_sets, scan_start_ms, scan_end_ms)
+            .scan_float_row_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
             .await?;
 
         let mut hist_rows = self
-            .scan_histogram_row_sets(tenant, &matcher_sets, scan_start_ms, scan_end_ms)
+            .scan_histogram_row_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
             .await?;
         recompute_histogram_stats(&mut hist_rows);
         let mut rows_by_fp: BTreeMap<SeriesFingerprint, Vec<(i64, SampleValue)>> = BTreeMap::new();
@@ -247,18 +262,18 @@ impl<S: MetricStore> PromqlEngine<S> {
         end_ms: i64,
         modifier: Option<ExtendedSelectorModifier>,
     ) -> Result<Vec<RangeSeries>> {
-        self.eval_matrix_selector_inner(tenant, selector, start_ms, end_ms, modifier, false)
+        self.eval_matrix_selector_inner(tenant, selector, start_ms, end_ms, modifier, None)
             .await
     }
 
-    async fn eval_matrix_selector_inner(
+    pub(super) async fn eval_matrix_selector_inner(
         &self,
         tenant: &str,
         selector: &MatrixSelector,
         start_ms: i64,
         end_ms: i64,
         modifier: Option<ExtendedSelectorModifier>,
-        _inject_zeros: bool,
+        typed_matchers: Option<&[Vec<crate::PromqlMatcher>]>,
     ) -> Result<Vec<RangeSeries>> {
         let range = selector_duration(selector.range)?;
         let bounds = AtModifierBounds { start_ms, end_ms };
@@ -287,15 +302,16 @@ impl<S: MetricStore> PromqlEngine<S> {
             }
             Some(ExtendedSelectorModifier::Anchored) | None => eval_end_ms,
         };
-        let matcher_sets = label_matcher_sets(&selector.vs);
+        let default_matchers = label_matcher_sets(&selector.vs);
+        let matcher_sets = typed_matchers.unwrap_or(&default_matchers);
         let labels_by_fp = self
-            .labels_by_fingerprint_sets(tenant, &matcher_sets, scan_start_ms, scan_end_ms)
+            .labels_by_fingerprint_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
             .await?;
         let rows = self
-            .scan_float_row_sets(tenant, &matcher_sets, scan_start_ms, scan_end_ms)
+            .scan_float_row_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
             .await?;
         let mut hist_rows = self
-            .scan_histogram_row_sets(tenant, &matcher_sets, scan_start_ms, scan_end_ms)
+            .scan_histogram_row_sets(tenant, matcher_sets, scan_start_ms, scan_end_ms)
             .await?;
         recompute_histogram_stats(&mut hist_rows);
 
@@ -408,10 +424,20 @@ impl<S: MetricStore> PromqlEngine<S> {
     ) -> Result<RangeEval> {
         let mut expr = expr;
         let mut modifier = None;
+        let mut typed_matchers = None;
         loop {
             match expr {
                 Expr::Paren(paren) => expr = &paren.expr,
                 Expr::Extension(extension) => {
+                    if let Some(selector) = extension
+                        .expr
+                        .as_any()
+                        .downcast_ref::<crate::planner::byte_selector_expr::ByteSelectorExpr>(
+                    ) {
+                        typed_matchers = Some(selector.matcher_sets.as_slice());
+                        expr = &selector.child;
+                        continue;
+                    }
                     let Some(extended) = extension
                         .expr
                         .as_any()
@@ -450,8 +476,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                         time_ms,
                         time_ms,
                         modifier,
-                        modifier.is_none()
-                            && matches!(function_name, "rate" | "increase" | "resets"),
+                        typed_matchers,
                     )
                     .await?;
                 Ok(RangeEval {

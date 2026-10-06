@@ -3468,13 +3468,14 @@ name = "krabka-logql"
 version = "0.4.0"
 dependencies = [
  "base64 0.23.1",
+ "bigdecimal",
  "chrono",
- "chrono-tz",
  "derive_more",
  "krabka-blockstore",
  "krabka-units",
  "num-traits",
  "regex",
+ "serde",
  "serde_json",
  "thiserror",
  "time",

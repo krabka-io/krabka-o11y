@@ -4,14 +4,15 @@ pub(crate) fn metric_series_for_group(
     labels: MetricLabels,
     buckets: Vec<MetricBucket>,
     metric: &MetricPlan,
-    start_ns: i64,
-    step_ns: i64,
+    grid: (i64, i64),
     step: Time,
+    exemplar_range: (i64, i64),
     metric_policy: (usize, &[Time]),
 ) -> Result<Vec<TraceMetricSeries>> {
+    let (start_ns, step_ns) = grid;
     let (max_exemplars, histogram_buckets) = metric_policy;
     let (labels, label_types) = labels;
-    let exemplars = metric_exemplars(&buckets, max_exemplars);
+    let exemplars = metric_exemplars(&buckets, max_exemplars, exemplar_range.0, exemplar_range.1);
     if matches!(metric.function, MetricFunction::QuantileOverTime) {
         return metric
             .quantiles

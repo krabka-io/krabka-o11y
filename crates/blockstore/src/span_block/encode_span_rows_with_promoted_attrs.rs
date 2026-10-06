@@ -24,6 +24,7 @@ pub fn encode_span_rows_with_promoted_attrs(
     let mut attr_value = new_str_list_list();
     let mut attr_value_int = ListBuilder::new(ListBuilder::new(Int64Builder::new()));
     let mut attr_value_double = ListBuilder::new(ListBuilder::new(Float64Builder::new()));
+    let mut attr_value_unsupported = new_str_list();
     let mut attr_value_bool = ListBuilder::new(ListBuilder::new(BooleanBuilder::new()));
     let mut events = ListBuilder::new(new_event_struct_builder());
     let mut links = ListBuilder::new(new_link_struct_builder());
@@ -43,6 +44,16 @@ pub fn encode_span_rows_with_promoted_attrs(
             &mut attr_value_double,
             &mut attr_value_bool,
         );
+        for attr in &row.attrs {
+            attr_value_unsupported.values().append_option(
+                if let super::AttrValue::Unsupported(value) = &attr.value {
+                    Some(value)
+                } else {
+                    None
+                },
+            );
+        }
+        attr_value_unsupported.append(true);
         append_events(&mut events, &row.events);
         append_links(&mut links, &row.links)?;
     }
@@ -56,6 +67,7 @@ pub fn encode_span_rows_with_promoted_attrs(
         Arc::new(attr_value_int.finish()) as ArrayRef,
         Arc::new(attr_value_double.finish()) as ArrayRef,
         Arc::new(attr_value_bool.finish()) as ArrayRef,
+        Arc::new(attr_value_unsupported.finish()) as ArrayRef,
         Arc::new(events.finish()) as ArrayRef,
         Arc::new(links.finish()) as ArrayRef,
     ]);

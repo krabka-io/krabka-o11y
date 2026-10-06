@@ -31,8 +31,20 @@ impl LabelFormat {
         fields: &mut Labels,
         timestamp_ns: Option<i64>,
     ) {
+        self.apply_with_assignment_tracking(line, fields, timestamp_ns, |_| {});
+    }
+
+    pub(crate) fn apply_with_assignment_tracking(
+        &self,
+        line: &str,
+        fields: &mut Labels,
+        timestamp_ns: Option<i64>,
+        mut assigned: impl FnMut(&str),
+    ) {
         for assignment in &self.assignments {
-            assignment.apply_with_timestamp(line, fields, timestamp_ns);
+            if assignment.apply_with_timestamp(line, fields, timestamp_ns) {
+                assigned(assignment.destination());
+            }
         }
     }
 }

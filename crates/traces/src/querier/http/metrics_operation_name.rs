@@ -2,14 +2,14 @@ use krabka_traceql::{Aggregate, Pipeline};
 
 pub(crate) fn metrics_operation_name(query: &str) -> Option<&'static str> {
     let query = krabka_traceql::parse(query).ok()?;
-    if query
-        .pipeline
+    let metric_start = query.pipeline.iter().position(|stage| matches!(stage, Pipeline::Aggregate(aggregate) if matches!(aggregate, Aggregate::Rate | Aggregate::CountOverTime | Aggregate::SumOverTime(_) | Aggregate::AvgOverTime(_) | Aggregate::MinOverTime(_) | Aggregate::MaxOverTime(_) | Aggregate::HistogramOverTime(_) | Aggregate::QuantileOverTime { .. })))?;
+    if query.pipeline[metric_start..]
         .iter()
         .any(|stage| matches!(stage, Pipeline::By(fields) if !fields.is_empty()))
     {
         return None;
     }
-    query.pipeline.iter().find_map(|stage| {
+    query.pipeline[metric_start..].iter().find_map(|stage| {
         let Pipeline::Aggregate(aggregate) = stage else {
             return None;
         };

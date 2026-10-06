@@ -22,11 +22,10 @@
 
 use std::cmp::Ordering;
 
-use krabka_blockstore::Labels;
 use regex::Regex;
 
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels,
     error::Result,
     result::{InstantSample, SampleValue},
 };
@@ -194,7 +193,11 @@ mod tests {
     }
 }
 
+mod apply_byte_label_join;
+mod apply_byte_label_replace;
+#[cfg(test)]
 mod apply_label_join;
+#[cfg(test)]
 mod apply_label_replace;
 mod apply_sort;
 mod apply_sort_by_label;
@@ -206,8 +209,12 @@ mod set_label_value;
 mod sort_order;
 mod sort_value;
 
-pub use apply_label_join::apply_label_join;
-pub use apply_label_replace::apply_label_replace;
+pub(crate) use apply_byte_label_join::apply_byte_label_join;
+pub(crate) use apply_byte_label_replace::apply_byte_label_replace;
+#[cfg(test)]
+use apply_label_join::apply_label_join;
+#[cfg(test)]
+use apply_label_replace::apply_label_replace;
 pub use apply_sort::apply_sort;
 pub use apply_sort_by_label::apply_sort_by_label;
 use compare_label_values::compare_label_values;

@@ -81,10 +81,10 @@ rules:
                 tenant: "tenant-a".to_string(),
                 rule_id: "InstanceUp\nup > 0".to_string(),
                 labels: BTreeMap::from([
-                    ("__name__".to_string(), "up".to_string()),
                     ("alertname".to_string(), "InstanceUp".to_string()),
                     ("job".to_string(), "api".to_string()),
-                ]),
+                ])
+                .into(),
                 active_since_ms: Some(120_000),
                 keep_firing_until_ms: Some(120_000),
             }]

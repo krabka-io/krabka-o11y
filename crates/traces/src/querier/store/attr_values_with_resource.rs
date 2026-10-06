@@ -9,12 +9,15 @@ pub(crate) fn attr_values_with_resource(
     row: usize,
     include_resource: bool,
 ) -> Result<Vec<(String, AttrValue)>, TraceqlError> {
+    let packed = block_attr_values(batch, row, include_resource, &BTreeSet::new())?;
     let mut out = Vec::new();
-    let mut promoted_keys = BTreeSet::new();
     for (idx, field) in batch.schema().fields().iter().enumerate() {
         let Some(key) = field.name().strip_prefix(ATTR_PREFIX) else {
             continue;
         };
+        if packed.iter().any(|(name, _)| name == key) {
+            continue;
+        }
         let col = batch.column(idx);
         if col.is_null(row) {
             continue;
@@ -29,14 +32,8 @@ pub(crate) fn attr_values_with_resource(
             DataType::Boolean => AttrValue::Bool(bool_array_value(col.as_ref(), row)?),
             _ => continue,
         };
-        promoted_keys.insert(key.to_string());
         out.push((key.to_string(), value));
     }
-    out.extend(block_attr_values(
-        batch,
-        row,
-        include_resource,
-        &promoted_keys,
-    )?);
+    out.extend(packed);
     Ok(out)
 }

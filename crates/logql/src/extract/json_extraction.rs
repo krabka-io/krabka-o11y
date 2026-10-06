@@ -35,10 +35,18 @@ impl JsonExtraction {
         &self.expression.0
     }
 
+    pub(crate) fn evaluate_remaining<'a>(
+        &self,
+        value: &'a serde_json::value::RawValue,
+        remaining: usize,
+    ) -> Option<super::json_path::JsonPathMatch<'a>> {
+        JsonPath::evaluate_parts(value, &self.path.parts[self.path.parts.len() - remaining..])
+    }
+
     pub(crate) fn evaluate<'a>(
         &self,
-        value: &'a serde_json::Value,
-    ) -> Option<&'a serde_json::Value> {
+        value: &'a serde_json::value::RawValue,
+    ) -> Option<super::json_path::JsonPathMatch<'a>> {
         self.path.evaluate(value)
     }
 }

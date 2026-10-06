@@ -73,7 +73,7 @@ impl FloatAggregation {
     }
 }
 
-fn format_float_sample(value: f64) -> String {
+pub(crate) fn format_float_sample(value: f64) -> String {
     if value.is_nan() {
         "NaN".to_string()
     } else if value.is_infinite() {

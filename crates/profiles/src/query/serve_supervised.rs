@@ -33,13 +33,17 @@ where
     let listener = ServerListener::bind(TcpListener::bind(addr).await?, security)
         .map_err(std::io::Error::other)?;
     let bound = listener.local_addr();
-    let app = router(state).merge(krabka_observability::readiness_router(readiness));
-    let server = serve_router(listener, app, security)
-        .with_graceful_shutdown(async move { shutdown.cancelled().await });
+    let app = router(Arc::clone(&state)).merge(krabka_observability::readiness_router(readiness));
+    let shutting_down = Arc::clone(&state);
+    let server = serve_router(listener, app, security).with_graceful_shutdown(async move {
+        shutdown.cancelled().await;
+        shutting_down.shutdown_async_queries().await;
+    });
     let handle = tokio::spawn(async move {
         if let Err(err) = server.await {
             tracing::error!(%err, "profiles querier server stopped");
         }
+        state.shutdown_async_queries().await;
     });
     Ok((bound, handle))
 }

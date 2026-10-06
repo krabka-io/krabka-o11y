@@ -8,8 +8,8 @@ use super::*;
 ///
 /// `categorize-labels` is the encoding that pulls the metadata back out. The
 /// two streams become one again -- the stream Grafana's log browser shows --
-/// and each entry names what it carried. `detected_level` travels with the
-/// metadata, because that is the category Loki's level discovery writes it in.
+/// and each entry names what it carried. These stored rows contain only the
+/// explicit trace metadata; querying them does not discover additional fields.
 #[test]
 pub(crate) fn structured_metadata_splits_a_stream_unless_the_request_categorizes_labels() {
     let mut label_index = LabelIndex::default();
@@ -54,7 +54,6 @@ pub(crate) fn structured_metadata_splits_a_stream_unless_the_request_categorizes
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "trace_id": "abc"
                             },
                             "values": [["10", "api error"]]
@@ -62,7 +61,6 @@ pub(crate) fn structured_metadata_splits_a_stream_unless_the_request_categorizes
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "trace_id": "def"
                             },
                             "values": [["20", "api error"]]
@@ -87,7 +85,6 @@ pub(crate) fn structured_metadata_splits_a_stream_unless_the_request_categorizes
                                     "api error",
                                     {
                                         "structuredMetadata": {
-                                            "detected_level": "unknown",
                                             "trace_id": "abc"
                                         }
                                     }
@@ -97,7 +94,6 @@ pub(crate) fn structured_metadata_splits_a_stream_unless_the_request_categorizes
                                     "api error",
                                     {
                                         "structuredMetadata": {
-                                            "detected_level": "unknown",
                                             "trace_id": "def"
                                         }
                                     }

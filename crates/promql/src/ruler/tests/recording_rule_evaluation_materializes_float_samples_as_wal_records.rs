@@ -33,8 +33,11 @@ pub(crate) async fn recording_rule_evaluation_materializes_float_samples_as_wal_
     check!(records.iter().all(|record| record.tenant == "tenant-a"));
     check!(records.iter().any(|record| record.labels
         == vec![
-            ("__name__".to_string(), "job:http_requests:sum".to_string()),
-            ("job".to_string(), "api".to_string()),
+            (
+                "__name__".to_string(),
+                "job:http_requests:sum".to_string().into()
+            ),
+            ("job".to_string(), "api".to_string().into()),
         ]
         && matches!(
             record.payload,
@@ -46,8 +49,11 @@ pub(crate) async fn recording_rule_evaluation_materializes_float_samples_as_wal_
         )));
     check!(records.iter().any(|record| record.labels
         == vec![
-            ("__name__".to_string(), "job:http_requests:sum".to_string()),
-            ("job".to_string(), "web".to_string()),
+            (
+                "__name__".to_string(),
+                "job:http_requests:sum".to_string().into()
+            ),
+            ("job".to_string(), "web".to_string().into()),
         ]
         && matches!(
             record.payload,

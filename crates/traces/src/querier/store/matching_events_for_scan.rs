@@ -26,6 +26,7 @@ pub(crate) fn matching_events_for_scan(
                 .iter()
                 .all(|matcher| event_matcher_matches_event(event, matcher))
         })
+        .take(1)
         .map(Some)
         .collect())
 }

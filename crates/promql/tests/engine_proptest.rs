@@ -49,10 +49,11 @@ fn labels(pairs: &[(&str, &str)]) -> Labels {
 
 /// Copies a label set into an owned map, so the expected side and the engine
 /// side compare as the same type.
-fn label_map(labels: &Labels) -> BTreeMap<String, String> {
+fn label_map<'a, V: AsRef<str> + 'a>(
+    labels: impl Iterator<Item = (&'a String, &'a V)>,
+) -> BTreeMap<String, String> {
     labels
-        .iter()
-        .map(|(name, value)| (name.clone(), value.clone()))
+        .map(|(name, value)| (name.clone(), value.as_ref().to_owned()))
         .collect()
 }
 
@@ -90,7 +91,7 @@ fn eval_sorted(
                 "{query}: expected a float sample, got a native histogram"
             )));
         };
-        rows.push((label_map(&sample.labels), *value));
+        rows.push((label_map(sample.labels.iter()), *value));
     }
     rows.sort_by(by_labels_then_value);
     Ok(rows)
@@ -347,7 +348,7 @@ proptest! {
             // An earlier decoy, so the answer depends on the sample at `t`.
             store.push_float(TENANT, series_labels.clone(), EVAL_MS - 30_000, value + 100.0);
             store.push_float(TENANT, series_labels.clone(), EVAL_MS, *value);
-            rows.push((label_map(&series_labels), *value));
+            rows.push((label_map(series_labels.iter()), *value));
         }
         let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 

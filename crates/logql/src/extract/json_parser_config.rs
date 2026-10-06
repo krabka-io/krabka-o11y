@@ -1,4 +1,4 @@
-use super::{BTreeSet, JsonExtraction, ParseError, template_parse_error};
+use super::{JsonExtraction, ParseError, template_parse_error};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JsonParserConfig {
@@ -11,14 +11,6 @@ impl JsonParserConfig {
     pub fn new(extractions: Vec<JsonExtraction>) -> Result<Self, ParseError> {
         if extractions.is_empty() {
             return Err(template_parse_error("expected json extraction"));
-        }
-        let mut destinations = BTreeSet::new();
-        for extraction in &extractions {
-            if !destinations.insert(extraction.destination.clone()) {
-                return Err(template_parse_error(
-                    "json extraction destination appears more than once",
-                ));
-            }
         }
         Ok(Self { extractions })
     }

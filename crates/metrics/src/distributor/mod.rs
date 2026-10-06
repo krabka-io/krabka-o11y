@@ -824,8 +824,8 @@ overrides:
             Bytes::from_static(b"series-key"),
             b"payload".to_vec(),
             vec![
-                ("traceparent".to_string(), "00-abc-def-01".to_string()),
-                ("tracestate".to_string(), "vendor=1".to_string()),
+                ("traceparent".to_string(), "00-abc-def-01".into()),
+                ("tracestate".to_string(), "vendor=1".into()),
             ],
         );
 
@@ -1130,8 +1130,8 @@ overrides:
             Bytes::from_static(b"the-key"),
             b"the-value".to_vec(),
             vec![
-                ("traceparent".to_string(), "00-abc-def-01".to_string()),
-                ("tracestate".to_string(), "vendor=1".to_string()),
+                ("traceparent".to_string(), "00-abc-def-01".into()),
+                ("tracestate".to_string(), "vendor=1".into()),
             ],
         );
 
@@ -1966,7 +1966,7 @@ overrides:
             records,
             vec![WalRecord {
                 tenant: "tenant-a".to_string(),
-                labels: vec![("__name__".to_string(), "up".to_string())],
+                labels: vec![("__name__".to_string(), "up".into())],
                 payload: SamplePayload::Float {
                     timestamp_ms: 100,
                     value: 1.0,
@@ -2192,8 +2192,8 @@ overrides:
         assert!(
             sample.labels
                 == vec![
-                    ("__name__".to_string(), "system.cpu.utilization".to_string()),
-                    ("host.name".to_string(), "api-1".to_string())
+                    ("__name__".to_string(), "system.cpu.utilization".into()),
+                    ("host.name".to_string(), "api-1".into())
                 ]
         );
     }
@@ -2219,9 +2219,9 @@ overrides:
                 == vec![WalRecord {
                     tenant: "tenant-a".to_string(),
                     labels: vec![
-                        ("__name__".to_string(), "cpu".to_string()),
-                        ("__proxy_source__".to_string(), "influx".to_string()),
-                        ("host".to_string(), "api-1".to_string()),
+                        ("__name__".to_string(), "cpu".into()),
+                        ("__proxy_source__".to_string(), "influx".into()),
+                        ("host".to_string(), "api-1".into()),
                     ],
                     payload: SamplePayload::Float {
                         timestamp_ms: 1_234,
@@ -3114,8 +3114,8 @@ overrides:
         check!(
             sample.labels
                 == vec![
-                    ("__name__".to_string(), "system_cpu_utilization".to_string()),
-                    ("host_name".to_string(), "api-1".to_string())
+                    ("__name__".to_string(), "system_cpu_utilization".into()),
+                    ("host_name".to_string(), "api-1".into())
                 ]
         );
         assert!(matches!(
@@ -3277,8 +3277,8 @@ overrides:
         assert!(
             sample.labels
                 == vec![
-                    ("__name__".to_string(), "system_cpu_utilization".to_string()),
-                    ("host_name".to_string(), "api-1".to_string())
+                    ("__name__".to_string(), "system_cpu_utilization".into()),
+                    ("host_name".to_string(), "api-1".into())
                 ]
         );
     }
@@ -3441,8 +3441,8 @@ overrides:
         assert!(
             target.labels
                 == vec![
-                    ("__name__".to_string(), "target_info".to_string()),
-                    ("service_name".to_string(), "checkout".to_string()),
+                    ("__name__".to_string(), "target_info".into()),
+                    ("service_name".to_string(), "checkout".into()),
                 ]
         );
         assert!(matches!(

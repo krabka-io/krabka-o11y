@@ -178,7 +178,7 @@ fn fixture_series_carry_the_krabka_fingerprint_of_their_labels() {
     let expected = tsdb_fixture::expected_series_labels()
         .into_iter()
         .map(|labels| {
-            let labels = labels.into_iter().collect::<Labels>();
+            let labels = labels.into_iter().collect::<krabka_metrics::MetricLabels>();
             (labels.fingerprint(), labels)
         })
         .collect::<BTreeMap<_, _>>();
@@ -382,7 +382,13 @@ fn series(
     labels: Vec<(&'static str, &'static str)>,
     chunks: Vec<SyntheticChunk>,
 ) -> SyntheticSeries {
-    SyntheticSeries { labels, chunks }
+    SyntheticSeries {
+        labels: labels
+            .into_iter()
+            .map(|(name, value)| (name.as_bytes().to_vec(), value.as_bytes().to_vec()))
+            .collect(),
+        chunks,
+    }
 }
 
 fn chunk(segment: usize, samples: &[(i64, f64)]) -> SyntheticChunk {
@@ -584,4 +590,78 @@ fn a_block_whose_samples_are_all_deleted_is_empty() {
     let result = decode_synthetic(&block, Some(&tombstones));
 
     assert!(result.err() == Some(TsdbImportError::Empty));
+}
+
+#[test]
+fn native_index_values_preserve_bytes_and_validate_names_independently() {
+    let values = [
+        b"__krabka_bytes_ff".to_vec(),
+        "�".as_bytes().to_vec(),
+        vec![0xfe],
+        vec![0xff],
+    ];
+    let series = values
+        .iter()
+        .enumerate()
+        .map(|(index, bytes)| SyntheticSeries {
+            labels: vec![
+                (b"__name__".to_vec(), b"byte_input".to_vec()),
+                (b"raw".to_vec(), bytes.clone()),
+            ],
+            chunks: vec![chunk(
+                0,
+                &[(10, f64::from(u32::try_from(index).unwrap()) + 1.0)],
+            )],
+        })
+        .collect::<Vec<_>>();
+    let block = write_block(&series, 1);
+    let decoded = decode_synthetic(&block, None).unwrap();
+    assert!(decoded.rows.series_labels.len() == 4 && decoded.rows.float_rows.len() == 4);
+    let mut fingerprints = std::collections::BTreeSet::new();
+    for (index, value) in values.iter().enumerate() {
+        let mut expected = krabka_metrics::MetricLabels::from_pairs([("__name__", "byte_input")]);
+        expected.insert("raw", krabka_metrics::MetricString::from(value.clone()));
+        let fingerprint = expected.fingerprint();
+        assert!(fingerprints.insert(fingerprint));
+        assert!(decoded.rows.series_labels[&fingerprint] == expected);
+        let sample = decoded
+            .rows
+            .float_rows
+            .iter()
+            .find(|sample| sample.fingerprint == fingerprint)
+            .unwrap();
+        assert!(
+            sample.timestamp_ms == 10
+                && sample.value.to_bits()
+                    == (f64::from(u32::try_from(index).unwrap()) + 1.0).to_bits()
+        );
+    }
+    let invalid_name = write_block(
+        &[SyntheticSeries {
+            labels: vec![
+                (b"__name__".to_vec(), b"byte_input".to_vec()),
+                (vec![0xff], b"valid-value".to_vec()),
+            ],
+            chunks: vec![chunk(0, &[(10, 1.0)])],
+        }],
+        1,
+    );
+    assert!(
+        matches!(decode_synthetic(&invalid_name, None), Err(TsdbImportError::InvalidLabels(reason)) if reason.contains("label name that is not valid UTF-8"))
+    );
+    let duplicate = write_block(
+        &[SyntheticSeries {
+            labels: vec![(b"raw".to_vec(), vec![0xff]), (b"raw".to_vec(), vec![0xfe])],
+            chunks: vec![chunk(0, &[(10, 1.0)])],
+        }],
+        1,
+    );
+    assert!(
+        matches!(decode_synthetic(&duplicate, None), Err(TsdbImportError::InvalidLabels(reason)) if reason.contains("out of order or repeated"))
+    );
+    let mut bad_checksum = block;
+    bad_checksum.index[10] ^= 1;
+    assert!(
+        matches!(decode_synthetic(&bad_checksum, None), Err(TsdbImportError::Checksum { section }) if section == "index symbols")
+    );
 }

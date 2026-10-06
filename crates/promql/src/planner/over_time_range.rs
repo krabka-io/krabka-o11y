@@ -27,7 +27,7 @@ use std::{
 };
 
 use arrow::{
-    array::{ArrayRef, Float64Array, Int64Array, StringBuilder},
+    array::{ArrayRef, BinaryBuilder, Float64Array, Int64Array},
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
@@ -36,12 +36,12 @@ use datafusion::{
     logical_expr::{Expr, Extension, LogicalPlan, LogicalPlanBuilder, col, lit},
     prelude::SessionContext,
 };
-use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 use krabka_units::prelude::*;
 
 use super::{LabeledSeries, StepGrid, leaf::leaf_scan};
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels,
     error::Result,
     extension::{
         normalize::SeriesNormalize,
@@ -54,7 +54,7 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
-    use arrow::array::StringArray;
+    use arrow::array::BinaryArray;
     use assert2::check;
 
     use super::*;
@@ -106,7 +106,7 @@ mod tests {
                 .column_by_name("job")
                 .unwrap()
                 .as_any()
-                .downcast_ref::<StringArray>()
+                .downcast_ref::<BinaryArray>()
                 .unwrap();
             let value = batch
                 .column_by_name(OVER_TIME_VALUE_COLUMN)
@@ -115,7 +115,10 @@ mod tests {
                 .downcast_ref::<Float64Array>()
                 .unwrap();
             for row in 0..batch.num_rows() {
-                got.push((job.value(row).to_string(), value.value(row)));
+                got.push((
+                    String::from_utf8(job.value(row).to_vec()).unwrap(),
+                    value.value(row),
+                ));
             }
         }
         got

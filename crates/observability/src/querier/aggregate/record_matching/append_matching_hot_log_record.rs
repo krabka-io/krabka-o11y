@@ -82,18 +82,12 @@ mod tests {
                 preserve,
             );
             let expected = BTreeMap::from([(
-                Labels::from([
-                    ("app".into(), "api".into()),
-                    ("detected_level".into(), "unknown".into()),
-                ]),
+                Labels::from([("app".into(), "api".into())]),
                 vec![LokiStreamEntry {
                     timestamp_ns: "10".into(),
                     line: "line".into(),
                     source_labels,
-                    structured_metadata: Labels::from([(
-                        "detected_level".into(),
-                        "unknown".into(),
-                    )]),
+                    structured_metadata: Labels::new(),
                     parsed: Labels::new(),
                 }],
             )]);

@@ -28,7 +28,11 @@ where
     for manifest in manifests {
         let mut index = Index::new();
         for series in &manifest.series {
-            index.add_series(&manifest.tenant, series.fingerprint, &series.labels);
+            index.add_series(
+                &manifest.tenant,
+                series.fingerprint,
+                &series.labels.utf8_projection(),
+            );
         }
         let mut applicable = Vec::new();
         for request in &requests {
@@ -87,8 +91,54 @@ fn request_fingerprints(
         return Ok(None);
     }
     let mut fingerprints = BTreeSet::new();
-    for matchers in &request.matcher_sets {
-        fingerprints.extend(index.matching_fingerprints(&manifest.tenant, matchers)?);
+    // Query equality uses raw Go bytes. Native posting projections deliberately
+    // omit invalid-byte values, so they cannot answer these predicates.
+    if !request.byte_matcher_sets.is_empty()
+        || manifest
+            .series
+            .iter()
+            .any(|series| series.labels.has_byte_values())
+    {
+        let sets = if request.byte_matcher_sets.is_empty() {
+            request
+                .matcher_sets
+                .iter()
+                .map(|set| {
+                    set.iter()
+                        .map(|matcher| krabka_blockstore::ByteLabelMatcher {
+                            name: matcher.name.clone(),
+                            op: matcher.op,
+                            value: matcher.value.as_bytes().to_vec(),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        } else {
+            request.byte_matcher_sets.clone()
+        };
+        for series in &manifest.series {
+            for matchers in &sets {
+                let mut matched = true;
+                for matcher in matchers {
+                    let value = series.labels.get_value(&matcher.name);
+                    if !matcher.matches(
+                        value.map_or(&[][..], crate::MetricString::as_bytes),
+                        value.map_or("", crate::MetricString::as_str),
+                    )? {
+                        matched = false;
+                        break;
+                    }
+                }
+                if matched {
+                    fingerprints.insert(series.fingerprint);
+                    break;
+                }
+            }
+        }
+    } else {
+        for matchers in &request.matcher_sets {
+            fingerprints.extend(index.matching_fingerprints(&manifest.tenant, matchers)?);
+        }
     }
     Ok((!fingerprints.is_empty()).then_some(fingerprints))
 }

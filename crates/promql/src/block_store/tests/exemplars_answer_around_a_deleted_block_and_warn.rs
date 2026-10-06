@@ -63,10 +63,10 @@ pub(crate) async fn exemplars_answer_around_a_deleted_block_and_warn() {
     let scan = store
         .exemplars(
             "tenant-a",
-            &[krabka_blockstore::LabelMatcher {
+            &[crate::PromqlMatcher {
                 name: "job".to_string(),
                 op: krabka_blockstore::MatchOp::Eq,
-                value: "api".to_string(),
+                value: "api".to_string().into(),
             }],
             10_000,
             11_000,

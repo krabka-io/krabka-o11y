@@ -132,7 +132,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 })),
                 Expr::StringLiteral(s) => Ok(Some(PlannedInstant::PrecomputedString {
                     ts_ms: time_ms,
-                    value: s.val.clone(),
+                    value: s.val.clone().into(),
                 })),
                 // A top-level raw matrix selector / subquery yields a range vector
                 // from `query_instant`, built via the interpreter's own
@@ -196,13 +196,53 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// the same hard error the interpreter raises. Any other extension shape
     /// (non-selector child, unknown extension) falls back to the interpreter,
     /// which returns the canonical unsupported-expression error.
-    async fn plan_extension_expr(
+    pub(super) async fn plan_extension_expr(
         &self,
         tenant: &str,
         expr: &Expr,
         extension: &promql_parser::parser::Extension,
         time_ms: i64,
     ) -> Result<Option<PlannedInstant>> {
+        if let Some(value) = crate::planner::byte_string_expr::string_expr_value(expr) {
+            return Ok(Some(PlannedInstant::PrecomputedString {
+                ts_ms: time_ms,
+                value,
+            }));
+        }
+        if let Some(selector) = extension
+            .expr
+            .as_any()
+            .downcast_ref::<crate::planner::byte_selector_expr::ByteSelectorExpr>(
+        ) {
+            let result = match &selector.child {
+                Expr::VectorSelector(vector) => {
+                    self.eval_instant_selector_with_matchers(
+                        tenant,
+                        vector,
+                        time_ms,
+                        Some(&selector.matcher_sets),
+                    )
+                    .await?
+                }
+                Expr::MatrixSelector(matrix) => QueryResult::RangeMatrix(
+                    self.eval_matrix_selector_inner(
+                        tenant,
+                        matrix,
+                        time_ms,
+                        time_ms,
+                        None,
+                        Some(&selector.matcher_sets),
+                    )
+                    .await?,
+                ),
+                _ => unreachable!("byte selector has a selector child"),
+            };
+            return Ok(Some(match result {
+                QueryResult::InstantVector(samples) => PlannedInstant::Precomputed(samples),
+                QueryResult::RangeMatrix(series) => PlannedInstant::PrecomputedMatrix(series),
+                _ => unreachable!("selector result"),
+            }));
+        }
         let Some(extended) = extension
             .expr
             .as_any()
@@ -210,13 +250,32 @@ impl<S: MetricStore> PromqlEngine<S> {
         else {
             return Ok(None);
         };
-        let Some(Expr::VectorSelector(selector)) = extended.child() else {
-            return Ok(None);
+        let (selector, typed_matchers) = match extended.child() {
+            Some(Expr::VectorSelector(selector)) => (selector, None),
+            Some(Expr::Extension(child)) => {
+                let Some(byte) = child
+                    .expr
+                    .as_any()
+                    .downcast_ref::<crate::planner::byte_selector_expr::ByteSelectorExpr>(
+                ) else {
+                    return Ok(None);
+                };
+                let Expr::VectorSelector(selector) = &byte.child else {
+                    return Ok(None);
+                };
+                (selector, Some(byte.matcher_sets.as_slice()))
+            }
+            _ => return Ok(None),
         };
         match extended.modifier() {
             ExtendedSelectorModifier::Smoothed => {
                 let QueryResult::InstantVector(samples) = self
-                    .eval_smoothed_instant_selector(tenant, selector, time_ms)
+                    .eval_smoothed_instant_selector_with_matchers(
+                        tenant,
+                        selector,
+                        time_ms,
+                        typed_matchers,
+                    )
                     .await?
                 else {
                     return Ok(None);

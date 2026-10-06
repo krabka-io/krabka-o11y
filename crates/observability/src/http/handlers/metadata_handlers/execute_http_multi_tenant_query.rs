@@ -6,6 +6,7 @@ use super::{
     scalar_vector_expression_result, time_range, validate_loki_query_range_resolution,
     validate_loki_range_query_range_limit,
 };
+use crate::{LogqlExpr, execute_http_query_for_tenant_inner, parse_logql_expr};
 
 pub(crate) async fn execute_http_multi_tenant_query(
     state: &QuerierState,
@@ -15,6 +16,17 @@ pub(crate) async fn execute_http_multi_tenant_query(
     encoding: LokiStreamEncoding,
 ) -> Result<Value, HttpQueryError> {
     reject_signed_vector_function_literal(&params.query)?;
+    if parse_logql_expr(&params.query)
+        .is_ok_and(|expression| federated_metric_expression(&expression))
+    {
+        let state = state.with_federated_metric_tenants(tenants);
+        if let Some(tenant) = tenants.first() {
+            // One evaluator and cap for all tenants, without a cache keyed by
+            // only the first tenant's identity.
+            return execute_http_query_for_tenant_inner(&state, tenant, params, kind, encoding)
+                .await;
+        }
+    }
     if let Some(result) = scalar_vector_expression_result(&params.query) {
         let time_range = time_range(params, kind)?;
         // A scalar expression reads no data, but the window cap still applies,
@@ -53,4 +65,26 @@ pub(crate) async fn execute_http_multi_tenant_query(
             "result": []
         })))
     }))
+}
+
+fn federated_metric_expression(expression: &LogqlExpr) -> bool {
+    match expression {
+        LogqlExpr::Metric { query, .. } => crate::metric_query_uses_approx_topk(query),
+        LogqlExpr::Variants { .. }
+        | LogqlExpr::Selection {
+            approximate: true, ..
+        } => true,
+        LogqlExpr::Aggregation { expr, .. }
+        | LogqlExpr::Sort { expr, .. }
+        | LogqlExpr::Selection { expr, .. }
+        | LogqlExpr::LabelReplace { expr, .. }
+        | LogqlExpr::LabelJoin { expr, .. }
+        | LogqlExpr::Vector(expr) => federated_metric_expression(expr),
+        LogqlExpr::Arithmetic { left, right, .. }
+        | LogqlExpr::Comparison { left, right, .. }
+        | LogqlExpr::Set { left, right, .. } => {
+            federated_metric_expression(left) || federated_metric_expression(right)
+        }
+        LogqlExpr::Stream { .. } | LogqlExpr::Scalar(_) => false,
+    }
 }

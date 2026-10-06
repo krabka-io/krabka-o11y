@@ -1,10 +1,9 @@
 use super::*;
+use crate::PromqlMatcher as LabelMatcher;
 
 #[tokio::test]
 pub(crate) async fn range_query_scans_store_once_per_matcher_set_not_per_step() {
     use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use krabka_blockstore::LabelMatcher;
 
     use crate::{
         error::Result,
@@ -28,7 +27,13 @@ pub(crate) async fn range_query_scans_store_once_per_matcher_set_not_per_step() 
             self.scans.fetch_add(1, Ordering::SeqCst);
             self.inner.scan(t, m, s, e).await
         }
-        async fn series(&self, t: &str, m: &[LabelMatcher], s: i64, e: i64) -> Result<Vec<Labels>> {
+        async fn series(
+            &self,
+            t: &str,
+            m: &[LabelMatcher],
+            s: i64,
+            e: i64,
+        ) -> Result<Vec<crate::PromqlLabels>> {
             self.series_calls.fetch_add(1, Ordering::SeqCst);
             self.inner.series(t, m, s, e).await
         }
@@ -48,7 +53,7 @@ pub(crate) async fn range_query_scans_store_once_per_matcher_set_not_per_step() 
             m: &[LabelMatcher],
             s: i64,
             e: i64,
-        ) -> Result<Vec<String>> {
+        ) -> Result<Vec<krabka_metrics::MetricString>> {
             self.inner.label_values(t, name, m, s, e).await
         }
         async fn exemplars(
@@ -69,7 +74,7 @@ pub(crate) async fn range_query_scans_store_once_per_matcher_set_not_per_step() 
         async fn cardinality_label_values(&self, t: &str) -> Result<Vec<LabelValueCardinality>> {
             self.inner.cardinality_label_values(t).await
         }
-        async fn cardinality_active_series(&self, t: &str) -> Result<Vec<Labels>> {
+        async fn cardinality_active_series(&self, t: &str) -> Result<Vec<crate::PromqlLabels>> {
             self.inner.cardinality_active_series(t).await
         }
         async fn tsdb_stats(&self, t: &str) -> Result<TsdbStats> {

@@ -23,6 +23,7 @@ Each format has one current version. Writers stamp it. Readers reject a missing,
 | metrics | Prometheus TSDB import publication markers (`uploaded/<ULID>-<hash>/_published`) | empty object; its presence is the state | readers read no `.index` manifest in an import directory without the marker |
 | traces | block metadata, compaction keys, and search index manifests | JSON/key version 1 | exact version; replacement only after output is durable |
 | profiles | block metadata, SymbolDB objects, and lifecycle manifests | protobuf/JSON version 1 | exact version; immutable object keys |
+| profiles | async query generations and expiry fences | JSON `version: 1`, required | exact version and tenant/query identity; immutable conditional creation; expiry fences remain after payload retention cleanup |
 | ruler | rule groups, evaluations, and active-alert tenant state | `krabka-format-version: 1`, required | exact version; validate the whole poll before state mutation |
 | tenant admin | delete requests, deletion markers, overrides, and uploaded debuginfo | JSON/raw version 1 | one current schema; raw uploads are immutable |
 | recovery | backup part manifests (`.krabka-recovery/manifest.json`) | JSON `schema_version` 1 | exact version; a manifest names a tenant, a part, or both; another version is rejected before a copy |

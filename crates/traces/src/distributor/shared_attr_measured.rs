@@ -13,6 +13,9 @@ pub(crate) fn shared_attr_measured(attr: &KeyValue) -> (String, u64) {
         AttrValue::Int(value) => value.to_le_bytes().len(),
         AttrValue::Double(value) => value.to_le_bytes().len(),
         AttrValue::Bool(_) => 1,
+        value @ (AttrValue::Array(_) | AttrValue::Unsupported(_)) => {
+            prost::Message::encoded_len(&value.otlp_value())
+        }
     };
     (attr.key.clone(), value_bytes as u64)
 }

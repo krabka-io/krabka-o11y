@@ -125,6 +125,278 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn query_analysis_measures_complete_blocks_and_separates_selected_series() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let mut api = record_at("t", "api", vec![0], 5, 1_000_000_000);
+        api.samples.push(WalSample {
+            value: 3,
+            ..api.samples[0].clone()
+        });
+        let worker = record_at("t", "worker", vec![0], 7, 1_000_000_000);
+        let later = record_at("t", "later", vec![0], 11, 5_000_000_000);
+        let stranger = record_at("u", "secret", vec![0], 13, 1_000_000_000);
+        let mut index = ProfileIndex::new();
+        let mut planned_bytes = 0;
+        let mut planned_symbols = 0;
+        for (offset, records) in [vec![api.clone(), worker], vec![later], vec![stranger]]
+            .into_iter()
+            .enumerate()
+        {
+            let tenant = &records[0].tenant;
+            let offset = i64::try_from(offset).expect("fixture has three blocks");
+            let metas = build_block(
+                &store,
+                tenant,
+                0,
+                &records,
+                (offset, offset),
+                &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+            )
+            .await
+            .unwrap();
+            for rec in &records {
+                let labels = Labels::from_pairs(rec.labels.iter().cloned());
+                index
+                    .add_series(tenant, labels.fingerprint(), &labels)
+                    .unwrap();
+            }
+            for meta in metas {
+                if offset == 0 {
+                    planned_bytes += store
+                        .head(&Path::from(meta.object_key.clone()))
+                        .await
+                        .unwrap()
+                        .size;
+                    planned_symbols += store
+                        .head(&Path::from(format!("{}.symdb", meta.object_key)))
+                        .await
+                        .unwrap()
+                        .size;
+                }
+                index.add_block(&meta);
+                index.add_profile_block(tenant, &meta.object_key, vec![STACKTRACE_PARTITION]);
+            }
+        }
+        let cold = ColdProfileStore::new(Arc::clone(&store), Arc::new(index));
+        let matching = vec![LabelMatcher::new("service_name", MatchOp::Eq, "api")];
+        let analysis = cold
+            .query_stats("t", PT, &matching, 900, 1100)
+            .await
+            .unwrap();
+        check!(analysis.fingerprints.len() == 1);
+        check!(analysis.block_count == 1);
+        check!(analysis.profile_count == 2);
+        check!(analysis.sample_count == 3);
+        let scope = &analysis.scopes[0];
+        check!(scope.component_type == "Long term storage");
+        check!(scope.component_count == 1);
+        check!(scope.series_count == 2);
+        check!(scope.index_bytes > 0);
+        check!(scope.profile_bytes > 0);
+        check!(scope.index_bytes + scope.profile_bytes == planned_bytes);
+        check!(scope.symbol_bytes == planned_symbols);
+        check!(!analysis.deduplication_needed);
+        let missing = vec![LabelMatcher::new("service_name", MatchOp::Eq, "missing")];
+        let excluded = cold
+            .query_stats("t", PT, &missing, 900, 1100)
+            .await
+            .unwrap();
+        check!(excluded.fingerprints.is_empty());
+        check!(excluded.scopes == analysis.scopes);
+        let out_of_range = cold.query_stats("t", PT, &[], 6000, 7000).await.unwrap();
+        check!(out_of_range.block_count == 0);
+        check!(out_of_range.sample_count == 0);
+        check!(out_of_range.scopes[0].profile_bytes == 0);
+        let empty = cold
+            .query_stats("absent", PT, &[], 0, i64::MAX)
+            .await
+            .unwrap();
+        check!(empty.block_count == 0);
+        let mut hot = krabka_pprof::InMemoryProfileStore::new();
+        hot.push_sample(("t", PT), api.labels.clone(), (0, 0), 5, 1000);
+        let union = krabka_pprof::UnionProfileStore::new(Arc::new(hot), Arc::new(cold));
+        let overlap = union
+            .query_stats("t", PT, &matching, 900, 1100)
+            .await
+            .unwrap();
+        check!(overlap.deduplication_needed);
+        check!(overlap.fingerprints.len() == 1);
+        check!(overlap.scopes.len() == 2);
+        check!(overlap.block_count == 2);
+        check!(overlap.sample_count == 4);
+    }
+
+    #[tokio::test]
+    async fn query_analysis_with_omitted_bounds_returns_empty_for_hot_and_cold_data() {
+        use krabka_observability::server_security::ServerSecurity;
+        use krabka_pprof::{InMemoryProfileStore, UnionProfileStore};
+
+        use crate::query::{QuerierState, serve};
+        let objects: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let mut records = [
+            record_at("t", "shared", vec![0], 5, 1_000_000_000),
+            record_at("t", "cold-only", vec![0], 7, 1_000_000_000),
+            record_at("t", "cold-only", vec![0], 11, 1_000_000_000),
+        ];
+        for (record, id) in records.iter_mut().zip(["shared-cold", "cold-a", "cold-b"]) {
+            record.labels.push(("__profile_id__".into(), id.into()));
+        }
+        let mut index = ProfileIndex::new();
+        for rec in &records {
+            let labels = Labels::from_pairs(rec.labels.iter().cloned());
+            index
+                .add_series("t", labels.fingerprint(), &labels)
+                .unwrap();
+        }
+        for block in build_block(
+            &objects,
+            "t",
+            0,
+            &records,
+            (0, 1),
+            &krabka_blockstore::ObjectStoreMetrics::unregistered(),
+        )
+        .await
+        .unwrap()
+        {
+            index.add_block(&block);
+            index.add_profile_block("t", &block.object_key, vec![STACKTRACE_PARTITION]);
+        }
+        let cold = Arc::new(ColdProfileStore::new(objects, Arc::new(index)));
+        let mut first = InMemoryProfileStore::new();
+        let mut first_shared = records[0].labels.clone();
+        first_shared
+            .iter_mut()
+            .find(|(name, _)| name == "__profile_id__")
+            .unwrap()
+            .1 = "head-a".into();
+        first.push_sample(("t", PT), first_shared, (0, 0), 5, 1000);
+        let hot_labels = vec![
+            ("service_name".into(), "hot-only".into()),
+            (krabka_blockstore::LABEL_PROFILE_TYPE.into(), PT.into()),
+        ];
+        first.push_sample(("t", PT), hot_labels.clone(), (0, 0), 11, 1000);
+        let mut second = InMemoryProfileStore::new();
+        let mut second_shared = records[0].labels.clone();
+        second_shared
+            .iter_mut()
+            .find(|(name, _)| name == "__profile_id__")
+            .unwrap()
+            .1 = "head-b".into();
+        second.push_sample(("t", PT), second_shared, (0, 0), 5, 1000);
+        let mut wall_labels = hot_labels;
+        wall_labels
+            .iter_mut()
+            .find(|(name, _)| name == krabka_blockstore::LABEL_PROFILE_TYPE)
+            .unwrap()
+            .1 = "wall:wall:nanoseconds:wall:nanoseconds".into();
+        second.push_sample(
+            ("t", "wall:wall:nanoseconds:wall:nanoseconds"),
+            wall_labels,
+            (0, 0),
+            13,
+            2000,
+        );
+        second.push_sample(
+            ("u", PT),
+            vec![("service_name".into(), "secret".into())],
+            (0, 0),
+            17,
+            1000,
+        );
+        let heads = Arc::new(UnionProfileStore::new(Arc::new(first), Arc::new(second)));
+        let mixed = Arc::new(UnionProfileStore::new(heads, Arc::clone(&cold)));
+        let state = Arc::new(QuerierState::new(mixed).with_query_analysis_series_enabled(true));
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = stopped.await;
+            },
+        )
+        .await
+        .unwrap();
+        let client = reqwest::Client::new();
+        for (start, end) in [(0, 0), (0, 50), (3000, 0)] {
+            for (tenant, query) in [
+                ("t", "{}"),
+                ("t", "{service_name=\"hot-only\"}"),
+                (
+                    "t",
+                    "process_cpu:cpu:nanoseconds:cpu:nanoseconds{service_name=\"hot-only\"}",
+                ),
+                ("t", "{service_name=\"shared\"}"),
+                ("t", "{__profile_id__=\"head-a\"}"),
+                ("t", "{service_name=\"cold-only\"}"),
+                ("t", "{service_name=\"missing\"}"),
+                ("u", "{service_name=\"secret\"}"),
+                ("u", "{service_name=\"hot-only\"}"),
+                ("absent", "{}"),
+                ("t", "{invalid"),
+            ] {
+                let response: serde_json::Value = client
+                    .post(format!(
+                        "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
+                    ))
+                    .header("x-scope-orgid", tenant)
+                    .json(&serde_json::json!({"query":query,"start":start,"end":end}))
+                    .send()
+                    .await
+                    .unwrap()
+                    .error_for_status()
+                    .unwrap()
+                    .json()
+                    .await
+                    .unwrap();
+                check!(response == serde_json::json!({}));
+            }
+        }
+        let _ = stop.send(());
+        // Verify that the cold backend contains populated metadata and physical rows.
+        check!(cold.series("t", &[], &[], 0, i64::MAX).await.unwrap().len() == 3);
+        let analysis = cold.query_stats("t", "", &[], 900, 1100).await.unwrap();
+        check!(analysis.fingerprints.len() == 2);
+        check!(analysis.profile_count == 3);
+        check!(analysis.sample_count == 3);
+        let flushed = Arc::new(UnionProfileStore::new(
+            Arc::new(InMemoryProfileStore::new()),
+            cold,
+        ));
+        let state = Arc::new(QuerierState::new(flushed).with_query_analysis_series_enabled(true));
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = stopped.await;
+            },
+        )
+        .await
+        .unwrap();
+        for (start, end) in [(0, 0), (0, 2000), (3000, 0)] {
+            let response: serde_json::Value = client
+                .post(format!(
+                    "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
+                ))
+                .header("x-scope-orgid", "t")
+                .json(&serde_json::json!({"query":"{}","start":start,"end":end}))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            check!(response == serde_json::json!({}));
+        }
+        let _ = stop.send(());
+    }
+
+    #[tokio::test]
     async fn a_cached_query_replans_compacted_blocks_and_preserves_missing_data_errors() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let mut index = ProfileIndex::new();
@@ -429,12 +701,6 @@ mod tests {
                     newest_profile_time: Some(5000),
                 }
         );
-
-        let query = cold.query_stats("t", PT, &[], 0, i64::MAX).await.unwrap();
-        check!(query.block_count == 2);
-        check!(query.fingerprints.len() == 2);
-        check!(query.profile_count == 2);
-        check!(query.sample_count == 2);
 
         // A tenant with no blocks reports no data without touching the store.
         let empty = stats_for_unknown_tenant(&cold).await;

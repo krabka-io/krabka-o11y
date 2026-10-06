@@ -15,7 +15,7 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use arrow::{
-    array::{ArrayRef, Float64Array, Int64Array, StringBuilder},
+    array::{ArrayRef, BinaryBuilder, Float64Array, Int64Array},
     datatypes::{DataType, Field, Schema},
     record_batch::RecordBatch,
 };
@@ -25,12 +25,12 @@ use datafusion::{
     logical_expr::{Extension, LogicalPlan, LogicalPlanBuilder},
     prelude::SessionContext,
 };
-use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 use krabka_units::prelude::*;
 
 use super::{LabeledSeries, StepGrid};
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels,
     error::Result,
     extension::{
         instant_manipulate::InstantManipulate, normalize::SeriesNormalize,

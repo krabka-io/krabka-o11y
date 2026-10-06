@@ -1,9 +1,10 @@
 use super::{
-    BackendError, Duration, InternalClient, MetricsJobRequest, MetricsPartial, MetricsResponseJson,
-    QuerierBackend, QuerierScheme, SearchJobRequest, SearchPartial, SearchResponseJson,
-    TENANT_HEADER, TagNamesJobRequest, TagNamesPartial, TagValuesBody, TagValuesJobRequest,
-    TagValuesPartial, TagsBody, TraceByIdJobRequest, TraceByIdResponseJson, TracePartial,
-    async_trait, build_url, error_for_status, ns_to_seconds, push_shard_params, scope_param,
+    BackendError, Duration, InstantMetricsResponseJson, InternalClient, MetricsJobRequest,
+    MetricsPartial, MetricsResponseJson, QuerierBackend, QuerierScheme, SearchJobRequest,
+    SearchPartial, SearchResponseJson, TENANT_HEADER, TagNamesJobRequest, TagNamesPartial,
+    TagValuesBody, TagValuesJobRequest, TagValuesPartial, TagsBody, TraceByIdJobRequest,
+    TraceByIdResponseJson, TracePartial, async_trait, build_url, error_for_status, ns_to_seconds,
+    push_shard_params, scope_param,
 };
 
 /// The HTTP transport to one querier at a time.
@@ -210,8 +211,8 @@ impl QuerierBackend for HttpQuerier {
         );
         let mut params: Vec<(&str, String)> = vec![
             ("q", req.query.clone()),
-            ("start", ns_to_seconds(req.start_ns)),
-            ("end", ns_to_seconds(req.end_ns)),
+            ("start", metric_timestamp(req.start_ns, req.instant)),
+            ("end", metric_timestamp(req.end_ns, req.instant)),
         ];
         if !req.instant {
             params.push(("step", ns_to_seconds(req.step_ns)));
@@ -225,6 +226,14 @@ impl QuerierBackend for HttpQuerier {
             .await
             .map_err(|e| Self::map_send_err(&e))?;
         let resp = error_for_status(resp).await?;
+        if req.instant {
+            let response: InstantMetricsResponseJson = resp.json().await.map_err(|e| {
+                BackendError::Transport(format!("decode instant metrics body: {e}"))
+            })?;
+            return response
+                .into_partial(req.end_ns)
+                .map_err(BackendError::Transport);
+        }
         let response: MetricsResponseJson = resp
             .json()
             .await
@@ -233,5 +242,42 @@ impl QuerierBackend for HttpQuerier {
             response,
             metrics: crate::frontend::wire::Metrics::default(),
         })
+    }
+}
+
+// Tempo's internal instant request builder sends integer nanoseconds. Keep
+// historical short timestamps unambiguous under its <=10-digit seconds rule.
+fn metric_timestamp(nanos: i64, instant: bool) -> String {
+    let integer = nanos.to_string();
+    if instant && integer.len() > 10 {
+        integer
+    } else {
+        ns_to_seconds(nanos)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use assert2::assert;
+
+    use super::metric_timestamp;
+
+    #[test]
+    fn instant_transport_preserves_modern_nanoseconds_and_historical_bounds() {
+        let start = 1_700_000_000_123_000_001;
+        let end = 1_700_000_001_987_654_321;
+        let uri = format!(
+            "/api/metrics/query?start={}&end={}",
+            metric_timestamp(start, true),
+            metric_timestamp(end, true)
+        )
+        .parse()
+        .unwrap();
+        assert!(
+            crate::querier::http::instant_metric_bounds(&uri) == Ok((start, end, end - start, end))
+        );
+        assert!(metric_timestamp(start, false) == "1700000000.123000001");
+        assert!(metric_timestamp(1_000_000_000, true) == "1");
+        assert!(metric_timestamp(-500_000_000, true) == "-0.5");
     }
 }

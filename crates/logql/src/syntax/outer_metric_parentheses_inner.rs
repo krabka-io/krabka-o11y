@@ -1,4 +1,10 @@
 pub(crate) fn outer_metric_parentheses_inner(input: &str) -> Option<&str> {
+    split_metric_parentheses(input)
+        .filter(|(_, rest)| rest.is_empty())
+        .map(|(inner, _)| inner)
+}
+
+pub(crate) fn split_metric_parentheses(input: &str) -> Option<(&str, &str)> {
     let mut chars = input.char_indices();
     if chars.next()?.1 != '(' {
         return None;
@@ -26,10 +32,7 @@ pub(crate) fn outer_metric_parentheses_inner(input: &str) -> Option<&str> {
                 depth = depth.checked_sub(1)?;
                 if matches!(depth, 0) {
                     let close_end = index.saturating_add(ch.len_utf8());
-                    if matches!(close_end.cmp(&input.len()), std::cmp::Ordering::Equal) {
-                        return Some(&input[1..index]);
-                    }
-                    return None;
+                    return Some((&input[1..index], &input[close_end..]));
                 }
             }
             _ => {}

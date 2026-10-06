@@ -6,7 +6,7 @@ use std::{
 };
 
 use datafusion::prelude::SessionContext;
-use krabka_blockstore::{LabelMatcher, Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::{float_sample_schema, native_histogram_schema};
 
 use self::{
@@ -15,7 +15,8 @@ use self::{
 };
 use crate::{
     ExemplarScan, LabelNameCardinality, LabelValueCardinality, MetadataRecord, MetadataScan,
-    MetricStore, PromqlError, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
+    MetricStore, PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher, ScanResult,
+    TsdbBlock, TsdbHeadStats, TsdbStats,
 };
 
 mod instant_scan;
@@ -136,7 +137,7 @@ where
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<String>, PromqlError> {
+    ) -> Result<Vec<krabka_metrics::MetricString>, PromqlError> {
         let mut values = BTreeSet::new();
         values.extend(
             self.cold
@@ -268,7 +269,8 @@ where
         tenant: &str,
     ) -> Result<Vec<LabelValueCardinality>, PromqlError> {
         let series = self.cardinality_active_series(tenant).await?;
-        let mut by_value = BTreeMap::<(String, String), BTreeSet<SeriesFingerprint>>::new();
+        let mut by_value =
+            BTreeMap::<(String, crate::PromqlString), BTreeSet<SeriesFingerprint>>::new();
         for labels in series {
             let fp = labels.fingerprint();
             for (name, value) in labels.iter() {

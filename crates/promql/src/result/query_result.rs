@@ -3,10 +3,16 @@ use super::{InstantSample, RangeSeries};
 /// A `PromQL` evaluation result.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum QueryResult {
-    Scalar { ts_ms: i64, value: f64 },
+    Scalar {
+        ts_ms: i64,
+        value: f64,
+    },
     InstantVector(Vec<InstantSample>),
     RangeMatrix(Vec<RangeSeries>),
-    Str { ts_ms: i64, value: String },
+    Str {
+        ts_ms: i64,
+        value: crate::PromqlString,
+    },
 }
 
 impl QueryResult {

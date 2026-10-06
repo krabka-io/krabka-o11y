@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 pub struct SyntheticSeries {
-    pub labels: Vec<(&'static str, &'static str)>,
+    pub labels: Vec<(Vec<u8>, Vec<u8>)>,
     pub chunks: Vec<SyntheticChunk>,
 }
 
@@ -85,12 +85,12 @@ fn write_index(series: &[SyntheticSeries], chunk_refs: &[Vec<u64>]) -> Vec<u8> {
             entry
                 .labels
                 .iter()
-                .flat_map(|(name, value)| [*name, *value])
+                .flat_map(|(name, value)| [name.as_slice(), value.as_slice()])
         })
         .collect::<Vec<_>>();
     symbols.sort_unstable();
     symbols.dedup();
-    let symbol_ref = |symbol: &str| {
+    let symbol_ref = |symbol: &[u8]| {
         u64::try_from(
             symbols
                 .binary_search(&symbol)
@@ -111,26 +111,29 @@ fn write_index(series: &[SyntheticSeries], chunk_refs: &[Vec<u64>]) -> Vec<u8> {
             &mut content,
             u64::try_from(symbol.len()).expect("symbol length"),
         );
-        content.extend_from_slice(symbol.as_bytes());
+        content.extend_from_slice(symbol);
     }
     put_section(&mut index, &content);
 
     align(&mut index, 16);
     let series_offset = offset(&index);
-    let mut postings = BTreeMap::<(&str, &str), Vec<u32>>::new();
+    let mut postings = BTreeMap::<(&[u8], &[u8]), Vec<u32>>::new();
     for (entry, refs) in series.iter().zip(chunk_refs) {
         align(&mut index, 16);
         let reference = u32::try_from(index.len() / 16).expect("series reference fits u32");
-        postings.entry(("", "")).or_default().push(reference);
+        postings.entry((b"", b"")).or_default().push(reference);
         let mut content = Vec::new();
         put_uvarint(
             &mut content,
             u64::try_from(entry.labels.len()).expect("label count"),
         );
         for (name, value) in &entry.labels {
-            postings.entry((name, value)).or_default().push(reference);
-            put_uvarint(&mut content, symbol_ref(name));
-            put_uvarint(&mut content, symbol_ref(value));
+            postings
+                .entry((name.as_slice(), value.as_slice()))
+                .or_default()
+                .push(reference);
+            put_uvarint(&mut content, symbol_ref(name.as_slice()));
+            put_uvarint(&mut content, symbol_ref(value.as_slice()));
         }
         put_uvarint(
             &mut content,
@@ -186,7 +189,7 @@ fn write_index(series: &[SyntheticSeries], chunk_refs: &[Vec<u64>]) -> Vec<u8> {
         put_uvarint(&mut table, 2);
         for part in [name, value] {
             put_uvarint(&mut table, u64::try_from(part.len()).expect("label length"));
-            table.extend_from_slice(part.as_bytes());
+            table.extend_from_slice(part);
         }
         put_uvarint(&mut table, offset(&index));
         let mut list = u32::try_from(refs.len())

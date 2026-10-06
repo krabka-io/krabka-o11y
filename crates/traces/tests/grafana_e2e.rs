@@ -830,12 +830,33 @@ fn input_span(span: Span) -> InputSpan {
 }
 
 fn traceql_attr(value: AttrValue) -> Option<TraceqlAttrValue> {
+    if let AttrValue::Array(values) = &value
+        && values.iter().any(|element| {
+            matches!(
+                element,
+                AttrValue::Array(_) | AttrValue::Bytes(_) | AttrValue::Unsupported(_)
+            ) || values.first().is_some_and(|first| {
+                std::mem::discriminant(first) != std::mem::discriminant(element)
+            })
+        })
+    {
+        return Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()));
+    }
     match value {
+        AttrValue::Unsupported(value) => Some(TraceqlAttrValue::Unsupported(value)),
+        AttrValue::Array(values) => Some(TraceqlAttrValue::Array(
+            values
+                .into_iter()
+                .map(traceql_attr)
+                .collect::<Option<Vec<_>>>()?,
+        )),
         AttrValue::Str(value) => Some(TraceqlAttrValue::Str(value)),
         AttrValue::Int(value) => Some(TraceqlAttrValue::Int(value)),
         AttrValue::Double(value) => Some(TraceqlAttrValue::Float(value)),
         AttrValue::Bool(value) => Some(TraceqlAttrValue::Bool(value)),
-        AttrValue::Bytes(_) => None,
+        value @ AttrValue::Bytes(_) => {
+            Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()))
+        }
     }
 }
 
@@ -1631,29 +1652,21 @@ async fn grafana_e2e_metrics(
             .all(|series| series["exemplars"].as_array().is_some_and(Vec::is_empty))
     );
 
-    // E22 — instant metrics via `time` (each series collapsed to one point).
+    // E22 — Tempo ignores `time`: the default last hour contains all four
+    // spans of TRACE_A. InstantSeries exposes a scalar, without a timestamp.
     let iq = enc("{ resource.service.name = \"checkout-frontend\" } | count_over_time()");
     let metrics = get_json(
         &client,
         &proxy(&format!("api/metrics/query?q={iq}&time={now_secs}")),
     )
     .await?;
-    assert2::assert!(
-        metrics["series"]
-            .as_array()
-            .is_some_and(|series| !series.is_empty())
-    );
-    assert2::assert!(
-        metrics["series"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .all(|series| series["samples"]
-                .as_array()
-                .is_some_and(|samples| samples.len() == 1))
-    );
+    let expected = json!({"series": [{
+        "labels": [{"key": "__name__", "value": {"stringValue": "count_over_time"}}],
+        "value": 4.0
+    }], "metrics": {"completedJobs": 1, "totalJobs": 1}});
+    assert2::assert!(metrics == expected);
 
-    // E23 — instant metrics via start/end bounds (single sample at `end`).
+    // E23 — explicit bounds retain the same four-span scalar ledger.
     let metrics = get_json(
         &client,
         &proxy(&format!(
@@ -1661,18 +1674,7 @@ async fn grafana_e2e_metrics(
         )),
     )
     .await?;
-    let expected_end_ms = (now_secs * 1_000).to_string();
-    let single_sample_at_end = metrics["series"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .all(|series| {
-            series["samples"].as_array().is_some_and(|samples| {
-                samples.len() == 1
-                    && samples[0]["timestampMs"].as_str() == Some(expected_end_ms.as_str())
-            })
-        });
-    assert2::assert!(single_sample_at_end);
+    assert2::assert!(metrics == expected);
 
     // E24 — q-derived tag discovery (matching_traces -> scoped_tags_from_traces),
     // distinct from the global-index path in E13/E18.

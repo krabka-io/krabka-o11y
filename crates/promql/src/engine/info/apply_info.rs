@@ -33,7 +33,7 @@ pub(crate) fn apply_info(
                         continue;
                     }
                     if enrichment
-                        .get(name)
+                        .get_value(name)
                         .is_some_and(|previous| previous != value)
                     {
                         return Err(PromqlError::Exec(format!("conflicting label: {name}")));

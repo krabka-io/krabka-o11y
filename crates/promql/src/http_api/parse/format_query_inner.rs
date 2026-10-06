@@ -1,10 +1,8 @@
-use super::{
-    ApiError, IntoResponse, ParseQueryParams, Response, parse_promql, success_data_response,
-};
+use super::{ApiError, IntoResponse, ParseQueryParams, Response, success_data_response};
 
 pub(crate) fn format_query_inner(params: &ParseQueryParams) -> Response {
-    match parse_promql(&params.query) {
-        Ok(expr) => success_data_response(expr.to_string()),
+    match crate::format_promql_query(&params.query) {
+        Ok(formatted) => success_data_response(formatted),
         Err(error) => ApiError::from(error).into_response(),
     }
 }

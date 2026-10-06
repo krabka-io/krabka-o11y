@@ -3,6 +3,9 @@ use super::LogqlExpr;
 pub(crate) fn logql_expression_contains_label_join(expression: &LogqlExpr) -> bool {
     match expression {
         LogqlExpr::LabelJoin { .. } => true,
+        LogqlExpr::Variants { variants, .. } => {
+            variants.iter().any(logql_expression_contains_label_join)
+        }
         LogqlExpr::Aggregation {
             expr: expression, ..
         }

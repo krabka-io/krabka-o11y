@@ -65,7 +65,11 @@ pub(crate) async fn execute_http_query_for_tenant_inner(
         ));
     }
     let expression = parse_logql_expr(&params.query).map_err(|source| {
-        if source.to_string().contains("range aggregation") {
+        if let krabka_logql::ParseError::Syntax { message, .. } = &source
+            && message.starts_with("invalid parameter (must be greater than 0) approx_topk(")
+        {
+            HttpQueryError::LokiPlainParse(format!("parse error : {message}"))
+        } else if source.to_string().contains("range aggregation") {
             HttpQueryError::LokiPlainParse(
                 "parse error at line 1, col 1: syntax error: unexpected IDENTIFIER".to_string(),
             )

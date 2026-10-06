@@ -111,7 +111,7 @@ impl Signal for MetricsSignal {
                 ("series", series.to_string()),
             ]);
             let fingerprint = labels.fingerprint();
-            series_labels.insert(fingerprint, labels);
+            series_labels.insert(fingerprint, labels.into());
             for point in 0..batch.samples {
                 let value = mix(self.seed, batch.seq, series, point) % 1_000;
                 float_rows.push(FloatRow {

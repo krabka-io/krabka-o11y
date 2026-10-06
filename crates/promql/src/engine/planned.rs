@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
 
 use datafusion::{logical_expr::LogicalPlan, prelude::SessionContext};
-use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 
-use crate::result::{InstantSample, RangeSeries};
+use crate::{
+    PromqlLabels as Labels,
+    result::{InstantSample, RangeSeries},
+};
 
 mod instant_shape;
 mod operator_instant;

@@ -30,7 +30,7 @@ async fn tail_endpoint_does_not_resend_records_after_an_idle_poll() {
     let frame_of = |timestamp: &str, line: &str| {
         json!({
             "streams": [{
-                "stream": {"app": "api", "detected_level": "unknown", "env": "prod"},
+                "stream": {"app": "api", "env": "prod"},
                 "values": [[timestamp, line]]
             }],
         })
@@ -129,7 +129,7 @@ async fn tail_endpoint_streams_hot_wal_tail_over_websocket() {
                     {
                         "stream": {
                             "app": "api",
-                            "detected_level": "unknown",
+
                             "env": "prod"
                         },
                         "values": [
@@ -181,7 +181,7 @@ async fn tail_endpoint_streams_hot_wal_tail_over_websocket() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -238,7 +238,7 @@ async fn tail_endpoint_applies_limit_to_hot_wal_tail_frame() {
                     {
                         "stream": {
                             "app": "api",
-                            "detected_level": "unknown",
+
                             "env": "prod"
                         },
                         "values": [

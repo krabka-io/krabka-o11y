@@ -35,8 +35,7 @@ rules:
     check!(appended == 2);
     check!(records.len() == 2);
     check!(
-        records.iter().all(
-            |record| record.labels[0] == ("__name__".to_string(), "job:up:current".to_string())
-        )
+        records.iter().all(|record| record.labels[0]
+            == ("__name__".to_string(), "job:up:current".to_string().into()))
     );
 }

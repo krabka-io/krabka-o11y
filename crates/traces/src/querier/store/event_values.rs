@@ -41,8 +41,60 @@ pub(crate) fn event_values(batch: &RecordBatch, row: usize) -> Result<Vec<EventR
         out.push(EventRef {
             time_since_start,
             name,
-            attributes: nested_string_attrs(attr_keys, attr_values, idx)?,
+            attributes: nested_typed_attrs(row_events, idx)?.unwrap_or(nested_string_attrs(
+                attr_keys,
+                attr_values,
+                idx,
+            )?),
         });
     }
     Ok(out)
+}
+
+pub(super) fn nested_typed_attrs(
+    structs: &StructArray,
+    row: usize,
+) -> Result<Option<Vec<(String, super::AttrValue)>>, TraceqlError> {
+    let Some(payload) = structs.column_by_name("attr_typed") else {
+        return Ok(None);
+    };
+    if payload.is_null(row) {
+        return Ok(None);
+    }
+    let payload = string_array_value(payload.as_ref(), row)?;
+    let attrs: Vec<krabka_blockstore::SpanAttr> =
+        serde_json::from_str(&payload).map_err(|error| {
+            TraceqlError::Store(format!("invalid typed nested attributes: {error}"))
+        })?;
+    Ok(Some(
+        attrs
+            .into_iter()
+            .flat_map(|attr| {
+                use krabka_blockstore::AttrValue as BlockValue;
+
+                use super::AttrValue;
+                let values = match attr.value {
+                    BlockValue::Unsupported(value) => {
+                        return vec![(attr.key, super::AttrValue::Unsupported(value))];
+                    }
+                    BlockValue::Str(values) => {
+                        values.into_iter().map(AttrValue::Str).collect::<Vec<_>>()
+                    }
+                    BlockValue::Int(values) => values.into_iter().map(AttrValue::Int).collect(),
+                    BlockValue::Double(values) => {
+                        values.into_iter().map(AttrValue::Float).collect()
+                    }
+                    BlockValue::Bool(values) => values.into_iter().map(AttrValue::Bool).collect(),
+                };
+                if attr.is_array {
+                    vec![(attr.key, AttrValue::Array(values))]
+                } else {
+                    values
+                        .into_iter()
+                        .map(|value| (attr.key.clone(), value))
+                        .collect()
+                }
+            })
+            .collect(),
+    ))
 }

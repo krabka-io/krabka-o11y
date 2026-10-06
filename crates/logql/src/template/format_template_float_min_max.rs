@@ -4,11 +4,15 @@ pub(crate) fn format_template_float_min_max(
     args: &[String],
     op: impl Fn(f64, f64) -> f64,
 ) -> String {
-    let Some(values) = template_float_args(args) else {
-        return String::new();
-    };
+    let values = template_float_args(args);
     values
         .into_iter()
-        .reduce(op)
+        .reduce(|left, right| {
+            if left.is_nan() || right.is_nan() {
+                f64::NAN
+            } else {
+                op(left, right)
+            }
+        })
         .map_or_else(String::new, format_template_float)
 }

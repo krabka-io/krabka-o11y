@@ -16,8 +16,12 @@ pub(crate) fn assemble_compare_response(
     if range.scan_end < range.scan_start {
         return Err(TraceqlError::Plan("metrics end must be >= start".into()));
     }
-    let bucket_count = usize::try_from((range.scan_end.0 - range.scan_start.0) / range.step.0 + 1)
-        .map_err(|e| TraceqlError::Plan(e.to_string()))?;
+    let bucket_count = if range.instant {
+        1
+    } else {
+        usize::try_from((range.scan_end.0 - range.scan_start.0) / range.step.0 + 1)
+            .map_err(|e| TraceqlError::Plan(e.to_string()))?
+    };
 
     let (counts, totals) = accumulate_compare_counts(
         batches,

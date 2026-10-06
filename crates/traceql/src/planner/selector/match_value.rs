@@ -2,6 +2,7 @@ use super::{MatchValue, Value};
 
 pub(crate) fn match_value(value: &Value) -> MatchValue {
     match value {
+        Value::Array(_) => unreachable!("parser does not produce array literals"),
         Value::Str(v) => MatchValue::Str(v.clone()),
         Value::Int(v) | Value::Duration(v) => MatchValue::Int(*v),
         Value::Float(v) => MatchValue::Float(*v),

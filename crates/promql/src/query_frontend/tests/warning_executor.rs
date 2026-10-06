@@ -30,7 +30,7 @@ impl RangeQueryExecutor for WarningExecutor {
             result: QueryResult::RangeMatrix(vec![RangeSeries {
                 drop_name: false,
                 start_timestamps_ms: std::collections::BTreeMap::new(),
-                labels: labels(&[("__name__", "up"), ("job", "api")]),
+                labels: labels(&[("__name__", "up"), ("job", "api")]).into(),
                 samples: vec![(query.start_ms, SampleValue::Float(1.0))],
             }]),
             annotations,

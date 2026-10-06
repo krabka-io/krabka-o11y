@@ -18,8 +18,12 @@ pub(crate) fn compare_label_values(
     order: SortOrder,
 ) -> Ordering {
     for label_name in label_names {
-        let left = left.get(label_name.as_str()).unwrap_or("");
-        let right = right.get(label_name.as_str()).unwrap_or("");
+        let left = left
+            .get_value(label_name.as_str())
+            .map_or(&[][..], crate::PromqlString::as_bytes);
+        let right = right
+            .get_value(label_name.as_str())
+            .map_or(&[][..], crate::PromqlString::as_bytes);
         if left == right {
             continue;
         }

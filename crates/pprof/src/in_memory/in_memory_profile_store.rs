@@ -1,7 +1,7 @@
 use super::{
     Arc, BTreeSet, HashMap, LabelMatcher, MemTable, ProfileError, ProfileScan, ProfileStats,
     ProfileStore, SampleRow, SymbolDb, compile_matchers, encode_rows, fingerprint_labels,
-    profile_samples_schema, row_matches,
+    profile_samples_schema, queried_series_fingerprint, row_matches,
 };
 
 /// In-memory `ProfileStore` used by engine tests.
@@ -184,19 +184,60 @@ impl ProfileStore for InMemoryProfileStore {
         if !bounds.is_some_and(|(oldest, newest)| start_ms <= newest && end_ms >= oldest) {
             return Ok(crate::ProfileQueryStats::default());
         }
-        let rows = self
-            .rows_in_range(tenant, i64::MIN, i64::MAX)
-            .filter(|row| row.profile_type == profile_type)
-            .filter(|row| row_matches(row, &compiled));
         let mut stats = crate::ProfileQueryStats::default();
         let mut profiles = BTreeSet::new();
-        for row in rows {
-            stats.fingerprints.insert(row.fingerprint);
-            profiles.insert((row.fingerprint, row.timestamp_ms));
-            stats.sample_count = stats.sample_count.saturating_add(1);
+        let mut physical_series = BTreeSet::new();
+        let rows: Vec<_> = self.rows_in_range(tenant, i64::MIN, i64::MAX).collect();
+        for row in &rows {
+            physical_series.insert(row.fingerprint);
+            profiles.insert((row.fingerprint, row.profile_type.as_str(), row.timestamp_ms));
+            if (profile_type.is_empty() || row.profile_type == profile_type)
+                && row_matches(row, &compiled)
+            {
+                stats
+                    .fingerprints
+                    .insert(queried_series_fingerprint(&row.labels));
+            }
         }
+        stats.profiles = profiles
+            .iter()
+            .map(|(fp, ty, ts)| (*fp, (*ty).to_string(), *ts))
+            .collect();
         stats.profile_count = profiles.len() as u64;
-        stats.block_count = u64::from(stats.sample_count > 0);
+        stats.sample_count = rows.len() as u64;
+        stats.block_count = u64::from(!rows.is_empty());
+        // Measure the retained row, label and association buffers, rather than
+        // a newly materialized query batch. Allocator metadata and HashMap
+        // bucket overhead are excluded from these backend payload counts.
+        let retained = self.samples.get(tenant).map_or(&[][..], Vec::as_slice);
+        let mut profile_bytes = self
+            .samples
+            .get(tenant)
+            .map_or(0, |rows| rows.capacity() * std::mem::size_of::<SampleRow>());
+        let mut index_bytes = 0;
+        for row in retained {
+            profile_bytes += row.profile_type.capacity();
+            profile_bytes += row.trace_id.as_ref().map_or(0, Vec::capacity);
+            profile_bytes += row.wal_sample_ids.capacity() * std::mem::size_of::<Vec<u8>>();
+            profile_bytes += row.wal_sample_ids.iter().map(Vec::capacity).sum::<usize>();
+            index_bytes += row.labels.capacity() * std::mem::size_of::<(String, String)>();
+            index_bytes += row
+                .labels
+                .iter()
+                .map(|(name, value)| name.capacity() + value.capacity())
+                .sum::<usize>();
+        }
+        stats.scopes.push(crate::ProfileQueryScope {
+            component_type: "Short term storage",
+            component_count: u64::from(stats.block_count > 0),
+            block_count: stats.block_count,
+            series_count: physical_series.len() as u64,
+            profile_count: stats.profile_count,
+            sample_count: stats.sample_count,
+            index_bytes: index_bytes as u64,
+            profile_bytes: profile_bytes as u64,
+            symbol_bytes: self.symbols.payload_memory_bytes() as u64,
+        });
         Ok(stats)
     }
 

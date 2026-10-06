@@ -31,7 +31,8 @@ pub(crate) fn find_template_control_action(
         match template_control_action(expression) {
             TemplateControlAction::If
             | TemplateControlAction::Range
-            | TemplateControlAction::With => {
+            | TemplateControlAction::With
+            | TemplateControlAction::Definition => {
                 nested_controls.push(());
             }
             TemplateControlAction::End => {

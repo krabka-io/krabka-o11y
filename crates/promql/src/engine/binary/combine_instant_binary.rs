@@ -43,6 +43,12 @@ pub(crate) fn combine_instant_binary(
     let op = BinaryOp::try_from_token(binary.op)?;
     match (lhs, rhs) {
         (InstantValue::Scalar(left), InstantValue::Scalar(right)) => {
+            if matches!(op, BinaryOp::TrimUpper | BinaryOp::TrimLower) {
+                return Err(PromqlError::Exec(format!(
+                    "operator {:?} not allowed for Scalar operations",
+                    op.symbol()
+                )));
+            }
             let Some(value) = op.apply_scalar(left, right, modifier) else {
                 return Err(PromqlError::Plan(
                     "scalar comparison without bool cannot filter a scalar".to_string(),

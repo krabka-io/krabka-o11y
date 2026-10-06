@@ -300,7 +300,7 @@ pub(crate) use self::{
             validate_loki_line_size,
         },
         otlp_normalization::{
-            detect_log_level, discover_detected_level_label, discover_service_name_label,
+            discover_detected_level_label, discover_service_name_label,
             loki_missing_proto_timestamp_error, loki_proto_label_pairs_to_labels,
             loki_proto_timestamp_ns, loki_stale_sample_label_set, normalize_otlp_proto_logs,
             normalize_otlp_proto_logs_for_tenant, otlp_attributes_to_labels,
@@ -434,8 +434,7 @@ pub(crate) use self::{
                 QueryRow, append_matching_hot_log_record, append_matching_hot_metric_record,
                 append_matching_metric_row, apply_distinct_to_streams, is_deleted_log_entry,
                 matching_loki_stream_entry, parse_decimal_sample_literal,
-                parse_metric_sample_value, should_insert_unknown_detected_level,
-                sort_loki_stream_values, structured_metadata_value,
+                parse_metric_sample_value, sort_loki_stream_values, structured_metadata_value,
             },
             sample_windows::{
                 FormattedMetricSeries, METRIC_DECIMAL_SCALE, MetricSamples, MetricValue,

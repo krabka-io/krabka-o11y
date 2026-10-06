@@ -1,6 +1,6 @@
 use super::{
     Arc, DataType, Field, Fields, FixedSizeBinaryBuilder, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE,
-    StructBuilder, new_str_list, new_str_list_list,
+    StringBuilder, StructBuilder, new_str_list, new_str_list_list,
 };
 
 pub(crate) fn new_link_struct_builder() -> StructBuilder {
@@ -22,12 +22,14 @@ pub(crate) fn new_link_struct_builder() -> StructBuilder {
                 ))),
                 true,
             ),
+            Field::new("attr_typed", DataType::Utf8, true),
         ]),
         vec![
             Box::new(FixedSizeBinaryBuilder::new(16)),
             Box::new(FixedSizeBinaryBuilder::new(8)),
             Box::new(new_str_list()),
             Box::new(new_str_list_list()),
+            Box::new(StringBuilder::new()),
         ],
     )
 }

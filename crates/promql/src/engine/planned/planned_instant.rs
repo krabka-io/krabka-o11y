@@ -35,7 +35,10 @@ pub(crate) enum PlannedInstant {
     /// variant. The assembler turns it into a `QueryResult::Str` verbatim, and
     /// there is no operator plan to execute. The value mirrors exactly what the
     /// interpreter returns for the same literal.
-    PrecomputedString { ts_ms: i64, value: String },
+    PrecomputedString {
+        ts_ms: i64,
+        value: crate::PromqlString,
+    },
     /// A fully-materialized range vector, also called a range matrix. A top-level
     /// raw matrix selector or subquery carries this variant, and its
     /// `query_instant` result is a `QueryResult::RangeMatrix`. The interpreter's

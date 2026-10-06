@@ -15,11 +15,20 @@ pub(crate) fn metric_numeric_value(
     field: &Field,
 ) -> Result<Option<f64>> {
     let values = super::compare_row(batch, row, super::UnixNano(0))?;
-    if let Some(value) = super::compare_row_attr_values(&values, &field.scope, &field.key).first() {
+    let raw = super::compare_row_attr_values(&values, &field.scope, &field.key);
+    // Tempo's Static.Float returns NaN for arrays: none of their elements is
+    // admitted as a scalar numeric observation.
+    if raw.len() > 1 {
+        return Ok(None);
+    }
+    if let Some(value) = raw.first() {
         let value = match value {
             super::AttrValue::Int(value) => f64_from_i64(*value),
             super::AttrValue::Float(value) => *value,
-            super::AttrValue::Bool(_) | super::AttrValue::Str(_) => return Ok(None),
+            super::AttrValue::Unsupported(_)
+            | super::AttrValue::Array(_)
+            | super::AttrValue::Bool(_)
+            | super::AttrValue::Str(_) => return Ok(None),
         };
         return Ok((!value.is_nan()).then_some(value));
     }

@@ -50,3 +50,62 @@ pub(crate) fn the_scalar_limit_flags_become_the_provider_defaults() {
         "a flag the file does not name still applies"
     );
 }
+
+/// Detector settings are values, including explicit false and signed unlimited
+/// depth; treating discovery as a presence-only CLI switch would lose false.
+#[test]
+fn log_level_detection_flags_keep_source_defaults_and_signed_depth() {
+    use clap::Parser as _;
+
+    let defaults =
+        ServiceConfig::try_parse_from(["krabka-observability", "--target", "distributor"])
+            .expect("default flags parse");
+    let source_fields = [
+        "level",
+        "LEVEL",
+        "Level",
+        "log.level",
+        "severity",
+        "SEVERITY",
+        "Severity",
+        "SeverityText",
+        "lvl",
+        "LVL",
+        "Lvl",
+        "severity_text",
+        "Severity_Text",
+        "SEVERITY_TEXT",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect::<Vec<_>>();
+    check!(
+        (
+            defaults.discover_log_levels,
+            &defaults.log_level_fields,
+            defaults.log_level_from_json_max_depth
+        ) == (true, &source_fields, 2)
+    );
+    check!(limits_for_config(&defaults) == Limits::default());
+    for depth in ["-1", "0", "4"] {
+        let config = ServiceConfig::try_parse_from([
+            "krabka-observability",
+            "--target",
+            "distributor",
+            "--discover-log-levels=false",
+            "--log-level-fields=priority,SeverityText",
+            "--log-level-from-json-max-depth",
+            depth,
+        ])
+        .expect("detector flags parse");
+        check!(
+            limits_for_config(&config)
+                == Limits {
+                    discover_log_levels: false,
+                    log_level_fields: vec!["priority".into(), "SeverityText".into()],
+                    log_level_from_json_max_depth: depth.parse().unwrap(),
+                    ..Limits::default()
+                }
+        );
+    }
+}

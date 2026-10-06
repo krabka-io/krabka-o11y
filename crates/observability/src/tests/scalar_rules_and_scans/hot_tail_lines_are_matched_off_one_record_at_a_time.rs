@@ -9,10 +9,9 @@ use super::*;
 /// That counting-down is the whole design, and one record with one line
 /// cannot show it -- a plain membership test would agree.
 ///
-/// The key is built from the QUERY's output labels rather than the
-/// record's raw ones, which is why the response streams here carry a
-/// `detected_level` the records do not: the query synthesises it, so a
-/// response without it matches nothing at all.
+/// The key uses the query's output labels. Plain stored records contribute
+/// only their existing labels; the later parser/format pipeline changes both
+/// labels and line before matching them against the independent response.
 #[test]
 pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
     use krabka_logql::StreamPlan;
@@ -37,7 +36,7 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
     let response = |entries: &[(i64, &str)]| {
         serde_json::json!({
             "data": {"result": [{
-                "stream": {"app": "api", "detected_level": "unknown"},
+                "stream": {"app": "api"},
                 "values": entries
                     .iter()
                     .map(|(ts, line)| serde_json::json!([ts.to_string(), line]))
@@ -52,6 +51,11 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
 
     // One record, one matching line.
     check!(counted(&response(&[(10, "a")]), &[record("tenant", 10, "a")]) == 1);
+
+    // Querying a stored row with no discovery metadata cannot synthesize it.
+    let mut invented_level = response(&[(10, "a")]);
+    invented_level["data"]["result"][0]["stream"]["detected_level"] = "unknown".into();
+    check!(counted(&invented_level, &[record("tenant", 10, "a")]) == 0);
 
     // A line the hot tail does not hold came from the blocks.
     check!(counted(&response(&[(10, "b")]), &[record("tenant", 10, "a")]) == 0);
@@ -115,7 +119,7 @@ pub(crate) fn hot_tail_lines_are_matched_off_one_record_at_a_time() {
         ..plan.clone()
     };
     let pipeline_response = serde_json::json!({"data": {"result": [{
-        "stream": {"app": "hello", "message": "hello", "detected_level": "unknown"},
+        "stream": {"app": "hello", "message": "hello"},
         "values": [["10", "hello"], ["10", "hello"]],
     }]}});
     check!(

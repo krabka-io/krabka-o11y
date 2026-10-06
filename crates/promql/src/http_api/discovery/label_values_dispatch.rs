@@ -54,5 +54,10 @@ pub(crate) async fn label_values_dispatch<S: MetricStore>(
         return error.into_response();
     }
     apply_limit(&mut values, params.limit);
-    success_data_response(values)
+    success_data_response(
+        values
+            .into_iter()
+            .map(|value| value.as_str().to_owned())
+            .collect::<Vec<_>>(),
+    )
 }

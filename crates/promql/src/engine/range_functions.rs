@@ -1,4 +1,3 @@
-use krabka_blockstore::Labels;
 use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
 use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
@@ -20,6 +19,7 @@ use super::{
 #[cfg(feature = "experimental-functions")]
 use crate::error::{PromqlError, Result};
 use crate::{
+    PromqlLabels as Labels,
     planner::ExtendedSelectorModifier,
     result::{InstantSample, RangeSeries, SampleValue},
 };

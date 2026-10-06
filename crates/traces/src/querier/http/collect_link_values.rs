@@ -19,7 +19,7 @@ pub(crate) fn collect_link_values(
             link.attributes
                 .iter()
                 .filter(|(key, _)| nested_attribute_key_matches(key, tag, "link."))
-                .map(|(_, value)| typed_value_parts(value)),
+                .flat_map(|(_, value)| typed_value_parts(value)),
         );
     }
 }

@@ -437,9 +437,8 @@ fn run_query(case: &Case, query: &str) -> Value {
 
 /// Reshapes a Loki `streams` response into the oracle's shape.
 ///
-/// `detected_level` is dropped here and checked on its own, by
-/// [`every_returned_stream_carries_the_unknown_detected_level`], so that a
-/// change to the synthetic label does not read as a change to the rows.
+/// Labels are compared in full: these fixtures write blocks directly, so no
+/// distributor discovery has supplied entry metadata or extra stream labels.
 fn streams_from_response(
     response: &Value,
 ) -> BTreeMap<BTreeMap<String, String>, Vec<(String, String)>> {
@@ -452,7 +451,6 @@ fn streams_from_response(
             .as_object()
             .expect("a stream label map")
             .iter()
-            .filter(|(name, _)| name.as_str() != "detected_level")
             .map(|(name, value)| {
                 (
                     name.clone(),
@@ -539,27 +537,17 @@ proptest! {
         prop_assert_eq!(actual, case.expected_streams(), "query: {}", query);
     }
 
-    /// Every returned stream carries `detected_level`, and it is `unknown`
-    /// while nothing supplies a level.
-    ///
-    /// Loki adds the label at query time to a stream that carries no level of
-    /// its own. Grafana's logs panel groups on it, so a stream that comes back
-    /// without it is a visible fault, not a cosmetic one.
-    ///
-    /// No generated series carries `level`, `severity`, `severity_text` or
-    /// `detected_level`, and no generated query has a `keep` stage. `unknown`
-    /// is therefore the only value the specification allows here. The other
-    /// two properties drop this label before they compare rows, which is why
-    /// it needs a property of its own.
+    /// Direct block rows have no discovered entry metadata. Query execution
+    /// must preserve their full labels without synthesizing an ingest result.
     #[test]
-    fn every_returned_stream_carries_the_unknown_detected_level(case in arb_case()) {
+    fn direct_block_queries_do_not_invent_discovered_metadata(case in arb_case()) {
         let query = case.literal_query();
         let response = run_query(&case, &query);
 
         for result in response["data"]["result"].as_array().expect("results") {
             prop_assert_eq!(
-                result["stream"]["detected_level"].as_str(),
-                Some("unknown"),
+                result["stream"].get("detected_level"),
+                None,
                 "query: {}",
                 query
             );

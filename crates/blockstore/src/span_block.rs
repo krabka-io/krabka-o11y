@@ -68,7 +68,11 @@ mod tests {
             events: vec![SpanEvent {
                 name: "exception".into(),
                 time_since_start: nanos(10),
-                attrs: vec![("exception.type".into(), "IOError".into())],
+                attrs: vec![SpanAttr {
+                    key: "exception.type".into(),
+                    is_array: false,
+                    value: AttrValue::Str(vec!["IOError".into()]),
+                }],
             }],
             links: vec![SpanLink {
                 linked_trace_id: [2; 16],

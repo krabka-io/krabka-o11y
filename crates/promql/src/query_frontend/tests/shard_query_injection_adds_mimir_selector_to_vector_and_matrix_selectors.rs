@@ -16,4 +16,18 @@ pub(crate) fn shard_query_injection_adds_mimir_selector_to_vector_and_matrix_sel
     ] {
         assert2::assert!(rewritten.contains(needle));
     }
+
+    let rewritten = query_with_shard_selector(
+        "sum(histogram_count((h </ 2) >/ 1))",
+        QueryShard { index: 1, total: 2 },
+    )
+    .unwrap();
+    let reparsed = crate::parse_promql(&rewritten).unwrap();
+    let ast = crate::serialize_promql_expr(&reparsed).unwrap();
+    assert2::assert!(ast["expr"]["args"][0]["op"] == ">/");
+    assert2::assert!(ast["expr"]["args"][0]["lhs"]["expr"]["op"] == "</");
+    assert2::assert!(
+        ast["expr"]["args"][0]["lhs"]["expr"]["lhs"]["matchers"]
+            == serde_json::json!([{"name":"__query_shard__","type":"=","value":"1_of_2"}])
+    );
 }

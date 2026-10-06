@@ -25,7 +25,7 @@ pub(crate) fn collect_event_values(
                         .attrs
                         .iter()
                         .filter(|attr| attr.key == tag)
-                        .map(|attr| typed_value_parts(&attr.value)),
+                        .flat_map(|attr| typed_value_parts(&attr.value)),
                 );
             }
         }

@@ -91,6 +91,10 @@ where
             .cold
             .query_stats(tenant, profile_type, matchers, start_ms, end_ms)
             .await?;
+        hot.deduplication_needed |=
+            cold.deduplication_needed || !hot.profiles.is_disjoint(&cold.profiles);
+        hot.profiles.extend(cold.profiles);
+        hot.scopes.extend(cold.scopes);
         hot.block_count = hot.block_count.saturating_add(cold.block_count);
         hot.fingerprints.extend(cold.fingerprints);
         hot.profile_count = hot.profile_count.saturating_add(cold.profile_count);

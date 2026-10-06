@@ -764,7 +764,6 @@ rules:
                             "labels": {
                                 "alertname": "ApiErrors",
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "severity": "page"
                             },

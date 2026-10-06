@@ -16,9 +16,7 @@ pub(crate) struct MetricBucket {
 impl MetricBucket {
     pub(crate) fn record(&mut self, value: Option<f64>, exemplar: Option<TraceMetricExemplar>) {
         self.count += 1;
-        if let Some(exemplar) = exemplar
-            && self.exemplars.is_empty()
-        {
+        if let Some(exemplar) = exemplar {
             self.exemplars.push(exemplar);
         }
         let Some(value) = value else {

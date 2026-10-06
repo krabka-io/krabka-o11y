@@ -7,4 +7,7 @@ pub(crate) struct PlannedSpanset {
     /// value to `SearchResponse::inspected`. Nested structural-join tables scan
     /// the same blocks again, so this field counts only the primary scan.
     pub inspected: ByteSize,
+    pub sampling_factor: f64,
+    /// A nonempty selected spanset entered the pre-metric scalar pipeline.
+    pub spanset_pipeline_had_input: bool,
 }

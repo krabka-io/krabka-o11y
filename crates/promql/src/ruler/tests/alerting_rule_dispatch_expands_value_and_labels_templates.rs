@@ -44,7 +44,6 @@ annotations:
         sink.alerts()
             == vec![super::super::AlertmanagerAlert {
                 labels: BTreeMap::from([
-                    ("__name__".to_string(), "up".to_string()),
                     ("alertname".to_string(), "InstanceUp".to_string()),
                     ("detail".to_string(), "v=1".to_string()),
                     ("job".to_string(), "api".to_string()),

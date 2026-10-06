@@ -2,19 +2,12 @@ use std::fmt::Write as _;
 
 use super::{
     BOUNDARY_CLOSED_BOTH, BOUNDARY_OPEN_LEFT, BOUNDARY_OPEN_RIGHT, HistogramBucketJson,
-    NativeHistogram, append_custom_histogram_buckets, append_standard_histogram_buckets,
-    sample_string,
+    NativeHistogram, native_histogram_buckets, sample_string,
 };
 
 /// Renders Prometheus's `FloatHistogram.String()` representation.
 pub(crate) fn native_histogram_string(histogram: &NativeHistogram) -> String {
-    let mut buckets = Vec::new();
-    if histogram.is_nhcb() {
-        append_custom_histogram_buckets(&mut buckets, histogram);
-    } else {
-        append_standard_histogram_buckets(&mut buckets, histogram);
-    }
-    buckets.sort_by(|left, right| left.lower.total_cmp(&right.lower));
+    let buckets = native_histogram_buckets(histogram);
 
     let mut output = format!(
         "{{count:{}, sum:{}",

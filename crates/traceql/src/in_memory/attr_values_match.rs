@@ -5,6 +5,15 @@ pub(crate) fn attr_values_match(
     op: MatchCmp,
     expected: &MatchValue,
 ) -> bool {
+    let values = values
+        .iter()
+        .filter_map(|value| match value {
+            AttrValue::Unsupported(_) => None,
+            AttrValue::Array(values) if values.is_empty() => None,
+            AttrValue::Array(values) if values.len() == 1 => values.first(),
+            value => Some(*value),
+        })
+        .collect::<Vec<_>>();
     if values.is_empty() {
         return nil_matches(op, expected);
     }

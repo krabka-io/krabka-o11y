@@ -47,7 +47,6 @@ pub(crate) fn a_parser_stage_fills_the_parsed_bucket_and_not_the_metadata_one() 
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "status": "500",
                                 "trace_id": "abc"
                             },
@@ -73,7 +72,6 @@ pub(crate) fn a_parser_stage_fills_the_parsed_bucket_and_not_the_metadata_one() 
                                     r#"{"status":"500"}"#,
                                     {
                                         "structuredMetadata": {
-                                            "detected_level": "unknown",
                                             "trace_id": "abc"
                                         },
                                         "parsed": {"status": "500"}

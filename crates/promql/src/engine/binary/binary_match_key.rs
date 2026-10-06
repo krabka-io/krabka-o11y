@@ -5,7 +5,7 @@ pub(crate) fn binary_match_key(labels: &Labels, modifier: Option<&BinModifier>) 
     match modifier.and_then(|modifier| modifier.matching.as_ref()) {
         Some(LabelModifier::Include(include)) => {
             for name in &include.labels {
-                if let Some(value) = labels.get(name) {
+                if let Some(value) = labels.get_value(name) {
                     key_labels.insert(name, value);
                 }
             }

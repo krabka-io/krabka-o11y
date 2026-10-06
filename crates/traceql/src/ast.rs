@@ -39,7 +39,7 @@ mod structural_op;
 mod value;
 mod with_binding;
 
-pub use aggregate::Aggregate;
+pub use aggregate::{Aggregate, ScalarAggregate};
 pub use comparison_op::ComparisonOp;
 pub use field::Field;
 pub use field_expr::FieldExpr;

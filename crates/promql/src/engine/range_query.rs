@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::BTreeMap};
 
-use krabka_blockstore::{Labels, SeriesFingerprint, TenantId};
+use krabka_blockstore::{SeriesFingerprint, TenantId};
 use krabka_units::prelude::*;
 use promql_parser::parser::Expr;
 
@@ -17,7 +17,7 @@ use super::{
 #[cfg(feature = "experimental-functions")]
 use super::{QUERY_RANGE_CONTEXT, QueryRangeContext};
 use crate::{
-    DurationExprContext, PromqlError,
+    DurationExprContext, PromqlError, PromqlLabels as Labels,
     error::Result,
     parse_promql_with_duration_context,
     planner::StepGrid,

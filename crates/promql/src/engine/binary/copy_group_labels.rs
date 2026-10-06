@@ -5,7 +5,7 @@ pub(crate) fn copy_group_labels(labels: &mut Labels, one_side: &Labels, group_la
         if is_result_metadata_label(name) {
             continue;
         }
-        if let Some(value) = one_side.get(name) {
+        if let Some(value) = one_side.get_value(name) {
             labels.insert(name, value);
         } else {
             *labels = super::super::labels::labels_without_label(labels, name);

@@ -1,12 +1,15 @@
 use super::{
     LogqlExpr, ParseError, Parser, VectorAggregationOp, function_args,
     outer_metric_parentheses_inner, parse_expr, parse_metric_query, parse_scalar_text,
-    parse_string_arg, syntax_error,
+    parse_string_arg, parse_variants, syntax_error,
 };
 
 pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
     if let Some(inner) = outer_metric_parentheses_inner(input) {
         return parse_expr(inner);
+    }
+    if let Some(expression) = parse_variants(input)? {
+        return Ok(expression);
     }
     for (name, descending) in [("sort_desc", true), ("sort", false)] {
         if let Some(args) = function_args(input, name)? {
@@ -38,6 +41,12 @@ pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
                 .trim()
                 .parse()
                 .map_err(|_| syntax_error("expected integer selection limit"))?;
+            if approximate && limit == 0 {
+                return Err(syntax_error(&format!(
+                    "invalid parameter (must be greater than 0) approx_topk({}",
+                    args[0].trim()
+                )));
+            }
             return Ok(LogqlExpr::Selection {
                 expr: Box::new(parse_expr(args[1])?),
                 limit,
@@ -121,4 +130,21 @@ pub(crate) fn parse_expr_primary(input: &str) -> Result<LogqlExpr, ParseError> {
         });
     }
     Err(original_error)
+}
+
+#[cfg(test)]
+mod tests {
+    use assert2::assert;
+
+    use super::{parse_expr, parse_metric_query};
+
+    #[test]
+    fn approximate_selection_requires_a_positive_parameter_for_all_expression_shapes() {
+        for inner in ["vector(3)", r#"count_over_time({app="api"}[1m])"#] {
+            assert!(parse_expr(&format!("approx_topk(0,{inner})")).is_err());
+            assert!(parse_expr(&format!("approx_topk(1,{inner})")).is_ok());
+        }
+        assert!(parse_metric_query(r#"approx_topk(0,count_over_time({app="api"}[1m]))"#).is_err());
+        assert!(parse_metric_query(r#"approx_topk(1,count_over_time({app="api"}[1m]))"#).is_ok());
+    }
 }

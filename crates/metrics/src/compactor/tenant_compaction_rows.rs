@@ -4,7 +4,7 @@ use super::{BTreeMap, ClockReadingRow, ExemplarRow, FloatRow, MetadataRow, Nativ
 #[derive(Clone, Debug, PartialEq)]
 pub struct TenantCompactionRows {
     pub tenant: String,
-    pub series_labels: BTreeMap<u64, krabka_blockstore::Labels>,
+    pub series_labels: BTreeMap<u64, crate::MetricLabels>,
     pub float_rows: Vec<FloatRow>,
     pub histogram_rows: Vec<NativeHistogramRow>,
     pub exemplar_rows: Vec<ExemplarRow>,

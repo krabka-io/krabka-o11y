@@ -1,16 +1,14 @@
 //! Metric data access abstraction.
 
 use datafusion::prelude::SessionContext;
-use krabka_blockstore::{LabelMatcher, Labels};
 
-use crate::PromqlError;
+use crate::{PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher};
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use datafusion::prelude::SessionContext;
-    use krabka_blockstore::Labels;
 
     use super::*;
 
@@ -21,7 +19,7 @@ mod tests {
         async fn scan(
             &self,
             _tenant: &str,
-            _matchers: &[krabka_blockstore::LabelMatcher],
+            _matchers: &[crate::PromqlMatcher],
             _start_ms: i64,
             _end_ms: i64,
         ) -> Result<ScanResult, PromqlError> {
@@ -36,7 +34,7 @@ mod tests {
         async fn label_names(
             &self,
             _tenant: &str,
-            _matchers: &[krabka_blockstore::LabelMatcher],
+            _matchers: &[crate::PromqlMatcher],
             _start_ms: i64,
             _end_ms: i64,
         ) -> Result<Vec<String>, PromqlError> {
@@ -47,17 +45,17 @@ mod tests {
             &self,
             _tenant: &str,
             _name: &str,
-            _matchers: &[krabka_blockstore::LabelMatcher],
+            _matchers: &[crate::PromqlMatcher],
             _start_ms: i64,
             _end_ms: i64,
-        ) -> Result<Vec<String>, PromqlError> {
+        ) -> Result<Vec<krabka_metrics::MetricString>, PromqlError> {
             Ok(vec![])
         }
 
         async fn series(
             &self,
             _tenant: &str,
-            _matchers: &[krabka_blockstore::LabelMatcher],
+            _matchers: &[crate::PromqlMatcher],
             _start_ms: i64,
             _end_ms: i64,
         ) -> Result<Vec<Labels>, PromqlError> {
@@ -67,7 +65,7 @@ mod tests {
         async fn exemplars(
             &self,
             _tenant: &str,
-            _matchers: &[krabka_blockstore::LabelMatcher],
+            _matchers: &[crate::PromqlMatcher],
             _start_ms: i64,
             _end_ms: i64,
         ) -> Result<ExemplarScan, PromqlError> {

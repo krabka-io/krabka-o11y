@@ -8,6 +8,7 @@ pub(crate) fn assemble_search_response(
     inspected: ByteSize,
 ) -> Result<SearchResponse> {
     let mut traces: BTreeMap<[u8; 16], TraceAcc> = BTreeMap::new();
+    let mut groups: BTreeMap<[u8; 16], BTreeMap<String, SpanSet>> = BTreeMap::new();
     for batch in batches {
         for row in 0..batch.num_rows() {
             let trace_id = fixed_16(batch, COL_TRACE_ID, row)?;
@@ -32,6 +33,24 @@ pub(crate) fn assemble_search_response(
                 events: Vec::new(),
                 links: Vec::new(),
             };
+            if let Some(group_id) = string_value(batch, "__traceql.spanset", row) {
+                let group = groups
+                    .entry(trace_id)
+                    .or_default()
+                    .entry(group_id)
+                    .or_insert_with(|| SpanSet {
+                        spans: Vec::new(),
+                        matched: 0,
+                        attributes: Vec::new(),
+                    });
+                if group.spans.is_empty()
+                    && let Some(encoded) = string_value(batch, "__traceql.spanset_attributes", row)
+                {
+                    group.attributes = serde_json::from_str(&encoded)
+                        .map_err(|error| TraceqlError::Exec(error.to_string()))?;
+                }
+                group.spans.push(span.clone());
+            }
             traces
                 .entry(trace_id)
                 .or_insert_with(|| TraceAcc {
@@ -58,14 +77,37 @@ pub(crate) fn assemble_search_response(
         .map(|(trace_id, mut acc)| {
             deduplicate_search_spans(&mut acc.spans);
             let matched = u32::try_from(acc.spans.len()).unwrap_or(u32::MAX);
-            let spans = acc.spans.into_iter().take(spss).collect();
+            let grouped = groups
+                .get(&trace_id)
+                .into_iter()
+                .flat_map(|groups| groups.values())
+                .map(|group| {
+                    let mut spans = group.spans.clone();
+                    deduplicate_search_spans(&mut spans);
+                    let matched = u32::try_from(spans.len()).unwrap_or(u32::MAX);
+                    SpanSet {
+                        spans: spans.into_iter().take(spss).collect(),
+                        matched,
+                        attributes: group.attributes.clone(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            let span_sets = if grouped.is_empty() {
+                vec![SpanSet {
+                    spans: acc.spans.into_iter().take(spss).collect(),
+                    matched,
+                    attributes: Vec::new(),
+                }]
+            } else {
+                grouped
+            };
             TraceResult {
                 trace_id,
                 root_service_name: acc.root_service_name,
                 root_trace_name: acc.root_trace_name,
                 start_time_unix_nano: acc.start_time_unix_nano,
                 duration: acc.duration,
-                span_sets: vec![SpanSet { spans, matched }],
+                span_sets,
             }
         })
         .collect();

@@ -2,12 +2,15 @@ use super::SpanSetJson;
 
 /// Reunion spanSets across blocks.
 ///
-/// This dedupes spans by `spanID` into the first spanSet, and accumulates each
+/// This dedupes spans by `spanID` within the same grouping attributes, and accumulates each
 /// spanSet's true `matched` count. The match count is additive across shards.
 /// This is ported from the legacy `merge_span_sets`.
 pub(crate) fn merge_span_sets(existing: &mut Vec<SpanSetJson>, incoming: Vec<SpanSetJson>) {
     for span_set in incoming {
-        let Some(first) = existing.first_mut() else {
+        let Some(first) = existing
+            .iter_mut()
+            .find(|set| set.attributes == span_set.attributes)
+        else {
             existing.push(span_set);
             continue;
         };

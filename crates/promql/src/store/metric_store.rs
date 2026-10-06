@@ -101,7 +101,7 @@ pub trait MetricStore: Send + Sync {
         matchers: &[LabelMatcher],
         start_ms: i64,
         end_ms: i64,
-    ) -> Result<Vec<String>, PromqlError>;
+    ) -> Result<Vec<krabka_metrics::MetricString>, PromqlError>;
 
     /// Returns the label sets of matched series.
     async fn series(

@@ -20,7 +20,10 @@ mod types;
 mod util;
 
 pub use error::ParseError;
-pub use extract::{JsonExtraction, JsonParserConfig, LogfmtExtraction, LogfmtParserConfig};
+pub use extract::{
+    JsonExtraction, JsonParserConfig, LogfmtExtraction, LogfmtParser, LogfmtParserConfig,
+    parse_json_object_entries,
+};
 pub use filters::{
     ComparisonOp, FieldFilter, FieldFilterChain, FieldFilterExpression, FieldFilterLogicOp,
     FieldValue, IpMatcher, LineFilter, LineFilterOp,
@@ -44,7 +47,13 @@ pub use syntax::{
     parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
     parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,
 };
-pub use template::LineFormat;
+pub use template::{
+    LineFormat, TemplateBucket, TemplateBucketIterator, TemplateFloatHistogram, TemplateHistogram,
+    TemplateHistogramBucket, TemplateHistogramError, TemplateHistogramReference,
+    TemplateHistogramSlice, TemplateHistogramSpan, TemplateHistogramView, TemplateQueryResult,
+    TemplateRenderError, TemplateRuntimeValue as TemplateData, TemplateTime, TemplateTimeLocation,
+    go_string_equal_fold, parse_go_float, quote_go_bytes,
+};
 pub use types::{
     DestinationLabel, DurationNanos, JsonExpressionPath, OffsetNanos, QuantileDenominator,
     QuantileNumerator, SourceLabel,

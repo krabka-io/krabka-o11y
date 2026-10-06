@@ -15,6 +15,7 @@ pub fn router<S>(state: Arc<QuerierState<S>>) -> Router
 where
     S: ProfileStore + 'static,
 {
+    super::async_stacktrace_query::start_maintenance(&state);
     let querier = pb::querier::v1::querier_service_connect::QuerierServiceBuilder::<()>::new()
         .profile_types(profile_types_handler::<S>)
         .label_names(label_names_handler::<S>)

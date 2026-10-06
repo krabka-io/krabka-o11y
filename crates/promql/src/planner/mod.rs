@@ -9,7 +9,7 @@ pub mod scalar_math;
 
 use std::{any::Any, sync::Arc, time::Duration};
 
-use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
 use promql_parser::{
@@ -19,7 +19,7 @@ use promql_parser::{
     util::display_duration,
 };
 
-use crate::{PromqlError, error::Result};
+use crate::{PromqlError, PromqlLabels as Labels, error::Result};
 
 #[cfg(test)]
 mod tests {
@@ -149,6 +149,8 @@ mod tests {
     }
 }
 
+pub(crate) mod byte_selector_expr;
+pub(crate) mod byte_string_expr;
 mod consume_ident;
 mod consume_number_duration;
 mod duration_expr_context;
@@ -157,6 +159,7 @@ mod duration_unit_seconds;
 mod extended_modifier_at;
 mod extended_selector_expr;
 mod extended_selector_modifier;
+mod format_promql_expr;
 pub(crate) mod histogram_trim_operators;
 mod info_label_selector;
 mod is_ident_char;
@@ -172,6 +175,7 @@ mod offset_operand;
 mod parse_experimental_zero_arg_helper;
 mod parse_promql;
 mod parse_promql_with_duration_context;
+mod query_ast_codec;
 mod seconds_to_duration_literal;
 mod skip_ws;
 mod starts_offset_keyword;
@@ -189,6 +193,7 @@ use duration_unit_seconds::duration_unit_seconds;
 use extended_modifier_at::extended_modifier_at;
 pub use extended_selector_expr::ExtendedSelectorExpr;
 pub use extended_selector_modifier::ExtendedSelectorModifier;
+pub use format_promql_expr::{format_promql_expr, serialize_promql_expr};
 use is_ident_char::is_ident_char;
 use is_ident_start::is_ident_start;
 use is_zero::is_zero;
@@ -201,6 +206,7 @@ use offset_operand::offset_operand;
 use parse_experimental_zero_arg_helper::parse_experimental_zero_arg_helper;
 pub use parse_promql::parse_promql;
 pub use parse_promql_with_duration_context::parse_promql_with_duration_context;
+pub use query_ast_codec::{format_promql_query, serialize_promql_query};
 use seconds_to_duration_literal::seconds_to_duration_literal;
 use skip_ws::skip_ws;
 use starts_offset_keyword::starts_offset_keyword;

@@ -1,5 +1,6 @@
 use super::{
-    FieldExpr, MatchCmp, MatchValue, SpanMatcher, match_cmp, match_scope, match_value, matcher_key,
+    FieldExpr, MatchCmp, MatchValue, Scope, SpanMatcher, match_cmp, match_scope, match_value,
+    matcher_key,
 };
 
 pub(crate) fn matcher_from_field_expr(fe: &FieldExpr) -> Option<SpanMatcher> {
@@ -14,8 +15,16 @@ pub(crate) fn matcher_from_field_expr(fe: &FieldExpr) -> Option<SpanMatcher> {
         FieldExpr::Field(field) => Some(SpanMatcher {
             scope: match_scope(&field.scope),
             key: matcher_key(field),
-            op: MatchCmp::Neq,
-            value: MatchValue::Nil,
+            op: if matches!(field.scope, Scope::Parent) {
+                MatchCmp::Neq
+            } else {
+                MatchCmp::Eq
+            },
+            value: if matches!(field.scope, Scope::Parent) {
+                MatchValue::Nil
+            } else {
+                MatchValue::Bool(true)
+            },
             negated: false,
         }),
         FieldExpr::ExpressionComparison { .. }

@@ -5,7 +5,7 @@ pub(crate) fn alert_template_queries<'a>(
 ) -> BTreeSet<String> {
     let mut queries = BTreeSet::new();
     for template in templates {
-        if let Ok(format) = krabka_logql::LineFormat::new(template) {
+        if let Ok(format) = krabka_logql::LineFormat::new_prometheus(template) {
             queries.extend(format.query_calls());
         }
     }

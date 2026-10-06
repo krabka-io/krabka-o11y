@@ -29,6 +29,13 @@ pub(crate) struct Cli {
     /// Pyroscope query architecture contract: v1 (default) or v2.
     #[arg(long, env = "KRABKA_PROFILES_QUERY_ARCHITECTURE", default_value = "v1")]
     pub(crate) query_architecture: krabka_profiles::query::PyroscopeQueryArchitecture,
+    /// Includes selector-matching series counts in v1 query analysis.
+    #[arg(
+        long,
+        env = "KRABKA_PROFILES_QUERY_ANALYSIS_SERIES_ENABLED",
+        default_value_t = false
+    )]
+    pub(crate) query_analysis_series_enabled: bool,
     /// Enables the experimental v2 asynchronous query frontend.
     #[arg(
         long,

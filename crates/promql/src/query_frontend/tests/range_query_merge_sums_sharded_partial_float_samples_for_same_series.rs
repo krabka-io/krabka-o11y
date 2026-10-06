@@ -7,7 +7,7 @@ pub(crate) fn range_query_merge_sums_sharded_partial_float_samples_for_same_seri
         QueryResult::RangeMatrix(vec![RangeSeries {
             drop_name: false,
             start_timestamps_ms: std::collections::BTreeMap::new(),
-            labels: labels.clone(),
+            labels: labels.clone().into(),
             samples: vec![
                 (0, SampleValue::Float(1.0)),
                 (60_000, SampleValue::Float(2.0)),
@@ -16,7 +16,7 @@ pub(crate) fn range_query_merge_sums_sharded_partial_float_samples_for_same_seri
         QueryResult::RangeMatrix(vec![RangeSeries {
             drop_name: false,
             start_timestamps_ms: std::collections::BTreeMap::new(),
-            labels: labels.clone(),
+            labels: labels.clone().into(),
             samples: vec![
                 (0, SampleValue::Float(10.0)),
                 (60_000, SampleValue::Float(20.0)),
@@ -30,7 +30,7 @@ pub(crate) fn range_query_merge_sums_sharded_partial_float_samples_for_same_seri
             == QueryResult::RangeMatrix(vec![RangeSeries {
                 drop_name: false,
                 start_timestamps_ms: std::collections::BTreeMap::new(),
-                labels,
+                labels: labels.into(),
                 samples: vec![
                     (0, SampleValue::Float(11.0)),
                     (60_000, SampleValue::Float(22.0)),

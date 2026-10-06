@@ -1,8 +1,9 @@
 use assert2::check;
-use krabka_blockstore::{LabelMatcher, MatchOp};
+use krabka_blockstore::MatchOp;
 use krabka_metrics::{NativeHistogram, ResetHint};
 
 use super::*;
+use crate::PromqlMatcher as LabelMatcher;
 
 fn histogram(count: f64) -> NativeHistogram {
     NativeHistogram {
@@ -50,7 +51,7 @@ pub(crate) async fn histograms_in_either_store_are_found() {
     let matchers = [LabelMatcher {
         name: "job".to_string(),
         op: MatchOp::Eq,
-        value: "api".to_string(),
+        value: "api".to_string().into(),
     }];
     // A scan merges the histogram tables of both stores, so the merged store
     // can say "no histograms" only when both stores say it.
@@ -84,7 +85,7 @@ pub(crate) async fn histograms_in_either_store_are_found() {
     check!(
         result
             == QueryResult::InstantVector(vec![InstantSample {
-                labels: labels(&[("job", "api")]),
+                labels: labels(&[("job", "api")]).into(),
                 ts_ms: 120_000,
                 value: SampleValue::Float(2.0),
                 drop_name: false,

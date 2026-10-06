@@ -1,11 +1,10 @@
 use super::SpanMatcher;
 
+/// Projection dependencies do not filter or expand event/link observations.
+/// Pinned vParquet5 resolves the first fetched value for each dynamic field.
 pub(crate) fn expansion_matchers(
     matchers: &[SpanMatcher],
-    projection_matchers: &[SpanMatcher],
+    _projection_matchers: &[SpanMatcher],
 ) -> Vec<SpanMatcher> {
-    let mut out = Vec::with_capacity(matchers.len() + projection_matchers.len());
-    out.extend_from_slice(matchers);
-    out.extend_from_slice(projection_matchers);
-    out
+    matchers.to_vec()
 }

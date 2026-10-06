@@ -151,24 +151,15 @@ async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() 
     let expected_key = BlockKey::new(TENANT, 0, 0, 1, TimeRange::new(10, 20).expect("time range"));
     assert!(descriptors.len() == 1);
     check!(descriptors[0].key == expected_key);
-    // Two series, not one: the distributor's level discovery puts
-    // `detected_level` on the entry whose line says "error" and on no other, so
-    // the two entries of one pushed stream land as two label sets.
+    // Discovery belongs to entry metadata. Both entries retain one immutable
+    // source series, even though their independently discovered levels differ.
     check!(
         descriptors[0].fingerprints
-            == BTreeSet::from([
-                series_fingerprint(&labels([
-                    ("app", "api"),
-                    ("detected_level", "error"),
-                    ("env", "prod"),
-                    ("service_name", "api"),
-                ])),
-                series_fingerprint(&labels([
-                    ("app", "api"),
-                    ("env", "prod"),
-                    ("service_name", "api"),
-                ])),
-            ])
+            == BTreeSet::from([series_fingerprint(&labels([
+                ("app", "api"),
+                ("env", "prod"),
+                ("service_name", "api"),
+            ]))])
     );
 
     // 4. The block itself, read straight out of the object store.
@@ -345,15 +336,13 @@ fn expected_wal_records() -> Vec<WalLogRecord> {
     vec![
         WalLogRecord {
             tenant: TENANT.to_string(),
-            labels: labels([
-                ("app", "api"),
-                ("detected_level", "error"),
-                ("env", "prod"),
-                ("service_name", "api"),
-            ]),
+            labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
             timestamp_ns: 10,
             line: "api error".to_string(),
-            structured_metadata: BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
+            structured_metadata: BTreeMap::from([
+                ("trace_id".to_string(), "abc".to_string()),
+                ("detected_level".to_string(), "error".to_string()),
+            ]),
             position: Some(WalPosition {
                 partition: PartitionIndex(0),
                 offset: Offset(0),
@@ -364,7 +353,10 @@ fn expected_wal_records() -> Vec<WalLogRecord> {
             labels: labels([("app", "api"), ("env", "prod"), ("service_name", "api")]),
             timestamp_ns: 20,
             line: "api recovered".to_string(),
-            structured_metadata: BTreeMap::new(),
+            structured_metadata: BTreeMap::from([(
+                "detected_level".to_string(),
+                "unknown".to_string(),
+            )]),
             position: Some(WalPosition {
                 partition: PartitionIndex(0),
                 offset: Offset(1),

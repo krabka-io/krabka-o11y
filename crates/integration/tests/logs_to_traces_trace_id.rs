@@ -16,17 +16,8 @@
 //!   -> LiveStore::trace_by_id                 (krabka-traces)
 //! ```
 //!
-//! # What this deliberately does not assert
-//!
-//! The JSON encoding of structured metadata in a Loki query response is being
-//! corrected against a real Loki container as this is written, and there is no
-//! stable shape to pin. So the id is read back off the **typed** `WalLogRecord`
-//! that ingest produced, not out of the query response's JSON, and the query
-//! leg asserts only that the line is queryable and comes back. Pinning the wire
-//! shape belongs in `krabka-observability`'s own differential suite, which is
-//! where it is being fixed; the link this crate exists to prove is that the id
-//! survives the logs path intact and is usable against traces, and that is what
-//! is asserted.
+//! The query reads the trace id from Loki's categorized metadata response.
+//! Controls verify tenant isolation and reject a different trace id.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -163,6 +154,7 @@ async fn a_trace_id_on_a_log_line_fetches_the_trace() {
     );
 
     let response = querier
+        .clone()
         .oneshot(
             Request::builder()
                 .method("GET")
@@ -173,6 +165,7 @@ async fn a_trace_id_on_a_log_line_fetches_the_trace() {
                     timestamp_ns + 1_000_000_000,
                 ))
                 .header("X-Scope-OrgID", TENANT)
+                .header("X-Loki-Response-Encoding-Flags", "categorize-labels")
                 .body(axum::body::Body::empty())
                 .expect("query_range request"),
         )
@@ -186,16 +179,43 @@ async fn a_trace_id_on_a_log_line_fetches_the_trace() {
     let json: Value = serde_json::from_slice(&body).expect("query_range json");
 
     check!(json["status"] == "success");
-    // The line came back. How the response encodes the metadata beside it is
-    // `krabka-observability`'s business, and is asserted there.
     let lines = collect_lines(&json);
     check!(lines == vec![LINE]);
+    let hex_id = json["data"]["result"][0]["values"][0][2]["structuredMetadata"]["trace_id"]
+        .as_str()
+        .expect("the query returns a trace id");
+    check!(hex_id == hex::encode(TRACE_ID));
+    for (tenant, query) in [
+        ("tenant-b", "{app=\"orders\"}".to_string()),
+        (
+            TENANT,
+            r#"{app="orders"} | trace_id = "ffffffffffffffffffffffffffffffff""#.to_string(),
+        ),
+    ] {
+        let response = querier
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/loki/api/v1/query_range?query={}&start={}&end={}",
+                        urlencode(&query),
+                        timestamp_ns - 1_000_000_000,
+                        timestamp_ns + 1_000_000_000
+                    ))
+                    .header("X-Scope-OrgID", tenant)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(response.status() == StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        check!(collect_lines(&body).is_empty());
+    }
 
-    // --- traces: the id off the log line fetches the trace -----------------
-    let hex_id = record
-        .structured_metadata
-        .get("trace_id")
-        .expect("the log line carries a trace id");
     let raw = hex::decode(hex_id).expect("the trace id is hex");
     let trace_id: [u8; 16] = raw
         .try_into()
@@ -210,6 +230,7 @@ async fn a_trace_id_on_a_log_line_fetches_the_trace() {
     // A trace id that no log line carried must not resolve, or the lookup above
     // would prove nothing about which id was used.
     check!(live_store().trace_by_id(TENANT, &[0xff; 16]).is_empty());
+    check!(live_store().trace_by_id("tenant-b", &trace_id).is_empty());
 }
 
 /// Every `values` entry across every returned stream, in order.

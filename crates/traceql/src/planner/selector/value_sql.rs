@@ -2,6 +2,7 @@ use super::{Result, TraceqlError, Value, string_lit};
 
 pub(crate) fn value_sql(value: &Value) -> Result<String> {
     match value {
+        Value::Array(_) => Err(TraceqlError::Unsupported("array literals".into())),
         Value::Str(v) => Ok(string_lit(v)),
         Value::Int(v) | Value::Duration(v) => Ok(v.to_string()),
         Value::Float(v) => {

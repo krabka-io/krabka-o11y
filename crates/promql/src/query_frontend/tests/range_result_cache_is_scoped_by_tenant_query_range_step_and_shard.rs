@@ -13,7 +13,7 @@ pub(crate) async fn range_result_cache_is_scoped_by_tenant_query_range_step_and_
     let result = unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
         drop_name: false,
         start_timestamps_ms: std::collections::BTreeMap::new(),
-        labels: labels(&[("__name__", "up"), ("job", "api")]),
+        labels: labels(&[("__name__", "up"), ("job", "api")]).into(),
         samples: vec![(0, SampleValue::Float(1.0))],
     }]));
 

@@ -90,6 +90,7 @@ async fn otlp_logs_endpoint_writes_tenant_scoped_wal_records() {
                 timestamp_ns: 19,
                 line: "api error".to_string(),
                 structured_metadata: BTreeMap::from([
+                    ("detected_level".to_string(), "error".to_string()),
                     ("instrumentation_scope".to_string(), "api".to_string()),
                     ("status".to_string(), "500".to_string()),
                     ("trace_id".to_string(), "abc".to_string()),
@@ -151,6 +152,7 @@ async fn otlp_logs_endpoint_preserves_severity_fields_as_structured_metadata() {
     assert!(
         records[0].structured_metadata
             == BTreeMap::from([
+                ("detected_level".to_string(), "error".to_string()),
                 ("severity_number".to_string(), "17".to_string()),
                 ("severity_text".to_string(), "ERROR".to_string()),
                 (
@@ -267,6 +269,7 @@ async fn otlp_logs_endpoint_normalizes_attribute_names_for_loki_labels_and_metad
                 timestamp_ns: 19,
                 line: "api error".to_string(),
                 structured_metadata: BTreeMap::from([
+                    ("detected_level".to_string(), "error".to_string()),
                     ("cloud_region".to_string(), "us-west".to_string()),
                     ("http_status_code".to_string(), "500".to_string()),
                     ("instrumentation_scope".to_string(), "api".to_string()),
@@ -594,6 +597,7 @@ async fn otlp_logs_endpoint_accepts_protobuf_payloads() {
                 timestamp_ns: 19,
                 line: "api error".to_string(),
                 structured_metadata: BTreeMap::from([
+                    ("detected_level".to_string(), "error".to_string()),
                     ("instrumentation_scope".to_string(), "api".to_string()),
                     ("scope_name".to_string(), "api".to_string()),
                     ("scope_version".to_string(), "1.2.3".to_string()),
@@ -637,6 +641,7 @@ async fn otlp_logs_endpoint_maps_proto_trace_and_span_ids_to_structured_metadata
     assert!(
         records[0].structured_metadata
             == BTreeMap::from([
+                ("detected_level".to_string(), "error".to_string()),
                 ("instrumentation_scope".to_string(), "api".to_string()),
                 ("scope_name".to_string(), "api".to_string()),
                 ("scope_version".to_string(), "1.2.3".to_string()),
@@ -682,6 +687,7 @@ async fn otlp_logs_endpoint_maps_proto_severity_fields_to_structured_metadata() 
     assert!(
         records[0].structured_metadata
             == BTreeMap::from([
+                ("detected_level".to_string(), "error".to_string()),
                 ("instrumentation_scope".to_string(), "api".to_string()),
                 ("scope_name".to_string(), "api".to_string()),
                 ("scope_version".to_string(), "1.2.3".to_string()),
@@ -780,6 +786,7 @@ async fn otlp_grpc_logs_service_writes_tenant_scoped_wal_records() {
                 timestamp_ns: 19,
                 line: "api error".to_string(),
                 structured_metadata: BTreeMap::from([
+                    ("detected_level".to_string(), "error".to_string()),
                     ("instrumentation_scope".to_string(), "api".to_string()),
                     ("scope_name".to_string(), "api".to_string()),
                     ("scope_version".to_string(), "1.2.3".to_string()),

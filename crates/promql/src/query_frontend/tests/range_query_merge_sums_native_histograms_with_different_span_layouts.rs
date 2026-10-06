@@ -7,7 +7,7 @@ pub(crate) fn range_query_merge_sums_native_histograms_with_different_span_layou
         QueryResult::RangeMatrix(vec![RangeSeries {
             drop_name: false,
             start_timestamps_ms: std::collections::BTreeMap::new(),
-            labels: labels.clone(),
+            labels: labels.clone().into(),
             samples: vec![(
                 0,
                 SampleValue::Histogram(native_histogram_with_positive_buckets(
@@ -24,7 +24,7 @@ pub(crate) fn range_query_merge_sums_native_histograms_with_different_span_layou
         QueryResult::RangeMatrix(vec![RangeSeries {
             drop_name: false,
             start_timestamps_ms: std::collections::BTreeMap::new(),
-            labels: labels.clone(),
+            labels: labels.clone().into(),
             samples: vec![(
                 0,
                 SampleValue::Histogram(native_histogram_with_positive_buckets(

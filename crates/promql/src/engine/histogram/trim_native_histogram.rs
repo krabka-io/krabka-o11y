@@ -101,7 +101,7 @@ pub(crate) fn trim_native_histogram(
     out
 }
 
-fn midpoint(lower: f64, upper: f64, positive: bool, linear: bool) -> f64 {
+pub(super) fn midpoint(lower: f64, upper: f64, positive: bool, linear: bool) -> f64 {
     if lower.is_infinite() {
         if upper.is_infinite() {
             0.0
@@ -121,7 +121,7 @@ fn midpoint(lower: f64, upper: f64, positive: bool, linear: bool) -> f64 {
     }
 }
 
-fn partial_bucket(
+pub(super) fn partial_bucket(
     lower: f64,
     higher: f64,
     count: f64,

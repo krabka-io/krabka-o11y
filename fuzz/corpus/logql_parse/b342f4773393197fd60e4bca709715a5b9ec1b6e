@@ -1,1 +1,0 @@
-count_over_time({app="api"}[10s] offset 5s)

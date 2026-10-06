@@ -14,8 +14,7 @@ use axum::{
     routing::{get, post},
 };
 use krabka_blockstore::{
-    ERASURE_REQUEST_PREFIX, ErasureRequest, Index, TenantId, has_erasure_requests,
-    put_erasure_request,
+    ERASURE_REQUEST_PREFIX, ErasureRequest, TenantId, has_erasure_requests, put_erasure_request,
 };
 use krabka_metrics::{
     LimitError, Limits, OverridesProvider, authorized_tenant_from_headers, wire::WireError,
@@ -38,6 +37,7 @@ use crate::{
 };
 
 mod admin;
+#[cfg(test)]
 mod alert_templates;
 mod cardinality;
 mod discovery;
@@ -58,7 +58,6 @@ mod status;
 pub(crate) use alert_templates::expand_alert_template;
 #[cfg(test)]
 pub(crate) use alert_templates::expand_alert_template_with_external;
-pub(crate) use alert_templates::expand_alert_template_with_queries;
 use cardinality::{
     cardinality_active_native_histogram_metrics, cardinality_active_native_histogram_metrics_post,
     cardinality_active_series, cardinality_active_series_post, cardinality_label_names,
@@ -84,7 +83,7 @@ use response::{
     cardinality_label_values_response, exemplar_key, exemplars_json, labels_json, labels_key,
     sample_string, success_data_response, success_response, success_response_with_stats,
 };
-pub(crate) use response::{format_sample_value, native_histogram_string};
+pub(crate) use response::{format_sample_value, native_histogram_buckets, native_histogram_string};
 use rules::{
     alerts, delete_ruler_config_group, delete_ruler_config_namespace, ruler_config_group,
     ruler_config_namespace, ruler_config_rules, rules, set_ruler_config_group,

@@ -98,7 +98,7 @@ pub(crate) async fn a_comparison_keeps_the_metric_name_that_arithmetic_drops() {
             .map(|pairs| {
                 pairs
                     .iter()
-                    .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+                    .map(|(name, value)| ((*name).to_string(), crate::PromqlString::from(*value)))
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();

@@ -7,7 +7,7 @@ pub(crate) fn leaf_schema(label_names: &[String]) -> Arc<Schema> {
         // from a PRESENT-but-empty-valued label (`""`). The reconstruction
         // (`engine::labels_from_batch`) maps NULL -> absent and `""` ->
         // present-empty, preserving the byte-exact label set through the chain.
-        fields.push(Field::new(name, DataType::Utf8, true));
+        fields.push(Field::new(name, DataType::Binary, true));
     }
     fields.push(Field::new(TIME_COLUMN, DataType::Int64, false));
     fields.push(Field::new(VALUE_COLUMN, DataType::Float64, false));

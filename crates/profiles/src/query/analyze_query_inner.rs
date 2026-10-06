@@ -24,11 +24,27 @@ where
         ));
     }
     let req = req.0;
+    // The pinned public frontend returns an empty diagnostic before parsing
+    // the selector whenever either bound is omitted (frontend_analyze_query.go).
+    if req.start == 0 || req.end == 0 {
+        return Ok(ConnectResponse::new(
+            pb::querier::v1::AnalyzeQueryResponse::default(),
+        ));
+    }
     state
         .validate_query_range(&tenant, req.start, req.end)
         .map_err(connect_error)?;
-    let (profile_type, selector) = parse_render_query(&req.query).map_err(connect_error)?;
-    let selector = merge_profile_type_selector(&selector, &profile_type).map_err(connect_error)?;
+    let (profile_type, selector) =
+        if !state.query_analysis_series_enabled || req.query.trim().is_empty() {
+            (String::new(), "{}".to_string())
+        } else if req.query.trim().starts_with('{') {
+            (String::new(), req.query.clone())
+        } else {
+            let (profile_type, selector) = parse_render_query(&req.query).map_err(connect_error)?;
+            let selector =
+                merge_profile_type_selector(&selector, &profile_type).map_err(connect_error)?;
+            (profile_type, selector)
+        };
     let matchers = parse_label_selector(&selector).map_err(connect_error)?;
     let query_stats = state
         .store
@@ -41,24 +57,54 @@ where
         )
         .await
         .map_err(connect_error)?;
-    let series_count = query_stats.fingerprints.len() as u64;
-    let has_data = query_stats.block_count > 0;
+    let series_count = if state.query_analysis_series_enabled {
+        query_stats.fingerprints.len() as u64
+    } else {
+        0
+    };
+    let mut scopes = vec![
+        pb::querier::v1::QueryScope {
+            component_type: "Short term storage".into(),
+            ..Default::default()
+        },
+        pb::querier::v1::QueryScope {
+            component_type: "Long term storage".into(),
+            ..Default::default()
+        },
+    ];
+    for scope in query_stats.scopes {
+        let destination = if scope.component_type == "Short term storage" {
+            &mut scopes[0]
+        } else {
+            &mut scopes[1]
+        };
+        destination.component_count = destination
+            .component_count
+            .saturating_add(scope.component_count);
+        destination.block_count = destination.block_count.saturating_add(scope.block_count);
+        destination.series_count = destination.series_count.saturating_add(scope.series_count);
+        destination.profile_count = destination
+            .profile_count
+            .saturating_add(scope.profile_count);
+        destination.sample_count = destination.sample_count.saturating_add(scope.sample_count);
+        destination.index_bytes = destination.index_bytes.saturating_add(scope.index_bytes);
+        destination.profile_bytes = destination
+            .profile_bytes
+            .saturating_add(scope.profile_bytes);
+        destination.symbol_bytes = destination.symbol_bytes.saturating_add(scope.symbol_bytes);
+    }
+    let total_bytes = scopes.iter().fold(0_u64, |total, scope| {
+        total
+            .saturating_add(scope.index_bytes)
+            .saturating_add(scope.profile_bytes)
+            .saturating_add(scope.symbol_bytes)
+    });
     let response = pb::querier::v1::AnalyzeQueryResponse {
-        query_scopes: vec![pb::querier::v1::QueryScope {
-            component_type: "Long term storage".to_string(),
-            component_count: u64::from(has_data),
-            block_count: query_stats.block_count,
-            series_count,
-            profile_count: query_stats.profile_count,
-            sample_count: query_stats.sample_count,
-            index_bytes: 0,
-            profile_bytes: 0,
-            symbol_bytes: 0,
-        }],
+        query_scopes: scopes,
         query_impact: Some(pb::querier::v1::QueryImpact {
-            total_bytes_in_time_range: 0,
+            total_bytes_in_time_range: total_bytes,
             total_queried_series: series_count,
-            deduplication_needed: false,
+            deduplication_needed: query_stats.deduplication_needed,
         }),
     };
     Ok(ConnectResponse::new(response))

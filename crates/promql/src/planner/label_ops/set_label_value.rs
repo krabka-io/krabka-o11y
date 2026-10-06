@@ -6,8 +6,13 @@ use super::Labels;
 /// `labels.Builder.Set`, and that method deletes the label when the value is
 /// empty, because Prometheus holds an empty label and a missing one to be the
 /// same thing.
-pub(crate) fn set_label_value(labels: &Labels, name: &str, value: &str) -> Labels {
-    if value.is_empty() {
+pub(crate) fn set_label_value(
+    labels: &Labels,
+    name: &str,
+    value: impl Into<crate::PromqlString>,
+) -> Labels {
+    let value = value.into();
+    if value.as_bytes().is_empty() {
         return labels
             .iter()
             .filter(|(label, _)| label.as_str() != name)

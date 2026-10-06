@@ -37,6 +37,23 @@ pub(crate) fn metric_label_value(batch: &RecordBatch, column: &str, row: usize) 
             .value(row)
             .to_string()),
         DataType::FixedSizeBinary(_) => Ok(bytes_to_hex(array.as_fixed_size_binary().value(row))),
+        DataType::Struct(_) => {
+            let key = column.strip_prefix(super::ATTR_PREFIX).ok_or_else(|| {
+                TraceqlError::Exec("typed attributes require an attribute column".into())
+            })?;
+            let value = super::row_attrs(batch, row)?
+                .into_iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| match value {
+                    super::AttrValue::Unsupported(_) => "nil".into(),
+                    super::AttrValue::Array(value) => format!("{value:?}"),
+                    super::AttrValue::Str(value) => value,
+                    super::AttrValue::Int(value) => value.to_string(),
+                    super::AttrValue::Float(value) => value.to_string(),
+                    super::AttrValue::Bool(value) => value.to_string(),
+                });
+            Ok(value.unwrap_or_else(|| "nil".into()))
+        }
         other => Err(TraceqlError::Exec(format!(
             "unsupported metrics label column type {other:?}"
         ))),

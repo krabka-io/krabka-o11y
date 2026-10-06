@@ -1,9 +1,11 @@
 //! Typed execution generation: the oracle reads original values, never the
 //! parser, projected columns, planner, or the engine's comparison helpers.
 
-use std::{cmp::Ordering, sync::Arc};
+use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
 
-use krabka_traceql::{AttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceqlEngine};
+use krabka_traceql::{
+    AttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceMetricSeries, TraceqlEngine,
+};
 use krabka_units::nanos;
 use proptest::prelude::*;
 
@@ -145,6 +147,7 @@ proptest! {
         actual.sort_unstable();
         prop_assert_eq!(actual,expected.clone(),"query: {}",expression);
         let count=f64::from(u32::try_from(expected.len()).unwrap());
-        prop_assert_eq!(&metrics.series[0].points,&vec![(0,count),(100,0.0)]);
+        let expected_series = if expected.is_empty() { Vec::new() } else { vec![TraceMetricSeries { labels: Vec::new(), label_types: BTreeMap::new(), points: vec![(0,count),(100,0.0)], exemplars: Vec::new() }] };
+        prop_assert_eq!(metrics.series, expected_series, "query: {}", expression);
     }
 }

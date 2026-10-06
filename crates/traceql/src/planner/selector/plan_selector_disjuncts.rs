@@ -39,5 +39,7 @@ pub(crate) async fn plan_selector_disjuncts<S: SpanStore>(
         ctx,
         plan,
         inspected,
+        sampling_factor: 1.0,
+        spanset_pipeline_had_input: false,
     })
 }

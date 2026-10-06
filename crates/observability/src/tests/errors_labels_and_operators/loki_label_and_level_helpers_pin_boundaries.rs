@@ -53,37 +53,26 @@ pub(crate) fn loki_label_and_level_helpers_pin_boundaries() {
     // handling swallows it before the name check is reached.
     check!(loki_proto_label_parse_error("{app=bad-value}").is_none());
 
-    let mut detected = BTreeMap::from([("app".to_string(), "api".to_string())]);
-    discover_detected_level_label(&mut detected, "api ERROR happened");
-    assert_eq!(
-        detected.get("detected_level").map(String::as_str),
-        Some("error")
+    let stream = BTreeMap::from([("app".to_string(), "api".to_string())]);
+    let mut detected = BTreeMap::new();
+    discover_detected_level_label(
+        &stream,
+        &mut detected,
+        "api ERROR happened",
+        &Limits::default(),
     );
-    // Any one of the four labels already present stops the discovery, and
-    // each has to be the ONLY one present -- a guard that needed two of
-    // them would still be stopped by a pair.
-    for held in ["detected_level", "level", "severity", "severity_text"] {
-        let mut labels = BTreeMap::from([(held.to_string(), "custom".to_string())]);
-        discover_detected_level_label(&mut labels, "api error happened");
-        check!(
-            labels.get("detected_level").map(String::as_str)
-                == if held == "detected_level" {
-                    Some("custom")
-                } else {
-                    None
-                },
-            "{held} alone stops the discovery"
+    check!(detected.get("detected_level").map(String::as_str) == Some("error"));
+    check!(stream == BTreeMap::from([("app".to_string(), "api".to_string())]));
+    for held in ["level", "severity", "severity_text"] {
+        let labels = BTreeMap::from([(held.to_string(), "custom".to_string())]);
+        let mut metadata = BTreeMap::new();
+        discover_detected_level_label(
+            &labels,
+            &mut metadata,
+            "api error happened",
+            &Limits::default(),
         );
-    }
-    for (line, want) in [
-        ("error happened", true),
-        ("happened error", true),
-        ("terror", false),
-        ("error_code", false),
-    ] {
-        assert_eq!(contains_log_level_token(line, "error"), want);
-    }
-    for (byte, want) in [(b'a', true), (b'1', true), (b'_', true), (b'-', false)] {
-        assert_eq!(is_log_level_word_byte(byte), want);
+        check!(metadata.get("detected_level").map(String::as_str) == Some("custom"));
+        check!(labels.len() == 1);
     }
 }

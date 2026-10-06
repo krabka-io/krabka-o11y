@@ -7,9 +7,5 @@ pub(crate) fn template_slice_string(
     let Some((start, end)) = template_slice_bounds(value.len(), bounds) else {
         return TemplateRuntimeValue::String(String::new());
     };
-    TemplateRuntimeValue::String(
-        value
-            .get(start..end)
-            .map_or_else(String::new, ToString::to_string),
-    )
+    TemplateRuntimeValue::Bytes(value.as_bytes()[start..end].to_vec())
 }

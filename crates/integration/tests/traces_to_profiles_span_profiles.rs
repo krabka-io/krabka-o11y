@@ -196,27 +196,38 @@ async fn querier_over(record: &ProfileRecord) -> axum::Router {
 /// The total is what makes the selector observable: each span contributed one
 /// sample worth 7, so the total says how many of them the query merged.
 async fn span_profile(app: axum::Router, span_selectors: &[String]) -> (Vec<String>, i64) {
+    profile_query(
+        app,
+        "SelectMergeSpanProfile",
+        TENANT,
+        json!({
+            "profileTypeID": PROFILE_TYPE,
+            "labelSelector": format!("{{service_name=\"{SERVICE}\"}}"),
+            "spanSelector": span_selectors,
+            "start": 0, "end": 100,
+        }),
+    )
+    .await
+}
+
+async fn profile_query(
+    app: axum::Router,
+    method: &str,
+    tenant: &str,
+    request: Value,
+) -> (Vec<String>, i64) {
     let response = app
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/querier.v1.QuerierService/SelectMergeSpanProfile")
+                .uri(format!("/querier.v1.QuerierService/{method}"))
                 .header("content-type", "application/json")
-                .header("x-scope-orgid", TENANT)
-                .body(axum::body::Body::from(
-                    json!({
-                        "profileTypeID": PROFILE_TYPE,
-                        "labelSelector": format!("{{service_name=\"{SERVICE}\"}}"),
-                        "spanSelector": span_selectors,
-                        "start": 0,
-                        "end": 100,
-                    })
-                    .to_string(),
-                ))
-                .expect("span profile request"),
+                .header("x-scope-orgid", tenant)
+                .body(axum::body::Body::from(request.to_string()))
+                .unwrap(),
         )
         .await
-        .expect("span profile response");
+        .unwrap();
 
     assert!(response.status() == StatusCode::OK);
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -315,4 +326,88 @@ async fn a_span_id_stored_by_traces_selects_that_span_s_profile() {
     .await;
     check!(!names.iter().any(|name| name == FRAME));
     check!(total == 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn trace_and_span_ids_select_profiles_through_supported_stacktrace_rpc() {
+    let mut traces = krabka_traces::LiveStore::new(i64::MAX);
+    for span_id in [WANTED_SPAN_ID, OTHER_SPAN_ID] {
+        traces.ingest(krabka_traces::SpanRecord {
+            tenant: TENANT.to_string(),
+            span: span(span_id, "GET /orders"),
+        });
+    }
+    let stored = traces.trace_by_id(TENANT, &TRACE_ID);
+    let wanted = stored
+        .iter()
+        .find(|span| span.span_id == WANTED_SPAN_ID)
+        .unwrap();
+    let other = stored
+        .iter()
+        .find(|span| span.span_id == OTHER_SPAN_ID)
+        .unwrap();
+    let record = profile_record([
+        u64::from_be_bytes(wanted.span_id),
+        u64::from_be_bytes(other.span_id),
+    ]);
+    let app = querier_over(&record).await;
+    let trace_id = hex::encode(wanted.trace_id);
+    let wanted_id = hex::encode(wanted.span_id);
+    let other_id = hex::encode(other.span_id);
+    for (tenant, spans, trace_ids, expected) in [
+        (TENANT, vec![], vec![trace_id.clone()], 14),
+        (TENANT, vec![wanted_id.clone()], vec![], 7),
+        (TENANT, vec![wanted_id.clone(), other_id], vec![], 14),
+        (
+            TENANT,
+            vec![],
+            vec!["ffffffffffffffffffffffffffffffff".to_string()],
+            0,
+        ),
+        (TENANT, vec!["ffffffffffffffff".to_string()], vec![], 0),
+        ("tenant-b", vec![], vec![trace_id.clone()], 0),
+    ] {
+        let (names, total) = profile_query(
+            app.clone(),
+            "SelectMergeStacktraces",
+            tenant,
+            json!({
+                "profileTypeID": PROFILE_TYPE,
+                "labelSelector": format!("{{service_name=\"{SERVICE}\"}}"),
+                "spanSelector": spans, "traceIdSelector": trace_ids,
+                "start": 0, "end": 100,
+            }),
+        )
+        .await;
+        check!(total == expected, "{tenant}, {spans:?}, {trace_ids:?}");
+        if expected != 0 {
+            check!(names.iter().any(|name| name == FRAME));
+        }
+    }
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/querier.v1.QuerierService/SelectMergeStacktraces")
+                .header("content-type", "application/json")
+                .header("x-scope-orgid", TENANT)
+                .body(axum::body::Body::from(
+                    json!({
+                        "profileTypeID": PROFILE_TYPE,
+                        "labelSelector": format!("{{service_name=\"{SERVICE}\"}}"),
+                        "spanSelector": [wanted_id], "traceIdSelector": [trace_id],
+                        "start": 0, "end": 100,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(response.status() == StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let error: Value = serde_json::from_slice(&body).unwrap();
+    check!(error["code"] == "invalid_argument");
 }

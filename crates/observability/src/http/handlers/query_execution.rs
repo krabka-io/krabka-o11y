@@ -15,12 +15,20 @@ use crate::{
     validate_query_entries_limit, validate_query_range_limit, validate_query_string_bytes_limit,
 };
 
+mod apply_grouped_metric_selection;
 mod apply_nested_vector_aggregation;
+mod execute_federated_metric_query;
 mod execute_http_logql_expr;
 mod execute_http_query_for_tenant;
+mod execute_http_variants;
 
-pub(crate) use apply_nested_vector_aggregation::apply_nested_vector_aggregation;
+use apply_grouped_metric_selection::apply_grouped_metric_selection;
+pub(crate) use apply_nested_vector_aggregation::{
+    apply_nested_vector_aggregation, format_float_sample,
+};
+use execute_federated_metric_query::execute_federated_metric_query;
 pub(crate) use execute_http_logql_expr::execute_http_logql_expr;
 pub(crate) use execute_http_query_for_tenant::{
     execute_http_query_for_tenant, execute_http_query_for_tenant_inner,
 };
+use execute_http_variants::execute_http_variants;

@@ -1,6 +1,5 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
-use krabka_blockstore::Labels;
 use krabka_metrics::{NativeHistogram, ResetHint};
 use promql_parser::parser::{
     LabelModifier,
@@ -20,6 +19,7 @@ use super::{
     result_utils::quantile_value,
 };
 use crate::{
+    PromqlLabels as Labels,
     error::{PromqlError, Result},
     result::{InstantSample, SampleValue},
 };

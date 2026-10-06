@@ -1,4 +1,7 @@
-use super::{LabelMatcher, Labels, PipelineEvaluation, PipelineStage};
+use super::{
+    LabelMatcher, Labels, PipelineEvaluation, PipelineStage,
+    variant_metadata::{PipelineLabels, initial_pipeline_fields},
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct StreamQuery {
@@ -72,14 +75,36 @@ impl StreamQuery {
             return None;
         }
 
-        let mut fields = labels.clone();
-        fields.extend(initial_fields.clone());
+        let (mut fields, metadata) = initial_pipeline_fields(labels, initial_fields);
+        let mut categories = PipelineLabels::new(labels, metadata);
 
         let mut line = line.to_string();
         for stage in &self.pipeline {
-            if !stage.apply_with_timestamp(&mut line, &mut fields, timestamp_ns) {
-                return None;
+            if matches!(stage, PipelineStage::VariantBoundary) {
+                // The common extractor's complete output becomes the new stream
+                // base, then its surviving structured metadata is added again.
+                categories.reenter(&mut fields);
+                continue;
             }
+            match stage {
+                PipelineStage::Parser(parser) => {
+                    parser.apply_with_categories(&mut line, &mut fields, &mut categories);
+                }
+                PipelineStage::LabelFormat(format) => {
+                    format.apply_with_assignment_tracking(
+                        &line,
+                        &mut fields,
+                        timestamp_ns,
+                        |destination| categories.record_assignment(destination),
+                    );
+                }
+                _ => {
+                    if !stage.apply_with_timestamp(&mut line, &mut fields, timestamp_ns) {
+                        return None;
+                    }
+                }
+            }
+            categories.retain_metadata(&fields);
         }
 
         Some(PipelineEvaluation { fields, line })

@@ -50,9 +50,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 
 use crate::{
+    PromqlLabels as Labels,
     planner::StepGrid,
     result::{InstantSample, SampleValue},
 };

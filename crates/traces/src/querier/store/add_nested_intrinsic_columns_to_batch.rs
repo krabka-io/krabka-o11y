@@ -7,6 +7,7 @@ use super::{
 pub(crate) fn add_nested_intrinsic_columns_to_batch(
     batch: &RecordBatch,
     matchers: &[SpanMatcher],
+    expansion_matchers: &[SpanMatcher],
 ) -> Result<RecordBatch, TraceqlError> {
     let schema = batch.schema();
     let missing = [
@@ -26,7 +27,7 @@ pub(crate) fn add_nested_intrinsic_columns_to_batch(
         return Ok(batch.clone());
     }
 
-    let nested = nested_intrinsic_rows(batch, matchers, &missing_attrs)?;
+    let nested = nested_intrinsic_rows(batch, expansion_matchers, &missing_attrs)?;
     let mut fields = schema
         .fields()
         .iter()
@@ -74,14 +75,13 @@ pub(crate) fn add_nested_intrinsic_columns_to_batch(
         }
     }
     for (column, _) in missing_attrs {
-        fields.push(Field::new(&column, DataType::Utf8, true));
-        columns.push(
-            nested
-                .attr_columns
-                .get(&column)
-                .ok_or_else(|| TraceqlError::Store(format!("missing nested attr column {column}")))?
-                .clone(),
-        );
+        let array = nested
+            .attr_columns
+            .get(&column)
+            .ok_or_else(|| TraceqlError::Store(format!("missing nested attr column {column}")))?
+            .clone();
+        fields.push(Field::new(&column, array.data_type().clone(), true));
+        columns.push(array);
     }
     RecordBatch::try_new(Arc::new(Schema::new(fields)), columns)
         .map_err(|err| TraceqlError::Store(format!("add nested intrinsic columns: {err}")))

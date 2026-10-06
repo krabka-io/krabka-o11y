@@ -29,11 +29,17 @@
 
 mod support;
 
+#[path = "support/loki_experimental_queries.rs"]
+mod loki_experimental_queries;
+
 #[path = "support/loki_remote_fixture.rs"]
 mod loki_remote_fixture;
 
 #[path = "../../metrics-service/tests/support/generated_differential.rs"]
 mod generated_differential;
+
+#[path = "../../logql/tests/support/template_functions.rs"]
+mod template_functions;
 
 use std::{
     fmt::Write as _,
@@ -209,6 +215,10 @@ compactor:
 querier:
   query_ingesters_within: 0s
 
+ingester:
+  wal:
+    dir: /dev/shm/loki-wal
+
 pattern_ingester:
   enabled: true
 
@@ -275,10 +285,26 @@ async fn loki_corpus_matches_krabka() -> TestResult {
     );
     let cases = corpus(&timeline)?;
     let total = cases.len();
+    let mut template_cases = Vec::new();
     for case in cases {
         let krabka_response = krabka_side.probe(&client, &case).await?;
         let loki_response = loki_side.probe(&client, &case).await?;
-        let agrees = krabka_response == loki_response;
+        let mut agrees = krabka_response == loki_response;
+        if let Some((_, expression, line)) = template_functions::CASES
+            .iter()
+            .find(|(name, _, _)| *name == case.name)
+        {
+            let expected = template_expected_response(&timeline, case.name, line);
+            agrees &= krabka_response == expected && loki_response == expected;
+            template_cases.push(json!({
+                "id": case.name, "name": case.name, "expression": expression,
+                "request": {"method": "GET", "path": case.path, "tenant": case.tenant, "query": supported_template_query(expression)},
+                "raw_oracle": loki_side.last_response, "raw_candidate": krabka_side.last_response,
+                "oracle": loki_response, "candidate": krabka_response,
+                "independent_expected": expected,
+                "status": if agrees { "matched" } else { "mismatch" },
+            }));
+        }
         match known_divergence(case.name) {
             Some(divergence) if agrees => healed.push(divergence),
             Some(_) => {}
@@ -287,6 +313,19 @@ async fn loki_corpus_matches_krabka() -> TestResult {
         }
     }
 
+    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
+        || std::path::PathBuf::from("../../target"),
+        std::path::PathBuf::from,
+    );
+    std::fs::create_dir_all(&output)?;
+    std::fs::write(
+        output.join("loki-supported-template-functions.json"),
+        serde_json::to_vec_pretty(&json!({
+            "schema_version": 1, "upstream_source": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
+            "timeline_base_ns": timeline.base_ns,
+            "planned": template_functions::CASES.len(), "cases": template_cases,
+        }))?,
+    )?;
     krabka.shutdown();
     // How much was actually asked. An empty divergence list over four queries
     // and an empty one over sixty read the same in a passing log otherwise.
@@ -1176,6 +1215,16 @@ fn corpus(timeline: &Timeline) -> TestResult<Vec<Case>> {
     cases.extend(vector_function_cases(timeline));
     cases.extend(parser_error_cases(timeline));
     cases.extend(parser_cases(timeline));
+    cases.extend(
+        template_functions::CASES
+            .iter()
+            .map(|(name, expression, _)| {
+                let query = supported_template_query(expression);
+                Case::get(name, "/loki/api/v1/query_range")
+                    .params(range_params(timeline, &query, 1))
+                    .tenant(PARSER_TENANT)
+            }),
+    );
     cases.extend(parser_metric_cases(timeline));
     cases.extend(parser_instant_cases(timeline));
     cases.extend(metadata_cases(timeline));
@@ -1202,6 +1251,12 @@ fn corpus(timeline: &Timeline) -> TestResult<Vec<Case>> {
 }
 
 /// `/query_range` over log selectors, line filters, parsers and formatters.
+fn supported_template_query(expression: &str) -> String {
+    let template = serde_json::to_string(&format!("{{{{ {expression} }}}}"))
+        .expect("template string serializes");
+    format!("{{app=\"api\",format=\"logfmt\"}} | line_format {template}")
+}
+
 fn stream_cases(timeline: &Timeline) -> Vec<Case> {
     [
         ("selector_api_stream", r#"{app="api"}"#),
@@ -1562,6 +1617,22 @@ fn parser_cases(timeline: &Timeline) -> Vec<Case> {
         ("parser_label_format_pipeline", r#"{app="api",format="logfmt"} | logfmt | label_format summary=`{{ .msg | replace " " "_" | upper }}` | summary = "API_PARSER_ERROR""#),
         ("parser_line_format_strings", r#"{app="api",format="logfmt"} | logfmt | line_format `{{ .raw | trim | trimPrefix "/" | trimSuffix "/" | title }} {{ .raw | trimAll " /" }} {{ .path | substr 1 10 }} {{ .path | substr 5 -1 }} {{ .path | substr -1 4 }}` |= "Checkout checkout api/items items /api""#),
         ("parser_line_format_logic", r#"{app="api",format="logfmt"} | logfmt | line_format `{{ contains "helper" .msg }} {{ .path | hasPrefix "/api" }} {{ .path | hasSuffix "items" }} {{ .msg | eq "template helper" }}` |= "true true true true""#),
+        ("parser_template_string_truthiness", r#"{app="api",format="logfmt"} | line_format `{{ if "false" }}yes{{ else }}bad{{ end }}|{{ if "0" }}yes{{ else }}bad{{ end }}|{{ if false }}bad{{ else }}no{{ end }}`"#),
+        ("parser_template_operands", r#"{app="api",format="logfmt"} | line_format `{{ and "left" "right" }}|{{ or "" "fallback" }}|{{ "last" | and "first" }}|{{ "last" | or "first" }}`"#),
+        ("parser_template_typed_values", r#"{app="api",format="logfmt"} | line_format `{{ eq "b" "a" "b" }}|{{ lt "3" "10" }}|{{ lt 3 10 }}|{{ default "fallback" false }}|{{ default "fallback" 0 }}|{{ default "fallback" "0" }}`"#),
+        ("parser_template_collection_values", r#"{app="api",format="logfmt"} | line_format `{{ len (fromJson "[1,2]") }}|{{ or (fromJson "[]") (fromJson "[1,2]") }}|{{ with or "" "chosen" }}{{ . | upper }}{{ else }}bad{{ end }}`"#),
+        ("parser_template_numeric_conditions", r#"{app="api",format="logfmt"} | line_format `{{ if sub 2 2 }}bad{{ else }}zero{{ end }}|{{ if addf 1 -1 }}bad{{ else }}zero{{ end }}`"#),
+        ("parser_template_short_circuit", r#"{app="api",format="logfmt"} | line_format `{{ or "chosen" (div 1 0) }}|{{ and "" (div 1 0) }}` | __error__ = """#),
+        ("parser_template_error_filter", r#"{app="api",format="logfmt"} | line_format `prefix{{ count "[" __line__ }}` | __error__ = """#),
+        ("parser_template_definitions", r#"{app="api",format="logfmt"} | line_format `{{ template "suffix" "chosen" }}{{ define "suffix" }}{{ . | upper }}={{ $ }}{{ end }}`"#),
+        ("parser_template_block", r#"{app="api",format="logfmt"} | line_format `{{ block "body" "fallback" }}{{ . }}{{ end }}`"#),
+        ("parser_template_outer_assignment", r#"{app="api",format="logfmt"} | line_format `{{ $sum := 0 }}{{ range $n := fromJson "[1,2,3]" }}{{ $sum = add $sum $n }}{{ . }}{{ end }}|{{ $sum }}`"#),
+        ("parser_template_range_flow", r#"{app="api",format="logfmt"} | line_format `{{ range 4 }}{{ if eq . 1 }}{{ continue }}{{ end }}{{ if eq . 3 }}{{ break }}{{ end }}{{ . }}{{ end }}done`"#),
+        ("parser_template_range_assignment", r#"{app="api",format="logfmt"} | line_format `{{$i := 9}}{{$v := "before"}}{{range $i, $v = fromJson "[10,20]"}}{{$i}}={{$v}};{{end}}|{{$i}}:{{$v}}`"#),
+        ("parser_template_empty_range_binding", r#"{app="api",format="logfmt"} | line_format `{{range $v := fromJson "[]"}}bad{{else}}{{len $v}}{{end}}|{{range (fromJson "null")}}bad{{else}}nil{{end}}`"#),
+        ("parser_template_invalid_range_filter", r#"{app="api",format="logfmt"} | line_format `{{range "abc"}}bad{{else}}bad{{end}}` | __error__="""#),
+        ("parser_template_recursive_execution", r#"{app="api",format="logfmt"} | line_format `{{define "down"}}{{if gt . 0}}{{range 1}}{{template "down" (sub $ 1)}}{{end}}{{else}}done{{end}}{{end}}{{template "down" 2000}}`"#),
+        ("parser_template_label_composition", r#"{app="api",format="logfmt"} | label_format decision=`{{ or "" "chosen" }}` | decision="chosen" | line_format `{{ .decision | upper }}`"#),
         ("parser_line_format_ne", r#"{app="api",format="logfmt"} | logfmt | line_format `{{ ne .msg "api parser error" }} {{ .path | ne "/health" }}` |= "true true""#),
         ("parser_line_format_len", r#"{app="api",format="logfmt"} | logfmt | line_format `len={{ len .msg }}` |= "len=15""#),
         ("parser_line_format_spacing", r#"{app="api",format="logfmt"} | logfmt | line_format `{{ alignLeft 5 .short }}|{{ alignLeft 5 .long }}|{{ alignRight 5 .short }}|{{ alignRight 5 .long }}|{{ repeat 3 .mark }}` |= "hi   |hello|   hi|world|xxx""#),
@@ -3254,6 +3325,7 @@ struct Side {
     distributor: String,
     block_builder: String,
     request_id: Option<String>,
+    last_response: Option<Value>,
 }
 
 impl Side {
@@ -3263,6 +3335,7 @@ impl Side {
             distributor: distributor.to_string(),
             block_builder: block_builder.to_string(),
             request_id: None,
+            last_response: None,
         }
     }
 
@@ -3307,6 +3380,7 @@ impl Side {
         let status = response.status().as_u16();
         let content_type = media_type(response.headers().get(reqwest::header::CONTENT_TYPE));
         let text = response.text().await?;
+        self.last_response = Some(json!({"status": status, "body": json_or_text(&text)}));
         if case.shape == Shape::Delete
             && let Some(request_id) = raw_delete_request_id(&text)
         {
@@ -3987,6 +4061,13 @@ fn pretty(value: &Value) -> String {
 // ---------------------------------------------------------------------------
 
 async fn start_loki() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
+    start_loki_with_config(LOKI_CONFIG, "overrides: {}\n").await
+}
+
+async fn start_loki_with_config(
+    config: &str,
+    overrides: &str,
+) -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
     // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
     // the same map that decides what `docker load` tags. A default here would
     // be a second copy of that decision, and when the two disagreed
@@ -4007,9 +4088,10 @@ async fn start_loki() -> TestResult<testcontainers::ContainerAsync<GenericImage>
             // Copied into the image rather than bind-mounted, so the test has
             // no host-filesystem prerequisites. The path is the one the image's
             // own default command already points at.
+            .with_copy_to("/etc/loki/local-config.yaml", config.as_bytes().to_vec())
             .with_copy_to(
-                "/etc/loki/local-config.yaml",
-                LOKI_CONFIG.as_bytes().to_vec(),
+                "/etc/loki/experimental-overrides.yaml",
+                overrides.as_bytes().to_vec(),
             )
             .start(),
     )
@@ -4059,17 +4141,21 @@ impl KrabkaStack {
 }
 
 async fn start_krabka() -> TestResult<KrabkaStack> {
+    start_krabka_with_overrides(OverridesProvider::new(Limits::default())).await
+}
+
+async fn start_krabka_with_overrides(overrides: OverridesProvider) -> TestResult<KrabkaStack> {
     let sink = InMemoryWalSink::default();
     let root = tempfile::tempdir()?.keep();
     // `i64::MIN`: nothing has been compacted, so every record the distributor
     // wrote is in the querier's hot tail. This is the same wiring
     // `build_service_router` uses for a querier with no compaction frontier.
     let state = QuerierState::new(root, LabelIndex::default(), BlockIndex::default())
-        .with_hot_tail(sink.clone(), i64::MIN);
+        .with_hot_tail(sink.clone(), i64::MIN)
+        .with_limits_overrides(overrides.clone());
     // Loki's own default limits, as a distributor with no overrides file runs
     // them. `distributor_router` alone enforces none, and Loki does.
-    let distributor =
-        distributor_router_with_overrides(sink, OverridesProvider::new(Limits::default()));
+    let distributor = distributor_router_with_overrides(sink, overrides);
     let block_builder = build_service_router(
         &block_builder_config(tempfile::tempdir()?.keep()),
         ServiceDependencies::default(),
@@ -4168,4 +4254,55 @@ async fn wait_for_seeded(
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     Err(format!("{base} never returned all {expected} `{label}` values for {tenant}").into())
+}
+
+fn template_expected_response(timeline: &Timeline, name: &str, line: &str) -> Value {
+    let stream = PARSER_STREAMS
+        .iter()
+        .find(|stream| stream.labels.contains(&("format", "logfmt")))
+        .expect("independent logfmt fixture exists");
+    // The pinned distributor's word detector sees "error" only in the seed
+    // lines at offsets 8 and 12. Detection happens before line_format, so its
+    // structured metadata separates the returned streams even for a constant.
+    let results: Vec<_> = ["error", "unknown"]
+        .into_iter()
+        .map(|level| {
+            let values: Vec<_> = stream.entries.iter()
+                .filter(|entry| matches!(entry.offset_secs, 8 | 12) == (level == "error"))
+                .map(|entry| json!([
+                    timeline.at(entry.offset_secs).to_string(),
+                    if name == "line" { entry.line } else { line }
+                ]))
+                .collect();
+            json!({
+                "stream": {"app": "api", "env": "prod", "format": "logfmt", "service_name": "api", "detected_level": level},
+                "values": values
+            })
+        }).collect();
+    json!({"status": 200, "body": {"status": "success", "data": {
+        "resultType": "streams", "result": results
+    }}})
+}
+
+#[test]
+fn template_expected_stream_retains_every_fixture_identity() {
+    let timeline = Timeline {
+        base_ns: 1_000_000_000,
+    };
+    let expected = template_expected_response(&timeline, "lower", "known");
+    let expected_groups = [
+        ("error", vec![8, 12]),
+        ("unknown", vec![2, 3, 4, 7, 9, 10, 11, 13, 14, 15, 16, 20, 21, 22]),
+    ].into_iter().map(|(level, offsets)| {
+        let values: Vec<_> = offsets.into_iter()
+            .map(|offset| json!([timeline.at(offset).to_string(), "known"]))
+            .collect();
+        json!({"stream": {"app": "api", "env": "prod", "format": "logfmt", "service_name": "api", "detected_level": level}, "values": values})
+    }).collect::<Vec<_>>();
+    assert!(
+        expected
+            == json!({"status": 200, "body": {"status": "success", "data": {
+                "resultType": "streams", "result": expected_groups
+            }}})
+    );
 }

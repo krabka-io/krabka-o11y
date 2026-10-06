@@ -4,12 +4,12 @@ use std::{
 };
 
 use futures::TryStreamExt;
-use krabka_blockstore::{LabelMatcher, Labels};
 use krabka_metrics::{FloatSampleRow, decode_float_samples, float_sample_schema};
 
 use super::MergedMetricStore;
 use crate::{
-    LatestFloatScan, MetricBlockStore, MetricStore, PromqlError, WalHead,
+    LatestFloatScan, MetricBlockStore, MetricStore, PromqlError, PromqlLabels as Labels,
+    PromqlMatcher as LabelMatcher, WalHead,
     in_memory::{prepare_matchers, row_matches},
 };
 
@@ -76,11 +76,15 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
         let index = self.cold.floats.index();
         // Keep resolution errors pending until the original cold-read point.
         // An exact hot count can still require the ordinary scan before then.
-        let cold_candidates = index.resolve(tenant, matchers).map(|fps| {
-            let keys = index.candidate_blocks(tenant, &fps, start_ms, end_ms);
-            let blocks = index.all_blocks(tenant);
-            (fps, keys, blocks)
-        });
+        let cold_candidates =
+            self.cold
+                .matching_series_by_fp(tenant, matchers)
+                .map(|cold_labels| {
+                    let fps = cold_labels.keys().copied().collect::<BTreeSet<_>>();
+                    let keys = index.candidate_blocks(tenant, &fps, start_ms, end_ms);
+                    let blocks = index.all_blocks(tenant);
+                    (fps, keys, blocks, cold_labels)
+                });
         let mut latest = HashMap::<u64, LatestSeries, ahash::RandomState>::default();
         let mut upper_count = 0_usize;
         if let Some(rows) = hot.floats.get(tenant) {
@@ -93,7 +97,7 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
                 .filter(|(_, count)| {
                     // A loose bound must use the exact hot loop, not the full
                     // scan: its boundary and duplicate limit behavior differs.
-                    cold_candidates.as_ref().is_ok_and(|(_, keys, blocks)| {
+                    cold_candidates.as_ref().is_ok_and(|(_, keys, blocks, _)| {
                         blocks
                             .iter()
                             .filter(|block| keys.contains(&block.object_key))
@@ -201,8 +205,7 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
                 }
             }
         }
-        let (fps, keys, blocks) =
-            cold_candidates.map_err(|error| PromqlError::Store(error.to_string()))?;
+        let (fps, keys, blocks, cold_labels) = cold_candidates?;
         let mut covered_blocks = 0;
         let mut uncovered = Vec::new();
         for block in blocks {
@@ -245,9 +248,7 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
         }
         let mut series = latest.into_iter().collect::<Vec<_>>();
         series.sort_unstable_by_key(|(fp, _)| *fp);
-        let mut labels = self
-            .cold
-            .matching_series_by_fp(tenant, matchers)?
+        let mut labels = cold_labels
             .into_iter()
             .map(|(fp, labels)| (fp, Arc::new(labels)))
             .collect::<BTreeMap<_, _>>();

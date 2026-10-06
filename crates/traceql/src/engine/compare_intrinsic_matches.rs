@@ -26,8 +26,24 @@ pub(crate) fn compare_intrinsic_matches(
             .is_some_and(|code| enum_cmp(code, op, rhs, kind_enum_value)),
         Intrinsic::Duration => row.duration.is_some_and(|duration| match rhs {
             Value::Int(rhs) | Value::Duration(rhs) => num_cmp(duration, op, *rhs),
-            _ => false,
+            _ => super::field_comparison::field_values(
+                &super::Field {
+                    scope: super::Scope::Intrinsic(intrinsic.clone()),
+                    key: String::new(),
+                },
+                row,
+            )
+            .iter()
+            .any(|value| super::field_comparison::scalar_matches(value, op, rhs)),
         }),
-        _ => false,
+        _ => super::field_comparison::field_values(
+            &super::Field {
+                scope: super::Scope::Intrinsic(intrinsic.clone()),
+                key: String::new(),
+            },
+            row,
+        )
+        .iter()
+        .any(|value| super::field_comparison::scalar_matches(value, op, rhs)),
     }
 }

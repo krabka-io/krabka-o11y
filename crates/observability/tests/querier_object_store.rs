@@ -220,7 +220,7 @@ async fn configured_object_store_query_returns_partial_warning_for_missing_block
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -322,7 +322,7 @@ async fn configured_object_store_backward_limited_query_stops_after_newest_block
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -431,7 +431,7 @@ async fn configured_object_store_query_merges_hot_tail_with_source_split_stats()
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -531,7 +531,7 @@ async fn configured_object_store_metric_query_returns_partial_warning_for_missin
                         {
                             "metric": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "prod"
                             },
                             "values": [
@@ -976,12 +976,7 @@ async fn configured_object_store_detected_fields_endpoint_loads_request_tenant_m
         json_body(response).await
             == json!({
                 "fields": [
-                    {
-                        "label": "detected_level",
-                        "type": "string",
-                        "cardinality": 1,
-                        "parsers": null
-                    },
+
                     {
                         "label": "status",
                         "type": "int",
@@ -1114,7 +1109,7 @@ async fn configured_object_store_querier_loads_manifest_for_request_tenant_heade
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "stage"
                             },
                             "values": [
@@ -1275,7 +1270,7 @@ async fn configured_object_store_shard_catalog_querier_loads_shards_for_request_
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
+
                                 "env": "stage"
                             },
                             "values": [
@@ -1722,12 +1717,7 @@ async fn a_retention_swept_block_degrades_every_read_surface_instead_of_failing(
             "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000029&limit=10",
             json!({
                 "fields": [
-                    {
-                        "label": "detected_level",
-                        "type": "string",
-                        "cardinality": 1,
-                        "parsers": null,
-                    },
+
                     {
                         "label": "status",
                         "type": "int",

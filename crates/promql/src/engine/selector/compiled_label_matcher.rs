@@ -7,6 +7,6 @@ pub(crate) struct CompiledLabelMatcher {
     pub(crate) op: MatchOp,
     /// The literal comparand for `Eq`/`Neq`. This field is also the source of the
     /// precompiled, anchored regex, but the compiled form lives in `regex`.
-    pub(crate) value: String,
+    pub(crate) value: crate::PromqlString,
     pub(crate) regex: Option<Regex>,
 }

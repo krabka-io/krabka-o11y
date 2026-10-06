@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{LabelMatcher, Result, escape_object_path_segment};
 
+mod byte_label_matcher;
+pub use byte_label_matcher::ByteLabelMatcher;
+
 /// One persisted request to remove selected rows in a closed time range.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ErasureRequest {
@@ -17,6 +20,9 @@ pub struct ErasureRequest {
     pub selector: String,
     /// Prometheus matcher alternatives resolved against each block during compaction.
     pub matcher_sets: Vec<Vec<LabelMatcher>>,
+    /// Authoritative byte alternatives for metric selectors with non-UTF-8 values.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub byte_matcher_sets: Vec<Vec<ByteLabelMatcher>>,
     /// Inclusive Unix nanosecond boundary.
     pub start_ns: i64,
     /// Inclusive Unix nanosecond boundary.
@@ -56,10 +62,32 @@ impl ErasureRequest {
             tenant,
             selector,
             matcher_sets,
+            byte_matcher_sets: Vec::new(),
             start_ns,
             end_ns,
             created_at_ns,
         }
+    }
+
+    /// Attaches authoritative metric byte matchers and binds them into the ID.
+    ///
+    /// # Panics
+    /// Panics if the string-and-byte identity tuple cannot be serialized.
+    #[must_use]
+    pub fn with_byte_matchers(mut self, matcher_sets: Vec<Vec<ByteLabelMatcher>>) -> Self {
+        self.byte_matcher_sets = matcher_sets;
+        let identity = serde_json::to_vec(&(
+            &self.tenant,
+            &self.selector,
+            &self.matcher_sets,
+            &self.byte_matcher_sets,
+            self.start_ns,
+            self.end_ns,
+            self.created_at_ns,
+        ))
+        .expect("metric byte erasure identity serialises");
+        self.id = format!("delete-{:016x}", xxhash_rust::xxh3::xxh3_64(&identity));
+        self
     }
 
     /// Returns true when the request overlaps the closed range.

@@ -117,7 +117,7 @@ mod tests {
                 == SpansetExpr::Selector(Box::new(FieldExpr::Comparison {
                     lhs: Field {
                         scope: Scope::Intrinsic(Intrinsic::Duration),
-                        key: "duration".into(),
+                        key: "span:duration".into(),
                     },
                     op: ComparisonOp::Gt,
                     rhs: Value::Duration(100_000_000),
@@ -522,7 +522,9 @@ mod tests {
     fn most_recent_query_hint_parses() {
         let q = parse("{ .a = 1 } with (most_recent=true)").unwrap();
         assert!(q.hints.most_recent);
-        assert!(parse("{ .a = 1 } with (unknown=true)").is_err());
+        let unknown = parse("{ .a = 1 } with (unknown=true)").unwrap();
+        assert!(unknown.hints.values == vec![("unknown".into(), Value::Bool(true))]);
+        assert!(!unknown.hints.most_recent);
     }
 
     #[test]
@@ -633,9 +635,53 @@ mod tests {
     // ---- query hints ----
 
     #[test]
-    fn query_hint_non_boolean_value_errors() {
-        let msg = parse_err("{ .a = 1 } with (most_recent=5)");
-        assert!(msg.contains("expected boolean query hint value"));
+    fn query_hints_accept_static_values_and_preserve_unknown_or_wrong_types() {
+        let q = parse("{} with(most_recent=5, unused=\"opaque\", sample=0.5, timeout=1s)").unwrap();
+        assert!(!q.hints.most_recent);
+        assert!(
+            q.hints.values
+                == vec![
+                    ("most_recent".into(), Value::Int(5)),
+                    ("unused".into(), Value::Str("opaque".into())),
+                    ("sample".into(), Value::Float(0.5)),
+                    ("timeout".into(), Value::Duration(1_000_000_000))
+                ]
+        );
+        assert!(parse("{} with(unused=span.name)").is_err());
+    }
+
+    #[test]
+    fn hints_keep_first_boolean_and_prefer_float_over_integer_sampling() {
+        let q = parse(
+            "{} with(most_recent=false, most_recent=true, sample=1, sample=0.5, sample=0.25)",
+        )
+        .unwrap();
+        assert!(!q.hints.most_recent);
+        assert!(q.hints.numeric("sample").unwrap().to_bits() == 0.5_f64.to_bits());
+        for query in [
+            "{} with(unused=1+2)",
+            "{} with(unused=nil)",
+            "{} with(unused=unknown)",
+            "{} with(unused=-1)",
+            "{} | count() > 1 < 2",
+        ] {
+            assert!(parse(query).is_err(), "{query}");
+        }
+        let q = parse("{} | min_over_time(duration) > 10ms < 1s").unwrap();
+        assert!(
+            q.pipeline[1]
+                == Pipeline::Filter {
+                    op: ComparisonOp::Gt,
+                    value: 0.01
+                }
+        );
+        assert!(
+            q.pipeline[2]
+                == Pipeline::Filter {
+                    op: ComparisonOp::Lt,
+                    value: 1.0
+                }
+        );
     }
 
     #[test]
@@ -709,21 +755,21 @@ mod tests {
                 "{ .a = 1 } | sum_over_time(span:duration)",
                 Aggregate::SumOverTime(Field {
                     scope: Scope::Intrinsic(Intrinsic::Duration),
-                    key: "duration".into(),
+                    key: "span:duration".into(),
                 }),
             ),
             (
                 "{ .a = 1 } | min_over_time(span:duration)",
                 Aggregate::MinOverTime(Field {
                     scope: Scope::Intrinsic(Intrinsic::Duration),
-                    key: "duration".into(),
+                    key: "span:duration".into(),
                 }),
             ),
             (
                 "{ .a = 1 } | max_over_time(span:duration)",
                 Aggregate::MaxOverTime(Field {
                     scope: Scope::Intrinsic(Intrinsic::Duration),
-                    key: "duration".into(),
+                    key: "span:duration".into(),
                 }),
             ),
         ] {
@@ -902,6 +948,27 @@ mod tests {
     }
 
     #[test]
+    fn intrinsic_keys_preserve_scoped_names_and_canonical_id_aliases() {
+        for (query, expected) in [
+            ("{} | count_over_time() by(name)", "name"),
+            ("{} | count_over_time() by(span:name)", "span:name"),
+            ("{} | count_over_time() by(duration)", "duration"),
+            (
+                "{} | count_over_time() by(trace:duration)",
+                "trace:duration",
+            ),
+            ("{} | count_over_time() by(span:parentId)", "span:parentID"),
+            ("{} | count_over_time() by(link:spanId)", "link:spanID"),
+        ] {
+            let query = parse(query).unwrap();
+            let Pipeline::By(fields) = &query.pipeline[1] else {
+                panic!("metrics grouping");
+            };
+            assert!(fields[0].key == expected);
+        }
+    }
+
+    #[test]
     fn unknown_intrinsic_errors() {
         let msg = parse_err("{ span:bogus = 1 }");
         assert!(msg.contains("unknown intrinsic"));
@@ -921,7 +988,7 @@ mod tests {
     }
 
     #[test]
-    fn bare_field_without_comparison_is_existence() {
+    fn bare_field_without_comparison_is_boolean_predicate() {
         let q = parse("{ .foo }").unwrap();
         let SpansetExpr::Selector(fe) = &q.root else {
             panic!("selector")
@@ -930,6 +997,79 @@ mod tests {
             panic!("bare field")
         };
         assert!(field.key == "foo");
+    }
+
+    #[test]
+    fn scalar_aggregate_and_group_expressions_retain_ast_and_validate_types() {
+        let query = parse("{} | by(span.cost / 2) | avg(duration * 2) > 10ms").unwrap();
+        assert!(matches!(
+            &query.pipeline[0],
+            Pipeline::Group(ScalarExpr::Binary {
+                op: ArithmeticOp::Div,
+                ..
+            })
+        ));
+        assert!(matches!(
+            &query.pipeline[1],
+            Pipeline::Aggregate(Aggregate::Expression { .. })
+        ));
+        for query in [
+            "{} | avg(name)",
+            "{} | sum(2)",
+            "{} | by(2)",
+            "{} | by(name + 1)",
+        ] {
+            assert!(parse(query).is_err(), "{query}");
+        }
+        assert!(parse("{} | by(name)").is_ok());
+        let boolean = parse("{} | by(span.cost > 1)").unwrap();
+        assert!(matches!(
+            &boolean.pipeline[0],
+            Pipeline::Group(ScalarExpr::Predicate(_))
+        ));
+        assert!(parse("{} | avg(span.cost > 1)").is_err());
+    }
+
+    #[test]
+    fn parent_expression_rejections_preserve_legacy_constant_parent_selectors() {
+        for query in [
+            "{} | by(parent.foo)",
+            "{} | by(span.foo, parent.bar)",
+            "{} | by(parent.foo = 1)",
+            "{} | sum(parent.foo + 1) > 1",
+            "{ parent.foo + 1 > span.foo }",
+            "{ parent.foo }",
+        ] {
+            assert!(parse(query).is_err(), "{query}");
+        }
+        assert!(parse("{ parent.foo = 1 }").is_ok());
+        assert!(parse("{ parent.foo != nil }").is_ok());
+        assert!(parse("{} | by(span.foo = 1)").is_ok());
+    }
+
+    #[test]
+    fn boolean_predicates_and_not_exists_follow_intrinsic_types() {
+        for query in [
+            "{ name }",
+            "{ duration }",
+            "{ span:childCount }",
+            "{ trace:id = nil }",
+            "{ event:name = nil }",
+            "{ instrumentation:name = nil }",
+            "{ resource.service.name = nil }",
+        ] {
+            assert!(parse(query).is_err(), "{query}");
+        }
+        for query in [
+            "{ span.flag }",
+            "{ event.flag }",
+            "{ instrumentation.flag }",
+            "{ .missing = nil }",
+            "{ trace:id != nil }",
+            "{ resource.service.name != nil }",
+        ] {
+            assert!(parse(query).is_ok(), "{query}");
+        }
     }
 
     #[test]

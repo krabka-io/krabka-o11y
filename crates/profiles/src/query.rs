@@ -1271,12 +1271,21 @@ overrides:
                 .as_array()
                 .is_some_and(|flags| {
                     flags.len() == 4
+                        && ["pyroscopeRuler", "pyroscopeRulerFunctions"]
+                            .iter()
+                            .all(|name| {
+                                flags
+                                    .iter()
+                                    .any(|flag| flag["name"] == *name && flag["enabled"] == true)
+                            })
                         && flags
                             .iter()
-                            .any(|flag| flag["name"] == "pyroscopeRuler" && flag["enabled"] == true)
-                        && flags
-                            .iter()
-                            .filter(|flag| flag["name"] != "pyroscopeRuler")
+                            .filter(|flag| {
+                                !matches!(
+                                    flag["name"].as_str(),
+                                    Some("pyroscopeRuler" | "pyroscopeRulerFunctions")
+                                )
+                            })
                             .all(|flag| {
                                 !flag
                                     .get("enabled")
@@ -1284,7 +1293,7 @@ overrides:
                                     .unwrap_or(false)
                             })
                 }),
-            "capabilities must report only configured total-value evaluation: {capabilities}"
+            "capabilities must report configured total and function evaluation: {capabilities}"
         );
 
         let rule: serde_json::Value = connect(
@@ -1375,7 +1384,7 @@ overrides:
             other_rules.get("rules").is_none(),
             "tenant leak: {other_rules}"
         );
-        let unsupported = connect(
+        let filtered = connect(
             "settings.v1.RecordingRulesService/UpsertRecordingRule",
             "tenant-a",
             json!({
@@ -1387,7 +1396,9 @@ overrides:
         .send()
         .await
         .unwrap();
-        assert!(unsupported.status() == reqwest::StatusCode::BAD_REQUEST);
+        assert!(filtered.status() == reqwest::StatusCode::OK);
+        let filtered: serde_json::Value = filtered.json().await.unwrap();
+        assert!(filtered["rule"]["stacktraceFilter"]["functionName"]["functionName"] == "main");
 
         let pprof_bytes = crate::wire::test_fixtures::cpu_profile_pprof_bytes();
         let encoded = base64::engine::general_purpose::STANDARD.encode(&pprof_bytes);
@@ -1647,16 +1658,18 @@ overrides:
             deleted_debug_info.get("object").is_none(),
             "delete failed: {deleted_debug_info}"
         );
-        connect(
-            "settings.v1.RecordingRulesService/DeleteRecordingRule",
-            "tenant-a",
-            json!({"id": rule_id}),
-        )
-        .send()
-        .await
-        .unwrap()
-        .error_for_status()
-        .unwrap();
+        for id in [rule_id, filtered["rule"]["id"].as_str().unwrap()] {
+            connect(
+                "settings.v1.RecordingRulesService/DeleteRecordingRule",
+                "tenant-a",
+                json!({"id": id}),
+            )
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        }
         let deleted_rules: serde_json::Value = connect(
             "settings.v1.RecordingRulesService/ListRecordingRules",
             "tenant-a",
@@ -3464,8 +3477,123 @@ overrides:
     }
 
     #[tokio::test]
-    async fn analyze_query_returns_scope_and_impact_for_matching_series() {
+    async fn enabled_query_analysis_accepts_empty_and_selector_only_queries() {
+        let state = Arc::new(
+            QuerierState::new(Arc::new(store_with_two_profile_types()))
+                .with_query_analysis_series_enabled(true),
+        );
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+        .unwrap();
+        for (query, count) in [
+            ("", 2),
+            ("{}", 2),
+            ("{service_name=\"api\"}", 2),
+            ("{service_name=\"missing\"}", 0),
+        ] {
+            let response: serde_json::Value = reqwest::Client::new()
+                .post(format!(
+                    "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
+                ))
+                .header("x-scope-orgid", "tenant-a")
+                .json(&json!({"start":1,"end":100,"query":query}))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            check!(
+                response
+                    .pointer("/queryImpact/totalQueriedSeries")
+                    .and_then(json_i64)
+                    .unwrap_or_default()
+                    == count
+            );
+            check!(
+                response
+                    .pointer("/queryScopes/0/profileCount")
+                    .and_then(json_i64)
+                    == Some(2)
+            );
+            check!(
+                response
+                    .pointer("/queryImpact/totalBytesInTimeRange")
+                    .and_then(json_i64)
+                    .unwrap_or_default()
+                    > 0
+            );
+        }
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn disabled_query_analysis_ignores_selector_and_preserves_physical_cost() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_two_profile_types())));
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+        .unwrap();
+        let response: serde_json::Value = reqwest::Client::new()
+            .post(format!(
+                "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
+            ))
+            .header("x-scope-orgid", "tenant-a")
+            .json(&json!({"start":1,"end":100,"query":"invalid ignored {"}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        check!(
+            response
+                .pointer("/queryImpact/totalQueriedSeries")
+                .and_then(json_i64)
+                .unwrap_or_default()
+                == 0
+        );
+        check!(
+            response
+                .pointer("/queryImpact/totalBytesInTimeRange")
+                .and_then(json_i64)
+                .unwrap_or_default()
+                > 0
+        );
+        check!(
+            response
+                .pointer("/queryScopes/0/profileCount")
+                .and_then(json_i64)
+                == Some(2)
+        );
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn analyze_query_returns_scope_and_impact_for_matching_series() {
+        let state = Arc::new(
+            QuerierState::new(Arc::new(store_with_two_profile_types()))
+                .with_query_analysis_series_enabled(true),
+        );
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let bound = serve(
             "127.0.0.1:0".parse().unwrap(),
@@ -3483,7 +3611,7 @@ overrides:
             ))
             .header("x-scope-orgid", "tenant-a")
             .json(&json!({
-                "start": 0,
+                "start": 1,
                 "end": 100,
                 "query": format!(r#"{PT}{{service_name="api"}}"#),
             }))
@@ -3508,17 +3636,17 @@ overrides:
             response
                 .pointer("/queryScopes/0/componentType")
                 .and_then(serde_json::Value::as_str)
-                == Some("Long term storage"),
+                == Some("Short term storage"),
             "{response}"
         );
         check!(
             response
                 .pointer("/queryScopes/0/seriesCount")
                 .and_then(json_i64)
-                == Some(1),
+                == Some(2),
             "{response}"
         );
-        for (field, value) in [("blockCount", 1), ("profileCount", 1), ("sampleCount", 1)] {
+        for (field, value) in [("blockCount", 1), ("profileCount", 2), ("sampleCount", 2)] {
             check!(
                 response
                     .pointer(&format!("/queryScopes/0/{field}"))
@@ -3542,7 +3670,8 @@ overrides:
             5,
             100,
         );
-        let state = Arc::new(QuerierState::new(Arc::new(store)));
+        let state =
+            Arc::new(QuerierState::new(Arc::new(store)).with_query_analysis_series_enabled(true));
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let bound = serve(
             "127.0.0.1:0".parse().unwrap(),
@@ -3587,7 +3716,10 @@ overrides:
 
     #[tokio::test]
     async fn analyze_query_counts_only_the_queried_profile_type() {
-        let state = Arc::new(QuerierState::new(Arc::new(store_with_two_profile_types())));
+        let state = Arc::new(
+            QuerierState::new(Arc::new(store_with_two_profile_types()))
+                .with_query_analysis_series_enabled(true),
+        );
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let bound = serve(
             "127.0.0.1:0".parse().unwrap(),
@@ -3605,7 +3737,7 @@ overrides:
             ))
             .header("x-scope-orgid", "tenant-a")
             .json(&json!({
-                "start": 0,
+                "start": 1,
                 "end": 100,
                 "query": format!(r#"{PT}{{service_name="api"}}"#),
             }))
@@ -4162,6 +4294,7 @@ mod utf8_label_names;
 use analyze_query_handler::analyze_query_handler;
 use analyze_query_inner::analyze_query_inner;
 use apply_go_pgo::apply_go_pgo;
+pub use async_stacktrace_query::AsyncQueryPolicy;
 use async_stacktrace_query::async_stacktrace_query;
 use connect_error::connect_error;
 use default_heatmap_time_buckets_max::DEFAULT_HEATMAP_TIME_BUCKETS_MAX;

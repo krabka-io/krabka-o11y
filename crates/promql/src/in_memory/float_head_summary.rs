@@ -1,12 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
 
-use krabka_blockstore::{Labels, SeriesFingerprint};
+use krabka_blockstore::SeriesFingerprint;
 use krabka_metrics::FloatSampleRow;
 
 use super::{
     FloatRow,
     matcher::{PreparedMatcher, all_match},
 };
+use crate::PromqlLabels as Labels;
 
 #[derive(Clone)]
 pub struct FloatSeriesSummary {

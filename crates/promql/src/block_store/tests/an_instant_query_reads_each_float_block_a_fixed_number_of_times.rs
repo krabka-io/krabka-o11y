@@ -23,7 +23,7 @@ async fn write_float_only_blocks(
         for series in 0..SERIES_PER_BLOCK {
             let labels = labels(&[("__name__", "soak_metric"), ("series", &series.to_string())]);
             let fingerprint = labels.fingerprint();
-            series_labels.insert(fingerprint, labels);
+            series_labels.insert(fingerprint, labels.into());
             float_rows.push(FloatRow {
                 fingerprint,
                 timestamp_ms: QUERY_TIME_MS - 1_000 * (block + 1),
@@ -60,7 +60,7 @@ async fn query_requests(blocks: i64) -> (RequestCounts, RequestCounts) {
     );
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     let expected = QueryResult::InstantVector(vec![InstantSample {
-        labels: Labels::new(),
+        labels: Labels::new().into(),
         ts_ms: QUERY_TIME_MS,
         value: SampleValue::Float(3.0),
         drop_name: false,

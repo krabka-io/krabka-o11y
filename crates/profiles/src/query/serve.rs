@@ -24,11 +24,17 @@ where
     let listener = ServerListener::bind(TcpListener::bind(addr).await?, security)
         .map_err(std::io::Error::other)?;
     let bound = listener.local_addr();
-    let server = serve_router(listener, router(state), security).with_graceful_shutdown(shutdown);
+    let shutting_down = Arc::clone(&state);
+    let server = serve_router(listener, router(Arc::clone(&state)), security)
+        .with_graceful_shutdown(async move {
+            shutdown.await;
+            shutting_down.shutdown_async_queries().await;
+        });
     tokio::spawn(async move {
         if let Err(err) = server.await {
             tracing::warn!(%err, "profiles querier server stopped with error");
         }
+        state.shutdown_async_queries().await;
     });
     Ok(bound)
 }

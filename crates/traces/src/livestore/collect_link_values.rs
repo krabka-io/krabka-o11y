@@ -14,7 +14,7 @@ pub(crate) fn collect_link_values(span: &Span, tag: &str, values: &mut BTreeSet<
                     link.attrs
                         .iter()
                         .filter(|attr| attr.key == tag)
-                        .map(|attr| typed_value_parts(&attr.value)),
+                        .flat_map(|attr| typed_value_parts(&attr.value)),
                 );
             }
         }

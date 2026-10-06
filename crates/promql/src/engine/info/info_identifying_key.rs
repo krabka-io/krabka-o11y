@@ -1,12 +1,15 @@
 use super::Labels;
 
 pub(crate) fn info_identifying_key(labels: &Labels) -> Option<String> {
-    if labels.get("job").is_none() && labels.get("instance").is_none() {
+    if labels.get_value("job").is_none() && labels.get_value("instance").is_none() {
         return None;
     }
-    Some(format!(
-        "job={}\ninstance={}\n",
-        labels.get("job").unwrap_or(""),
-        labels.get("instance").unwrap_or("")
-    ))
+    let empty = crate::PromqlString::default();
+    Some(
+        Labels::from_pairs([
+            ("job", labels.get_value("job").unwrap_or(&empty)),
+            ("instance", labels.get_value("instance").unwrap_or(&empty)),
+        ])
+        .order_key(),
+    )
 }

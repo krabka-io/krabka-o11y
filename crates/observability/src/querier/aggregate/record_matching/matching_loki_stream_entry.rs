@@ -1,11 +1,6 @@
 use super::{
     Labels, LokiStreamEntry, StreamQuery, UNWRAP_SAMPLE_VALUE_LABEL, label_format_destinations,
-    should_insert_unknown_detected_level_for_stream_query,
 };
-
-/// The label Loki's log-level discovery writes, and which it carries as
-/// structured metadata rather than as a series label.
-const DETECTED_LEVEL_LABEL: &str = "detected_level";
 
 /// Evaluates one record against a stream query, and buckets what comes out.
 ///
@@ -35,9 +30,6 @@ pub(crate) fn matching_loki_stream_entry(
         query.evaluate_with_fields_at(labels, line, structured_metadata, timestamp_ns)?;
     let mut stream_labels = evaluation.fields;
     stream_labels.remove(UNWRAP_SAMPLE_VALUE_LABEL);
-    if should_insert_unknown_detected_level_for_stream_query(query, &stream_labels) {
-        stream_labels.insert(DETECTED_LEVEL_LABEL.to_string(), "unknown".to_string());
-    }
 
     // A `label_format` destination is parsed whatever it held before, and
     // Loki's own answer moves it out of `structuredMetadata` as readily as out
@@ -50,14 +42,7 @@ pub(crate) fn matching_loki_stream_entry(
             parsed.insert(name.clone(), value.clone());
             continue;
         }
-        // Loki's level discovery writes `detected_level` as structured
-        // metadata, not as a series label, so it is bucketed with the metadata
-        // whether it was discovered at ingest or filled in as `unknown` here.
-        let discovered_level =
-            name == DETECTED_LEVEL_LABEL && labels.get(name).is_none_or(|label| label == value);
-        if discovered_level
-            || (!labels.contains_key(name) && structured_metadata.get(name) == Some(value))
-        {
+        if !labels.contains_key(name) && structured_metadata.get(name) == Some(value) {
             entry_metadata.insert(name.clone(), value.clone());
         } else if labels.get(name) != Some(value) {
             // A value the series did not carry and the metadata did not carry

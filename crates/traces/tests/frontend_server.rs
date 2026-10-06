@@ -52,6 +52,7 @@ async fn server_round_trips_search_and_echo() {
             span_sets: vec![SpanSetJson {
                 spans: vec![],
                 matched: 0,
+                attributes: Vec::new(),
             }],
         }],
         metrics: Metrics {
@@ -184,6 +185,90 @@ async fn server_by_id_returns_v2_envelope() {
             &serde_json::json!("BgYGBgYGBgY=")
         )
     );
+}
+
+#[tokio::test]
+async fn server_v1_trace_formats_preserve_nonfinite_scalar_array_and_opaque_attributes() {
+    use opentelemetry_proto::tonic::trace::v1::TracesData;
+    use prost::Message as _;
+
+    let attributes = serde_json::json!([
+        {"key":"nan","value":{"doubleValue":"NaN"}},
+        {"key":"array","value":{"arrayValue":{"values":[{"doubleValue":"Infinity"},{"doubleValue":1.5}]}}},
+        {"key":"opaque","value":{"kvlistValue":{"values":[{"key":"answer","value":{"arrayValue":{"values":[{"doubleValue":"-Infinity"},{"intValue":"9223372036854775807"}]}}}]}}}
+    ]);
+    let trace: TraceByIdResponseJson = serde_json::from_value(serde_json::json!({
+        "status":"COMPLETE","message":"", "trace":{"resourceSpans":[{
+            "resource":{"attributes":attributes}, "scopeSpans":[{
+                "scope":{"name":"tracer","attributes":attributes}, "spans":[{
+                    "traceId":"CgoKCgoKCgoKCgoKCgoKCg==", "spanId":"BgYGBgYGBgY=", "name":"nonfinite",
+                    "attributes":attributes,
+                    "events":[{"name":"event","attributes":attributes}],
+                    "links":[{"traceId":"CgoKCgoKCgoKCgoKCgoKCg==","spanId":"BgYGBgYGBgY=","attributes":attributes}]
+                }]
+            }]
+        }]}
+    })).unwrap();
+    let backend = MockQuerier::new();
+    backend.stub_trace(TracePartial {
+        trace,
+        metrics: Metrics::default(),
+    });
+    let qf = Arc::new(QueryFrontend::new(
+        Arc::new(backend),
+        Arc::new(MockCatalog::new(vec![block("b1")])),
+        FrontendConfig {
+            hot_frontier_ns: i64::MAX,
+            ..FrontendConfig::default()
+        },
+        MembershipView::fixed(["q1:3200"]),
+    ));
+    let addr = spawn(router_with_backend(qf, RoleReadiness::new())).await;
+    let client = reqwest::Client::new();
+    let endpoint = format!("http://{addr}/api/traces/{}", "0a".repeat(16));
+    let response = client
+        .get(&endpoint)
+        .header("X-Scope-OrgID", "t1")
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap();
+    assert2::assert!(response.status().is_success());
+    let json: serde_json::Value = response.json().await.unwrap();
+    for pointer in [
+        "/resourceSpans/0/resource/attributes",
+        "/resourceSpans/0/scopeSpans/0/scope/attributes",
+        "/resourceSpans/0/scopeSpans/0/spans/0/attributes",
+        "/resourceSpans/0/scopeSpans/0/spans/0/events/0/attributes",
+        "/resourceSpans/0/scopeSpans/0/spans/0/links/0/attributes",
+    ] {
+        assert2::assert!(json.pointer(pointer) == Some(&attributes));
+    }
+    let response = client
+        .get(&endpoint)
+        .header("X-Scope-OrgID", "t1")
+        .header("Accept", "application/protobuf")
+        .send()
+        .await
+        .unwrap();
+    assert2::assert!(response.status().is_success());
+    assert2::assert!(response.headers()["content-type"] == "application/protobuf");
+    let data = TracesData::decode(response.bytes().await.unwrap()).unwrap();
+    let resource = &data.resource_spans[0];
+    let scope = &resource.scope_spans[0];
+    let span = &scope.spans[0];
+    assert2::assert!(span.trace_id == vec![10; 16]);
+    assert2::assert!(span.span_id == vec![6; 8]);
+    for actual in [
+        &resource.resource.as_ref().unwrap().attributes,
+        &scope.scope.as_ref().unwrap().attributes,
+        &span.attributes,
+        &span.events[0].attributes,
+        &span.links[0].attributes,
+    ] {
+        let actual = actual.iter().map(|entry|serde_json::json!({"key":entry.key,"value":krabka_traces::AttrValue::encode_otlp_json(entry.value.as_ref().unwrap())})).collect::<Vec<_>>();
+        assert2::assert!(serde_json::json!(actual) == attributes);
+    }
 }
 
 #[tokio::test]

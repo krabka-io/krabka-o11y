@@ -9,14 +9,11 @@ use crate::{
     quote_logql_string, validate_loki_label_limits, validate_loki_line_size,
 };
 
-mod contains_log_level_token;
-mod detect_log_level;
 mod discover_detected_level_label;
 mod discover_service_name_label;
 mod insert_metadata_if_absent;
 mod insert_proto_trace_context_metadata;
 mod is_default_otlp_resource_label;
-mod is_log_level_word_byte;
 mod loki_missing_proto_timestamp_error;
 mod loki_proto_label_pairs_to_labels;
 mod loki_proto_timestamp_ns;
@@ -38,14 +35,11 @@ mod validate_ingest_timestamp_ns;
 mod validate_loki_timestamp_window;
 mod validate_loki_timestamp_window_at;
 
-pub(crate) use contains_log_level_token::contains_log_level_token;
-pub(crate) use detect_log_level::detect_log_level;
 pub(crate) use discover_detected_level_label::discover_detected_level_label;
 pub(crate) use discover_service_name_label::discover_service_name_label;
 pub(crate) use insert_metadata_if_absent::insert_metadata_if_absent;
 pub(crate) use insert_proto_trace_context_metadata::insert_proto_trace_context_metadata;
 pub(crate) use is_default_otlp_resource_label::is_default_otlp_resource_label;
-pub(crate) use is_log_level_word_byte::is_log_level_word_byte;
 pub(crate) use loki_missing_proto_timestamp_error::loki_missing_proto_timestamp_error;
 pub(crate) use loki_proto_label_pairs_to_labels::loki_proto_label_pairs_to_labels;
 pub(crate) use loki_proto_timestamp_ns::loki_proto_timestamp_ns;

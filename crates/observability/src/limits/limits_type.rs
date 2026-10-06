@@ -6,9 +6,9 @@ use super::{
 /// One tenant's complete limit set.
 ///
 /// The key names and the defaults are `Loki`'s, from `limits_config` in
-/// `pkg/validation/limits.go` at the 3.5.1 tag the `loki_differential` suite
-/// pins. Three fields are Krabka's own and say so. Zero turns a limit off,
-/// which is `Loki`'s sentinel for every one of these.
+/// `pkg/validation/limits.go` at the 3.7.7 tag the `loki_differential` suite
+/// pins. Three fields are Krabka's own and say so. Zero turns admission caps
+/// off; detection settings describe their own sentinels.
 ///
 /// It is not `Eq`. Every dimensioned field stores `f64`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -37,6 +37,21 @@ pub struct Limits {
 
     /// Most structured-metadata labels on one entry. `Loki` default: `128`.
     pub max_structured_metadata_entries_count: u64,
+
+    /// Discover log levels during ingestion and add structured metadata.
+    /// `Loki` default: enabled.
+    #[serde(default = "default_discover_log_levels")]
+    pub discover_log_levels: bool,
+
+    /// Ordered field names used for log-level detection. An empty list uses
+    /// `Loki`'s fourteen default names.
+    #[serde(default = "default_log_level_fields")]
+    pub log_level_fields: Vec<String>,
+
+    /// JSON nesting levels searched for log levels. `Loki` default: `2`;
+    /// zero and negative values allow unlimited depth.
+    #[serde(default = "default_log_level_from_json_max_depth")]
+    pub log_level_from_json_max_depth: i64,
 
     /// Per-tenant Loki OTLP resource-attribute actions.
     #[serde(default)]
@@ -110,6 +125,14 @@ pub struct Limits {
     /// Most series one query may match. `Loki` default: `500`.
     pub max_query_series: u64,
 
+    /// Enables Loki's experimental multi-variant queries. Default: disabled.
+    #[serde(default)]
+    pub enable_multi_variant_queries: bool,
+
+    /// Aggregations enabled for sharded execution. Loki's default is empty.
+    #[serde(default)]
+    pub shard_aggregations: Vec<String>,
+
     /// Largest summed size of the blocks one query plans to read. `Loki` calls
     /// this `max_query_bytes_read`, and its default is `0`, that is no cap.
     #[serde(
@@ -160,6 +183,38 @@ pub struct Limits {
     pub retention_period: Time,
 }
 
+// Loki 3.7.7 pkg/validation/limits.go:70–86,345–349. Explicitly empty
+// overrides remain empty; the detector applies allowedLabelsForLevel's fallback.
+fn default_discover_log_levels() -> bool {
+    true
+}
+
+fn default_log_level_fields() -> Vec<String> {
+    [
+        "level",
+        "LEVEL",
+        "Level",
+        "log.level",
+        "severity",
+        "SEVERITY",
+        "Severity",
+        "SeverityText",
+        "lvl",
+        "LVL",
+        "Lvl",
+        "severity_text",
+        "Severity_Text",
+        "SEVERITY_TEXT",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+fn default_log_level_from_json_max_depth() -> i64 {
+    2
+}
+
 impl Default for Limits {
     fn default() -> Self {
         Self {
@@ -169,6 +224,9 @@ impl Default for Limits {
             max_line_size_truncate: false,
             max_structured_metadata_size: bytes(64_000),
             max_structured_metadata_entries_count: 128,
+            discover_log_levels: default_discover_log_levels(),
+            log_level_fields: default_log_level_fields(),
+            log_level_from_json_max_depth: default_log_level_from_json_max_depth(),
             otlp_config: OtlpConfig::default(),
             // `validation.max-label-names-per-series`
             max_label_names_per_series: 15,
@@ -190,6 +248,8 @@ impl Default for Limits {
             max_entries_limit_per_query: 5_000,
             // `querier.max-query-series`
             max_query_series: 500,
+            enable_multi_variant_queries: false,
+            shard_aggregations: Vec::new(),
             // `frontend.max-query-bytes-read`, which defaults to no cap.
             max_query_read: ByteSize::ZERO,
             // Krabka's own, and off until an operator asks for it.
@@ -221,6 +281,9 @@ impl Limits {
             max_line_size_truncate: false,
             max_structured_metadata_size: ByteSize::ZERO,
             max_structured_metadata_entries_count: 0,
+            discover_log_levels: default_discover_log_levels(),
+            log_level_fields: default_log_level_fields(),
+            log_level_from_json_max_depth: default_log_level_from_json_max_depth(),
             otlp_config: OtlpConfig::default(),
             max_label_names_per_series: 0,
             max_label_name_length: ByteSize::ZERO,
@@ -232,6 +295,8 @@ impl Limits {
             max_query_lookback: Time::ZERO,
             max_entries_limit_per_query: 0,
             max_query_series: 0,
+            enable_multi_variant_queries: false,
+            shard_aggregations: Vec::new(),
             max_query_read: ByteSize::ZERO,
             max_query_string_bytes: ByteSize::ZERO,
             max_query_range: Time::ZERO,

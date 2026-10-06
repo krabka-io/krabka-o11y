@@ -1,11 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use krabka_blockstore::{LabelMatcher, Labels};
 use promql_parser::parser::{Call, Expr, VectorSelector};
 
 use super::selector::{compile_label_matchers, info_data_label_matchers, labels_match};
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher,
     error::Result,
     result::{InstantSample, SampleValue},
 };

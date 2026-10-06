@@ -6,6 +6,10 @@
 //! `krabka-promql`.
 
 mod arrow_codec;
+mod metric_labels;
+mod metric_string;
+pub use metric_labels::{IntoMetricLabelsArc, MetricLabels};
+pub use metric_string::MetricString;
 
 pub mod compactor;
 pub mod distributor;

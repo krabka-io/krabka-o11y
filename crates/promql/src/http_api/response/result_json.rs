@@ -14,11 +14,11 @@ pub(crate) fn result_json(result: QueryResult) -> Value {
                 .into_iter()
                 .map(|sample| match sample.value {
                     SampleValue::Float(value) => json!({
-                        "metric": labels_json(&sample.labels),
+                        "metric": labels_json(sample.labels.iter()),
                         "value": [timestamp_seconds(sample.ts_ms), sample_string(value)],
                     }),
                     SampleValue::Histogram(histogram) => json!({
-                        "metric": labels_json(&sample.labels),
+                        "metric": labels_json(sample.labels.iter()),
                         "histogram": [timestamp_seconds(sample.ts_ms), native_histogram_json(&histogram)],
                     }),
                 })
@@ -34,7 +34,7 @@ pub(crate) fn result_json(result: QueryResult) -> Value {
         }),
         QueryResult::Str { ts_ms, value } => json!({
             "resultType": "string",
-            "result": [timestamp_seconds(ts_ms), value],
+            "result": [timestamp_seconds(ts_ms), value.as_str()],
         }),
     }
 }

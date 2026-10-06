@@ -195,12 +195,20 @@ def typed_tree(tree):
 
     def field(item, scalar):
         if (not isinstance(item, dict) or item.get("scalar_type") != scalar
-                or item.get("scope") not in ("", "resource", "span", "event", "link")
+                or item.get("scope") not in ("", "resource", "span", "event", "link", "instrumentation")
                 or not re.fullmatch(r"[A-Za-z_:.][A-Za-z_0-9:.]*", item.get("key", ""))):
             raise ValueError("invalid typed TraceQL field")
-        if scalar == "String" and item["scope"] in ("", "span") and item["key"] in ("duration", "status", "kind"):
-            raise ValueError("intrinsic field has a different scalar type")
         scope, key = item["scope"], item["key"]
+        if ":" in key:
+            allowed = {"String": {"span:name", "span:id", "event:name", "link:traceID", "link:spanID", "instrumentation:name", "instrumentation:version"},
+                       "Duration": {"span:duration", "event:timeSinceStart"}}
+            if scope or key not in allowed.get(scalar, set()):
+                raise ValueError("invalid scoped intrinsic type")
+            return key
+        if scalar == "Duration" and (scope or key != "duration"):
+            raise ValueError("invalid duration field")
+        if scalar == "String" and scope in ("", "span") and key in ("duration", "status", "kind"):
+            raise ValueError("intrinsic field has a different scalar type")
         return scope + "." + key if scope else key if key in ("name", "duration", "status", "kind") else "." + key
 
     if kind in ("prom_scalar", "prom_metric", "log_stream", "profile_selector"):
@@ -271,7 +279,7 @@ def typed_tree(tree):
                 text = f"{text}[{seconds}s]" if node["input"]["node"]["node"] == "prom_metric" else f"({text})[{seconds}s:1s]"
         else:
             raise ValueError("typed node child signature differs")
-    elif kind in ("trace_string", "trace_duration", "trace_field_comparison"):
+    elif kind in ("trace_string", "trace_duration", "trace_field_comparison", "trace_scaled_duration_comparison"):
         op = node.get("op")
         operators = {"Eq":"=", "Neq":"!=", "Gt":">", "Gte":">=", "Lt":"<", "Lte":"<=", "Regex":"=~", "NotRegex":"!~"}
         if op not in operators:
@@ -285,14 +293,20 @@ def typed_tree(tree):
                 raise ValueError("invalid duration comparison")
             left, right = field(node["field"], "Duration"), str(node["nanos"]) + "ns"
         else:
-            if op not in ("Eq", "Neq"):
+            scalar = node.get("left", {}).get("scalar_type")
+            if scalar not in ("String", "Duration") or op in ("Regex", "NotRegex") or (scalar == "String" and op not in ("Eq", "Neq")):
                 raise ValueError("invalid field comparison")
-            left, right = field(node.get("left"), "String"), field(node.get("right"), "String")
+            left, right = field(node.get("left"), scalar), field(node.get("right"), scalar)
+            if kind == "trace_scaled_duration_comparison":
+                factor = node.get("factor")
+                if scalar != "Duration" or type(factor) is not int or not -(1 << 63) <= factor < (1 << 63):
+                    raise ValueError("invalid scaled duration comparison")
+                left = f"({left} * {factor})"
         value_type, text = "TracePredicate", left + " " + operators[op] + " " + right
     else:
         raise ValueError("unknown typed AST node")
     parsed_children = [typed_tree(child) for child in children]
-    depth = max((child[2] + 1 for child in parsed_children), default=0)
+    depth = max((child[2] + 1 for child in parsed_children), default=1 if kind == "trace_scaled_duration_comparison" else 0)
     parents = []
     def collect(child):
         child_type, child_text, _, _ = typed_tree(child)
@@ -355,6 +369,21 @@ def self_check():
             pass
         else:
             raise AssertionError("invalid typed signature accepted")
+    duration = lambda key: {"scope":"", "key":key, "scalar_type":"Duration"}
+    comparison = {"node":{"node":"trace_field_comparison", "left":duration("span:duration"), "op":"Gt", "right":duration("event:timeSinceStart")}}
+    assert typed_tree(comparison) == ("TracePredicate", "span:duration > event:timeSinceStart", 0, [])
+    scaled = {"node":{"node":"trace_scaled_duration_comparison", "left":duration("duration"), "factor":2, "op":"Gt", "right":duration("duration")}}
+    assert typed_tree(scaled) == ("TracePredicate", "(duration * 2) > duration", 1, [])
+    for corrupt in ({**comparison["node"], "op":"Regex"},
+                    {**comparison["node"], "right":duration("name")},
+                    {**scaled["node"], "factor":True},
+                    {**scaled["node"], "factor":1 << 63}):
+        try:
+            typed_tree({"node":corrupt})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid duration field AST accepted")
     print("reviewed query evidence negative controls passed")
 
 

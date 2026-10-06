@@ -17,6 +17,9 @@ pub(crate) fn the_overrides_file_round_trips_through_the_limit_set() {
         max_line_size_truncate: true,
         max_structured_metadata_size: bytes(3072),
         max_structured_metadata_entries_count: 6,
+        discover_log_levels: false,
+        log_level_fields: vec!["priority".into(), "LogPriority".into()],
+        log_level_from_json_max_depth: -1,
         otlp_config: OtlpConfig {
             resource_attributes: OtlpResourceAttributesConfig {
                 ignore_defaults: true,
@@ -47,6 +50,8 @@ pub(crate) fn the_overrides_file_round_trips_through_the_limit_set() {
         max_query_lookback: days(6),
         max_entries_limit_per_query: 11,
         max_query_series: 12,
+        enable_multi_variant_queries: true,
+        shard_aggregations: vec!["approx_topk".into()],
         max_query_read: bytes(8192),
         max_query_string_bytes: bytes(256),
         max_query_range: secs(13),

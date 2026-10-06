@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-use krabka_blockstore::{LabelMatcher, Labels, MatchOp};
+use krabka_blockstore::MatchOp;
 use krabka_units::prelude::*;
 use num_traits::ToPrimitive;
 use promql_parser::{
@@ -9,7 +9,7 @@ use promql_parser::{
 };
 use regex::Regex;
 
-use crate::{PromqlError, error::Result};
+use crate::{PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher, error::Result};
 
 mod apply_offset_delta;
 mod apply_selector_time_modifier;

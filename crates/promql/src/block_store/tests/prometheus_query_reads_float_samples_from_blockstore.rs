@@ -37,7 +37,7 @@ pub(crate) async fn prometheus_query_reads_float_samples_from_blockstore() {
     assert2::assert!(
         samples
             == vec![InstantSample {
-                labels: series_labels,
+                labels: series_labels.into(),
                 ts_ms: 1_000,
                 value: SampleValue::Float(1.0),
                 drop_name: false,

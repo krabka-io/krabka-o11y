@@ -649,7 +649,7 @@ mod tests {
         body::{Body, to_bytes},
         http::{Method, Request},
     };
-    use krabka_blockstore::{BlockWriter, LabelMatcher, Labels, MatchOp, TENANT_HEADER};
+    use krabka_blockstore::{BlockWriter, Labels, MatchOp, TENANT_HEADER};
     use krabka_metrics::{
         FloatRow, ObjectStoreCompactionIndexSink, TenantCompactionRows,
         write_compacted_tenant_blocks,
@@ -708,7 +708,7 @@ mod tests {
         let fingerprint = labels.fingerprint();
         let rows = TenantCompactionRows {
             tenant: "tenant-a".to_owned(),
-            series_labels: BTreeMap::from([(fingerprint, labels)]),
+            series_labels: BTreeMap::from([(fingerprint, labels.into())]),
             float_rows: vec![FloatRow {
                 fingerprint,
                 timestamp_ms: 1_000,
@@ -867,7 +867,7 @@ mod tests {
                 == StatusCode::CONFLICT
         );
 
-        let matchers = [LabelMatcher::new(
+        let matchers = [krabka_promql::PromqlMatcher::new(
             "__name__",
             MatchOp::Eq,
             "uploaded_metric",

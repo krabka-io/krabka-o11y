@@ -1,9 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use krabka_blockstore::Labels;
-
 use super::{PromqlError, QueryResult, Result, labels_key};
-use crate::{RangeSeries, SampleValue};
+use crate::{PromqlLabels as Labels, RangeSeries, SampleValue};
 
 pub(crate) fn finalize_metric_names(result: &mut QueryResult) -> Result<()> {
     match result {

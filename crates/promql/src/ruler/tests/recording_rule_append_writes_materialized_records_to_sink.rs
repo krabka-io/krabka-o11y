@@ -26,8 +26,8 @@ pub(crate) async fn recording_rule_append_writes_materialized_records_to_sink() 
             == vec![WalRecord {
                 tenant: "tenant-a".to_string(),
                 labels: vec![
-                    ("__name__".to_string(), "job:up:current".to_string()),
-                    ("job".to_string(), "api".to_string()),
+                    ("__name__".to_string(), "job:up:current".into()),
+                    ("job".to_string(), "api".into()),
                 ],
                 payload: SamplePayload::Float {
                     timestamp_ms: 60_000,

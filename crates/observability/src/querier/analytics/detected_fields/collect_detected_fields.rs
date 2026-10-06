@@ -82,7 +82,7 @@ pub(crate) async fn collect_detected_fields(
                 continue;
             }
             scanned_lines += 1;
-            detect_entry_fields(&mut fields, labels, &row.line, &row.structured_metadata);
+            detect_entry_fields(&mut fields, &row.line, &row.structured_metadata);
         }
     }
 
@@ -104,12 +104,7 @@ pub(crate) async fn collect_detected_fields(
             continue;
         }
         scanned_lines += 1;
-        detect_entry_fields(
-            &mut fields,
-            &record.labels,
-            &record.line,
-            &record.structured_metadata,
-        );
+        detect_entry_fields(&mut fields, &record.line, &record.structured_metadata);
     }
 
     Ok(fields)

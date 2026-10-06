@@ -357,8 +357,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn grouped_pipeline_by_nested_event_intrinsic_counts_all_events_without_nested_selector()
-    {
+    async fn grouped_pipeline_by_nested_event_intrinsic_ignores_later_event_decoys() {
         let mut one = span(1, "one", 50, vec![("svc", AttrValue::Str("api".into()))]);
         one.events = vec![
             EventRef {
@@ -392,7 +391,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(names(&out) == vec!["one".to_string(), "two".to_string()]);
+        assert!(names(&out).is_empty());
     }
 
     #[tokio::test]
@@ -914,15 +913,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(
-            names(&out)
-                == vec![
-                    "fast-a".to_string(),
-                    "fast-b".to_string(),
-                    "slow-a".to_string(),
-                    "slow-b".to_string()
-                ]
-        );
+        assert!(names(&out) == vec!["slow-a".to_string(), "slow-b".to_string()]);
     }
 
     #[tokio::test]
@@ -1525,3 +1516,9 @@ mod register_field_comparison_columns;
 use register_field_comparison_columns::{
     collect_field_selectors, register_field_comparison_columns,
 };
+
+mod apply_expression_pipeline;
+
+mod expression_name;
+
+mod sample_metric_scan;

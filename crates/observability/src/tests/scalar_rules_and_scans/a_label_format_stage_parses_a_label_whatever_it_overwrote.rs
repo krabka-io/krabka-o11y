@@ -53,7 +53,6 @@ pub(crate) fn a_label_format_stage_parses_a_label_whatever_it_overwrote() {
                         {
                             "stream": {
                                 "app": "api",
-                                "detected_level": "unknown",
                                 "env": "prod",
                                 "region": "eu",
                                 "shard": "z"
@@ -79,7 +78,6 @@ pub(crate) fn a_label_format_stage_parses_a_label_whatever_it_overwrote() {
                                     "10",
                                     "api ok",
                                     {
-                                        "structuredMetadata": {"detected_level": "unknown"},
                                         "parsed": {
                                             "env": "prod",
                                             "region": "eu",

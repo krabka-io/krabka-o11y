@@ -22,7 +22,7 @@ pub mod testkit;
 
 pub use ast::{
     Aggregate, ArithmeticOp, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query,
-    ScalarExpr, Scope, SpansetExpr, StructuralOp, Value,
+    ScalarAggregate, ScalarExpr, Scope, SpansetExpr, StructuralOp, Value,
 };
 pub use engine::{EngineOpts, SearchOptions, TraceqlEngine};
 pub use error::TraceqlError;

@@ -20,7 +20,8 @@ pub(crate) fn nested_projection_matcher(field: &Field) -> Option<SpanMatcher> {
         Scope::Both => (MatchScope::Both, field.key.clone()),
         Scope::Span => (MatchScope::Span, field.key.clone()),
         Scope::Resource => (MatchScope::Resource, field.key.clone()),
-        Scope::Parent | Scope::Instrumentation | Scope::Intrinsic(_) => return None,
+        Scope::Instrumentation => (MatchScope::Instrumentation, field.key.clone()),
+        Scope::Parent | Scope::Intrinsic(_) => return None,
     };
     Some(SpanMatcher {
         scope,
