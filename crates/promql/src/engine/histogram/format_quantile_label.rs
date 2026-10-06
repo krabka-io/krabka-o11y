@@ -1,4 +1,4 @@
-/// Quantile labels use OpenMetrics floats, including a decimal for integers.
+/// Quantile labels use `OpenMetrics` floats, including a decimal for integers.
 pub(crate) fn format_quantile_label(value: f64) -> String {
     if !value.is_finite() {
         return crate::http_api::format_sample_value(value);

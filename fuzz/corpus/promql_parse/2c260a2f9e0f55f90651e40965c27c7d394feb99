@@ -1,0 +1,1 @@
+count_over_time(metric1_total[((max(min((step()+1),((1h))),1ms)))])

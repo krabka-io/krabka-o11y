@@ -125,6 +125,7 @@ impl InMemorySpanStore {
         tenant: &str,
         matchers: &[SpanMatcher],
         projection_matchers: &[SpanMatcher],
+        include_raw_attributes: bool,
         start_ns: i64,
         end_ns: i64,
     ) -> Result<ScanResult> {
@@ -133,6 +134,7 @@ impl InMemorySpanStore {
         let attr_cols = Self::attr_columns(&in_range, projection_matchers);
         let schema = span_schema_with_attrs(&attr_cols);
 
+        let mut raw_rows = Vec::new();
         let mut builders = ScanBuilders::new(row_count);
         let mut attr_builders: Vec<(String, AttrBuilder)> = attr_cols
             .iter()
@@ -150,6 +152,9 @@ impl InMemorySpanStore {
                 for event in event_rows {
                     for link in &link_rows {
                         builders.append(trace, span, i, event, *link, &mut attr_builders)?;
+                        if include_raw_attributes {
+                            raw_rows.push(span);
+                        }
                     }
                 }
             }
@@ -158,6 +163,21 @@ impl InMemorySpanStore {
         let mut columns = builders.finish();
         columns.extend(attr_builders.into_iter().map(|(_, b)| b.finish()));
 
+        let schema = if include_raw_attributes {
+            let raw = super::raw_attribute_columns::raw_attribute_columns(&raw_rows);
+            let mut fields = schema.fields().to_vec();
+            for (name, array) in raw {
+                fields.push(Arc::new(arrow::datatypes::Field::new(
+                    name,
+                    array.data_type().clone(),
+                    false,
+                )));
+                columns.push(array);
+            }
+            Arc::new(arrow::datatypes::Schema::new(fields))
+        } else {
+            schema
+        };
         let batch = RecordBatch::try_new(schema.clone(), columns)
             .map_err(|e| TraceqlError::Store(e.to_string()))?;
         let inspected =
@@ -182,7 +202,7 @@ impl SpanStore for InMemorySpanStore {
         start_ns: i64,
         end_ns: i64,
     ) -> Result<ScanResult> {
-        self.scan_with_projection(tenant, matchers, &[], start_ns, end_ns)
+        self.scan_with_projection(tenant, matchers, &[], false, start_ns, end_ns)
     }
 
     async fn scan_with_options(
@@ -197,6 +217,7 @@ impl SpanStore for InMemorySpanStore {
             tenant,
             matchers,
             &options.projection_matchers,
+            options.include_raw_attributes,
             start_ns,
             end_ns,
         )

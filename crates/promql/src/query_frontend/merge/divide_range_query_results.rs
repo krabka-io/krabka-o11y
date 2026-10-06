@@ -55,6 +55,8 @@ pub(crate) fn divide_range_query_results(
             .collect::<Vec<_>>();
         if !samples.is_empty() {
             avg_series.push(RangeSeries {
+                drop_name: false,
+                start_timestamps_ms: std::collections::BTreeMap::new(),
                 labels: series.labels,
                 samples,
             });

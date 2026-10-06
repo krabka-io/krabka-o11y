@@ -1,0 +1,1 @@
+present_over_time(http_requests_total{handler="/foo", handler="/bar", instance="127.0.0.1"}[5m])

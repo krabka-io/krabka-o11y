@@ -17,6 +17,12 @@ where
     let tenant = tenant_from_headers(&headers, &state.tenant_policy)
         .map_err(|error| tenant_connect_error(&error))?;
     authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
+    // The pinned v2 query frontend exposes this diagnostic as an empty stub.
+    if state.query_architecture == super::PyroscopeQueryArchitecture::V2 {
+        return Ok(ConnectResponse::new(
+            pb::querier::v1::AnalyzeQueryResponse::default(),
+        ));
+    }
     let req = req.0;
     state
         .validate_query_range(&tenant, req.start, req.end)

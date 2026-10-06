@@ -8,6 +8,8 @@ use super::*;
 #[test]
 fn rank_reduction_ranks_nan_last_for_top_and_bottom() {
     let series = |name: &str, value: f64| RangeSeries {
+        drop_name: false,
+        start_timestamps_ms: std::collections::BTreeMap::new(),
         labels: labels(&[("__name__", "up"), ("series", name)]),
         samples: vec![(0, SampleValue::Float(value))],
     };

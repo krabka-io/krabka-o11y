@@ -72,6 +72,7 @@ mod tests {
                         "histogram ignored".to_string(),
                         "stale sample skipped".to_string(),
                     ],
+                    ..crate::Annotations::default()
                 }
         );
     }
@@ -95,6 +96,7 @@ mod tests {
 
 mod annotated_query_result;
 mod annotations;
+mod histogram_quantile_repair;
 mod instant_sample;
 mod query_result;
 mod range_series;
@@ -102,6 +104,7 @@ mod sample_value;
 
 pub use annotated_query_result::AnnotatedQueryResult;
 pub use annotations::Annotations;
+pub use histogram_quantile_repair::HistogramQuantileRepair;
 pub use instant_sample::InstantSample;
 pub use query_result::QueryResult;
 pub use range_series::RangeSeries;

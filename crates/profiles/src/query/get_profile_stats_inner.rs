@@ -16,6 +16,13 @@ where
     let tenant = tenant_from_headers(&headers, &state.tenant_policy)
         .map_err(|error| tenant_connect_error(&error))?;
     authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
+    // The v2 frontend still asks v1 ingesters for this legacy RPC; segment
+    // writer data is not represented in its response.
+    if state.query_architecture == super::PyroscopeQueryArchitecture::V2 {
+        return Ok(ConnectResponse::new(
+            pb::querier::v1::GetProfileStatsResponse::default(),
+        ));
+    }
     // GetProfileStats is a global "has this tenant ever ingested, and over what
     // span" query. Pyroscope's request carries no time range, and Grafana's
     // Profiles Drilldown sends an empty message (so start/end arrive as 0).

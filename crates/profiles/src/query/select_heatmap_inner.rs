@@ -1,7 +1,7 @@
 use super::{
     Arc, BTreeMap, ConnectError, ConnectRequest, ConnectResponse, EndMs, Extension, HeaderMap,
-    Principal, ProfileStore, QuerierState, StartMs, authorize_tenant, connect_error,
-    heatmap_time_buckets, limit, pb, step_from_secs, tenant_connect_error,
+    Principal, ProfileStore, QuerierState, StartMs, TimeExt, authorize_tenant, connect_error,
+    heatmap_from_points, heatmap_time_buckets, limit, pb, step_from_secs, tenant_connect_error,
     tenant_denied_connect_error, tenant_from_headers,
 };
 
@@ -21,21 +21,28 @@ where
     state
         .validate_query_range(&tenant, req.start, req.end)
         .map_err(connect_error)?;
+    if req.limit.is_some_and(|limit| limit < 0) {
+        return Err(connect_error(super::ProfileError::Plan(
+            "limit must be non-negative".to_string(),
+        )));
+    }
     let step = step_from_secs(req.step).map_err(connect_error)?;
-    let time_buckets = heatmap_time_buckets(
+    heatmap_time_buckets(
         StartMs(req.start),
         EndMs(req.end),
         step,
         state.heatmap_time_buckets_max,
     )
     .map_err(connect_error)?;
+    let step_ms = step.millis_i64();
+    let scan_start = req.start.saturating_sub(step_ms);
     let span_exemplars = match req.exemplar_type {
         exemplar_type if exemplar_type == pb::querier::v1::ExemplarType::Span as i32 => state
             .select_heatmap_span_exemplars(
                 (&tenant, &req.profile_type_id, &req.label_selector),
                 &req.group_by,
-                (req.start, req.end),
-                time_buckets,
+                (scan_start, req.end),
+                step_ms,
             )
             .await
             .map_err(connect_error)?,
@@ -43,8 +50,8 @@ where
             .select_heatmap_individual_exemplars(
                 (&tenant, &req.profile_type_id, &req.label_selector),
                 &req.group_by,
-                (req.start, req.end),
-                time_buckets,
+                (scan_start, req.end),
+                step_ms,
             )
             .await
             .map_err(connect_error)?,
@@ -52,33 +59,65 @@ where
     };
     let heatmaps = if req.query_type == pb::querier::v1::HeatmapQueryType::Span as i32 {
         state
-            .select_span_heatmaps(
+            .select_span_heatmap_points(
                 (&tenant, &req.profile_type_id, &req.label_selector),
                 &req.group_by,
-                (req.start, req.end),
-                time_buckets,
-                state.heatmap_value_buckets,
+                (scan_start, req.end),
             )
             .await
     } else {
         state
             .engine
-            .select_heatmaps(
+            .select_heatmap_points(
                 (tenant.as_str(), &req.profile_type_id, &req.label_selector),
                 &req.group_by,
-                (req.start, req.end),
-                time_buckets,
-                state.heatmap_value_buckets,
+                (scan_start, req.end),
             )
             .await
     }
     .map_err(connect_error)?;
-    let series = heatmaps
+    if heatmaps.iter().all(|(_, points)| points.is_empty()) {
+        return Ok(ConnectResponse::new(
+            pb::querier::v1::SelectHeatmapResponse::default(),
+        ));
+    }
+    if state.query_architecture == super::PyroscopeQueryArchitecture::V2
+        && (!matches!(req.query_type, 1 | 2)
+            || (req.exemplar_type == 2 && req.query_type != 1)
+            || (req.exemplar_type == 3 && req.query_type != 2))
+    {
+        return Err(ConnectError::new(
+            super::Code::Unknown,
+            "invalid heatmap query and exemplar type combination",
+        ));
+    }
+    let mut series = heatmap_from_points(
+        heatmaps,
+        req.start,
+        req.end,
+        step_ms,
+        state.heatmap_value_buckets,
+    );
+    series.sort_by_key(|series| {
+        std::cmp::Reverse(
+            series
+                .slots
+                .iter()
+                .flat_map(|slot| &slot.counts)
+                .map(|count| i64::from(*count))
+                .sum::<i64>(),
+        )
+    });
+    let series = series
         .into_iter()
         .take(limit(req.limit))
-        .map(|heatmap| {
-            let exemplar_slots = span_exemplars.get(&heatmap.labels);
-            let mut series = pb::querier::v1::HeatmapSeries::from(heatmap);
+        .map(|mut series| {
+            let labels = series
+                .labels
+                .iter()
+                .map(|label| (label.name.clone(), label.value.clone()))
+                .collect::<Vec<_>>();
+            let exemplar_slots = span_exemplars.get(&labels);
             if let Some(exemplar_slots) = exemplar_slots {
                 for slot in &mut series.slots {
                     slot.exemplars = exemplar_slots

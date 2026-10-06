@@ -7,13 +7,11 @@ use super::{
     RangeEval, add_compatible_native_histogram,
     annotations::{
         emit_info, emit_warning, histogram_counter_reset_collision_warning,
-        histogram_ignored_in_mixed_range_info, metric_might_not_be_counter_info,
-        mismatched_custom_buckets_info, mixed_exponential_custom_warning,
-        mixed_floats_histograms_warning, native_histogram_not_counter_warning,
-        native_histogram_not_gauge_warning,
+        histogram_ignored_in_mixed_range_info, mismatched_custom_buckets_info,
+        mixed_exponential_custom_warning, mixed_floats_histograms_warning,
+        native_histogram_not_counter_warning, native_histogram_not_gauge_warning,
     },
     histogram::native_histogram_detect_reset,
-    labels::{labels_without_label, labels_without_metric_name},
     native_histograms_are_range_compatible, reconcile_native_histogram_layouts,
     result_utils::quantile_value,
     scale_native_histogram_values,
@@ -27,18 +25,16 @@ use crate::{
 };
 
 mod align_subquery_start;
-mod anchored_float_range_value;
 mod apply_outer_range_fn;
 mod boundary_value;
 mod compact_histogram_spans;
 mod count_changes;
 mod count_resets;
 mod count_step_transitions;
-mod counter_corrected_values;
-mod counter_delta;
 mod deriv_sample_from_series;
 mod double_exponential_smoothing;
 mod double_exponential_smoothing_sample_from_series;
+mod extended_range_value;
 mod extrapolate_histogram_delta;
 mod extrapolated_histogram_component;
 mod extrapolated_histogram_counts;
@@ -80,28 +76,27 @@ mod range_sample_count;
 mod range_samples;
 mod regression_slope;
 mod regression_slope_and_intercept;
-mod smoothed_float_range_value;
 mod validate_smoothing_factor;
 
 pub(super) use align_subquery_start::align_subquery_start;
-use anchored_float_range_value::anchored_float_range_value;
 pub(super) use apply_outer_range_fn::apply_outer_range_fn;
 use boundary_value::boundary_value;
 use compact_histogram_spans::compact_histogram_spans;
 use count_changes::count_changes;
 use count_resets::count_resets;
 use count_step_transitions::count_step_transitions;
-use counter_corrected_values::counter_corrected_values;
-use counter_delta::counter_delta;
 use deriv_sample_from_series::deriv_sample_from_series;
 #[cfg(feature = "experimental-functions")]
 use double_exponential_smoothing::double_exponential_smoothing;
 #[cfg(feature = "experimental-functions")]
 use double_exponential_smoothing_sample_from_series::double_exponential_smoothing_sample_from_series;
+pub(super) use extended_range_value::{
+    extended_float_range_value, extended_histogram_range_value, interpolate_histogram,
+};
 use extrapolate_histogram_delta::extrapolate_histogram_delta;
 use extrapolated_histogram_component::extrapolated_histogram_component;
 use extrapolated_histogram_counts::extrapolated_histogram_counts;
-use extrapolated_rate::extrapolated_rate;
+use extrapolated_rate::{extrapolated_rate, extrapolated_rate_with_starts};
 use extremum_kind::ExtremumKind;
 use float_range_samples::float_range_samples;
 use fold_over_time_extremum::fold_over_time_extremum;
@@ -139,6 +134,7 @@ use range_sample_count::range_sample_count;
 use range_samples::range_samples;
 use regression_slope::regression_slope;
 use regression_slope_and_intercept::regression_slope_and_intercept;
-use smoothed_float_range_value::smoothed_float_range_value;
 #[cfg(feature = "experimental-functions")]
 pub(super) use validate_smoothing_factor::validate_smoothing_factor;
+
+use crate::functions::extrapolate::start_timestamp_reset;

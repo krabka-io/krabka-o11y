@@ -17,7 +17,24 @@ pub fn decode_push(
 
         for sample in &series.samples {
             let raw = gunzip(&sample.raw_profile, max_decompressed)?;
-            let profile = PprofProfile::decode(&raw)?;
+            let mut profile = PprofProfile::decode(&raw)?.into_inner();
+            // Pyroscope normalizes symbolized push.v1 mappings before storage.
+            // OTLP mappings without this flag retain their original addresses.
+            for location in &mut profile.location {
+                if profile.mapping.iter().any(|mapping| {
+                    mapping.id == location.mapping_id && mapping.symbolization.has_functions()
+                }) {
+                    location.address = 0;
+                }
+            }
+            for mapping in &mut profile.mapping {
+                if mapping.symbolization.has_functions() {
+                    mapping.memory_start = 0;
+                    mapping.memory_limit = 0;
+                    mapping.file_offset = 0;
+                }
+            }
+            let profile = PprofProfile::from(profile);
             let mut labels = labels.clone();
             if !sample.id.is_empty() {
                 labels.insert("__profile_id__", sample.id.clone());

@@ -1,18 +1,18 @@
 use super::{
     Array, AsArray, BTreeMap, BinaryArray, COL_FINGERPRINT, COL_TIMESTAMP, Int64Type, PCOL_SPAN_ID,
-    PCOL_TOTAL_VALUE, PCOL_TRACE_ID, ProfileError, UInt64Type, heatmap_slot_timestamp, label_pairs,
-    pb, span_id_hex_from_u64,
+    PCOL_TRACE_ID, PCOL_VALUE, ProfileError, UInt64Type, heatmap_slot_timestamp, label_pairs, pb,
+    span_id_hex_from_u64,
 };
 
 pub(crate) async fn heatmap_span_exemplars_from_scan(
     scan: &krabka_pprof::ProfileScan,
     start_ms: i64,
     end_ms: i64,
-    time_buckets: usize,
+    step_ms: i64,
     labels: &[(String, String)],
 ) -> Result<BTreeMap<i64, Vec<pb::querier::v1::Exemplar>>, ProfileError> {
     let sql = format!(
-        "SELECT {timestamp}, {fingerprint}, {span}, {trace}, MAX({total}) AS total \
+        "SELECT {timestamp}, {fingerprint}, {span}, {trace}, SUM({total}) AS total \
          FROM {table} WHERE {span} IS NOT NULL \
          GROUP BY {timestamp}, {fingerprint}, {span}, {trace} \
          ORDER BY {timestamp}, {fingerprint}, {span}, {trace}",
@@ -20,7 +20,7 @@ pub(crate) async fn heatmap_span_exemplars_from_scan(
         fingerprint = COL_FINGERPRINT,
         span = PCOL_SPAN_ID,
         trace = PCOL_TRACE_ID,
-        total = PCOL_TOTAL_VALUE,
+        total = PCOL_VALUE,
         table = scan.samples_table,
     );
     let batches = scan
@@ -43,9 +43,12 @@ pub(crate) async fn heatmap_span_exemplars_from_scan(
                 continue;
             }
             let timestamp = timestamps.value(row);
-            let Some(slot_timestamp) =
-                heatmap_slot_timestamp(start_ms, end_ms, time_buckets, timestamp)
-            else {
+            let Some(slot_timestamp) = heatmap_slot_timestamp(
+                start_ms.saturating_add(step_ms),
+                end_ms,
+                step_ms,
+                timestamp,
+            ) else {
                 continue;
             };
             out.entry(slot_timestamp)

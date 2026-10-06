@@ -29,6 +29,8 @@ impl RangeQueryExecutor for AvgPartialRecordingExecutor {
             }
         };
         Ok(unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
+            drop_name: false,
+            start_timestamps_ms: std::collections::BTreeMap::new(),
             labels: labels(&[]),
             samples: vec![(query.start_ms, SampleValue::Float(value))],
         }])))

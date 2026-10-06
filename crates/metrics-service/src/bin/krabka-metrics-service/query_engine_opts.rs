@@ -2,6 +2,7 @@ use super::{Cli, EngineOpts};
 
 pub(crate) fn query_engine_opts(cli: &Cli) -> EngineOpts {
     EngineOpts {
+        enable_type_and_unit_labels: true,
         lookback_delta: cli.query_lookback_delta,
         eval_interval: cli.query_eval_interval,
         max_samples: cli.query_max_samples,

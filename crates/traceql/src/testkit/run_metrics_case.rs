@@ -74,22 +74,19 @@ fn metric_value(value: f64) -> Value {
 }
 
 fn metrics_json(series: &[TraceMetricSeries]) -> Value {
-    json!(
-        series
-            .iter()
-            .map(|series| json!({
-                "labels": series.labels,
-                "points": series.points.iter().map(|(timestamp, value)| {
-                    (*timestamp, metric_value(*value))
-                }).collect::<Vec<_>>(),
-                "exemplars": series.exemplars.iter().map(|exemplar| json!({
-                    "labels": exemplar.labels,
-                    "value": metric_value(exemplar.value),
-                    "timestamp_ns": exemplar.timestamp_ns,
-                })).collect::<Vec<_>>(),
-            }))
-            .collect::<Vec<_>>()
-    )
+    json!(series.iter().map(|series| {
+        let mut result = json!({
+            "labels": series.labels,
+            "points": series.points.iter().map(|(timestamp, value)| (*timestamp, metric_value(*value))).collect::<Vec<_>>(),
+            "exemplars": series.exemplars.iter().map(|exemplar| {
+                let mut value = json!({"labels": exemplar.labels, "value": metric_value(exemplar.value), "timestamp_ns": exemplar.timestamp_ns});
+                if !exemplar.label_types.is_empty() { value["label_types"] = json!(exemplar.label_types); }
+                value
+            }).collect::<Vec<_>>(),
+        });
+        if !series.label_types.is_empty() { result["label_types"] = json!(series.label_types); }
+        result
+    }).collect::<Vec<_>>())
 }
 
 fn normalize_metrics(value: &mut Value) {
@@ -110,7 +107,12 @@ fn normalize_metrics(value: &mut Value) {
             }
         }
     }
-    series.sort_by_cached_key(|series| series["labels"].to_string());
+    series.sort_by_cached_key(|series| {
+        (
+            series["labels"].to_string(),
+            series["label_types"].to_string(),
+        )
+    });
 }
 
 #[cfg(test)]
@@ -126,7 +128,7 @@ mod tests {
             kind: "metrics".into(),
             query: Some(r#"{ .svc = "x" } | count_over_time() | by(span.svc)"#.into()),
             expect_series_count: Some(1),
-            expect_metrics: Some(serde_json::to_string(series).unwrap()),
+            expect_metrics: Some(metrics_json(series).to_string()),
             ..Case::default()
         }
     }
@@ -137,14 +139,20 @@ mod tests {
         engine.opts.max_exemplars = 1;
         // The fixture has one svc=x span: trace 2, span 1, start 1001ns.
         let expected = vec![TraceMetricSeries {
+            label_types: Default::default(),
             labels: vec![("span.svc".into(), "x".into())],
             points: vec![(0, 1.0), (10_000, 0.0)],
             exemplars: vec![TraceMetricExemplar {
+                label_types: Default::default(),
                 labels: vec![
-                    ("trace_id".into(), "02".repeat(16)),
-                    ("span_id".into(), "01".repeat(8)),
+                    (
+                        "trace:id".into(),
+                        "02".repeat(16).trim_start_matches('0').into(),
+                    ),
+                    (".svc".into(), "x".into()),
+                    ("span.svc".into(), "x".into()),
                 ],
-                value: 1.0,
+                value: f64::NAN,
                 timestamp_ns: 1_001,
             }],
         }];
@@ -158,9 +166,19 @@ mod tests {
         wrong_label[0].labels[0].1 = "a".into();
         let mut wrong_timestamp = expected.clone();
         wrong_timestamp[0].points[0].0 = 1;
+        let mut wrong_type = expected.clone();
+        wrong_type[0]
+            .label_types
+            .insert("span.svc".into(), crate::TraceMetricLabelType::Int);
         let mut wrong_exemplar = expected;
         wrong_exemplar[0].exemplars[0].labels[0].1 = "03".repeat(16);
-        for wrong in [wrong_value, wrong_label, wrong_timestamp, wrong_exemplar] {
+        for wrong in [
+            wrong_value,
+            wrong_label,
+            wrong_timestamp,
+            wrong_exemplar,
+            wrong_type,
+        ] {
             let result = run_metrics_case(&engine, case(&wrong)).await;
             assert!(
                 !result.passed,
@@ -183,9 +201,11 @@ mod tests {
     #[test]
     fn nonfinite_values_use_explicit_tokens_and_reject_null_or_finite_values() {
         let series = [TraceMetricSeries {
+            label_types: Default::default(),
             labels: Vec::new(),
             points: vec![(0, f64::NAN), (1, f64::INFINITY), (2, f64::NEG_INFINITY)],
             exemplars: vec![TraceMetricExemplar {
+                label_types: Default::default(),
                 labels: Vec::new(),
                 value: f64::NAN,
                 timestamp_ns: 0,

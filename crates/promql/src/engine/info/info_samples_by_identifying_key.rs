@@ -22,17 +22,22 @@ pub(crate) fn info_samples_by_identifying_key(
         let Some(key) = info_identifying_key(&sample.labels) else {
             continue;
         };
+        let key = format!(
+            "{key}name={}\n",
+            sample.labels.get("__name__").unwrap_or("")
+        );
+        if let Some(existing) = info_by_key.get(&key)
+            && sample.ts_ms == existing.ts_ms
+        {
+            return Err(PromqlError::Exec(
+                "found duplicate series for info metric".to_string(),
+            ));
+        }
         info_by_key
             .entry(key)
             .and_modify(|existing| {
                 if sample.ts_ms > existing.ts_ms {
                     *existing = sample.clone();
-                } else if sample.ts_ms == existing.ts_ms {
-                    for (name, value) in sample.labels.iter() {
-                        if existing.labels.get(name).is_none() {
-                            existing.labels.insert(name, value);
-                        }
-                    }
                 }
             })
             .or_insert(sample);

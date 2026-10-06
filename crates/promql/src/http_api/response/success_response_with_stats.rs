@@ -92,7 +92,7 @@ pub(crate) fn success_response_with_stats(
         envelope.insert("warnings".to_string(), json!(annotations.warnings));
     }
     if !annotations.infos.is_empty() {
-        envelope.insert("infos".to_string(), json!(annotations.infos));
+        envelope.insert("infos".to_string(), json!(annotations.http_infos()));
     }
     Json(Value::Object(envelope)).into_response()
 }

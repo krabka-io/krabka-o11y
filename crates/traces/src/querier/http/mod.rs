@@ -825,6 +825,9 @@ mod tests {
 
     #[tokio::test]
     async fn metrics_routes_return_traceql_metrics_json() {
+        // The two selected fixture spans occupy one second-long bucket. Tempo's
+        // frontend attaches that bucket's value to the exemplar, with the
+        // canonical trace:id and the selector's projected .svc attribute.
         let (status, body) = get_json(
             "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20rate()&start=0&end=1&step=1",
         )
@@ -840,10 +843,10 @@ mod tests {
                     ],
                     "exemplars": [{
                         "labels": [
-                            {"key": "trace_id", "value": {"stringValue": "09090909090909090909090909090909"}},
-                            {"key": "span_id", "value": {"stringValue": "0101010101010101"}}
+                            {"key": "trace:id", "value": {"stringValue": "9090909090909090909090909090909"}},
+                            {"key": ".svc", "value": {"stringValue": "a"}}
                         ],
-                        "value": 1.0,
+                        "value": 2.0,
                         "timestampMs": "0"
                     }]
                 }]
@@ -865,10 +868,10 @@ mod tests {
                     ],
                     "exemplars": [{
                         "labels": [
-                            {"key": "trace_id", "value": {"stringValue": "09090909090909090909090909090909"}},
-                            {"key": "span_id", "value": {"stringValue": "0101010101010101"}}
+                            {"key": "trace:id", "value": {"stringValue": "9090909090909090909090909090909"}},
+                            {"key": ".svc", "value": {"stringValue": "a"}}
                         ],
-                        "value": 1.0,
+                        "value": 2.0,
                         "timestampMs": "0"
                     }]
                 }]

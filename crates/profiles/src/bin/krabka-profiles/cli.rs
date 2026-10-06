@@ -26,6 +26,16 @@ pub(crate) struct Cli {
     pub(crate) wal_security: WalClientSecurityArgs,
     #[arg(long, env = "KRABKA_PROFILES_TARGET")]
     pub(crate) target: Target,
+    /// Pyroscope query architecture contract: v1 (default) or v2.
+    #[arg(long, env = "KRABKA_PROFILES_QUERY_ARCHITECTURE", default_value = "v1")]
+    pub(crate) query_architecture: krabka_profiles::query::PyroscopeQueryArchitecture,
+    /// Enables the experimental v2 asynchronous query frontend.
+    #[arg(
+        long,
+        env = "KRABKA_PROFILES_ASYNC_QUERIES_ENABLED",
+        default_value_t = false
+    )]
+    pub(crate) async_queries_enabled: bool,
     /// HTTP ingest and query listen address. Default: `0.0.0.0:4040`.
     ///
     /// Every interface, as Pyroscope defaults to. A container that binds

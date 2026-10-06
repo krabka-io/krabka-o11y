@@ -20,6 +20,16 @@ pub(crate) fn row_attrs(batch: &RecordBatch, row: usize) -> Result<Vec<(String, 
                     TraceqlError::Exec(format!("unsupported string attribute column {name}"))
                 })?)
             }
+            DataType::Dictionary(_, value_type)
+                if matches!(
+                    value_type.as_ref(),
+                    DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View
+                ) =>
+            {
+                AttrValue::Str(string_array_value(array.as_ref(), row).ok_or_else(|| {
+                    TraceqlError::Exec(format!("unsupported dictionary attribute column {name}"))
+                })?)
+            }
             DataType::Int64 => AttrValue::Int(
                 array
                     .as_primitive::<arrow::datatypes::Int64Type>()

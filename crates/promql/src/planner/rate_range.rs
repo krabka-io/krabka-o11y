@@ -215,3 +215,5 @@ pub use rate_udf_kind::RateUdfKind;
 pub use rate_value_column::RATE_VALUE_COLUMN;
 pub use time_column::TIME_COLUMN;
 pub use value_column::VALUE_COLUMN;
+
+mod fold_start_timestamp_rates;

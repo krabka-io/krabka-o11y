@@ -1,6 +1,6 @@
 //! Raw pprof emission from merged profile trees.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 
 use crate::{
     Frame, PprofProfile, ProfileType, ResolvedFunction, ResolvedLocation, ResolvedMapping, Tree,
@@ -69,7 +69,7 @@ mod tests {
             ProfileType::parse("process_cpu:cpu:nanoseconds:cpu:nanoseconds").unwrap();
         let mut tree = Tree::new();
         for idx in 0..10 {
-            tree.add_stack(&[frame(&format!("leaf{idx}"))], 1);
+            tree.add_stack(&[frame(&format!("leaf{idx}"))], idx + 1);
         }
 
         let profile = tree_to_pprof_with_max_nodes(&tree, &profile_type, 4);
@@ -81,7 +81,7 @@ mod tests {
             .sum();
 
         check!(inner.sample.len() <= 4);
-        check!(total == 10);
+        check!(total == 55);
         check!(inner.string_table.iter().any(|value| value == "other"));
     }
 

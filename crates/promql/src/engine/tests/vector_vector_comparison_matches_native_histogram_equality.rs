@@ -37,7 +37,7 @@ pub(crate) async fn vector_vector_comparison_matches_native_histogram_equality()
     };
     assert2::assert!(samples.len() == 1);
     assert2::assert!(samples[0].labels == labels(&[("x", "1")]));
-    assert2::assert!(float_value(&samples[0].value) == 4.0);
+    assert2::assert!(samples[0].value == SampleValue::Float(4.0));
 
     let not_equal = engine
         .query_instant(
@@ -52,7 +52,7 @@ pub(crate) async fn vector_vector_comparison_matches_native_histogram_equality()
     };
     assert2::assert!(samples.len() == 1);
     assert2::assert!(samples[0].labels == labels(&[("x", "1")]));
-    assert2::assert!(float_value(&samples[0].value) == 4.0);
+    assert2::assert!(samples[0].value == SampleValue::Float(4.0));
 
     let false_filter = engine
         .query_instant(&tenant_id("tenant-a"), "a == on (x) c", 10_000)

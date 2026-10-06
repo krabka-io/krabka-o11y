@@ -54,7 +54,7 @@ impl ScannedRows {
     pub(crate) async fn histograms(&self, max_samples: usize) -> Result<Arc<Vec<HistogramRow>>> {
         self.histograms
             .get_or_try_init(|| async {
-                let rows = match &self.histogram_table {
+                let mut rows = match &self.histogram_table {
                     Some(table) => {
                         let rows = collect_histogram_rows(&self.ctx, table, max_samples).await?;
                         self.ctx.deregister_table(table.as_str())?;
@@ -62,6 +62,15 @@ impl ScannedRows {
                     }
                     None => Vec::new(),
                 };
+                rows.sort_by_key(|row| (row.fp, row.ts_ms));
+                rows.dedup_by(|later, earlier| {
+                    if (later.fp, later.ts_ms) == (earlier.fp, earlier.ts_ms) {
+                        earlier.clone_from(later);
+                        true
+                    } else {
+                        false
+                    }
+                });
                 Ok(Arc::new(rows))
             })
             .await

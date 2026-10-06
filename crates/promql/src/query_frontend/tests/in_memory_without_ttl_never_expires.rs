@@ -12,6 +12,8 @@ pub(crate) async fn in_memory_without_ttl_never_expires() {
         shard: None,
     };
     let result = unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
+        drop_name: false,
+        start_timestamps_ms: std::collections::BTreeMap::new(),
         labels: labels(&[("__name__", "up")]),
         samples: vec![(0, SampleValue::Float(1.0))],
     }]));

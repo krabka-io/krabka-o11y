@@ -1,4 +1,5 @@
 use krabka_blockstore::Labels;
+use krabka_units::prelude::*;
 use promql_parser::parser::{Call, Expr};
 
 use super::{
@@ -61,6 +62,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             // `vector(s)` — a single no-label series carrying the scalar `s`.
             "vector" => self.plan_vector_function_call(tenant, call, time_ms).await,
             // `timestamp(v)` — per-row: the sample's timestamp in seconds.
+            "start_timestamp" => self.plan_start_timestamp_call(tenant, call, time_ms).await,
             "timestamp" => self.plan_timestamp_call(tenant, call, time_ms).await,
             // `absent(v)` / `absent_over_time(v[range])`.
             "absent" => self.plan_absent_call(tenant, call, time_ms).await,
@@ -73,6 +75,70 @@ impl<S: MetricStore> PromqlEngine<S> {
                 self.plan_calendar_call(tenant, call, kind, time_ms).await
             }
         }
+    }
+
+    async fn plan_start_timestamp_call(
+        &self,
+        tenant: &str,
+        call: &Call,
+        time_ms: i64,
+    ) -> Result<Option<PlannedInstant>> {
+        let [argument] = call.args.args.as_slice() else {
+            return Ok(None);
+        };
+        let mut argument = argument.as_ref();
+        while let Expr::Paren(paren) = argument {
+            argument = &paren.expr;
+        }
+        let Expr::VectorSelector(selector) = argument else {
+            // Expressions and subqueries do not propagate start-time metadata.
+            let _ = self.plan_and_resolve(tenant, argument, time_ms).await?;
+            return Ok(Some(PlannedInstant::Precomputed(Vec::new())));
+        };
+        let end = super::apply_selector_time_modifier(
+            time_ms,
+            selector.at.as_ref(),
+            selector.offset.as_ref(),
+            super::current_at_modifier_bounds(),
+        )?;
+        let start = end.saturating_sub(self.opts.lookback_delta.millis_i64());
+        let matchers = super::label_matcher_sets(selector);
+        let rows = self
+            .scan_float_row_sets(tenant, &matchers, start, end)
+            .await?;
+        let histograms = self
+            .scan_histogram_row_sets(tenant, &matchers, start, end)
+            .await?;
+        let mut starts = std::collections::BTreeMap::new();
+        for row in rows {
+            starts.insert((row.fp, row.ts_ms), row.start_timestamp_ms.unwrap_or(0));
+        }
+        for row in histograms {
+            starts.insert(
+                (row.fp, row.ts_ms),
+                row.hist.start_timestamp_ms.unwrap_or(0),
+            );
+        }
+        let QueryResult::InstantVector(samples) = self
+            .eval_instant_selector(tenant, selector, time_ms)
+            .await?
+        else {
+            unreachable!("selector produces vector")
+        };
+        Ok(Some(PlannedInstant::Precomputed(
+            samples
+                .into_iter()
+                .filter_map(|sample| {
+                    let start = starts.get(&(sample.labels.fingerprint(), sample.ts_ms))?;
+                    Some(InstantSample {
+                        labels: labels_without_metric_name(&sample.labels),
+                        ts_ms: time_ms,
+                        value: SampleValue::Float(timestamp_seconds(*start)),
+                        drop_name: true,
+                    })
+                })
+                .collect(),
+        )))
     }
 
     /// Plans `timestamp(v)`.

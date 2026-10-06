@@ -1,8 +1,8 @@
 //! The differential corpus, read from the vendored Prometheus `.test` files.
 //!
 //! `crates/promql/tests/testdata` holds the upstream `promql/promqltest`
-//! corpus, vendored whole at `v3.8.1`. The in-process conformance suite already
-//! runs every `eval` in it against Krabka's engine. This module turns the same
+//! curated corpus, based on `v3.8.1` with the `v3.14.0` updates and local
+//! cases recorded in `ATTRIBUTION.md`. This module turns those same
 //! files into something two *containers* can be asked about: a `load` block
 //! becomes a `remote_write` body, and an `eval` line becomes a query that both
 //! Krabka and the real thing answer.
@@ -1018,7 +1018,12 @@ pub fn compare_case(case: &CorpusCase, krabka: &Value, upstream: &Value) -> Opti
             crate::diff_corpus::normalize(upstream),
         )
     };
-    (left != right).then(|| {
+    let equal = if case.expects_failure {
+        left == right
+    } else {
+        crate::diff_corpus::queries_equal(&left, &right)
+    };
+    (!equal).then(|| {
         format!(
             "{} `{}` at {:?}\n      krabka:   {}\n      upstream: {}",
             case.name,
@@ -1056,26 +1061,42 @@ fn compact(value: &Value) -> String {
     }
 }
 
-/// Writes the run's report: what ran, what was skipped and why, which known
-/// divergences showed themselves, and every disagreement in full.
-///
-/// A skipped case is only visible if something writes it down. This is the
-/// counterpart of the `PromQL` conformance report.
+/// Actual oracle feature flags and candidate query-server options.
+pub struct ReportConfiguration {
+    /// Exact feature flags passed to the oracle container.
+    pub oracle_flags: Vec<String>,
+    /// Options used by the candidate query server.
+    pub candidate_engine_opts: krabka_promql::EngineOpts,
+}
+
+/// Writes the cases and the actual oracle/candidate evaluation configuration.
 ///
 /// # Panics
 ///
-/// Panics when the report cannot be written, which would otherwise hide the
-/// very list it exists to publish.
+/// Panics when either report cannot be serialized or written.
 pub fn write_report(
     suite: &str,
     corpus: &PromqlCorpus,
     mismatches: &[(String, String)],
     extra: &[KnownDivergence],
+    configuration: &ReportConfiguration,
 ) {
+    let opts = configuration.candidate_engine_opts;
+    let configuration = serde_json::json!({
+        "oracle_flags": configuration.oracle_flags,
+        "candidate_engine_opts": {
+            "lookback_delta_ms": opts.lookback_delta.millis_i64(),
+            "eval_interval_ms": opts.eval_interval.millis_i64(),
+            "enable_type_and_unit_labels": opts.enable_type_and_unit_labels,
+            "max_samples": opts.max_samples,
+            "max_fetched_series": opts.max_fetched_series,
+        },
+    });
     let disagreed: BTreeSet<&str> = mismatches.iter().map(|(name, _)| name.as_str()).collect();
     let run: BTreeSet<&str> = corpus.cases.iter().map(|case| case.name.as_str()).collect();
     let mut report = String::new();
     let _ = writeln!(report, "{suite} differential report");
+    let _ = writeln!(report, "configuration: {configuration}");
     let _ = writeln!(report, "seeded series: {}", corpus.series.len());
     let _ = writeln!(report, "seeded samples: {}", corpus.sample_count());
     let _ = writeln!(report, "cases run: {}", corpus.cases.len());
@@ -1145,7 +1166,17 @@ pub fn write_report(
         "id":case.name, "query":case.promql, "status":"skipped", "detail":case.reason,
     }))).collect::<Vec<_>>();
     std::fs::write(path.with_extension("json"), serde_json::to_vec_pretty(&serde_json::json!({
-        "suite":suite, "corpus_version":"3.8.1", "adapter":"time-separated remote_write v1 segments; not original upstream fixture semantics",
+        "suite":suite, "corpus_version":"mixed-curated-3.8.1-and-3.14.0",
+        "corpus_provenance": {
+            "attribution":"crates/promql/tests/testdata/ATTRIBUTION.md",
+            "base":{"version":"3.8.1","revision":"ed753444ffec98097399d0cfa9073c70a840b812"},
+            "overrides":{"version":"3.14.0","revision":"d7598b7141418fa35be2b5ec5d0fefb634199610",
+                "files":["extended_vectors.test","name_label_dropping.test","type_and_unit.test"],
+                "annotation_updates":"histogram metric-name formatting"},
+            "local_files":["ranges.test"],
+        },
+        "configuration":configuration,
+        "adapter":"time-separated remote_write v1 segments; not original upstream fixture semantics",
         "cases":cases, "run":corpus.cases.len(), "skipped":corpus.skipped.len(),
     })).expect("serialize differential case report")).expect("write differential JSON report");
     println!("{suite}: report written to {}", path.display());

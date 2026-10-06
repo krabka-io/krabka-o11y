@@ -64,6 +64,10 @@ jobs:
             target: //crates/traces:tempo_deployment_docker_test
             docker: true
             upstream_runner: false
+          - suite: profile-transitions
+            target: //crates/profiles:pyroscope_deployment_docker_test
+            docker: true
+            upstream_runner: false
           - suite: backup-restore
             target: //crates/integration:backup_restore_test
             docker: false
@@ -117,7 +121,7 @@ jobs:
         run: |
           set -euo pipefail
           evidence="${RUNNER_TEMP}/query-evidence/${SUITE}"
-          mkdir -p "${evidence}"
+          mkdir -p "${evidence}/raw"
           git rev-parse HEAD > "${evidence}/commit"
           printf '%s\n' '${{ steps.run.outcome }}' > "${evidence}/run-result"
           printf '%s\n' "${TARGET}" > "${evidence}/target"
@@ -138,9 +142,10 @@ jobs:
           logs="${logs/:/\/}"
           if [[ -f "${logs}/test.log" ]]; then
             cp "${logs}/test.log" "${evidence}/test.log"
+            cp "${logs}/test.log" "${evidence}/raw/test.log"
           fi
           if [[ -d "${logs}/test.outputs" ]]; then
-            cp -rL "${logs}/test.outputs" "${evidence}/raw"
+            cp -rL "${logs}/test.outputs/." "${evidence}/raw/"
           fi
           for provenance in "${RUNNER_TEMP}"/query-runners/*runner*.json; do
             if [[ -f "${provenance}" ]]; then
@@ -173,7 +178,7 @@ jobs:
         run: |
           set -euo pipefail
           suites=(promql-full-default promql-full-experimental prometheus-http mimir-http
-            loki-http tempo-http pyroscope-http metrics-transitions tempo-transitions backup-restore)
+            loki-http tempo-http pyroscope-http metrics-transitions tempo-transitions profile-transitions backup-restore)
           for suite in "${suites[@]}"; do
             manifest="${RUNNER_TEMP}/query-evidence/query-raw-${suite}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}/SHA256SUMS"
             test -s "${manifest}"
@@ -195,7 +200,8 @@ jobs:
           python3 tools/query-language-inventory.py --check
           python3 tools/query-language-report.py \
             --evidence "${RUNNER_TEMP}/query-evidence" \
-            --output "${RUNNER_TEMP}/query-language-qualification.json" "${flags[@]}"
+            --output "${RUNNER_TEMP}/query-language-qualification.json" \
+            --fail-invalid-evidence "${flags[@]}"
       - name: upload aggregate report
         if: always()
         uses: actions/upload-artifact@v4

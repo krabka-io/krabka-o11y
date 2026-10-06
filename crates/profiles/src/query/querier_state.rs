@@ -3,16 +3,20 @@ use krabka_units::convert::TimeExt as _;
 use super::{
     Arc, BTreeMap, DEFAULT_HEATMAP_TIME_BUCKETS_MAX, DEFAULT_HEATMAP_VALUE_BUCKETS, DefaultStore,
     EndMs, EngineOpts, FlameEngine, FlameGraph, FrontendConfig, HeatmapSpanExemplarsBySeries,
-    InMemoryProfileStore, LabelMatcher, LabeledHeatmap, Limits, MatchOp, OverridesProvider,
-    PROFILE_ID_LABEL, ProfileError, ProfileStats, ProfileStore, QueryExecution, QueryRange,
-    QueryTarget, SampleSelector, Series, SeriesAgg, ServiceMetrics, SpanExemplarsBySeries, StartMs,
-    TenantId, TenantPolicy, Time, bin_heatmap, heatmap_individual_exemplars_from_scan,
-    heatmap_span_exemplars_from_scan, individual_exemplars_from_scan, parse_label_selector,
-    span_exemplars_from_scan, span_heatmap_points_from_scan, split_inclusive_range,
+    InMemoryProfileStore, LabelMatcher, Limits, MatchOp, OverridesProvider, PROFILE_ID_LABEL,
+    ProfileError, ProfileStats, ProfileStore, QueryExecution, QueryRange, QueryTarget,
+    SampleSelector, Series, SeriesAgg, ServiceMetrics, SpanExemplarsBySeries, StartMs, TenantId,
+    TenantPolicy, Time, heatmap_individual_exemplars_from_scan, heatmap_span_exemplars_from_scan,
+    individual_exemplars_from_scan, parse_label_selector, span_exemplars_from_scan,
+    span_heatmap_points_from_scan, split_inclusive_range,
 };
 
 pub struct QuerierState<S: ProfileStore = DefaultStore> {
+    pub(crate) query_architecture: super::PyroscopeQueryArchitecture,
+    pub(crate) async_queries_enabled: bool,
     pub(crate) store: Arc<S>,
+    pub(crate) async_query_slots:
+        tokio::sync::Mutex<BTreeMap<String, std::collections::BTreeSet<String>>>,
     pub(crate) engine: FlameEngine<S>,
     pub(crate) execution: QueryExecution,
     pub(crate) overrides: OverridesProvider,
@@ -80,7 +84,10 @@ impl<S: ProfileStore> QuerierState<S> {
                 })
             });
         Self {
+            query_architecture: super::PyroscopeQueryArchitecture::default(),
+            async_queries_enabled: false,
             store,
+            async_query_slots: tokio::sync::Mutex::new(BTreeMap::new()),
             engine,
             execution,
             overrides,
@@ -95,6 +102,23 @@ impl<S: ProfileStore> QuerierState<S> {
             heatmap_value_buckets: DEFAULT_HEATMAP_VALUE_BUCKETS,
             heatmap_time_buckets_max: DEFAULT_HEATMAP_TIME_BUCKETS_MAX,
         }
+    }
+
+    /// Binds query behavior to Pyroscope's v1 ingester or v2 segment-writer API.
+    #[must_use]
+    pub fn with_query_architecture(
+        mut self,
+        architecture: super::PyroscopeQueryArchitecture,
+    ) -> Self {
+        self.query_architecture = architecture;
+        self
+    }
+
+    /// Enables the experimental v2 asynchronous query frontend.
+    #[must_use]
+    pub fn with_async_queries_enabled(mut self, enabled: bool) -> Self {
+        self.async_queries_enabled = enabled;
+        self
     }
 
     #[must_use]
@@ -414,19 +438,9 @@ impl<S: ProfileStore> QuerierState<S> {
         self.validate_query_range(tenant, start_ms, end_ms)?;
         let scan_start = start_ms.saturating_sub(step.millis_i64());
         let base_matchers = parse_label_selector(label_selector)?;
-        let mut profile_group_by = group_by.to_vec();
-        if !profile_group_by.iter().any(|name| name == PROFILE_ID_LABEL) {
-            profile_group_by.push(PROFILE_ID_LABEL.to_string());
-        }
         let groups = self
             .store
-            .series(
-                tenant.as_str(),
-                &base_matchers,
-                &profile_group_by,
-                scan_start,
-                end_ms,
-            )
+            .series(tenant.as_str(), &base_matchers, &[], scan_start, end_ms)
             .await?;
         let mut out: SpanExemplarsBySeries = BTreeMap::new();
         for labels in groups {
@@ -439,9 +453,14 @@ impl<S: ProfileStore> QuerierState<S> {
             };
             let series_labels: Vec<_> = labels
                 .iter()
-                .filter(|(name, _)| name != PROFILE_ID_LABEL)
+                .filter(|(name, _)| group_by.contains(name))
                 .cloned()
                 .collect();
+            let exemplar_labels = labels
+                .iter()
+                .filter(|(name, _)| name != PROFILE_ID_LABEL)
+                .cloned()
+                .collect::<Vec<_>>();
             let mut matchers = base_matchers.clone();
             matchers.extend(
                 labels.iter().map(|(name, value)| {
@@ -455,7 +474,7 @@ impl<S: ProfileStore> QuerierState<S> {
             let exemplars = individual_exemplars_from_scan(
                 &scan,
                 krabka_units::millis(1),
-                &series_labels,
+                &exemplar_labels,
                 &profile_id,
                 call_sites,
             )
@@ -475,19 +494,16 @@ impl<S: ProfileStore> QuerierState<S> {
         target: QueryTarget<'_>,
         group_by: &[String],
         range: QueryRange,
-        time_buckets: usize,
+        step_ms: i64,
     ) -> Result<HeatmapSpanExemplarsBySeries, ProfileError> {
         let (tenant, profile_type, label_selector) = target;
         let (start_ms, end_ms) = range;
         self.validate_query_range(tenant, start_ms, end_ms)?;
         let base_matchers = parse_label_selector(label_selector)?;
-        let groups = if group_by.is_empty() {
-            vec![Vec::new()]
-        } else {
-            self.store
-                .series(tenant.as_str(), &base_matchers, group_by, start_ms, end_ms)
-                .await?
-        };
+        let groups = self
+            .store
+            .series(tenant.as_str(), &base_matchers, &[], start_ms, end_ms)
+            .await?;
         let mut out = BTreeMap::new();
         for labels in groups {
             let mut matchers = base_matchers.clone();
@@ -500,11 +516,32 @@ impl<S: ProfileStore> QuerierState<S> {
                 .store
                 .select(tenant.as_str(), profile_type, &matchers, start_ms, end_ms)
                 .await?;
-            let exemplars =
-                heatmap_span_exemplars_from_scan(&scan, start_ms, end_ms, time_buckets, &labels)
-                    .await?;
+            let exemplar_labels = labels
+                .iter()
+                .filter(|(name, _)| name != PROFILE_ID_LABEL && !group_by.contains(name))
+                .cloned()
+                .collect::<Vec<_>>();
+            let series_labels = labels
+                .iter()
+                .filter(|(name, _)| group_by.contains(name))
+                .cloned()
+                .collect::<Vec<_>>();
+            let exemplars = heatmap_span_exemplars_from_scan(
+                &scan,
+                start_ms,
+                end_ms,
+                step_ms,
+                &exemplar_labels,
+            )
+            .await?;
             if !exemplars.is_empty() {
-                out.insert(labels, exemplars);
+                let slots = out.entry(series_labels).or_insert_with(BTreeMap::new);
+                for (timestamp, mut exemplars) in exemplars {
+                    slots
+                        .entry(timestamp)
+                        .or_insert_with(Vec::new)
+                        .append(&mut exemplars);
+                }
             }
         }
         Ok(out)
@@ -515,25 +552,15 @@ impl<S: ProfileStore> QuerierState<S> {
         target: QueryTarget<'_>,
         group_by: &[String],
         range: QueryRange,
-        time_buckets: usize,
+        step_ms: i64,
     ) -> Result<HeatmapSpanExemplarsBySeries, ProfileError> {
         let (tenant, profile_type, label_selector) = target;
         let (start_ms, end_ms) = range;
         self.validate_query_range(tenant, start_ms, end_ms)?;
         let base_matchers = parse_label_selector(label_selector)?;
-        let mut profile_group_by = group_by.to_vec();
-        if !profile_group_by.iter().any(|name| name == PROFILE_ID_LABEL) {
-            profile_group_by.push(PROFILE_ID_LABEL.to_string());
-        }
         let groups = self
             .store
-            .series(
-                tenant.as_str(),
-                &base_matchers,
-                &profile_group_by,
-                start_ms,
-                end_ms,
-            )
+            .series(tenant.as_str(), &base_matchers, &[], start_ms, end_ms)
             .await?;
         let mut out: HeatmapSpanExemplarsBySeries = BTreeMap::new();
         for labels in groups {
@@ -546,9 +573,14 @@ impl<S: ProfileStore> QuerierState<S> {
             };
             let series_labels: Vec<_> = labels
                 .iter()
-                .filter(|(name, _)| name != PROFILE_ID_LABEL)
+                .filter(|(name, _)| group_by.contains(name))
                 .cloned()
                 .collect();
+            let exemplar_labels = labels
+                .iter()
+                .filter(|(name, _)| name != PROFILE_ID_LABEL && !group_by.contains(name))
+                .cloned()
+                .collect::<Vec<_>>();
             let mut matchers = base_matchers.clone();
             matchers.extend(
                 labels.iter().map(|(name, value)| {
@@ -563,8 +595,8 @@ impl<S: ProfileStore> QuerierState<S> {
                 &scan,
                 start_ms,
                 end_ms,
-                time_buckets,
-                &series_labels,
+                step_ms,
+                &exemplar_labels,
                 &profile_id,
             )
             .await?;
@@ -576,14 +608,12 @@ impl<S: ProfileStore> QuerierState<S> {
         Ok(out)
     }
 
-    pub(crate) async fn select_span_heatmaps(
+    pub(crate) async fn select_span_heatmap_points(
         &self,
         target: QueryTarget<'_>,
         group_by: &[String],
         range: QueryRange,
-        time_buckets: usize,
-        value_buckets: usize,
-    ) -> Result<Vec<LabeledHeatmap>, ProfileError> {
+    ) -> Result<Vec<krabka_pprof::LabeledHeatmapPoints>, ProfileError> {
         let (tenant, profile_type, label_selector) = target;
         let (start_ms, end_ms) = range;
         self.validate_query_range(tenant, start_ms, end_ms)?;
@@ -611,10 +641,7 @@ impl<S: ProfileStore> QuerierState<S> {
             if points.is_empty() && !group_by.is_empty() {
                 continue;
             }
-            out.push(LabeledHeatmap {
-                labels,
-                heatmap: bin_heatmap(&points, start_ms, end_ms, time_buckets, value_buckets),
-            });
+            out.push((labels, points));
         }
         Ok(out)
     }

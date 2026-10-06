@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 
@@ -139,6 +139,8 @@ struct Events {
     failed: BTreeSet<String>,
     skipped: BTreeSet<String>,
     root_status: &'static str,
+    metadata: BTreeMap<String, Value>,
+    compared: BTreeSet<String>,
 }
 
 fn is_remote_leaf(name: &str) -> TestResult<bool> {
@@ -171,7 +173,43 @@ fn parse_events(output: &str, mode: &str) -> TestResult<Events> {
     let mut failed = BTreeSet::new();
     let mut skipped = BTreeSet::new();
     let mut root_status = None;
+    let mut metadata = BTreeMap::new();
+    let mut compared = BTreeSet::new();
     for line in output.lines().map(str::trim) {
+        if let Some((_, encoded)) = line.split_once("KRABKA_QUERY_CASE ") {
+            let case: Value = serde_json::from_str(encoded)?;
+            let name = case["name"]
+                .as_str()
+                .ok_or("case metadata needs test name")?;
+            if !is_remote_leaf(name)?
+                || case["query"]
+                    .as_str()
+                    .is_none_or(|query| query.trim().is_empty())
+                || !matches!(
+                    case["expected_outcome"].as_str(),
+                    Some("query-result" | "semantic-negative")
+                )
+                || !name.contains(&format!(
+                    "/kind={}/",
+                    case["kind"].as_str().unwrap_or_default()
+                ))
+                || !name.ends_with(&format!(
+                    "/direction={}",
+                    case["direction"].as_str().unwrap_or_default()
+                ))
+            {
+                return Err("invalid query case metadata".into());
+            }
+            let name = name.to_owned();
+            if metadata.insert(name, case).is_some() {
+                return Err("duplicate query case metadata".into());
+            }
+        }
+        if let Some((_, name)) = line.split_once("KRABKA_QUERY_VERDICT ")
+            && (!is_remote_leaf(name)? || !compared.insert(name.to_owned()))
+        {
+            return Err("invalid or duplicate semantic comparison verdict".into());
+        }
         if let Some((_, remaining)) = line.split_once("Loaded ")
             && remaining.contains(&format!("remote test cases (range-type={mode})"))
         {
@@ -228,6 +266,9 @@ fn parse_events(output: &str, mode: &str) -> TestResult<Events> {
     {
         return Err("contradictory or incomplete Go test events".into());
     }
+    if metadata.keys().cloned().collect::<BTreeSet<_>>() != started || compared != passed {
+        return Err("case query metadata or semantic comparison verdict missing".into());
+    }
     Ok(Events {
         loaded,
         started,
@@ -235,6 +276,8 @@ fn parse_events(output: &str, mode: &str) -> TestResult<Events> {
         failed,
         skipped,
         root_status,
+        metadata,
+        compared,
     })
 }
 
@@ -298,6 +341,23 @@ pub fn execution_report(output: &str, mode: &str) -> TestResult<Value> {
         && events.skipped.is_empty()
         && events.passed.len() == events.loaded
         && (definitions, metric_cases, log_cases) == expected;
+    let cases = events
+        .metadata
+        .into_iter()
+        .map(|(name, mut case)| {
+            case["status"] = json!(if events.passed.contains(&name) {
+                "passed"
+            } else if events.failed.contains(&name) {
+                "failed"
+            } else if events.skipped.contains(&name) {
+                "skipped"
+            } else {
+                "not_run"
+            });
+            case["semantic_comparison_completed"] = json!(events.compared.contains(&name));
+            case
+        })
+        .collect::<Vec<_>>();
     Ok(json!({
         "mode": mode, "success": success, "root_status": events.root_status,
         "original_declared_definitions": {"total": 101, "metrics": 73, "logs": 28, "marked_skipped_but_enabled": 15},
@@ -310,6 +370,7 @@ pub fn execution_report(output: &str, mode: &str) -> TestResult<Value> {
         "skipped_count": events.skipped.len(), "not_run_count": events.loaded - finished.len(),
         "unstarted_count": events.loaded - events.started.len(),
         "passed": events.passed, "failed": events.failed, "skipped": events.skipped, "not_run": not_run,
+        "cases": cases,
     }))
 }
 
@@ -320,6 +381,16 @@ mod tests {
     use assert2::assert;
 
     use super::*;
+
+    fn case_metadata(name: &str) -> String {
+        format!(
+            "KRABKA_QUERY_CASE {}\n",
+            json!({
+                "name":name, "query":"sum(count_over_time({app=\"fixture\"}[5m]))",
+                "kind":"metric", "direction":"FORWARD", "expected_outcome":"query-result"
+            })
+        )
+    }
 
     #[test]
     fn fixture_metadata_matches_formats_fields_and_last_instant_window() {
@@ -362,13 +433,20 @@ mod tests {
         for case in 0..81 {
             let name =
                 format!("TestRemoteStorageEquality/query-{case}/kind=metric/direction=FORWARD");
-            write!(successful, "=== RUN {name}\n--- PASS: {name} (0s)\n").unwrap();
+            write!(
+                successful,
+                "=== RUN {name}\n{}KRABKA_QUERY_VERDICT {name}\n--- PASS: {name} (0s)\n",
+                case_metadata(&name)
+            )
+            .unwrap();
         }
         successful.push_str("--- PASS: TestRemoteStorageEquality (0s)\n");
         assert!(execution_report(&successful, "instant").unwrap()["executed"] == 81);
         for invalid in [
             "--- PASS: TestRemoteStorageEquality (0s)\n".to_string(),
             successful.replace("Loaded 81", "Loaded 82"),
+            successful.replace("KRABKA_QUERY_CASE", "MISSING_QUERY_CASE"),
+            successful.replace("KRABKA_QUERY_VERDICT", "MISSING_QUERY_VERDICT"),
             successful.replace(
                 "--- PASS: TestRemoteStorageEquality/query",
                 "--- FAIL: TestRemoteStorageEquality/query",
@@ -389,12 +467,14 @@ mod tests {
         let mut events = "Loaded 81 remote test cases (range-type=instant)\n".to_string();
         for case in 0..81 {
             let name = name(case);
-            writeln!(events, "=== RUN {name}").unwrap();
+            write!(events, "=== RUN {name}\n{}", case_metadata(&name)).unwrap();
             match case {
                 12 => writeln!(events, "--- FAIL: {name} (0s)").unwrap(),
                 13 => writeln!(events, "--- SKIP: {name} (0s)").unwrap(),
                 14 => (),
-                _ => writeln!(events, "--- PASS: {name} (0s)").unwrap(),
+                _ => {
+                    writeln!(events, "KRABKA_QUERY_VERDICT {name}\n--- PASS: {name} (0s)").unwrap();
+                }
             }
         }
         events.push_str("--- FAIL: TestRemoteStorageEquality (0s)\nFAIL\n");

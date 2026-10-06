@@ -65,7 +65,7 @@ impl TempoMetricBounds {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{collections::BTreeMap, sync::Arc};
 
     use assert2::assert;
     use krabka_traceql::{
@@ -161,6 +161,7 @@ mod tests {
             response
                 == TraceMetricsResponse {
                     series: vec![TraceMetricSeries {
+                        label_types: BTreeMap::default(),
                         labels: Vec::new(),
                         points: vec![(20, 2.0), (30, 2.0), (40, 2.0)],
                         exemplars: Vec::new(),

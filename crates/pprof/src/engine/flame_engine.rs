@@ -1019,6 +1019,27 @@ impl<S: ProfileStore> FlameEngine<S> {
         time_buckets: usize,
         value_buckets: usize,
     ) -> Result<Vec<LabeledHeatmap>, ProfileError> {
+        let points = self.select_heatmap_points(query, group_by, range).await?;
+        Ok(points
+            .into_iter()
+            .map(|(labels, points)| LabeledHeatmap {
+                labels,
+                heatmap: bin_heatmap(&points, range.0, range.1, time_buckets, value_buckets),
+            })
+            .collect())
+    }
+
+    /// Returns profile totals before binning so callers can use shared value
+    /// boundaries and an explicit query resolution.
+    ///
+    /// # Errors
+    /// Returns an error for invalid selectors or failed profile scans.
+    pub async fn select_heatmap_points(
+        &self,
+        query: (&str, &str, &str),
+        group_by: &[String],
+        range: (i64, i64),
+    ) -> Result<Vec<crate::LabeledHeatmapPoints>, ProfileError> {
         let (tenant, profile_type, label_selector) = query;
         let (start_ms, end_ms) = range;
         let base_matchers = crate::matcher::parse_label_selector(label_selector)?;
@@ -1046,10 +1067,7 @@ impl<S: ProfileStore> FlameEngine<S> {
             if points.is_empty() && !group_by.is_empty() {
                 continue;
             }
-            out.push(LabeledHeatmap {
-                labels,
-                heatmap: bin_heatmap(&points, start_ms, end_ms, time_buckets, value_buckets),
-            });
+            out.push((labels, points));
         }
         Ok(out)
     }

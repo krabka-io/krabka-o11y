@@ -561,22 +561,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn merge_stack_trace_selector_filters_call_sites() {
-        let fg = merge_fixture()
-            .select_merge_stacktraces_with_stack_trace_selector(
-                "tenant-a",
-                PT,
-                "{}",
-                (0, 200),
-                0,
-                &["work".to_string()],
-            )
-            .await
-            .unwrap();
-
-        check!(fg.total == 15);
-        check!(fg.names.iter().any(|name| name == "work"));
-        check!(!fg.names.iter().any(|name| name == "other"));
+    async fn merge_stack_trace_selector_filters_root_first_call_sites() {
+        let engine = merge_fixture();
+        for (names, expected) in [
+            (vec!["main", "work"], 15),
+            (vec!["main"], 18),
+            (vec!["work"], 0),
+            (vec!["work", "main"], 0),
+        ] {
+            let selectors = names
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect::<Vec<_>>();
+            let fg = engine
+                .select_merge_stacktraces_with_stack_trace_selector(
+                    "tenant-a",
+                    PT,
+                    "{}",
+                    (0, 200),
+                    0,
+                    &selectors,
+                )
+                .await
+                .unwrap();
+            check!(fg.total == expected);
+            if names == ["main", "work"] {
+                check!(self_value_for(&fg, "work") == 15);
+                check!(!has_name(&fg, "other"));
+            } else if names == ["main"] {
+                check!(self_value_for(&fg, "work") == 15);
+                check!(self_value_for(&fg, "other") == 3);
+            } else {
+                check!(!has_name(&fg, "work"));
+                check!(!has_name(&fg, "other"));
+            }
+        }
     }
 
     #[tokio::test]
@@ -1320,5 +1339,5 @@ use merge_scan_to_tree::merge_scan_to_tree;
 use merge_sql_to_tree::merge_sql_to_tree;
 use series_buckets_from_stacktrace_selector::series_buckets_from_stacktrace_selector;
 use series_buckets_from_totals::series_buckets_from_totals;
-use stack_matches_call_sites::stack_matches_call_sites;
+pub use stack_matches_call_sites::stack_matches_call_sites;
 use validate_range::validate_range;

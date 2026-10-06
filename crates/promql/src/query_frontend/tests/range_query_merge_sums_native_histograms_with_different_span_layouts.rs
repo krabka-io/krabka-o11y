@@ -5,6 +5,8 @@ pub(crate) fn range_query_merge_sums_native_histograms_with_different_span_layou
     let labels = labels(&[]);
     let result = merge_range_query_results(vec![
         QueryResult::RangeMatrix(vec![RangeSeries {
+            drop_name: false,
+            start_timestamps_ms: std::collections::BTreeMap::new(),
             labels: labels.clone(),
             samples: vec![(
                 0,
@@ -20,6 +22,8 @@ pub(crate) fn range_query_merge_sums_native_histograms_with_different_span_layou
             )],
         }]),
         QueryResult::RangeMatrix(vec![RangeSeries {
+            drop_name: false,
+            start_timestamps_ms: std::collections::BTreeMap::new(),
             labels: labels.clone(),
             samples: vec![(
                 0,

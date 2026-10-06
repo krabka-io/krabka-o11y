@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 
-use krabka_blockstore::LabelMatcher;
-use promql_parser::parser::{Call, Expr, VectorSelector};
+use krabka_blockstore::{LabelMatcher, MatchOp};
+use promql_parser::{
+    label::Matcher,
+    parser::{Call, Expr, VectorSelector, token::T_EQL_REGEX},
+};
 
 use super::{
     PromqlEngine,
@@ -58,7 +61,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             samples,
             &info_by_key,
             &context,
-        ))))
+        )?)))
     }
 
     /// Selects the `target_info` or custom-selector series.
@@ -105,9 +108,21 @@ impl<S: MetricStore> PromqlEngine<S> {
                 }
             }
         };
-        let Some(selector) = selector else {
+        let Some(mut selector) = selector else {
             return Ok(Vec::new());
         };
+        if data_label_matchers
+            .iter()
+            .any(|matcher| matcher.name == "__name__")
+            && !data_label_matchers.iter().any(|matcher| {
+                matcher.name == "__name__" && matches!(matcher.op, MatchOp::Eq | MatchOp::Re)
+            })
+        {
+            selector.matchers.matchers.push(
+                Matcher::new_matcher(T_EQL_REGEX, "__name__".to_string(), ".+_info".to_string())
+                    .map_err(PromqlError::Parse)?,
+            );
+        }
         let QueryResult::InstantVector(info_samples) = self
             .eval_instant_selector(tenant, &selector, time_ms)
             .await?

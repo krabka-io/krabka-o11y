@@ -83,51 +83,33 @@ const QUERY_CONCURRENCY: usize = 12;
 
 /// The Prometheus feature flags the corpus needs.
 ///
-/// Every one of these gates a *file* of the vendored corpus rather than
-/// changing how the rest of `PromQL` behaves: `info()` and the
-/// `double_exponential_smoothing` family are experimental functions,
-/// `duration_expression.test` needs duration expressions, `extended_vectors.test`
-/// needs the extended range selectors, `type_and_unit.test` needs `__type__` and
-/// `__unit__` to be understood rather than treated as ordinary labels, and the
-/// histogram corpora need native histograms.
+/// Native histograms, experimental functions, duration expressions, extended
+/// range selectors and type/unit labels enable the corresponding corpus
+/// features. Delayed name removal changes composed-expression semantics and
+/// matches the pinned upstream test engine and the candidate's behavior.
 const PROMETHEUS_FEATURES: &str = "native-histograms,promql-experimental-functions,\
-     promql-duration-expr,promql-extended-range-selectors,type-and-unit-labels";
+     promql-duration-expr,promql-extended-range-selectors,type-and-unit-labels,promql-delayed-name-removal";
 
 /// Query changes observed when the client oracle moved from Prometheus 3.8 to
 /// 3.14. The list is bidirectional: the suite fails if any case starts agreeing
 /// again, so each difference remains an explicit compatibility decision.
-const PROMETHEUS_DIVERGENCES: &[KnownDivergence] = &[
-    KnownDivergence {
-        reason: "Prometheus 3.14 rejects nested duration expressions that 3.8 and Krabka accept.",
-        cases: &[
-            "duration_expression.test:170",
-            "duration_expression.test:173",
-            "duration_expression.test:176",
-            "duration_expression.test:203",
-            "duration_expression.test:206",
-            "duration_expression.test:209",
-            "duration_expression.test:212",
-            "duration_expression.test:215",
-            "duration_expression.test:218",
-            "duration_expression.test:221",
-            "duration_expression.test:224",
-            "duration_expression.test:227",
-        ],
-    },
-    KnownDivergence {
-        reason: "Prometheus 3.14 changed the anchored boundary used by changes and resets.",
-        cases: &["extended_vectors.test:321", "extended_vectors.test:344"],
-    },
-    KnownDivergence {
-        reason: "Prometheus 3.14 adds sample-range detail to histogram monotonicity annotations; values agree.",
-        cases: &[
-            "histograms.test:958",
-            "histograms.test:962",
-            "histograms.test:966",
-            "native_histograms.test:1787",
-        ],
-    },
-];
+const PROMETHEUS_DIVERGENCES: &[KnownDivergence] = &[KnownDivergence {
+    reason: "Prometheus 3.14 rejects nested duration expressions that 3.8 and Krabka accept.",
+    cases: &[
+        "duration_expression.test:170",
+        "duration_expression.test:173",
+        "duration_expression.test:176",
+        "duration_expression.test:203",
+        "duration_expression.test:206",
+        "duration_expression.test:209",
+        "duration_expression.test:212",
+        "duration_expression.test:215",
+        "duration_expression.test:218",
+        "duration_expression.test:221",
+        "duration_expression.test:224",
+        "duration_expression.test:227",
+    ],
+}];
 
 /// The corpus builds, and every case it declines to run says why.
 ///
@@ -204,6 +186,10 @@ async fn prometheus_compliance_corpus_matches_krabka() -> TestResult {
         &corpus,
         &mismatches,
         PROMETHEUS_DIVERGENCES,
+        &promql_corpus::ReportConfiguration {
+            oracle_flags: vec![format!("--enable-feature={PROMETHEUS_FEATURES}")],
+            candidate_engine_opts: krabka_promql::EngineOpts::default(),
+        },
     );
     krabka.shutdown();
 
@@ -280,19 +266,28 @@ async fn upstream_promql_http_compliance_matches_krabka() -> TestResult {
         || std::path::PathBuf::from("../../target"),
         std::path::PathBuf::from,
     );
-    generated_differential::run(
+    generated_differential::run_typed(
         "promql",
         &[
-            r#"demo_memory_usage_bytes{type="free"}"#,
-            "demo_cpu_usage_seconds_total",
-            "demo_num_cpus",
+            generated_differential::TypedExpr::prom_metric(
+                "demo_memory_usage_bytes",
+                &[generated_differential::LabelMatcher::new(
+                    "type",
+                    generated_differential::MatchOp::Eq,
+                    "free",
+                )],
+            ),
+            generated_differential::TypedExpr::prom_metric("demo_cpu_usage_seconds_total", &[]),
+            generated_differential::TypedExpr::prom_metric("demo_num_cpus", &[]),
         ],
         &[
-            "abs({expr})",
-            "sum({expr})",
-            "sum by(instance)({expr})",
-            "({expr})+1",
-            "clamp_min({expr},0)",
+            generated_differential::TypedConstructor::PromAbs,
+            generated_differential::TypedConstructor::PromSum { by: vec![] },
+            generated_differential::TypedConstructor::PromSum {
+                by: vec!["instance".into()],
+            },
+            generated_differential::TypedConstructor::PromAdd(1),
+            generated_differential::TypedConstructor::PromClampMin(0),
         ],
         &report_dir,
         |query| {

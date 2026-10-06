@@ -23,6 +23,7 @@ vendored-protoc = ["dep:protoc-bin-vendored"]
 heap-profiling = ["krabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
 
 [dependencies]
+uuid = { version = "1.26.1", features = ["v4"] }
 sha2 = { workspace = true }
 arrow = { workspace = true }
 base64 = { workspace = true }

@@ -90,6 +90,7 @@ pub(crate) async fn a_block_deleted_after_the_manifest_listing_is_skipped_and_wa
                              this result (1:1)"
                         )],
                         infos: Vec::new(),
+                        ..crate::Annotations::default()
                     }
                 ),
             "warm={warm}"

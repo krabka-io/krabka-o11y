@@ -1,7 +1,15 @@
 use super::{FieldExpr, Result, comparison_to_sql, field_to_column, ident};
 
 pub(crate) fn field_expr_to_sql(fe: &FieldExpr) -> Result<String> {
+    // A dynamic field comparison requires the whole predicate to read packed
+    // values: a heterogeneous promoted sibling may be NULL despite its presence.
+    if fe.has_field_comparison() {
+        return Ok(ident(&crate::ast::field_comparison_column(fe)));
+    }
     match fe {
+        FieldExpr::ExpressionComparison { .. } | FieldExpr::FieldComparison { .. } => {
+            Ok(ident(&crate::ast::field_comparison_column(fe)))
+        }
         FieldExpr::Comparison { lhs, op, rhs } => comparison_to_sql(lhs, *op, rhs),
         FieldExpr::And(a, b) => Ok(format!(
             "({} AND {})",

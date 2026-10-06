@@ -493,6 +493,7 @@ mod tests {
         let options = ScanOptions {
             job: None,
             projection_matchers: projection,
+            ..ScanOptions::default()
         };
         let r = s
             .scan_with_options("t", &[], 0, 10_000, &options)
@@ -2025,3 +2026,5 @@ use status_enum_value::status_enum_value;
 use stored_trace::StoredTrace;
 use string_matches::string_matches;
 use typed_value_parts::typed_value_parts;
+
+mod raw_attribute_columns;

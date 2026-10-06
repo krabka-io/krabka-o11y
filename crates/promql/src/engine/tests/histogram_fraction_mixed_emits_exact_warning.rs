@@ -13,6 +13,6 @@ pub(crate) async fn histogram_fraction_mixed_emits_exact_warning() {
         .expect("query");
     assert2::assert!(
         annotations.warnings.iter().any(|w| w
-            == "PromQL warning: vector contains a mix of classic and native histograms (1:29)")
+            == "PromQL warning: vector contains a mix of classic and native histograms for metric name \"series\" (1:29)")
     );
 }

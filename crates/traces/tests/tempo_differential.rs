@@ -16,6 +16,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use generated_differential::{CompareOp, TypedConstructor, TypedExpr};
 use http_body_util::BodyExt as _;
 use krabka_traceql::{
     AttrValue as TraceqlAttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceqlEngine,
@@ -288,26 +289,7 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
             "{}/api/search?q={encoded}&{query_range}&limit=100&spss=100",
             krabka.base_url
         );
-        let field_comparison_gap = query == "{ .foo = .bar }";
-        let actual = if field_comparison_gap {
-            let response = client
-                .get(&candidate_url)
-                .header("x-scope-orgid", TENANT)
-                .send()
-                .await?;
-            let status = response.status();
-            let text = response.text().await?;
-            // This valid upstream expression is unimplemented in Krabka's
-            // literal-only comparison AST. Retain it in qualification (#329).
-            assert2::assert!(
-                status == ReqwestStatusCode::BAD_REQUEST
-                    && text.contains("expected value, got Dot"),
-                "field comparison gap changed: {status}: {text}"
-            );
-            json!({"status":status.as_u16(), "body":text})
-        } else {
-            get_json(&client, &candidate_url, Some(TENANT)).await?
-        };
+        let actual = get_json(&client, &candidate_url, Some(TENANT)).await?;
         let expected = if expected_ids.is_empty() {
             BTreeMap::new()
         } else {
@@ -320,7 +302,7 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
             )])
         };
         forest_evidence.push(
-            json!({"query":query, "expected":expected, "upstream":upstream, "krabka":actual, "status": if field_comparison_gap { "unsupported" } else if search_identities(&upstream)? == expected && search_identities(&actual)? == expected { "matched" } else { "mismatch" }}),
+            json!({"query":query, "expected":expected, "upstream":upstream, "krabka":actual, "status": if search_identities(&upstream)? == expected && search_identities(&actual)? == expected { "matched" } else { "mismatch" }}),
         );
         let evidence_dir = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
             || std::path::PathBuf::from("../../target"),
@@ -335,12 +317,10 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
             search_identities(&upstream)? == expected,
             "pinned Tempo selection differs for {query}: {upstream}"
         );
-        if !field_comparison_gap {
-            assert2::assert!(
-                search_identities(&actual)? == expected,
-                "Krabka selection differs for {query}: {actual}"
-            );
-        }
+        assert2::assert!(
+            search_identities(&actual)? == expected,
+            "Krabka selection differs for {query}: {actual}"
+        );
     }
 
     compare_generated_trace_queries(&client, &tempo_query, &krabka.base_url, query_range).await?;
@@ -398,13 +378,24 @@ async fn compare_generated_trace_queries(
             ERROR_SPAN_ID_HEX.to_owned(),
         ],
     )]);
-    generated_differential::run(
+    let checkout =
+        TypedExpr::trace_string_compare("resource", "service.name", CompareOp::Eq, "checkout");
+    generated_differential::run_typed(
         "traceql",
-        &[r#"resource.service.name = "checkout""#],
+        std::slice::from_ref(&checkout),
         &[
-            "({expr}) && duration > 0ns",
-            r#"({expr}) && resource.service.name = "checkout""#,
-            r#"({expr}) || name = "missing""#,
+            TypedConstructor::TraceAnd(TypedExpr::trace_duration_compare(
+                "duration",
+                CompareOp::Gt,
+                0,
+            )),
+            TypedConstructor::TraceAnd(checkout.clone()),
+            TypedConstructor::TraceOr(TypedExpr::trace_string_compare(
+                "",
+                "name",
+                CompareOp::Eq,
+                "missing",
+            )),
         ],
         &generated_output,
         |expression| {
@@ -415,6 +406,44 @@ async fn compare_generated_trace_queries(
                 query_range,
                 expression,
                 &expected_checkout,
+            )
+        },
+    )
+    .await?;
+
+    let expected_field_match = BTreeMap::from([("09".repeat(16), vec!["0b".repeat(8)])]);
+    generated_differential::run_typed(
+        "traceql-field-comparisons",
+        &[TypedExpr::trace_field_compare(
+            "",
+            "foo",
+            CompareOp::Eq,
+            "",
+            "bar",
+        )],
+        &[
+            TypedConstructor::TraceAnd(TypedExpr::trace_duration_compare(
+                "duration",
+                CompareOp::Gt,
+                0,
+            )),
+            TypedConstructor::TraceOr(TypedExpr::trace_string_compare(
+                "",
+                "name",
+                CompareOp::Eq,
+                "missing",
+            )),
+            TypedConstructor::Paren,
+        ],
+        &generated_output,
+        |expression| {
+            compare_generated_trace_selector(
+                client,
+                tempo_query,
+                krabka_query,
+                query_range,
+                expression,
+                &expected_field_match,
             )
         },
     )
@@ -493,9 +522,212 @@ async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult
     )
     .await?;
     assert_metric_totals_match(&tempo_metrics, &krabka_metrics);
+    let numeric_result =
+        compare_live_numeric_metrics(&client, &tempo_query, &krabka.base_url, &query_range).await;
+    let exemplar_result = compare_live_singleton_exemplar(
+        &client,
+        &tempo_query,
+        &krabka.base_url,
+        &query_range,
+        trace_start_secs,
+    )
+    .await;
+    let arithmetic_result =
+        compare_live_field_arithmetic(&client, &tempo_query, &krabka.base_url, &query_range).await;
+    numeric_result?;
+    exemplar_result?;
+    arithmetic_result?;
 
     krabka.shutdown();
     Ok(())
+}
+
+async fn compare_live_numeric_metrics(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    query_range: &str,
+) -> TestResult {
+    let mut cases = Vec::new();
+    let mut failures = Vec::new();
+    for (stableid, operation) in [
+        ("avg-duration", "avg_over_time(duration)"),
+        ("min-duration", "min_over_time(duration)"),
+        ("max-duration", "max_over_time(duration)"),
+        ("sum-duration", "sum_over_time(duration)"),
+        ("quantile-duration", "quantile_over_time(duration, .5, .9)"),
+        ("histogram-duration", "histogram_over_time(duration)"),
+    ] {
+        let query = format!(
+            r#"{{ resource.service.name = "checkout" }} | {operation} with(exemplars=false)"#
+        );
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let suffix = format!("/api/metrics/query_range?q={encoded}&{query_range}&step=30s");
+        let upstream =
+            get_json_until_positive_metric_total(client, &format!("{oracle}{suffix}"), None)
+                .await?;
+        let candidate_result =
+            get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
+        let actual = candidate_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let result = metric_series_match(&upstream, &actual);
+        if let Err(error) = &result {
+            failures.push(format!("{stableid}: {error}"));
+        }
+        cases.push(json!({"stableid":format!("tempo-live-metric-{stableid}"),"query":query,
+            "request":{"range":query_range,"step":"30s","exemplars":false},
+            "expected_fixture_duration_seconds":[0.5,0.15,0.14],
+            "upstream":upstream,"krabka":actual,"status":if result.is_ok() {"matched"} else {"mismatch"},
+            "error":result.err().map(|error|error.to_string())}));
+    }
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(output).join("tempo-numeric-metric-conformance.json"),
+            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
+        )?;
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
+}
+
+async fn compare_live_field_arithmetic(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    query_range: &str,
+) -> TestResult {
+    let mut cases = Vec::new();
+    let mut failures = Vec::new();
+    // The existing checkout fixture has three positive durations, attached to
+    // independently assigned IDs 2 (GET), 3 (SELECT), and 4 (charge). Name
+    // predicates provide excluded witnesses for each arithmetic expression.
+    for (stableid, predicate, expected_span_ids) in [
+        (
+            "multiply-duration",
+            "duration * 2 > duration && name != \"GET /checkout\"",
+            vec![CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+        ),
+        (
+            "divide-duration",
+            "duration / 2 < duration && name = \"SELECT cart\"",
+            vec![CHILD_SPAN_ID_HEX],
+        ),
+        (
+            "add-duration",
+            "duration + duration >= duration && name != \"charge card\"",
+            vec!["0202020202020202", CHILD_SPAN_ID_HEX],
+        ),
+        (
+            "negate-duration",
+            "-duration < 0s && name = \"charge card\"",
+            vec![ERROR_SPAN_ID_HEX],
+        ),
+    ] {
+        let query = format!("{{ resource.service.name = \"checkout\" && {predicate} }}");
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let suffix = format!("/api/search?q={encoded}&{query_range}&limit=10&spss=10");
+        let upstream_result =
+            get_json_until_non_empty_traces(client, &format!("{oracle}{suffix}"), None).await;
+        let candidate_result =
+            get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
+        let upstream = upstream_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let actual = candidate_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let expected_count = expected_span_ids.len();
+        let expected = BTreeMap::from([(
+            TRACE_ID_HEX.to_owned(),
+            expected_span_ids.into_iter().map(str::to_owned).collect(),
+        )]);
+        let result = upstream_result.and_then(|upstream| {
+            candidate_result.and_then(|actual| {
+                let upstream_ids = search_identities(&upstream)?;
+                let actual_ids = search_identities(&actual)?;
+                if upstream_ids != expected || actual_ids != expected {
+                    return Err(format!(
+                        "{query}: expected {expected:?}, upstream {upstream_ids:?}, Krabka {actual_ids:?}"
+                    ).into());
+                }
+                Ok(())
+            })
+        });
+        if let Err(error) = &result {
+            failures.push(format!("{stableid}: {error}"));
+        }
+        cases.push(
+            json!({"stableid":format!("tempo-live-arithmetic-{stableid}"),"query":query,
+            "request":{"range":query_range,"limit":10,"spss":10},
+            "independent_expected":{"span_ids_by_trace":expected,"span_count":expected_count},
+            "upstream":upstream,"krabka":actual,
+            "status":if result.is_ok(){"matched"}else{"mismatch"},
+            "error":result.err().map(|error|error.to_string())}),
+        );
+    }
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(output).join("tempo-field-arithmetic-conformance.json"),
+            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
+        )?;
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
+}
+
+async fn compare_live_singleton_exemplar(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    query_range: &str,
+    trace_start_secs: u64,
+) -> TestResult {
+    // Tempo uses reservoir sampling within a trace. This selector contains one
+    // matching span, so its exact identity and timestamp are independent of RNG.
+    let query = r#"{ name = "SELECT cart" } | count_over_time()"#;
+    let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    let suffix =
+        format!("/api/metrics/query_range?q={encoded}&{query_range}&step=30s&exemplars=100");
+    let upstream =
+        get_json_until_positive_metric_total(client, &format!("{oracle}{suffix}"), None).await?;
+    let actual = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await?;
+    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
+        || std::env::temp_dir().join("krabka-tempo-exemplar"),
+        std::path::PathBuf::from,
+    );
+    let expected_exemplar = json!({"labels": [
+        {"key": "trace:id", "value": {"stringValue": TRACE_ID_HEX.trim_start_matches('0')}},
+        {"key": "name", "value": {"stringValue": "SELECT cart"}},
+    ], "value": 1.0, "timestampMs": (trace_start_secs * 1000 + 100).to_string()});
+    let result = metric_series_match(&upstream, &actual).and_then(|()| {
+        for response in [&upstream, &actual] {
+            let exemplars = response["series"][0]["exemplars"].as_array().ok_or("singleton exemplar missing")?;
+            if exemplars.len() != 1 || sorted_metric_labels(&exemplars[0])? != sorted_metric_labels(&expected_exemplar)?
+                || metric_timestamp(&exemplars[0])? != i64::try_from(trace_start_secs * 1000 + 100)?
+                || metric_value(&exemplars[0])?.to_bits() != 1.0_f64.to_bits()
+            {
+                return Err(format!("singleton exemplar differs from fixture ledger: expected={expected_exemplar}, response={response}").into());
+            }
+        }
+        Ok(())
+    });
+    std::fs::create_dir_all(&output)?;
+    std::fs::write(
+        output.join("tempo-live-exemplar-conformance.json"),
+        serde_json::to_vec_pretty(
+            &json!({"cases":[{"stableid":"tempo-live-exemplar-singleton-count", "query": query, "request": {"range":query_range,"step":"30s","exemplars":100}, "upstream": upstream, "krabka": actual,
+            "independent_expected": expected_exemplar, "expected_trace_id": TRACE_ID_HEX, "expected_timestamp_ms": trace_start_secs * 1000 + 100,
+            "status": if result.is_ok() {"matched"} else {"mismatch"}, "error":result.as_ref().err().map(ToString::to_string)}]}),
+        )?,
+    )?;
+    result
 }
 
 #[tokio::test]
@@ -581,7 +813,7 @@ async fn real_tempo_and_krabka_match_traceql_metrics_by_labels() -> TestResult {
     let query_start = trace_start_secs.saturating_sub(60);
     let query_end = trace_start_secs + 120;
     let query_range = format!("start={query_start}&end={query_end}");
-    let otlp_body = sample_otlp_body_at(trace_start_secs * 1_000_000_000);
+    let otlp_body = typed_grouping_otlp_body_at(trace_start_secs * 1_000_000_000);
     let krabka = start_krabka_pair(&otlp_body).await?;
 
     post_otlp(
@@ -624,6 +856,7 @@ async fn real_tempo_and_krabka_match_traceql_metrics_by_labels() -> TestResult {
         assert2::assert!(krabka_keys == tempo_keys);
         assert_metric_totals_match(&tempo_metrics, &krabka_metrics);
     }
+    compare_live_typed_groups(&client, &tempo_query, &krabka.base_url, &query_range).await?;
     krabka.shutdown();
     Ok(())
 }
@@ -1001,7 +1234,10 @@ async fn start_krabka_pair_on(
         .clone();
     let store = Arc::new(TraceqlEngine::new(
         Arc::new(span_store_from_records(&records)),
-        EngineOpts::default(),
+        EngineOpts {
+            max_exemplars: 100,
+            ..EngineOpts::default()
+        },
     ));
     let app = authenticated(krabka_traces::querier::http::router(store));
     let listener = tokio::net::TcpListener::bind(format!("{bind_host}:0")).await?;
@@ -1555,8 +1791,32 @@ fn sorted_metric_labels(item: &JsonValue) -> TestResult<Vec<JsonValue>> {
         None => Vec::new(),
         Some(labels) => labels.as_array().ok_or("invalid metric labels")?.clone(),
     };
+    for label in &mut labels {
+        let value = label.get_mut("value").ok_or("metric label omitted value")?;
+        *value = canonical_metric_any_value(value)?;
+    }
     labels.sort_by_cached_key(JsonValue::to_string);
     Ok(labels)
+}
+
+fn canonical_metric_any_value(value: &JsonValue) -> TestResult<JsonValue> {
+    let mut canonical = value.clone();
+    if let Some(double) = value.get("doubleValue") {
+        // ProtoJSON permits both 1 and 1.0 for a double. Normalize only that
+        // field's numeric representation; retain its AnyValue discriminator.
+        canonical["doubleValue"] = match double {
+            JsonValue::Number(number) => {
+                json!(number.as_f64().ok_or("invalid double metric label")?)
+            }
+            JsonValue::String(number)
+                if matches!(number.as_str(), "NaN" | "Infinity" | "-Infinity") =>
+            {
+                double.clone()
+            }
+            _ => return Err("invalid double metric label".into()),
+        };
+    }
+    Ok(canonical)
 }
 
 fn metric_series_by_labels(response: &JsonValue) -> TestResult<BTreeMap<String, &JsonValue>> {
@@ -1650,6 +1910,39 @@ fn metric_items<'a>(series: &'a JsonValue, field: &str) -> TestResult<&'a [JsonV
             .as_array()
             .map(Vec::as_slice)
             .ok_or_else(|| format!("invalid {field}").into()),
+    }
+}
+
+#[test]
+fn metrics_comparator_canonicalizes_double_spelling_without_erasing_label_types() {
+    let expected = json!({"series":[{
+        "labels":[{"key":"span.mixed","value":{"doubleValue":1}}],
+        "samples":[{"timestampMs":"1","value":1}],
+        "exemplars":[{"timestampMs":"1","value":1,
+            "labels":[{"key":"span.mixed","value":{"doubleValue":1}}]}]
+    }]});
+    let mut equivalent = expected.clone();
+    equivalent["series"][0]["labels"][0]["value"] = json!({"doubleValue":1.0});
+    equivalent["series"][0]["exemplars"][0]["labels"][0]["value"] = json!({"doubleValue":1.0});
+    assert2::assert!(metric_series_match(&expected, &equivalent).is_ok());
+    for value in [
+        json!({"intValue":"1"}),
+        json!({"stringValue":"1"}),
+        json!({"boolValue":true}),
+        json!({"doubleValue":1.5}),
+        json!({"doubleValue":null}),
+    ] {
+        for path in [
+            "/series/0/labels/0/value",
+            "/series/0/exemplars/0/labels/0/value",
+        ] {
+            let mut wrong = equivalent.clone();
+            *wrong.pointer_mut(path).unwrap() = value.clone();
+            assert2::assert!(
+                metric_series_match(&expected, &wrong).is_err(),
+                "{path}: {value}"
+            );
+        }
     }
 }
 
@@ -1968,4 +2261,205 @@ fn authenticated(router: axum::Router) -> axum::Router {
         router,
         &krabka_observability::server_security::ServerSecurity::default(),
     )
+}
+
+fn typed_grouping_otlp_body_at(start_ns: u64) -> Vec<u8> {
+    let mut data = TracesData::decode(sample_otlp_body_at(start_ns).as_slice()).unwrap();
+    let spans = [
+        Some(Value::IntValue(1)),
+        Some(Value::IntValue(1)),
+        Some(Value::StringValue("1".into())),
+        Some(Value::DoubleValue(1.0)),
+        Some(Value::BoolValue(true)),
+        Some(Value::BoolValue(false)),
+        None,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, mixed)| {
+        let mut attributes = vec![OtlpKeyValue {
+            key: "present".into(),
+            value: Some(AnyValue {
+                value: Some(Value::IntValue(42)),
+            }),
+            ..OtlpKeyValue::default()
+        }];
+        if let Some(value) = mixed {
+            attributes.push(OtlpKeyValue {
+                key: "mixed".into(),
+                value: Some(AnyValue { value: Some(value) }),
+                ..OtlpKeyValue::default()
+            });
+        }
+        OtlpSpan {
+            trace_id: vec![0x44; 16],
+            span_id: vec![u8::try_from(index + 1).unwrap(); 8],
+            name: format!("typed-{index}"),
+            start_time_unix_nano: start_ns + 100_000_000,
+            end_time_unix_nano: start_ns + 101_000_000,
+            attributes,
+            ..OtlpSpan::default()
+        }
+    })
+    .collect();
+    data.resource_spans.push(ResourceSpans {
+        resource: Some(Resource {
+            attributes: vec![string_kv("service.name", "typed")],
+            ..Resource::default()
+        }),
+        scope_spans: vec![ScopeSpans {
+            spans,
+            ..ScopeSpans::default()
+        }],
+        ..ResourceSpans::default()
+    });
+    data.encode_to_vec()
+}
+
+async fn compare_live_typed_groups(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    range: &str,
+) -> TestResult {
+    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
+        || std::env::temp_dir().join("krabka-tempo-typed-groups"),
+        std::path::PathBuf::from,
+    );
+    std::fs::create_dir_all(&output)?;
+    let mut cases = Vec::new();
+    let mut failures = Vec::new();
+    for (stableid, grouping) in [
+        ("tempo-live-group-heterogeneous-scalars", "span.mixed"),
+        (
+            "tempo-live-group-heterogeneous-and-missing",
+            "span.mixed,span.present",
+        ),
+    ] {
+        let query = format!(
+            "{{ resource.service.name = \"typed\" }} | count_over_time() by ({grouping}) with(exemplars=false)"
+        );
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
+        let upstream =
+            get_json_until_positive_metric_total(client, &format!("{oracle}{suffix}"), None)
+                .await?;
+        let actual = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await?;
+        let independent = typed_group_expectation(grouping);
+        let result = metric_series_match(&upstream, &actual).and_then(|()| {
+            check_typed_group_ledger(&upstream, grouping, &independent)?;
+            check_typed_group_ledger(&actual, grouping, &independent)
+        });
+        if let Err(error) = &result {
+            failures.push(format!("{stableid}: {error}"));
+        }
+        cases.push(json!({"stableid":stableid,"query":query,"request":{"range":range,"step":"30s","exemplars":false},"independent_expected":independent,"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
+        std::fs::write(
+            output.join("tempo-typed-group-conformance.json"),
+            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
+        )?;
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
+}
+
+fn typed_group_expectation(grouping: &str) -> JsonValue {
+    let mut mixed = vec![
+        json!({"intValue":"1"}),
+        json!({"stringValue":"1"}),
+        json!({"doubleValue":1.0}),
+        json!({"boolValue":true}),
+        json!({"boolValue":false}),
+    ];
+    if grouping == "span.mixed" {
+        mixed.push(json!({"stringValue":"nil"}));
+    }
+    let mut expected = json!({"group_count":6,"total":7,"mixed_values":mixed,"int_one_count":2});
+    if grouping != "span.mixed" {
+        expected["present"] = json!({"intValue":"42"});
+    }
+    expected
+}
+
+fn check_typed_group_ledger(
+    response: &JsonValue,
+    grouping: &str,
+    expected: &JsonValue,
+) -> TestResult {
+    let groups = response["series"]
+        .as_array()
+        .ok_or("response omitted typed groups")?;
+    let observed = groups
+        .iter()
+        .flat_map(|series| series["labels"].as_array().into_iter().flatten())
+        .filter(|label| label["key"] == "span.mixed")
+        .map(|label| canonical_metric_any_value(&label["value"]).map(|value| value.to_string()))
+        .collect::<TestResult<BTreeSet<_>>>()?;
+    let values = expected["mixed_values"]
+        .as_array()
+        .ok_or("expected label ledger")?
+        .iter()
+        .map(|value| canonical_metric_any_value(value).map(|value| value.to_string()))
+        .collect::<TestResult<BTreeSet<_>>>()?;
+    if groups.len() != 6
+        || observed != values
+        || metric_points_total(response).to_bits() != 7.0_f64.to_bits()
+    {
+        return Err(format!(
+            "typed group independent ledger differs: expected={expected}, response={response}"
+        )
+        .into());
+    }
+    for series in groups {
+        let labels = series["labels"].as_array().ok_or("missing group labels")?;
+        if grouping != "span.mixed"
+            && !labels.iter().any(|label| {
+                label["key"] == "span.present" && label["value"] == expected["present"]
+            })
+        {
+            return Err("composition group lost typed int42 label".into());
+        }
+        let count = if labels
+            .iter()
+            .any(|label| label["key"] == "span.mixed" && label["value"] == json!({"intValue":"1"}))
+        {
+            2.0_f64
+        } else {
+            1.0_f64
+        };
+        let total = metric_points_total(&json!({"series":[series]}));
+        if total.to_bits() != count.to_bits() {
+            return Err(format!("typed per-group count differs: {series}").into());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn typed_group_ledger_rejects_type_coercion_with_unchanged_counts() {
+    let expected = typed_group_expectation("span.mixed");
+    let groups = expected["mixed_values"].as_array().unwrap().iter().map(|value| {
+        let count = if value == &json!({"intValue":"1"}) { 2.0 } else { 1.0 };
+        json!({"labels":[{"key":"span.mixed","value":value}],"samples":[{"timestampMs":"1","value":count}]})
+    }).collect::<Vec<_>>();
+    let correct = json!({"series":groups});
+    assert2::assert!(check_typed_group_ledger(&correct, "span.mixed", &expected).is_ok());
+    let mut equivalent = correct.clone();
+    equivalent["series"][2]["labels"][0]["value"] = json!({"doubleValue":1});
+    assert2::assert!(check_typed_group_ledger(&equivalent, "span.mixed", &expected).is_ok());
+    for (group, replacement) in [
+        (0, json!({"stringValue":"1"})),
+        (1, json!({"doubleValue":1})),
+        (2, json!({"intValue":"1"})),
+        (3, json!({"intValue":"1"})),
+        (4, json!({"boolValue":true})),
+    ] {
+        let mut conflated = equivalent.clone();
+        conflated["series"][group]["labels"][0]["value"] = replacement;
+        assert2::assert!(metric_points_total(&conflated).to_bits() == 7.0_f64.to_bits());
+        assert2::assert!(check_typed_group_ledger(&conflated, "span.mixed", &expected).is_err());
+    }
 }

@@ -18,6 +18,10 @@ pub(crate) fn collect_field_expr_regexes(fe: &FieldExpr, cache: &mut CompareRege
                 cache.insert(pattern.clone(), re);
             }
         }
-        FieldExpr::Comparison { .. } | FieldExpr::Field(_) | FieldExpr::Const(_) => {}
+        FieldExpr::ExpressionComparison { .. }
+        | FieldExpr::FieldComparison { .. }
+        | FieldExpr::Comparison { .. }
+        | FieldExpr::Field(_)
+        | FieldExpr::Const(_) => {}
     }
 }

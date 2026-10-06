@@ -39,6 +39,7 @@ pub(crate) async fn an_object_store_cached_range_query_reports_the_annotations_o
                     "PromQL warning: block metrics/float/0001.parquet is missing".to_string()
                 ],
                 infos: vec!["PromQL info: metric might not be a counter".to_string()],
+                ..crate::Annotations::default()
             }
     );
 }

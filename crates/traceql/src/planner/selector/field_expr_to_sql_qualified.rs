@@ -1,11 +1,23 @@
-use super::{FieldExpr, Result, comparison_to_sql_qualified, qualified_field_ident};
+use super::{FieldExpr, Result, comparison_to_sql_qualified, ident, qualified_field_ident};
 
 pub(crate) fn field_expr_to_sql_qualified(
     fe: &FieldExpr,
     span_alias: &str,
     parent_alias: &str,
 ) -> Result<String> {
+    // A dynamic field comparison requires the whole predicate to read packed
+    // values: a heterogeneous promoted sibling may be NULL despite its presence.
+    if fe.has_field_comparison() {
+        return Ok(format!(
+            "{span_alias}.{}",
+            ident(&crate::ast::field_comparison_column(fe))
+        ));
+    }
     match fe {
+        FieldExpr::ExpressionComparison { .. } | FieldExpr::FieldComparison { .. } => Ok(format!(
+            "{span_alias}.{}",
+            ident(&crate::ast::field_comparison_column(fe))
+        )),
         FieldExpr::Comparison { lhs, op, rhs } => {
             comparison_to_sql_qualified(lhs, *op, rhs, span_alias, parent_alias)
         }

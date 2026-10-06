@@ -1,0 +1,1 @@
+SUM({__type__="counter", __unit__="request"}) BY (job)

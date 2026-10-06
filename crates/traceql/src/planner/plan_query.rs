@@ -54,6 +54,20 @@ fn project_spanset_fields(expr: &SpansetExpr, options: &mut ScanOptions) {
 
 fn project_selector_fields(expr: &FieldExpr, options: &mut ScanOptions) {
     match expr {
+        FieldExpr::ExpressionComparison { lhs, rhs, .. } => {
+            options.include_raw_attributes = true;
+            let mut fields = Vec::new();
+            lhs.collect_fields(&mut fields);
+            rhs.collect_fields(&mut fields);
+            for field in fields {
+                project_selector_fields(&FieldExpr::Field(field.clone()), options);
+            }
+        }
+        FieldExpr::FieldComparison { lhs, rhs, .. } => {
+            options.include_raw_attributes = true;
+            project_selector_fields(&FieldExpr::Field(lhs.clone()), options);
+            project_selector_fields(&FieldExpr::Field(rhs.clone()), options);
+        }
         // Nested fields expand event/link rows using their predicates. Keep
         // those dependencies local to each selector disjunct, rather than
         // combining mutually exclusive branches into one scan predicate.

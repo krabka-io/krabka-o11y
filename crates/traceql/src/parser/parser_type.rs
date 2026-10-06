@@ -1,9 +1,9 @@
 use super::{
-    Aggregate, ComparisonOp, DEFAULT_COMPARE_TOP_N, Field, FieldExpr, Intrinsic, Pipeline, Query,
-    QueryHints, Result, Scope, SpansetExpr, StructuralOp, Token, TraceqlError, Value, WithBinding,
-    intrinsic, is_duration_field, numeric_filter_field, numeric_filter_value, parse_duration_nanos,
-    scope, scopeless_intrinsic, value_add, value_div, value_mod, value_mul, value_neg, value_pow,
-    value_sub,
+    Aggregate, ArithmeticOp, ComparisonOp, DEFAULT_COMPARE_TOP_N, Field, FieldExpr, Intrinsic,
+    Pipeline, Query, QueryHints, Result, ScalarExpr, Scope, SpansetExpr, StructuralOp, Token,
+    TraceqlError, Value, WithBinding, intrinsic, is_duration_field, numeric_filter_field,
+    numeric_filter_value, parse_duration_nanos, scope, scopeless_intrinsic, value_add, value_div,
+    value_mod, value_mul, value_neg, value_pow, value_sub,
 };
 
 pub(crate) struct Parser {
@@ -391,33 +391,161 @@ impl Parser {
     }
 
     pub(crate) fn parse_comparison(&mut self) -> Result<FieldExpr> {
-        if eat!(self, &Token::LParen) {
-            let expr = self.parse_field_or()?;
-            self.expect(&Token::RParen)?;
-            return Ok(expr);
+        // Parentheses may enclose a Boolean predicate or an arithmetic operand.
+        // Try the Boolean form first, then restore the cursor for scalar parsing.
+        let saved = self.pos;
+        if self.eat(&Token::LParen) {
+            let attempt = self.parse_field_or().and_then(|expr| {
+                self.expect(&Token::RParen)?;
+                Ok(expr)
+            });
+            // A typed predicate error is already definitive. Backtracking it
+            // into scalar parsing would replace it with a syntax diagnostic.
+            let attempt = match attempt {
+                Err(error @ TraceqlError::Plan(_)) => return Err(error),
+                other => other,
+            };
+            if let Ok(expr) = attempt
+                && !matches!(
+                    self.peek(),
+                    Token::Plus
+                        | Token::Minus
+                        | Token::Star
+                        | Token::Slash
+                        | Token::Mod
+                        | Token::Caret
+                        | Token::Eq
+                        | Token::Neq
+                        | Token::Parent
+                        | Token::Lte
+                        | Token::Child
+                        | Token::Gte
+                        | Token::Re
+                        | Token::Nre
+                )
+            {
+                return Ok(expr);
+            }
+            self.pos = saved;
         }
-        // A bare boolean literal is a constant filter: `{ true }` matches every
-        // span, `{ false }` none. Only a *leading* bool is a constant — a bool on
-        // the right of a comparison (`{ .ok = true }`) is handled by parse_value.
-        if let Token::Bool(value) = self.peek() {
-            let value = *value;
-            self.pos += 1;
-            return Ok(FieldExpr::Const(value));
-        }
-        let lhs = self.parse_field()?;
+        let lhs = self.parse_scalar_expression(0, true)?;
         let Some(op) = self.parse_comparison_op() else {
-            return Ok(FieldExpr::Field(lhs));
+            return match lhs {
+                ScalarExpr::Field(field) => Ok(FieldExpr::Field(field)),
+                ScalarExpr::Literal(Value::Bool(value)) => Ok(FieldExpr::Const(value)),
+                _ => Err(Self::err("scalar predicate requires a comparison")),
+            };
         };
         if op == ComparisonOp::Eq && self.peek() == &Token::Eq {
             return Err(Self::err("use single = for equality; == is not TraceQL"));
         }
-        let rhs = self.parse_value(&lhs)?;
-        if matches!(op, ComparisonOp::Re | ComparisonOp::Nre) && !matches!(rhs, Value::Str(_)) {
+        let unquoted_duration = matches!(&lhs, ScalarExpr::Field(field) if is_duration_field(field))
+            && matches!(self.peek(), Token::Ident(name) if scopeless_intrinsic(name).is_none())
+            && !matches!(
+                self.tokens.get(self.pos + 1),
+                Some(Token::Dot | Token::Colon)
+            );
+        let mut rhs = self.parse_scalar_expression(0, false)?;
+        if unquoted_duration && let ScalarExpr::Literal(Value::Str(value)) = rhs {
+            rhs = ScalarExpr::Literal(Value::Duration(parse_duration_nanos(&value)?));
+        }
+        if matches!(op, ComparisonOp::Re | ComparisonOp::Nre)
+            && !matches!(rhs, ScalarExpr::Literal(Value::Str(_)))
+        {
             return Err(TraceqlError::Plan(
                 "regex comparison requires string value".into(),
             ));
         }
-        Ok(FieldExpr::Comparison { lhs, op, rhs })
+        super::validate_scalar_comparison(&lhs, op, &rhs)?;
+        Ok(match (lhs, rhs) {
+            (ScalarExpr::Field(lhs), ScalarExpr::Field(rhs)) => {
+                FieldExpr::FieldComparison { lhs, op, rhs }
+            }
+            (ScalarExpr::Field(lhs), ScalarExpr::Literal(rhs)) => {
+                FieldExpr::Comparison { lhs, op, rhs }
+            }
+            (lhs, rhs) => FieldExpr::ExpressionComparison { lhs, op, rhs },
+        })
+    }
+
+    pub(crate) fn parse_scalar_expression(
+        &mut self,
+        minimum: u8,
+        bare_field: bool,
+    ) -> Result<ScalarExpr> {
+        let mut lhs = if self.eat(&Token::Minus) {
+            let value = self.parse_scalar_expression(40, bare_field)?;
+            match value {
+                ScalarExpr::Literal(value) => ScalarExpr::Literal(value_neg(value)?),
+                value => ScalarExpr::Negate(Box::new(value)),
+            }
+        } else if self.eat(&Token::LParen) {
+            let value = self.parse_scalar_expression(0, bare_field)?;
+            self.expect(&Token::RParen)?;
+            value
+        } else if self.peek() == &Token::Dot
+            || matches!(self.peek(), Token::Ident(name) if scopeless_intrinsic(name).is_some())
+            || (bare_field
+                && matches!(self.peek(), Token::Ident(name) if !name.starts_with(|character: char| character.is_ascii_digit() || character == '.')))
+            || matches!(
+                self.tokens.get(self.pos + 1),
+                Some(Token::Dot | Token::Colon)
+            )
+        {
+            ScalarExpr::Field(self.parse_field()?)
+        } else {
+            match self.advance() {
+                Token::Ident(value) => ScalarExpr::Literal(
+                    if value.starts_with(|character: char| character.is_ascii_digit())
+                        || value.starts_with('.')
+                    {
+                        parse_duration_nanos(&value).map(Value::Duration)?
+                    } else {
+                        Value::Str(value)
+                    },
+                ),
+                Token::Str(value) => ScalarExpr::Literal(Value::Str(value)),
+                Token::Int(value) => ScalarExpr::Literal(Value::Int(value)),
+                Token::Float(value) => ScalarExpr::Literal(Value::Float(value)),
+                Token::Bool(value) => ScalarExpr::Literal(Value::Bool(value)),
+                Token::Nil => ScalarExpr::Literal(Value::Nil),
+                other => return Err(Self::err(format!("expected value, got {other:?}"))),
+            }
+        };
+        loop {
+            let (op, precedence) = match self.peek() {
+                Token::Plus => (ArithmeticOp::Add, 10),
+                Token::Minus => (ArithmeticOp::Sub, 10),
+                Token::Star => (ArithmeticOp::Mul, 20),
+                Token::Slash => (ArithmeticOp::Div, 20),
+                Token::Mod => (ArithmeticOp::Mod, 20),
+                Token::Caret => (ArithmeticOp::Pow, 30),
+                _ => break,
+            };
+            if precedence < minimum {
+                break;
+            }
+            self.pos += 1;
+            let rhs = self.parse_scalar_expression(precedence + 1, false)?;
+            lhs = match (lhs, rhs) {
+                (ScalarExpr::Literal(lhs), ScalarExpr::Literal(rhs)) => {
+                    ScalarExpr::Literal(match op {
+                        ArithmeticOp::Add => value_add(lhs, rhs)?,
+                        ArithmeticOp::Sub => value_sub(lhs, rhs)?,
+                        ArithmeticOp::Mul => value_mul(lhs, rhs)?,
+                        ArithmeticOp::Div => value_div(lhs, rhs)?,
+                        ArithmeticOp::Mod => value_mod(lhs, rhs)?,
+                        ArithmeticOp::Pow => value_pow(lhs, rhs)?,
+                    })
+                }
+                (lhs, rhs) => ScalarExpr::Binary {
+                    lhs: Box::new(lhs),
+                    op,
+                    rhs: Box::new(rhs),
+                },
+            };
+        }
+        Ok(lhs)
     }
 
     pub(crate) fn parse_field(&mut self) -> Result<Field> {
@@ -456,10 +584,6 @@ impl Parser {
             scope: Scope::Both,
             key: first,
         })
-    }
-
-    pub(crate) fn parse_value(&mut self, lhs: &Field) -> Result<Value> {
-        self.parse_additive_value(lhs)
     }
 
     pub(crate) fn parse_additive_value(&mut self, lhs: &Field) -> Result<Value> {

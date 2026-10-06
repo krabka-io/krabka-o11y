@@ -5,8 +5,8 @@ use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
 
 use super::{
     annotations::{
-        bad_bucket_label_warning, emit_info, emit_warning,
-        histogram_quantile_forced_monotonicity_info, invalid_quantile_warning, is_valid_quantile,
+        bad_bucket_label_warning, emit_histogram_quantile_forced_monotonicity_info, emit_info,
+        emit_warning, invalid_quantile_warning, is_valid_quantile,
         native_histogram_fraction_nans_info, native_histogram_quantile_nan_result_info,
         native_histogram_quantile_nan_skew_info, warn_mixed_histograms,
     },
@@ -441,8 +441,10 @@ mod combined_reset_hint;
 mod compact_spanned_histogram_counts;
 mod custom_histogram_bound;
 mod detect_reset_bucket_counts;
+mod divide_native_histogram_values;
 mod histogram_accessor;
 mod histogram_accessor_from_function_name;
+mod histogram_accumulator;
 mod native_histogram_all_buckets;
 mod native_histogram_bucket_mean;
 mod native_histogram_bucket_quantile;
@@ -462,6 +464,7 @@ mod scale_native_histogram_values;
 mod scaled_native_histogram;
 mod spanned_histogram_counts;
 mod standard_histogram_bound;
+mod trim_native_histogram;
 mod zero_bucket_bounds;
 mod zero_count_at_threshold;
 
@@ -486,8 +489,10 @@ use combined_reset_hint::combined_reset_hint;
 use compact_spanned_histogram_counts::compact_spanned_histogram_counts;
 use custom_histogram_bound::custom_histogram_bound;
 use detect_reset_bucket_counts::detect_reset_bucket_counts;
+pub(super) use divide_native_histogram_values::divide_native_histogram_values;
 pub(super) use histogram_accessor::HistogramAccessor;
 pub(super) use histogram_accessor_from_function_name::histogram_accessor_from_function_name;
+pub(super) use histogram_accumulator::HistogramAccumulator;
 use native_histogram_all_buckets::native_histogram_all_buckets;
 use native_histogram_bucket_mean::native_histogram_bucket_mean;
 use native_histogram_bucket_quantile::native_histogram_bucket_quantile;
@@ -507,6 +512,7 @@ pub(super) use scale_native_histogram_values::scale_native_histogram_values;
 pub(super) use scaled_native_histogram::scaled_native_histogram;
 use spanned_histogram_counts::spanned_histogram_counts;
 use standard_histogram_bound::standard_histogram_bound;
+pub(super) use trim_native_histogram::trim_native_histogram;
 use zero_bucket_bounds::zero_bucket_bounds;
 use zero_count_at_threshold::zero_count_at_threshold;
 

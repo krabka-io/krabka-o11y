@@ -1,4 +1,6 @@
-use super::{CompareGroup, META_TYPE_KEY, MetricsRange, TraceMetricSeries, compare_points};
+use super::{
+    BTreeMap, CompareGroup, META_TYPE_KEY, MetricsRange, TraceMetricSeries, compare_points,
+};
 
 pub(crate) fn compare_value_series(
     group: CompareGroup,
@@ -12,6 +14,7 @@ pub(crate) fn compare_value_series(
             (META_TYPE_KEY.to_string(), group.meta_type().to_string()),
             (attr_key.to_string(), value.to_string()),
         ],
+        label_types: BTreeMap::default(),
         points: compare_points(buckets, range),
         exemplars: Vec::new(),
     }

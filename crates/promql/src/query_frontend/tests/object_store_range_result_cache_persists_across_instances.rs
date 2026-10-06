@@ -13,6 +13,8 @@ pub(crate) async fn object_store_range_result_cache_persists_across_instances() 
         shard: Some(QueryShard { index: 1, total: 2 }),
     };
     let result = unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
+        drop_name: false,
+        start_timestamps_ms: std::collections::BTreeMap::new(),
         labels: labels(&[("__name__", "up"), ("job", "api")]),
         samples: vec![(0, SampleValue::Float(1.0))],
     }]));

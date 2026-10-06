@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Extract pinned upstream query surfaces; validate their explicit evidence offline.
 
---refresh downloads the six pinned files and replaces the inventory, initially
-classifying every feature as uncovered. --check performs offline schema,
+--refresh downloads the six pinned files and applies the reviewed registry to
+the complete inventory. --check performs offline schema,
 provenance, graph, count, and evidence validation; it does not rerun upstream
 extraction or establish that mapped tests passed. --self-check tests extraction.
 """
@@ -12,6 +12,7 @@ import hashlib
 import json
 import pathlib
 import re
+import runpy
 import sys
 import urllib.request
 
@@ -358,6 +359,12 @@ def build(download):
 def check(artifact):
     if artifact.get("schema_version") != 1 or set(artifact.get("surfaces", {})) != set(PINS):
         raise ValueError("unexpected inventory schema or languages")
+    classifier = (ROOT / "crates/promql/src/conformance/case_features.rs").read_text()
+    constant = classifier.partition("const EXPERIMENTAL_FUNCTIONS: &[&str] = &[")[2].partition("];")[0]
+    declared = re.findall(r'"([a-z_]+)"', constant)
+    experimental = [function["name"] for function in artifact["surfaces"]["promql"]["functions"] if function["experimental"]]
+    if len(declared) != len(set(declared)) or set(declared) != set(experimental):
+        raise ValueError("Rust disabled-feature classifier differs from pinned function registry")
     for language, surface in artifact["surfaces"].items():
         pin = PINS[language]
         if surface["pin"] != pin:
@@ -398,12 +405,21 @@ def check(artifact):
             ):
                 raise ValueError(f"{language}: invalid explicit evidence for {feature['id']}")
             status = feature["status"]
-            if status not in {"uncovered", "mapped"}:
+            if status not in {"uncovered", "partial", "mapped"}:
                 raise ValueError(f"{language}: invalid status for {feature['id']}")
             if status == "uncovered" and any(evidence.values()):
                 raise ValueError(f"{language}: uncovered feature has evidence: {feature['id']}")
             if status == "mapped" and not all(evidence.values()):
                 raise ValueError(f"{language}: mapped feature needs positive, negative and composition evidence")
+            if status == "partial" and (not any(evidence.values()) or all(evidence.values())):
+                raise ValueError(f"{language}: partial feature must retain missing evidence roles")
+    registry_path = ROOT / "qualification/query-language-evidence.json"
+    if registry_path.exists():
+        helpers = runpy.run_path(str(ROOT / "tools/query-language-evidence.py"))
+        registry = json.loads(registry_path.read_text())
+        helpers["check_registry"](registry, artifact)
+        if artifact != helpers["mapped_inventory"](artifact, registry):
+            raise ValueError("inventory evidence differs from reviewed source-bound registry")
 
 
 def self_check():
@@ -474,7 +490,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--check", action="store_true", help="validate checked-in artifact offline (default)")
-    actions.add_argument("--refresh", action="store_true", help="fetch exact pinned sources and reset evidence to uncovered")
+    actions.add_argument("--refresh", action="store_true", help="fetch exact pinned sources and retain reviewed source-bound evidence")
     actions.add_argument("--self-check", action="store_true", help="exercise extraction edge cases without network")
     args = parser.parse_args()
     if args.self_check:
@@ -485,6 +501,12 @@ def main():
             with urllib.request.urlopen(url, timeout=30) as response:
                 return response.read()
         artifact = build(download)
+        registry_path = ROOT / "qualification/query-language-evidence.json"
+        if registry_path.exists():
+            helpers = runpy.run_path(str(ROOT / "tools/query-language-evidence.py"))
+            registry = json.loads(registry_path.read_text())
+            helpers["check_registry"](registry, artifact)
+            artifact = helpers["mapped_inventory"](artifact, registry)
         check(artifact)
         ARTIFACT.write_text(json.dumps(artifact, indent=2) + "\n")
     else:
@@ -494,7 +516,9 @@ def main():
     for language, surface in artifact["surfaces"].items():
         features = surface["features"]
         uncovered = sum(feature["status"] == "uncovered" for feature in features)
-        print(f"{language} {surface['pin']['version']}: {len(features)} inventoried features, {uncovered} uncovered")
+        partial = sum(feature["status"] == "partial" for feature in features)
+        mapped = sum(feature["status"] == "mapped" for feature in features)
+        print(f"{language} {surface['pin']['version']}: {len(features)} inventoried features, {mapped} mapped, {partial} partial, {uncovered} uncovered")
 
 
 if __name__ == "__main__":

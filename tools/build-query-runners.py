@@ -109,8 +109,32 @@ def build(name, destination):
         if old not in original:
             raise RuntimeError("pinned Loki nonempty guard changed; review adaptation")
         adapted = original.replace(old, new, 1)
+        adapted = adapted.replace('\t"flag"\n', '\t"encoding/json"\n\t"flag"\n', 1)
+        query_log = '\t\t\tt.Logf("Query: %s", tc.Description())'
+        query_metadata = '''\t\t\tt.Logf("Query: %s", tc.Description())
+\t\t\tmetadata := map[string]any{
+\t\t\t\t"name": t.Name(), "query": tc.Query, "kind": tc.Kind(),
+\t\t\t\t"direction": fmt.Sprint(tc.Direction), "source": tc.Source,
+\t\t\t\t"description": tc.QueryDesc, "start_ns": tc.Start.UnixNano(),
+\t\t\t\t"end_ns": tc.End.UnixNano(), "step_ns": tc.Step.Nanoseconds(),
+\t\t\t\t"tolerance": *remoteTolerance, "expected_outcome": "query-result",
+\t\t\t}
+\t\t\tif tc.QueryDesc == "Log query with impossible filter (guarantees empty results, exercises log result cache)" {
+\t\t\t\tmetadata["expected_outcome"] = "semantic-negative"
+\t\t\t}
+\t\t\tencoded, err := json.Marshal(metadata)
+\t\t\trequire.NoError(t, err)
+\t\t\tt.Logf("KRABKA_QUERY_CASE %s", encoded)'''
+        compare = '\t\t\tassertDataEqualWithTolerance(t, expected, actual, *remoteTolerance)'
+        completed = compare + '''
+\t\t\tif !t.Failed() {
+\t\t\t\tt.Logf("KRABKA_QUERY_VERDICT %s", t.Name())
+\t\t\t}'''
+        if adapted.count(query_log) != 1 or adapted.count(compare) != 1:
+            raise RuntimeError("pinned Loki case logging/comparator seam changed")
+        adapted = adapted.replace(query_log, query_metadata, 1).replace(compare, completed, 1)
         remote.write_text(adapted)
-        adaptations.append({"path": "pkg/logql/bench/remote_test.go", "purpose": "assert both intentional empty answers",
+        adaptations.append({"path": "pkg/logql/bench/remote_test.go", "purpose": "assert both intentional empty answers; preserve exact query/request metadata and completed semantic comparisons",
                             "original_sha256": hashlib.sha256(original.encode()).hexdigest(),
                             "adapted_sha256": hashlib.sha256(adapted.encode()).hexdigest()})
         try:

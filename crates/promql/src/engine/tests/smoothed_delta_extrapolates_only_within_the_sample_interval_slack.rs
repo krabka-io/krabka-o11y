@@ -1,29 +1,19 @@
 use super::*;
 
-/// Past the last sample, `smoothed` extrapolates only while the gap stays
-/// within 1.1x the sample interval, and clamps to the last value beyond that.
-/// Both sides of that threshold have to be pinned: a test on either one alone
-/// leaves the slack factor free to move.
+/// Smoothed ranges interpolate between observed samples and carry the last
+/// observed value at the right boundary. They do not extend the last slope.
 #[tokio::test]
-pub(crate) async fn smoothed_delta_extrapolates_only_within_the_sample_interval_slack() {
+pub(crate) async fn smoothed_delta_uses_the_observed_right_boundary() {
     let mut store = InMemoryMetricStore::new();
     for (ts, value) in [(0, 0.0), (60_000, 60.0)] {
         store.push_float("tenant-a", labels(&[("__name__", "m")]), ts, value);
     }
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
 
-    // The interval is 60s, so the slack runs to 66s past the last sample.
     for (case, eval_ms, want) in [
-        ("63s past the last sample extrapolates", 123_000, 120.0),
-        // Exactly 66s -- 1.1 times the 60s interval -- is not past it. This
-        // pair is what separates `>` from `>=`, and the two cases either side
-        // of it above cannot.
-        (
-            "66s past the last sample is exactly the slack",
-            126_000,
-            120.0,
-        ),
-        ("70s past it clamps to the last value", 130_000, 50.0),
+        ("start between samples at 3s", 123_000, 57.0),
+        ("start between samples at 6s", 126_000, 54.0),
+        ("start between samples at 10s", 130_000, 50.0),
     ] {
         let result = engine
             .query_instant(&tenant_id("tenant-a"), "delta(smoothed(m[2m]))", eval_ms)
@@ -45,8 +35,5 @@ pub(crate) async fn smoothed_delta_extrapolates_only_within_the_sample_interval_
     else {
         panic!("expected a vector");
     };
-    assert2::assert!(approx_eq(
-        float_value(&samples[0].value),
-        0.683_333_333_333_333_3
-    ));
+    assert2::assert!(approx_eq(float_value(&samples[0].value), 1.0 / 3.0));
 }

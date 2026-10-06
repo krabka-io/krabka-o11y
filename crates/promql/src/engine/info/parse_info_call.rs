@@ -35,14 +35,14 @@ pub(crate) fn parse_info_call(call: &Call) -> Result<InfoContext<'_>> {
         .unwrap_or_default();
     let required_data_label_matchers = data_label_matchers
         .iter()
-        .filter(|matcher| !matches!(matcher.name.as_str(), "__name__" | "job" | "instance"))
+        .filter(|matcher| matcher.name != "__name__")
         .cloned()
         .collect::<Vec<_>>();
     let required_data_label_matchers_match_empty =
         labels_match(&Labels::new(), &required_data_label_matchers)?;
     let selected_data_labels = data_label_matchers
         .iter()
-        .filter(|matcher| !matches!(matcher.name.as_str(), "__name__" | "job" | "instance"))
+        .filter(|matcher| matcher.name != "__name__")
         .map(|matcher| matcher.name.clone())
         .collect::<BTreeSet<_>>();
     let restrict_data_labels = data_label_selector.is_some() && !selected_data_labels.is_empty();

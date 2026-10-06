@@ -395,13 +395,32 @@ async fn run_generated_logql(
     report_dir: &std::path::Path,
 ) -> TestResult {
     let end = (end_ns / 1_000_000_000).to_string();
-    generated_differential::run(
+    generated_differential::run_typed(
         "logql",
         &[
-            r#"sum(count_over_time({service_name="fixture-json"}[1m]))"#,
-            r#"sum(count_over_time({service_name="fixture-logfmt"}[1m]))"#,
+            generated_differential::TypedExpr::log_count_over_time(
+                &[generated_differential::LabelMatcher::new(
+                    "service_name",
+                    generated_differential::MatchOp::Eq,
+                    "fixture-json",
+                )],
+                60,
+            ),
+            generated_differential::TypedExpr::log_count_over_time(
+                &[generated_differential::LabelMatcher::new(
+                    "service_name",
+                    generated_differential::MatchOp::Eq,
+                    "fixture-logfmt",
+                )],
+                60,
+            ),
         ],
-        &["sum({expr})", "max({expr})", "avg({expr})", "({expr})+1"],
+        &[
+            generated_differential::TypedConstructor::LogSum,
+            generated_differential::TypedConstructor::LogMax,
+            generated_differential::TypedConstructor::LogAvg,
+            generated_differential::TypedConstructor::LogAdd(1),
+        ],
         report_dir,
         |expression| {
             let end = &end;

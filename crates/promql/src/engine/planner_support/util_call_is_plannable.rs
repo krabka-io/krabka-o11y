@@ -15,7 +15,7 @@ pub(crate) fn util_call_is_plannable(call: &Call) -> bool {
         // Argless scalar utilities.
         "time" | "pi" => call.args.args.is_empty(),
         // The lone inner instant-vector argument must be plannable.
-        "scalar" | "timestamp" | "absent" => call
+        "scalar" | "timestamp" | "start_timestamp" | "absent" => call
             .args
             .args
             .first()

@@ -95,6 +95,14 @@ pub mod testkit {
                 "upstream_version": version,
                 "upstream_revision": revision,
                 "experimental_functions": cfg!(feature = "experimental-functions"),
+                "enable_type_and_unit_labels": false,
+                "experimental_feature_registry": {
+                    "revision": revision,
+                    "functions_source": "promql/parser/functions.go",
+                    "functions": super::case_features::EXPERIMENTAL_FUNCTIONS,
+                    "aggregators_source": "promql/parser/lex.go:IsExperimentalAggregator",
+                    "aggregators": ["limitk", "limit_ratio"],
+                },
                 "complete_corpus": complete_corpus,
                 "files": self.files,
             });
@@ -255,10 +263,17 @@ pub mod testkit {
                     fail_message,
                     divergence,
                 } => {
-                    let engine = PromqlEngine::new(Arc::new(store.clone()), EngineOpts::default());
+                    let engine = PromqlEngine::new(
+                        Arc::new(store.clone()),
+                        EngineOpts {
+                            enable_type_and_unit_labels: false,
+                            ..EngineOpts::default()
+                        },
+                    );
                     let result = engine
                         .query_instant_with_annotations(&tenant, expr, *at_ms)
                         .await;
+                    let evaluation_error = result.as_ref().err().map(ToString::to_string);
                     let case = handle_instant_eval_result(
                         result,
                         expect,
@@ -274,6 +289,13 @@ pub mod testkit {
                         expr,
                         "instant",
                         fail_message.is_some(),
+                        (
+                            super::case_features::CaseFeatures::from_query_with_context(
+                                expr,
+                                crate::DurationExprContext::instant(*at_ms),
+                            ),
+                            evaluation_error,
+                        ),
                         case,
                     );
                 }
@@ -287,10 +309,17 @@ pub mod testkit {
                     fail_message,
                     divergence,
                 } => {
-                    let engine = PromqlEngine::new(Arc::new(store.clone()), EngineOpts::default());
+                    let engine = PromqlEngine::new(
+                        Arc::new(store.clone()),
+                        EngineOpts {
+                            enable_type_and_unit_labels: false,
+                            ..EngineOpts::default()
+                        },
+                    );
                     let result = engine
                         .query_range_with_annotations(&tenant, expr, *start_ms, *end_ms, *step)
                         .await;
+                    let evaluation_error = result.as_ref().err().map(ToString::to_string);
                     let case = handle_range_eval_result(
                         result,
                         expect,
@@ -306,6 +335,13 @@ pub mod testkit {
                         expr,
                         "range",
                         fail_message.is_some(),
+                        (
+                            super::case_features::CaseFeatures::from_query_with_context(
+                                expr,
+                                crate::DurationExprContext::range(*start_ms, *end_ms, *step),
+                            ),
+                            evaluation_error,
+                        ),
                         case,
                     );
                 }
@@ -330,25 +366,39 @@ pub mod testkit {
         expr: &str,
         kind: &str,
         expected_rejection: bool,
+        evidence: (super::case_features::CaseFeatures, Option<String>),
         case: Result<()>,
     ) {
         outcome.total_cases += 1;
+        let (features, evaluation_error) = evidence;
+        let disabled_features = features.disabled_features(expr, evaluation_error.as_deref());
+        let observed_status = match (divergence, &case) {
+            (None, Ok(())) => "matched",
+            (Some(_), Err(_)) => "expected_divergence",
+            _ => "mismatch",
+        }
+        .to_owned();
+        let detail = case
+            .as_ref()
+            .err()
+            .map(ToString::to_string)
+            .or_else(|| divergence.map(str::to_owned));
         outcome.cases.push(CaseOutcome {
             ordinal: outcome.total_cases,
             query: expr.to_owned(),
             kind: kind.to_owned(),
             expected_rejection,
-            status: match (divergence, &case) {
-                (None, Ok(())) => "matched",
-                (Some(_), Err(_)) => "expected_divergence",
-                _ => "mismatch",
-            }
-            .to_owned(),
-            detail: case
-                .as_ref()
-                .err()
-                .map(ToString::to_string)
-                .or_else(|| divergence.map(str::to_owned)),
+            features,
+            evaluation_error,
+            status: if disabled_features.is_empty() {
+                observed_status.clone()
+            } else {
+                "feature_disabled".to_owned()
+            },
+            observed_status,
+            observed_detail: detail.clone(),
+            disabled_features,
+            detail,
         });
         match (divergence, case) {
             (None, Ok(())) => outcome.passed_cases += 1,
@@ -474,6 +524,61 @@ pub mod testkit {
         path.file_name().and_then(|name| name.to_str()) == Some("limit.test")
     }
 
+    fn feature_disabled_cases(file: &TestFile) -> Vec<CaseOutcome> {
+        file.statements
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::EvalInstant {
+                    expr,
+                    at_ms,
+                    fail_message,
+                    ..
+                } => Some((
+                    expr,
+                    "instant",
+                    fail_message.is_some(),
+                    crate::DurationExprContext::instant(*at_ms),
+                )),
+                Statement::EvalRange {
+                    expr,
+                    start_ms,
+                    end_ms,
+                    step,
+                    fail_message,
+                    ..
+                } => Some((
+                    expr,
+                    "range",
+                    fail_message.is_some(),
+                    crate::DurationExprContext::range(*start_ms, *end_ms, *step),
+                )),
+                _ => None,
+            })
+            .enumerate()
+            .map(|(index, (expr, kind, expected_rejection, context))| {
+                let features =
+                    super::case_features::CaseFeatures::from_query_with_context(expr, context);
+                let disabled_features = super::case_features::disabled_limit_aggregators(&features);
+                CaseOutcome {
+                    ordinal: index + 1,
+                    query: expr.clone(),
+                    kind: kind.to_owned(),
+                    expected_rejection,
+                    features,
+                    evaluation_error: None,
+                    disabled_features,
+                    observed_status: "uncovered".to_owned(),
+                    observed_detail: None,
+                    status: "feature_disabled".to_owned(),
+                    detail: Some(
+                        "experimental-functions is disabled; case retained without execution"
+                            .to_owned(),
+                    ),
+                }
+            })
+            .collect()
+    }
+
     async fn run_corpus_path(dir: &Path, path: &Path) -> FileResult {
         let name = path.strip_prefix(dir).unwrap_or(path).display().to_string();
         let src = match std::fs::read_to_string(path) {
@@ -499,6 +604,11 @@ pub mod testkit {
                     query: header.to_owned(),
                     kind: "unparsed".to_owned(),
                     expected_rejection: header.contains(" fail "),
+                    features: super::case_features::CaseFeatures::from_query(header),
+                    evaluation_error: None,
+                    disabled_features: Vec::new(),
+                    observed_status: "uncovered".to_owned(),
+                    observed_detail: None,
                     status: "uncovered".to_owned(),
                     detail: None,
                 })
@@ -509,25 +619,6 @@ pub mod testkit {
                 case
             })
             .collect::<Vec<_>>();
-        if !corpus_path_enabled(path) {
-            let cases = declared
-                .into_iter()
-                .map(|mut case| {
-                    "feature_disabled".clone_into(&mut case.status);
-                    case.detail = Some("experimental-functions is disabled".to_owned());
-                    case
-                })
-                .collect::<Vec<_>>();
-            return FileResult {
-                name,
-                passed: true,
-                passed_cases: 0,
-                total_cases: cases.len(),
-                error: None,
-                divergences: Vec::new(),
-                cases,
-            };
-        }
         let file = match parse_test_file(&src) {
             Ok(file) => file,
             Err(error) => {
@@ -542,6 +633,18 @@ pub mod testkit {
                 };
             }
         };
+        if !corpus_path_enabled(path) {
+            let cases = feature_disabled_cases(&file);
+            return FileResult {
+                name,
+                passed: true,
+                passed_cases: 0,
+                total_cases: cases.len(),
+                error: None,
+                divergences: Vec::new(),
+                cases,
+            };
+        }
         match run_test_file_outcome(&file).await {
             Ok(outcome) => FileResult {
                 name,
@@ -1182,6 +1285,27 @@ pub mod testkit {
 
         use super::*;
 
+        #[test]
+        fn disabled_corpus_cases_preserve_expression_and_unexecuted_outcome() {
+            let file = parse_test_file(
+                "eval instant at 10s count(limitk by (group) (2, metric))\n\n\
+                 eval range from 0s to 10s step 5s limit_ratio(0.5, metric)\n",
+            )
+            .unwrap();
+            let cases = feature_disabled_cases(&file);
+            check!(cases.len() == 2);
+            check!(cases[0].query == "count(limitk by (group) (2, metric))");
+            check!(cases[1].query == "limit_ratio(0.5, metric)");
+            check!(cases[0].disabled_features == vec!["limitk"]);
+            check!(cases[1].disabled_features == vec!["limit_ratio"]);
+            for case in cases {
+                check!(case.features.parsed);
+                check!(case.status == "feature_disabled");
+                check!(case.observed_status == "uncovered");
+                check!(case.evaluation_error.is_none());
+            }
+        }
+
         /// The corpus's range comparison: the result must be a matrix, must
         /// carry the expected series, and every step must match. Each failure
         /// is a distinct refusal, so none of them can stand in for another.
@@ -1190,7 +1314,9 @@ pub mod testkit {
             let step = krabka_units::minutes(1);
             let matrix = |values: &[f64]| {
                 QueryResult::RangeMatrix(vec![crate::RangeSeries {
+                    drop_name: false,
                     labels: metric_to_labels(r#"up{job="api"}"#),
+                    start_timestamps_ms: BTreeMap::new(),
                     samples: values
                         .iter()
                         .enumerate()
@@ -1259,7 +1385,9 @@ pub mod testkit {
             }];
             let matrix = |value: f64| {
                 QueryResult::RangeMatrix(vec![crate::RangeSeries {
+                    drop_name: false,
                     labels: metric_to_labels(r#"up{job="api"}"#),
+                    start_timestamps_ms: BTreeMap::new(),
                     samples: vec![(0, SampleValue::Float(value))],
                 }])
             };
@@ -1544,18 +1672,22 @@ eval instant at 2m down{job="api"}
             let warned = Annotations {
                 warnings: vec!["w one".to_owned()],
                 infos: Vec::new(),
+                ..crate::Annotations::default()
             };
             let positioned = Annotations {
                 warnings: vec!["w one (1:25)".to_owned()],
                 infos: Vec::new(),
+                ..crate::Annotations::default()
             };
             let malformed_position = Annotations {
                 warnings: vec!["w one (x:25)".to_owned()],
                 infos: Vec::new(),
+                ..crate::Annotations::default()
             };
             let informed = Annotations {
                 warnings: Vec::new(),
                 infos: vec!["i one".to_owned()],
+                ..crate::Annotations::default()
             };
 
             for (expect, raised, unsatisfied_description) in [
@@ -2485,6 +2617,7 @@ eval instant at 0m up{job="api"}
 
 mod add_histogram_step;
 mod annotation_expect;
+mod case_features;
 mod case_outcome;
 mod chunk_reset_hints;
 mod compact_spanned_histogram_counts;

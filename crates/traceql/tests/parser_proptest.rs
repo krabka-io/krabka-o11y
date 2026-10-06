@@ -345,6 +345,7 @@ fn arb_comparison() -> impl Strategy<Value = FieldExpr> {
 fn arb_field_expr() -> impl Strategy<Value = FieldExpr> {
     prop_oneof![
         4 => arb_comparison(),
+        2 => (arb_attribute_field(), prop::sample::select(&[ComparisonOp::Eq, ComparisonOp::Neq, ComparisonOp::Lt, ComparisonOp::Lte, ComparisonOp::Gt, ComparisonOp::Gte]), arb_attribute_field()).prop_map(|(lhs, op, rhs)| FieldExpr::FieldComparison {lhs, op, rhs}),
         1 => arb_field().prop_map(FieldExpr::Field),
         1 => any::<bool>().prop_map(FieldExpr::Const),
     ]
@@ -576,7 +577,11 @@ fn field_expr_precedence(expr: &FieldExpr) -> u8 {
         FieldExpr::Or(..) => 1,
         FieldExpr::And(..) => 2,
         FieldExpr::Not(_) => 3,
-        FieldExpr::Comparison { .. } | FieldExpr::Field(_) | FieldExpr::Const(_) => 4,
+        FieldExpr::ExpressionComparison { .. }
+        | FieldExpr::FieldComparison { .. }
+        | FieldExpr::Comparison { .. }
+        | FieldExpr::Field(_)
+        | FieldExpr::Const(_) => 4,
     }
 }
 
@@ -586,6 +591,14 @@ fn render_field_expr(out: &mut String, expr: &FieldExpr, parent: u8) {
         out.push('(');
     }
     match expr {
+        FieldExpr::ExpressionComparison { .. } => {
+            unreachable!("generated legacy corpus does not construct scalar arithmetic")
+        }
+        FieldExpr::FieldComparison { lhs, op, rhs } => {
+            render_field(out, lhs);
+            let _ = write!(out, " {} ", comparison_text(*op));
+            render_field(out, rhs);
+        }
         FieldExpr::Comparison { lhs, op, rhs } => {
             render_field(out, lhs);
             let _ = write!(out, " {} ", comparison_text(*op));

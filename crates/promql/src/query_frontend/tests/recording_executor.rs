@@ -17,6 +17,8 @@ impl RangeQueryExecutor for RecordingExecutor {
             .expect("recording executor calls poisoned")
             .push(query.clone());
         Ok(unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
+            drop_name: false,
+            start_timestamps_ms: std::collections::BTreeMap::new(),
             labels: labels(&[("__name__", "up"), ("job", "api")]),
             samples: vec![(query.start_ms, SampleValue::Float(120_000.0))],
         }])))

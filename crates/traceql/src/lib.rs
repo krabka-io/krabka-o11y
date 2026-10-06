@@ -21,8 +21,8 @@ mod store;
 pub mod testkit;
 
 pub use ast::{
-    Aggregate, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query, Scope, SpansetExpr,
-    StructuralOp, Value,
+    Aggregate, ArithmeticOp, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query,
+    ScalarExpr, Scope, SpansetExpr, StructuralOp, Value,
 };
 pub use engine::{EngineOpts, SearchOptions, TraceqlEngine};
 pub use error::TraceqlError;
@@ -31,7 +31,8 @@ pub use lexer::{Token, lex};
 pub use parser::parse;
 pub use result::{
     AttrValue, EventRef, LinkRef, ScopedTag, SearchResponse, SpanRef, SpanSet, TagScope,
-    TraceMetricSeries, TraceMetricsResponse, TraceResult, TraceSpans, TypedValue,
+    TraceMetricExemplar, TraceMetricLabelType, TraceMetricSeries, TraceMetricsResponse,
+    TraceResult, TraceSpans, TypedValue,
 };
 pub use span_columns::{
     ATTR_PREFIX, COL_CHILD_COUNT, COL_DURATION, COL_EVENT_NAME, COL_EVENT_TIME_SINCE_START,

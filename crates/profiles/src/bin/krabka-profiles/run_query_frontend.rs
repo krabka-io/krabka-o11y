@@ -64,6 +64,8 @@ pub(crate) async fn run_query_frontend(
             overrides,
         )
         .with_admin_store(configured.store)
+        .with_query_architecture(cli.query_architecture)
+        .with_async_queries_enabled(cli.async_queries_enabled)
         .with_heatmap_policy(cli.heatmap_value_buckets, cli.heatmap_time_buckets_max)
         .with_metrics(metrics.clone()),
     );

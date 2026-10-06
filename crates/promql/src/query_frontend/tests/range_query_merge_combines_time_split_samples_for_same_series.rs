@@ -7,15 +7,21 @@ pub(crate) fn range_query_merge_combines_time_split_samples_for_same_series() {
     let result = merge_range_query_results(vec![
         QueryResult::RangeMatrix(vec![
             RangeSeries {
+                drop_name: false,
+                start_timestamps_ms: std::collections::BTreeMap::new(),
                 labels: api_labels.clone(),
                 samples: vec![(60_000, SampleValue::Float(2.0))],
             },
             RangeSeries {
+                drop_name: false,
+                start_timestamps_ms: std::collections::BTreeMap::new(),
                 labels: worker_labels.clone(),
                 samples: vec![(0, SampleValue::Float(3.0))],
             },
         ]),
         QueryResult::RangeMatrix(vec![RangeSeries {
+            drop_name: false,
+            start_timestamps_ms: std::collections::BTreeMap::new(),
             labels: api_labels.clone(),
             samples: vec![
                 (0, SampleValue::Float(1.0)),
@@ -29,6 +35,8 @@ pub(crate) fn range_query_merge_combines_time_split_samples_for_same_series() {
         result
             == QueryResult::RangeMatrix(vec![
                 RangeSeries {
+                    drop_name: false,
+                    start_timestamps_ms: std::collections::BTreeMap::new(),
                     labels: api_labels,
                     samples: vec![
                         (0, SampleValue::Float(1.0)),
@@ -37,6 +45,8 @@ pub(crate) fn range_query_merge_combines_time_split_samples_for_same_series() {
                     ],
                 },
                 RangeSeries {
+                    drop_name: false,
+                    start_timestamps_ms: std::collections::BTreeMap::new(),
                     labels: worker_labels,
                     samples: vec![(0, SampleValue::Float(3.0))],
                 },
