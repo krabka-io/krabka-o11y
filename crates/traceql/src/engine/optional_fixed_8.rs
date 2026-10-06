@@ -1,13 +1,11 @@
-use super::{Array, AsArray, RecordBatch, Result, TraceqlError};
+use super::{Array, AsArray, Result, TraceqlError};
 
-pub(crate) fn optional_fixed_8(
-    batch: &RecordBatch,
+pub(super) fn optional_fixed_8_column(
+    column: Option<&arrow::array::ArrayRef>,
     col: &str,
     row: usize,
 ) -> Result<Option<[u8; 8]>> {
-    let arr = batch
-        .column_by_name(col)
-        .ok_or_else(|| TraceqlError::Exec(format!("missing column {col}")))?;
+    let arr = column.ok_or_else(|| TraceqlError::Exec(format!("missing column {col}")))?;
     if arr.is_null(row) {
         return Ok(None);
     }

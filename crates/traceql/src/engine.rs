@@ -119,6 +119,245 @@ mod tests {
         }
     }
 
+    async fn search_column_batch() -> RecordBatch {
+        let mut store = InMemorySpanStore::new();
+        store.push_trace(
+            "t",
+            "worker",
+            "root-worker",
+            vec![sp_at(2, 3, None, "worker", 200)],
+        );
+        let mut root = sp_at(1, 1, None, "api", 100);
+        root.kind = 1;
+        root.status_code = 2;
+        store.push_trace(
+            "t",
+            "api",
+            "root-api",
+            vec![root, sp_at(1, 2, Some(1), "api", 100)],
+        );
+        store.push_trace("t", "db", "root-db", vec![sp_at(3, 4, None, "db", 100)]);
+        let scan = store.scan("t", &[], 0, 1000).await.unwrap();
+        let batches = scan
+            .ctx
+            .table(&scan.span_table)
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert!(batches.len() == 1);
+        batches.into_iter().next().unwrap()
+    }
+
+    fn expected_search_traces() -> Vec<TraceResult> {
+        let span =
+            |id: u8, parent: Option<u8>, start, service: &str, nested: (i32, i32, i32)| SpanRef {
+                span_id: [id; 8],
+                parent_span_id: parent.map(|id| [id; 8]),
+                name: format!("op-{id}"),
+                kind: i32::from(id == 1),
+                nested_set_left: nested.0,
+                nested_set_right: nested.1,
+                nested_set_parent: nested.2,
+                start_time_unix_nano: start,
+                duration: nanos(200),
+                status_code: if id == 1 { 2 } else { 0 },
+                status_message: String::new(),
+                instrumentation_name: "tracer".into(),
+                instrumentation_version: String::new(),
+                resource_attributes: Vec::new(),
+                attributes: vec![("svc".into(), AttrValue::Str(service.into()))],
+                events: Vec::new(),
+                links: Vec::new(),
+            };
+        [
+            (
+                1,
+                "api",
+                "root-api",
+                100,
+                vec![
+                    span(1, None, 100, "api", (1, 4, -1)),
+                    span(2, Some(1), 100, "api", (2, 3, 1)),
+                ],
+            ),
+            (
+                2,
+                "worker",
+                "root-worker",
+                200,
+                vec![span(3, None, 200, "worker", (1, 2, -1))],
+            ),
+            (
+                3,
+                "db",
+                "root-db",
+                100,
+                vec![span(4, None, 100, "db", (1, 2, -1))],
+            ),
+        ]
+        .into_iter()
+        .map(|(id, service, name, start, spans)| TraceResult {
+            trace_id: [id; 16],
+            root_service_name: service.into(),
+            root_trace_name: name.into(),
+            start_time_unix_nano: start,
+            duration: nanos(200),
+            span_sets: vec![SpanSet {
+                matched: u32::try_from(spans.len()).unwrap(),
+                spans,
+            }],
+        })
+        .collect()
+    }
+
+    fn replace_search_column(batch: &RecordBatch, name: &str, column: ArrayRef) -> RecordBatch {
+        let schema = batch.schema();
+        let index = schema.index_of(name).unwrap();
+        let mut fields = schema.fields().to_vec();
+        fields[index] = Arc::new(ArrowField::new(name, column.data_type().clone(), true));
+        let mut columns = batch.columns().to_vec();
+        columns[index] = column;
+        RecordBatch::try_new(Arc::new(Schema::new(fields)), columns).unwrap()
+    }
+
+    #[tokio::test]
+    async fn bound_search_columns_keep_batch_layouts_roots_ties_and_limits() {
+        let batch = search_column_batch().await;
+        let reverse = (0..batch.num_columns()).rev().collect::<Vec<_>>();
+        // This later duplicate must not decode the trace's root metadata again.
+        let duplicate = replace_search_column(
+            &batch.slice(1, 1),
+            COL_TRACE_DURATION,
+            Arc::new(StringArray::from(vec!["bad root"])),
+        );
+        let batches = [
+            RecordBatch::new_empty(Arc::new(Schema::empty())),
+            batch.slice(0, 2),
+            batch.slice(2, 2).project(&reverse).unwrap(),
+            duplicate,
+        ];
+        let traces = expected_search_traces();
+        for most_recent in [false, true] {
+            for limit in [0, 1, 3] {
+                for spss in [0, 1, 3] {
+                    let order = if most_recent { [1, 0, 2] } else { [0, 2, 1] };
+                    let mut expected = SearchResponse {
+                        traces: order
+                            .into_iter()
+                            .take(limit)
+                            .map(|index| traces[index].clone())
+                            .collect(),
+                        inspected_traces: 3,
+                        inspected: ByteSize::from_bytes(123),
+                    };
+                    for trace in &mut expected.traces {
+                        trace.span_sets[0].spans.truncate(spss);
+                    }
+                    let actual = assemble_search_response(
+                        &batches,
+                        limit,
+                        spss,
+                        most_recent,
+                        ByteSize::from_bytes(123),
+                    )
+                    .unwrap();
+                    assert!(
+                        actual == expected,
+                        "recent={most_recent} limit={limit} spss={spss}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn bound_search_columns_preserve_empty_batches_and_first_row_errors() {
+        let empty = RecordBatch::new_empty(Arc::new(Schema::empty()));
+        assert!(
+            assemble_search_response(&[empty], 1, 1, false, ByteSize::from_bytes(7)).unwrap()
+                == SearchResponse {
+                    traces: Vec::new(),
+                    inspected_traces: 0,
+                    inspected: ByteSize::from_bytes(7),
+                }
+        );
+        let batch = search_column_batch().await.slice(1, 1);
+        let omit = |batch: &RecordBatch, names: &[&str]| {
+            let columns = batch
+                .schema()
+                .fields()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, field)| {
+                    (!names.contains(&field.name().as_str())).then_some(index)
+                })
+                .collect::<Vec<_>>();
+            batch.project(&columns).unwrap()
+        };
+        let fixed = |width, bytes: &[u8]| -> ArrayRef {
+            let mut builder = FixedSizeBinaryBuilder::new(width);
+            builder.append_value(bytes).unwrap();
+            Arc::new(builder.finish())
+        };
+        let negative =
+            replace_search_column(&batch, COL_START, Arc::new(Int64Array::from(vec![-1])));
+        for (input, expected) in [
+            (
+                omit(&batch, &[COL_TRACE_ID, COL_SPAN_ID]),
+                format!("missing column {COL_TRACE_ID}"),
+            ),
+            (
+                omit(
+                    &replace_search_column(&batch, COL_TRACE_ID, fixed(8, &[1; 8])),
+                    &[COL_SPAN_ID],
+                ),
+                format!("column {COL_TRACE_ID} is not 16 bytes"),
+            ),
+            (
+                omit(
+                    &replace_search_column(&batch, COL_SPAN_ID, fixed(16, &[1; 16])),
+                    &[COL_PARENT_SPAN_ID],
+                ),
+                format!("column {COL_SPAN_ID} is not 8 bytes"),
+            ),
+            (
+                omit(&negative, &[COL_PARENT_SPAN_ID]),
+                format!("missing column {COL_PARENT_SPAN_ID}"),
+            ),
+            (
+                negative,
+                "out of range integral type conversion attempted".into(),
+            ),
+        ] {
+            let error = assemble_search_response(&[input], 1, 1, false, ByteSize::from_bytes(7))
+                .unwrap_err();
+            assert!(matches!(error, TraceqlError::Exec(ref message) if message == &expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn bound_search_columns_check_parent_null_before_its_array_type() {
+        let batch = search_column_batch().await.slice(1, 1);
+        let input = replace_search_column(
+            &batch,
+            COL_PARENT_SPAN_ID,
+            Arc::new(arrow::array::UInt64Array::from(vec![None::<u64>])),
+        );
+        let mut trace = expected_search_traces().remove(0);
+        trace.span_sets[0].spans.truncate(1);
+        trace.span_sets[0].matched = 1;
+        let expected = SearchResponse {
+            traces: vec![trace],
+            inspected_traces: 1,
+            inspected: ByteSize::from_bytes(7),
+        };
+        let actual =
+            assemble_search_response(&[input], 1, 1, false, ByteSize::from_bytes(7)).unwrap();
+        assert!(actual == expected);
+    }
+
     #[tokio::test]
     async fn typed_grouping_keeps_equal_spellings_separate_and_preserves_missing_group() {
         let mut store = InMemorySpanStore::new();
@@ -4853,15 +5092,15 @@ use f64_from_i64::f64_from_i64;
 use f64_from_u64::f64_from_u64;
 use f64_from_usize::f64_from_usize;
 use field_expr_matches_row::field_expr_matches_row;
-use fixed_8::fixed_8;
-use fixed_16::fixed_16;
+use fixed_8::{fixed_8, fixed_8_column};
+use fixed_16::{fixed_16, fixed_16_column};
 use float_cmp::float_cmp;
 use hinted_max_exemplars::hinted_max_exemplars;
 use histogram_points::histogram_points;
 use histogram_series_for_group::histogram_series_for_group;
-use i32_value::i32_value;
+use i32_value::{i32_value, i32_value_column};
 use i64_attr_values::i64_attr_values;
-use i64_value::i64_value;
+use i64_value::{i64_value, i64_value_column};
 use is_inert_metric_stage::is_inert_metric_stage;
 use kind_enum_name::kind_enum_name;
 use kind_enum_value::kind_enum_value;
@@ -4886,7 +5125,7 @@ use metric_series_for_group::metric_series_for_group;
 use metrics_range::MetricsRange;
 use nested_metric_projection_matcher::nested_metric_projection_matcher;
 use num_cmp::num_cmp;
-use optional_fixed_8::optional_fixed_8;
+use optional_fixed_8::optional_fixed_8_column;
 use optional_list_column::optional_list_column;
 use push_scoped_attr::push_scoped_attr;
 use quantile_label::quantile_label;
@@ -4903,7 +5142,7 @@ use status_enum_value::status_enum_value;
 use string_array_value::string_array_value;
 use string_attr_values::string_attr_values;
 use string_cmp::string_cmp;
-use string_value::string_value;
+use string_value::{string_value, string_value_column};
 use trace_acc::TraceAcc;
 pub use traceql_engine::TraceqlEngine;
 use u64_from_i64::u64_from_i64;
