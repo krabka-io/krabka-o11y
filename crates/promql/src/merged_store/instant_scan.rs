@@ -255,8 +255,12 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
             .map(|(fp, labels)| (fp, Arc::new(labels)))
             .collect::<BTreeMap<_, _>>();
         let mut samples = Vec::new();
-        for (_, entry) in series {
-            if let Some(hot) = entry.labels {
+        for (fp, entry) in series {
+            if let Some(hot) = entry.labels
+                && !labels
+                    .get(&fp)
+                    .is_some_and(|cold| cold.as_ref() == hot.as_ref())
+            {
                 labels.entry(hot.fingerprint()).or_insert(hot);
             }
             if let Some(sample) = entry.sample {
