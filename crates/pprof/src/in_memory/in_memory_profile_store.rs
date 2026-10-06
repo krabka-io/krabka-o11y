@@ -8,7 +8,7 @@ use super::{
 #[derive(Clone, Debug, Default)]
 pub struct InMemoryProfileStore {
     pub(crate) samples: HashMap<String, Vec<SampleRow>>,
-    pub(crate) symbols: SymbolDb,
+    pub(crate) symbols: Arc<SymbolDb>,
 }
 
 impl InMemoryProfileStore {
@@ -16,12 +16,12 @@ impl InMemoryProfileStore {
     pub fn new() -> Self {
         Self {
             samples: HashMap::new(),
-            symbols: SymbolDb::new(),
+            symbols: Arc::new(SymbolDb::new()),
         }
     }
 
     pub fn symbols_mut(&mut self) -> &mut SymbolDb {
-        &mut self.symbols
+        Arc::make_mut(&mut self.symbols)
     }
 
     pub fn push_sample(
@@ -152,10 +152,11 @@ impl ProfileStore for InMemoryProfileStore {
         let samples_table = "samples".to_string();
         ctx.register_table(&samples_table, Arc::new(table))
             .map_err(|err| ProfileError::Store(err.to_string()))?;
+        let symbols = Arc::clone(&self.symbols);
         Ok(ProfileScan {
             ctx,
             samples_table,
-            symbols: Arc::new(self.symbols.clone()),
+            symbols,
         })
     }
 

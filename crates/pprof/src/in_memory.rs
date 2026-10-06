@@ -100,6 +100,96 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn query_symbol_snapshots_share_storage_and_survive_later_writes() {
+        use crate::{Frame, ResolvedFunction, ResolvedLine, ResolvedLocation};
+
+        let profile_type = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
+        for clone_writer in [false, true] {
+            let mut store = store_with_two_samples();
+            let first = store.select("t", profile_type, &[], 0, 5000).await.unwrap();
+            let second = store.select("t", profile_type, &[], 0, 5000).await.unwrap();
+            assert!(Arc::ptr_eq(&first.symbols, &second.symbols));
+            let original_frames = store.symbols.resolve(0, 1);
+            let original_locations = store.symbols.resolve_locations(0, 1);
+            let original_batches = first
+                .ctx
+                .table(&first.samples_table)
+                .await
+                .unwrap()
+                .collect()
+                .await
+                .unwrap();
+            let mut clone = store.clone();
+            assert!(Arc::ptr_eq(&store.symbols, &clone.symbols));
+            let writer = if clone_writer { &mut clone } else { &mut store };
+            let symbols = writer.symbols_mut();
+            let name = symbols.intern_string("new");
+            let system_name = symbols.intern_string("new()");
+            let filename = symbols.intern_string("new.rs");
+            let function = symbols.intern_function(FunctionRec {
+                name,
+                system_name,
+                filename,
+                start_line: 5,
+            });
+            let location = symbols.intern_location(LocationRec {
+                address: 0x30,
+                mapping_id: 0,
+                lines: vec![LineRec {
+                    function_id: function,
+                    line: 9,
+                }],
+            });
+            let stacktrace = symbols.intern_stacktrace(42, &[location]);
+            writer.push_sample(("t", profile_type), Vec::new(), (42, stacktrace), 7, 2000);
+            let current = writer
+                .select("t", profile_type, &[], 0, 5000)
+                .await
+                .unwrap();
+            assert!(!Arc::ptr_eq(&first.symbols, &current.symbols));
+            assert!(
+                current.symbols.resolve(42, stacktrace)
+                    == vec![Frame {
+                        function: "new".to_string(),
+                        file: "new.rs".to_string(),
+                        line: 9,
+                    }]
+            );
+            assert!(
+                current.symbols.resolve_locations(42, stacktrace)
+                    == vec![ResolvedLocation {
+                        address: 0x30,
+                        mapping: None,
+                        lines: vec![ResolvedLine {
+                            function: ResolvedFunction {
+                                name: "new".to_string(),
+                                system_name: "new()".to_string(),
+                                filename: "new.rs".to_string(),
+                                start_line: 5,
+                            },
+                            line: 9,
+                        }],
+                    }]
+            );
+            for old in [first, second] {
+                assert!(old.symbols.resolve(0, 1) == original_frames);
+                assert!(old.symbols.resolve_locations(0, 1) == original_locations);
+                assert!(old.symbols.resolve(42, stacktrace).is_empty());
+                assert!(old.symbols.resolve_locations(42, stacktrace).is_empty());
+                let batches = old
+                    .ctx
+                    .table(&old.samples_table)
+                    .await
+                    .unwrap()
+                    .collect()
+                    .await
+                    .unwrap();
+                assert!(batches == original_batches);
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn profile_types_and_label_values() {
         let store = store_with_two_samples();
         let pts = store.profile_types("t", 0, 5000).await.unwrap();
