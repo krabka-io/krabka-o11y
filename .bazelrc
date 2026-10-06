@@ -23,6 +23,9 @@ build --host_linkopt=-Wno-unused-command-line-argument
 common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
 common --repo_env=BAZEL_NO_APPLE_CPP_TOOLCHAIN=1
 
+# Optimize across Rust crate boundaries.
+build --@rules_rust//rust/settings:lto=thin
+
 test --test_output=errors
 
 # Clippy, as an aspect over the targets the build already has.
