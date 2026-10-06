@@ -2,7 +2,9 @@
 
 This source audit identifies performance techniques that Krabka does not yet use.
 It does not qualify a performance gain. Research date: 2026-10-05 UTC.
-Krabka source inspected: `848eb6a6f23e92f3ec44b3cb7625db0a9a9eebe8`.
+Initial Krabka source inspected: `848eb6a6f23e92f3ec44b3cb7625db0a9a9eebe8`.
+Follow-up review: 2026-10-06 UTC, rebased source
+`7bc01c61eef24917d3ca45f4ce546c295680f27d`.
 
 ## Source identity
 
@@ -141,6 +143,17 @@ sorted iteration, replacement on duplicate keys, Unicode and the complete
 canonical FNV fingerprint corpus. Do not copy Mimir's xxhash or length limit.
 Krabka's canonical hash and input behavior are independent contracts.
 
+Mimir also passes an existing hash into its series map to avoid repeated
+hash calculations. It checks full label equality on both ordinary and
+collision entries. See its
+[series map](https://github.com/grafana/mimir/blob/e49585d43c6e852225e114bd1ddd98da58a4c060/vendor/github.com/prometheus/prometheus/tsdb/head.go#L2250-L2272).
+Krabka can apply the same principle where its cold reader already returns
+canonical keys. The prepared instant-scan candidate reuses such a key only
+when the complete hot and cold labels compare equal. Different labels retain
+the existing hash calculation. This trades hashing for a tree lookup and
+comparison; only a paired measurement can establish a gain. See the
+[prepared experiment](../qualification/grafana-equal-cold-hot-label-key-experiment-gcp.json).
+
 ### Postings and streaming operators
 
 Mimir first intersects restrictive postings, then subtracts negative postings.
@@ -205,6 +218,24 @@ Row validation errors still fail the query. See the
 [concurrent scan caller](../crates/observability/src/querier/scan/stream_scans/execute_stream_query_from_object_store_with_hot_tail_frontier_and_scan_options.rs).
 Keep each block's rows separate until its stream ends successfully; merge
 them in the existing block order before the final sort and response limit.
+Preserve error precedence too: a late read failure prevents row validation
+in the collected path. Drain the stream after a row error; a later read
+failure must still discard the block and produce its existing warning.
+
+The current comparison usually fills a 1,000-row limit from hot rows before
+cold reads. GCP CPU captures `37330880469` and `37371662781` attribute work to hot
+matching, allocation and response statistics. Their saved tables give no
+cold-collector attribution. Allocation capture `37333046600` records
+2,024,592 string-clone calls through the evaluator, matcher and hot appender.
+These captures do not prove that cold reads never occur. They support a
+smaller first candidate: reuse evaluated labels within a query when the
+pipeline and structured metadata are empty. The
+[existing statistics path](../crates/observability/src/http/response/parquet_responses/count_loki_stream_result_hot_tail_lines.rs)
+already uses this guard. Loki also
+[reuses evaluated label results](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/logql/log/labels.go#L590-L628).
+Preserve full label equality, rejected matches, level discovery and grouping.
+Keep metadata, pipeline, distinct and tail behavior. The call count shows
+allocation traffic; it does not establish an RSS saving.
 
 Loki recognizes finite regex alternatives and reads only their postings.
 Krabka's shared index runs the regex against every distinct value. A safe
@@ -314,3 +345,16 @@ and comparison harness. Run its independent behavior check, relevant native
 Docker cases, and an uninstrumented exact-image revision comparison on the
 private GCP runners. Use diagnostic profiles to choose the change; use paired
 measurements to decide whether to retain it.
+
+The first manifest-cache candidate is `d26b82c17940fb8e51514101cadf3c1e815484c0`.
+Its separate GCP diagnostic captures each accepted 360,000 rows. Compactor
+GETs fell from 1,433 to 1,078, and read bytes fell from 47,971,538 to
+16,277,064. Both captures issued 180 compactor listings, 134 puts and 268
+delete-stream calls. This confirms avoided reads under the existing listing
+and publication cadence. Different VMs and instrumentation prevent a CPU,
+RSS or latency qualification from these captures. The
+[experiment record](../qualification/grafana-manifest-content-cache-experiment-gcp.json)
+records the completed exact-image comparison. The cache is rejected: median
+CPU, RSS, query p99 and ingest p99 ratios are 0.976, 1.004, 1.069 and
+1.082. Ingest p99 rises in all three pairs with disjoint ranges. Avoided
+reads did not produce a consistent resource or query benefit.

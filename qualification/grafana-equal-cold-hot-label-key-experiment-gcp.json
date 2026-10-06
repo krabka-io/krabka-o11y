@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "experiment": "Reuse a canonical cold key only for equal hot labels",
+  "status": "profile_selected_draft_prepared_not_applied",
+  "candidate_applied": false,
+  "correctness_qualified": false,
+  "performance_qualified": false,
+  "retained": false,
+  "source_inspected_commit": "7bc01c61eef24917d3ca45f4ce546c295680f27d",
+  "draft_sha256": "dee414f21ec744c0da6afea0e621547bb6648eb15fbfdcfcfbf9b991494563ac",
+  "draft_applies_to_current_source": true,
+  "profile_run": 37390739256,
+  "profile_windows": [
+    {
+      "window": 1,
+      "querier_samples": 197,
+      "fingerprint_self_percent": 7.61,
+      "source_path": "qualification/evidence/profiling/gcp-37390739256/metrics/profiles/metrics-querier.1.cpu.perf.data.top.txt",
+      "source_sha256": "2f57a36934cfe23ef504d8aef22f0f4573ab4b42b963fca3a77e1ad5ff5b06a5"
+    },
+    {
+      "window": 2,
+      "querier_samples": 226,
+      "fingerprint_self_percent": 7.08,
+      "source_path": "qualification/evidence/profiling/gcp-37390739256/metrics/profiles/metrics-querier.2.cpu.perf.data.top.txt",
+      "source_sha256": "ea2940443aa3da32ae9e4add219098e1d6d381ddbbb92cc60d3e846392258a58"
+    },
+    {
+      "window": 3,
+      "querier_samples": 269,
+      "fingerprint_self_percent": 8.18,
+      "source_path": "qualification/evidence/profiling/gcp-37390739256/metrics/profiles/metrics-querier.3.cpu.perf.data.top.txt",
+      "source_sha256": "4526ef66aeb6e00e9ee995ac49cc97f77fb2268e72d901ea515abdbedd25c336"
+    }
+  ],
+  "selection": "Fingerprinting appears in all three query-process windows. The leaf samples include both query and WAL-tail calls; they do not prove that this candidate can avoid all sampled work.",
+  "guard": "The specialized cold matching_series_by_fp reader calculates every key with labels.fingerprint(). Reuse that key only when full cold and hot Labels compare equal; missing or different labels retain the existing canonical hash calculation.",
+  "canonical_hash_implementation_unchanged": true,
+  "prepared_independent_check": "A different hot label set whose row ID equals a canonical cold key still appears under its own canonical key in the complete returned label map. Existing hot-only, sharing, matcher and sample-limit ledgers remain.",
+  "negative_control_to_run": "Remove full label equality while keeping key-presence lookup. The different-hot-label complete-map ledger must fail.",
+  "next_action": "Finish rebase correctness and the manifest-cache control first. Then apply the two-file candidate, validate and run separate exact-image GCP controls.",
+  "draft_review": "Use a nonempty metric-name matcher so the cold index accepts the test query and both differing job labels qualify."
+}

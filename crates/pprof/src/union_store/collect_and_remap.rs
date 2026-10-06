@@ -27,7 +27,10 @@ mod tests {
     use std::sync::Arc;
 
     use arrow::{
-        array::{ArrayRef, BinaryArray, Int64Array, StringDictionaryBuilder, UInt64Array},
+        array::{
+            ArrayRef, BinaryArray, BinaryBuilder, Int64Array, ListBuilder, StringDictionaryBuilder,
+            UInt64Array,
+        },
         datatypes::Int32Type,
     };
     use assert2::assert;
@@ -40,6 +43,13 @@ mod tests {
         let mut types = StringDictionaryBuilder::<Int32Type>::new();
         for profile_type in ["cpu:cpu:nanoseconds:cpu:nanoseconds", "memory", "cpu"] {
             types.append(profile_type).unwrap();
+        }
+        let mut identities = ListBuilder::new(BinaryBuilder::new());
+        for row in [&[1_u8, 2][..], &[][..], &[1][..]] {
+            for identity in row {
+                identities.values().append_value([*identity; 52]);
+            }
+            identities.append(true);
         }
         let columns: Vec<ArrayRef> = vec![
             Arc::new(UInt64Array::from(vec![9, 1, 9])),
@@ -55,6 +65,7 @@ mod tests {
                 Some(&[0, 255][..]),
                 Some(&[][..]),
             ])),
+            Arc::new(identities.finish()),
         ];
         RecordBatch::try_new(profile_samples_schema(), columns).unwrap()
     }
