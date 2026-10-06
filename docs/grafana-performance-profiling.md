@@ -12,6 +12,11 @@ latency and RSS; `profile-report.json` explicitly sets `diagnostic_only: true`
 and `comparison_qualified: false`. Use an uninstrumented paired comparison
 to establish an optimization's performance result.
 
+Current application CPU/RSS comparisons exclude MinIO and include the Krabka
+broker. MinIO profiles and costs describe separate object-storage infrastructure.
+Historical aggregate resource figures below include MinIO unless explicitly
+re-derived in the [accounting correction](../qualification/grafana-object-storage-accounting.json).
+
 Reuse a preserved image to avoid rebuilding or changing the measured binary:
 
 ```bash

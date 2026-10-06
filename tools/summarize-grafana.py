@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse,hashlib,json,pathlib,statistics,zipfile
+import argparse,hashlib,importlib.util,json,pathlib,statistics,zipfile
 parser=argparse.ArgumentParser(description='Summarize three paired Grafana comparison artifacts after verifying their archive digests.')
 sources=parser.add_mutually_exclusive_group(required=True)
 sources.add_argument('--evidence',type=pathlib.Path,help='Directory with SIGNAL.zip files and provenance.json')
@@ -8,6 +8,9 @@ parser.add_argument('--output',type=pathlib.Path,required=True)
 parser.add_argument('--signals', nargs='+', choices=['metrics','logs','traces','profiles'],
                     default=None)
 args=parser.parse_args()
+spec=importlib.util.spec_from_file_location('comparison',pathlib.Path(__file__).with_name('compare-grafana.py'))
+comparison=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(comparison)
 ROOT=args.evidence
 proof=json.loads((ROOT/'provenance.json').read_text()) if ROOT else None
 local={}
@@ -34,14 +37,19 @@ def stats(values):
 def at(data,*keys):
     for key in keys:data=data[key]
     return data
-FIELDS={'rows_per_second':('ingest','accepted_rows_per_sec'),'accepted_rows':('ingest','accepted_rows'),'ingest_p99_seconds':('ingest','latency_seconds','p99'),'query_p99_seconds':('query','latency_seconds','p99'),'query_attempts':('query','attempts'),'cpu_seconds':('resources','cpu_seconds_total'),'rss_kib':('resources','rss_kib_simultaneous_peak'),'cpu_seconds_per_million_rows':('resources','cpu_seconds_per_million_accepted_rows'),'generator_cpu_seconds':('resources','load_generator_cpu_seconds'),'s3_requests':('resources','s3_requests'),'s3_read_bytes':('resources','s3_read_bytes'),'s3_write_bytes':('resources','s3_write_bytes'),'duration_seconds':('duration_seconds',)}
+FIELDS={'rows_per_second':('ingest','accepted_rows_per_sec'),'accepted_rows':('ingest','accepted_rows'),'ingest_p99_seconds':('ingest','latency_seconds','p99'),'query_p99_seconds':('query','latency_seconds','p99'),'query_attempts':('query','attempts'),'cpu_seconds':('resources','cpu_seconds_total'),'object_store_cpu_seconds':('resources','object_store','cpu_seconds'),'object_store_rss_kib':('resources','object_store','rss_kib_peak'),'rss_kib':('resources','rss_kib_simultaneous_peak'),'cpu_seconds_per_million_rows':('resources','cpu_seconds_per_million_accepted_rows'),'generator_cpu_seconds':('resources','load_generator_cpu_seconds'),'s3_requests':('resources','s3_requests'),'s3_read_bytes':('resources','s3_read_bytes'),'s3_write_bytes':('resources','s3_write_bytes'),'duration_seconds':('duration_seconds',)}
 def distribution(points):
     result={field:stats([at(e,*keys) for e in points]) for field,keys in FIELDS.items()}
     result['query_attempts_per_second']=stats([e['query']['attempts']/e['duration_seconds'] for e in points])
     result['average_cpu_cores']=stats([e['resources']['cpu_seconds_total']/e['duration_seconds'] for e in points])
+    result['object_store_average_cpu_cores']=stats([e['resources']['object_store']['cpu_seconds']/e['duration_seconds'] for e in points])
     result['driver_average_cpu_cores']=stats([e['resources']['load_generator_cpu_seconds']/e['duration_seconds'] for e in points])
     return result
-summary={'schema_version':1,'scope':'Fixed deployment-shape, single-node API-accepted performance; different durability contracts','aggregation':'median/min/max and raw values of three repetitions, no confidence intervals','signals':{}}
+summary={'schema_version':1,'scope':'Fixed deployment-shape, single-node API-accepted performance; application and broker costs exclude object storage; different durability contracts','aggregation':'median/min/max and raw values of three repetitions, no confidence intervals','signals':{}}
+summary.update(resource_accounting_scope=comparison.RESOURCE_ACCOUNTING_SCOPE,
+               resource_costs_rederived_from='verified raw telemetry samples',
+               accounting_harness_sha256=hashlib.sha256(pathlib.Path(__file__).with_name('compare-grafana.py').read_bytes()).hexdigest(),
+               source_resource_accounting_scopes={})
 reports=[]
 for signal in args.signals:
     product=PRODUCTS[signal]
@@ -56,6 +64,7 @@ for signal in args.signals:
         path,covered=local[signal]
         report=json.loads(path.read_text())
     reports.append(report)
+    summary['source_resource_accounting_scopes'][signal]=report.get('resource_accounting_scope','legacy_full_stack_including_object_store')
     assert report['phase_seconds']==60 and report['signal']==signal
     assert report['write_interval_seconds']==1 and report['query_interval_seconds']==0.25
     coverage=[]
@@ -69,6 +78,11 @@ for signal in args.signals:
             if name not in covered: raise ValueError(f'unhashed telemetry: {name}')
             raw=(path.parent/name).read_bytes()
         samples=[json.loads(line) for line in raw.splitlines()]
+        # Recompute every report in one scope, including historical full-stack
+        # reports. Never subtract independently timed MinIO/application peaks.
+        e['resources'].update(comparison.cost(samples))
+        rows=e['ingest']['accepted_rows']
+        e['resources']['cpu_seconds_per_million_accepted_rows']=e['resources']['cpu_seconds_total']*1e6/rows if rows else None
         span=samples[-1]['time_unix']-samples[0]['time_unix'] if len(samples)>1 else 0
         valid=len(samples)>=2 and span/e['duration_seconds']>=0.9
         e['resource_coverage']={'sample_count':len(samples),'sampled_seconds':span,'coverage_fraction':span/e['duration_seconds'],'valid':valid}
@@ -82,7 +96,7 @@ for signal in args.signals:
         entries=[e for e in report['entries'] if e['backend']==backend]
         steady=[e for e in entries if e['phase']=='steady'];assert sorted(e['repetition'] for e in steady)==[1,2,3]
         assert all(e.get('resource_coverage',{}).get('valid') for e in steady),(signal,backend,'steady cost unavailable')
-        row={'steady_objectives_met':all(e['objectives_met'] for e in steady),'steady':distribution(steady),'service_cpu':steady[0]['service_cpu'],'service_memory_gib':steady[0]['service_memory_gib']}
+        row={'steady_objectives_met':all(e['objectives_met'] for e in steady),'steady':distribution(steady),'service_cpu':steady[0]['service_cpu'],'service_memory_gib':steady[0]['service_memory_gib'],'object_store_budget':{'cpu':steady[0]['minio_cpu'],'memory_gib':steady[0]['minio_memory_gib'],'included_in_application_budget':False}}
         for phase,key in [('burst','writers'),('high_cardinality','cardinality')]:
             steps=[e for e in entries if e['phase']==phase]
             passing=[level for level in sorted({e[key] for e in steps}) if len([e for e in steps if e[key]==level])==3 and all(e['objectives_met'] for e in steps if e[key]==level)]

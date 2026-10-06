@@ -17,9 +17,14 @@ query results, and pass the background CPU gate. Telemetry must cover at least
 exact after publication to cold storage.
 
 These are API-accepted, single-node steady-load comparisons with matched
-aggregate CPU and memory budgets, including the broker on Krabka. CPU and RSS
-include MinIO on both sides. Acknowledgements have different durability
-contracts. Writer and cardinality ramps are outside this qualification.
+application CPU and memory budgets, including the broker on Krabka. Current
+CPU and peak RSS exclude MinIO on both sides. Its identical 2 vCPU / 2 GiB
+budget and measured costs are reported separately. Earlier tables and
+experiment records below used totals including MinIO; they retain that
+historical scope until re-derived from raw telemetry. See the
+[accounting correction](../qualification/grafana-object-storage-accounting.json).
+Acknowledgements have different durability contracts. Writer and cardinality
+ramps are outside this qualification.
 
 ## Verified measurement checkpoint
 

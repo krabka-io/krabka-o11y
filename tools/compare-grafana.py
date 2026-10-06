@@ -28,6 +28,8 @@ PRODUCTS = {
     'traces': ('tempo', 'mirror.gcr.io/grafana/tempo@sha256:19dca9c0b1801209424a757cd5970d6ffd7cfc9a7f4966c2a6795fbe29b495a8', 3200),
     'profiles': ('pyroscope', 'mirror.gcr.io/grafana/pyroscope@sha256:718b585ea168a616ca737018dbd1676992db9e5f1084ec4e9cd18f669326f334', 4040),
 }
+RESOURCE_ACCOUNTING_SCOPE = 'application_and_broker_excluding_object_store'
+
 _original_write = env.write_request
 _original_query = env.query_request
 _original_http = env.http
@@ -144,11 +146,17 @@ def cost(samples):
             elif name.startswith('minio_s3_traffic_received_bytes'):
                 write_bytes += delta
     result = {'cpu_seconds_by_role': {role: value / 1e6 for role, value in cpu.items()},
-            'cpu_seconds_total': sum(cpu.values()) / 1e6,
+            'cpu_seconds_total': sum(value for role, value in cpu.items() if role != 'minio') / 1e6,
+            'accounting_scope': RESOURCE_ACCOUNTING_SCOPE,
             'load_generator_cpu_seconds': samples[-1].get('load_generator_cpu_seconds', 0) - samples[0].get('load_generator_cpu_seconds', 0),
             'throttled_seconds_by_role': {role: value / 1e6 for role, value in throttle.items()},
-            'rss_kib_simultaneous_peak': max(sum(s['rss_kib'].values()) for s in samples),
+            'rss_kib_simultaneous_peak': max(sum(value for role, value in s['rss_kib'].items()
+                                                if role != 'minio') for s in samples),
+            'object_store': {'role': 'minio', 'cpu_seconds': cpu.get('minio', 0) / 1e6,
+                             'throttled_seconds': throttle.get('minio', 0) / 1e6,
+                             'rss_kib_peak': max(s['rss_kib'].get('minio', 0) for s in samples)},
             's3_requests': requests, 's3_read_bytes': read_bytes, 's3_write_bytes': write_bytes}
+    # MinIO remains a controlled process when checking unrelated host activity.
     if all('host_cpu_seconds' in sample for sample in samples):
         def external_cores(first, following):
             elapsed = following['time_unix'] - first['time_unix']
@@ -386,6 +394,8 @@ def run(args):
     report = {'schema_version': 1, 'commit': env.command('git', 'rev-parse', 'HEAD'),
               'signal': args.signal, 'seed': env.SEED, 'phase_seconds': args.seconds,
               'acknowledgements': 'API accepted; native durability contracts differ',
+              'resource_accounting_scope': RESOURCE_ACCOUNTING_SCOPE,
+              'object_store_budget': {'cpu': 2, 'memory_gib': 2, 'included_in_application_budget': False},
               'write_interval_seconds': 1, 'query_interval_seconds': 0.25,
               'image_commit': args.image_commit, 'image_digest': args.image_digest,
               'image_identity': identity,
@@ -495,6 +505,45 @@ def self_test():
     after.update(host_cpu_seconds=1.5, load_generator_cpu_seconds=0.5)
     assert cost([sample, after])['external_cpu_cores_mean'] == 0
     assert cost([sample, after])['host_activity_qualified'] is True
+    # Application and object-store peaks occur at different times. Subtracting
+    # independently measured peaks would incorrectly report 100 KiB, not 300.
+    samples = [
+        {'cpu_usec': {'broker': 0, 'metrics-querier': 0, 'minio': 0},
+         'throttled_usec': {'minio': 0},
+         'rss_kib': {'broker': 80, 'metrics-querier': 20, 'minio': 900}, 's3': {}},
+        {'cpu_usec': {'broker': 2_000_000, 'metrics-querier': 3_000_000, 'minio': 7_000_000},
+         'throttled_usec': {'minio': 1_000_000},
+         'rss_kib': {'broker': 50, 'metrics-querier': 250, 'minio': 10}, 's3': {}},
+        {'cpu_usec': {'broker': 4_000_000, 'metrics-querier': 6_000_000, 'minio': 14_000_000},
+         'throttled_usec': {'minio': 2_000_000},
+         'rss_kib': {'broker': 40, 'metrics-querier': 160, 'minio': 600}, 's3': {}},
+    ]
+    result = cost(samples)
+    assert result['accounting_scope'] == RESOURCE_ACCOUNTING_SCOPE
+    assert result['cpu_seconds_total'] == 10
+    assert result['cpu_seconds_by_role'] == {'broker': 4, 'metrics-querier': 6, 'minio': 14}
+    assert result['rss_kib_simultaneous_peak'] == 300
+    assert result['object_store'] == {'role': 'minio', 'cpu_seconds': 14,
+                                      'throttled_seconds': 2, 'rss_kib_peak': 900}
+    # Native monoliths have no broker, and the same exclusion applies.
+    for sample in samples:
+        del sample['cpu_usec']['broker']
+        del sample['rss_kib']['broker']
+        sample['cpu_usec']['mimir'] = sample['cpu_usec'].pop('metrics-querier')
+        sample['rss_kib']['mimir'] = sample['rss_kib'].pop('metrics-querier')
+    assert cost(samples)['cpu_seconds_total'] == 6
+    assert cost(samples)['rss_kib_simultaneous_peak'] == 250
+    # Counter resets still count new MinIO work, separately from the application.
+    samples[-1]['cpu_usec']['minio'] = 1_000_000
+    assert cost(samples)['object_store']['cpu_seconds'] == 8
+    assert cost(samples)['cpu_seconds_total'] == 6
+    native = [
+        {'time_unix': 0, 'cpu_usec': {'mimir': 0, 'minio': 0}, 'throttled_usec': {},
+         'rss_kib': {}, 's3': {}, 'host_cpu_seconds': 0},
+        {'time_unix': 1, 'cpu_usec': {'mimir': 1_000_000, 'minio': 1_000_000},
+         'throttled_usec': {}, 'rss_kib': {}, 's3': {}, 'host_cpu_seconds': 2},
+    ]
+    assert cost(native)['external_cpu_cores_mean'] == 0
     with tempfile.TemporaryDirectory() as directory:
         roles = pathlib.Path(directory)
         (roles / 'profiles-all.yaml').write_text('target: all\n')

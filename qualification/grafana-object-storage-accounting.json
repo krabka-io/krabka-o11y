@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "resource_accounting_scope": "application_and_broker_excluding_object_store",
+  "object_store_budget": {
+    "cpu": 2,
+    "memory_gib": 2,
+    "included_in_application_budget": false
+  },
+  "application_roles": "All measured container roles except minio; includes Krabka broker. Load-generator CPU remains separate.",
+  "peak_rss_method": "Maximum sum of non-minio role RSS within each telemetry sample; never subtract independently measured peaks.",
+  "historical_reports": "Raw reports/checksums unchanged. Summarizer re-derives all report costs from verified raw telemetry using shared cost() and labels original and resulting scopes.",
+  "accounting_harness_sha256": "7f29fca659a2bedd15ae8fa4665b3cba3db80240c16b7bd70e9474ffc8953f74",
+  "summary_harness_sha256": "12309a3a4fd8ffd78c975458e60d917d4c466c58c2c8bb81679e93057393047b",
+  "historical_rederivation": {
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37392223425",
+    "source_scope": "Original cache candidate image, not current rebased/restored source.",
+    "verified_checksum_entries": 725,
+    "distinct_verified_raw_files": 485,
+    "native_summary_path": "qualification/evidence/performance/gcp-37392223425/metrics/application-only-summary.json",
+    "native_summary_sha256": "40e08e5dc8884899451f9bb96fdf7d6e2cd20cd440d4c7453918ed86c5c737ff",
+    "revision_pairs_path": "qualification/evidence/performance/gcp-37392223425/metrics/application-only-revision-pairs.json",
+    "revision_pairs_sha256": "818508afaa478ee5ea0abfbccfe35acf7927703f2646f490f1deffc3fe172f46",
+    "native_krabka_divided_by_mimir": {
+      "average_cpu_cores": 0.45944804024440605,
+      "rss_kib": 1.4064246147891923,
+      "query_p99_seconds": 1.0649976411953932,
+      "ingest_p99_seconds": 2.745098876418148
+    },
+    "candidate_divided_by_baseline": {
+      "average_cpu_cores": 0.9682796784659169,
+      "rss_kib": 1.0049718606497946,
+      "query_p99_seconds": 1.0689976617982215,
+      "ingest_p99_seconds": 1.0818940732049622,
+      "object_store_average_cpu_cores": 0.9979661820458925,
+      "object_store_rss_kib": 1.0038888635707668
+    },
+    "native_medians": {
+      "krabka": {
+        "average_cpu_cores": 0.1668110019100346,
+        "rss_kib": 232572,
+        "query_p99_seconds": 0.028083221000002823,
+        "ingest_p99_seconds": 0.042304317999992236,
+        "object_store_average_cpu_cores": 0.055423089663227475,
+        "object_store_rss_kib": 264744
+      },
+      "mimir": {
+        "average_cpu_cores": 0.3630682629994428,
+        "rss_kib": 165364,
+        "query_p99_seconds": 0.026369279999983064,
+        "ingest_p99_seconds": 0.0154108539999811,
+        "object_store_average_cpu_cores": 0.013109489005339744,
+        "object_store_rss_kib": 136640
+      }
+    }
+  },
+  "validation": {
+    "self_test": "passed; independent misaligned application/broker/MinIO peak ledger, native monolith and reset-aware MinIO CPU",
+    "performance_qualification_current_branch": false,
+    "formatter": "passed",
+    "python_compilation": "passed",
+    "verified_historical_summary": "passed",
+    "ordinary_targets_passed": 387,
+    "ordinary_targets_cached": true,
+    "ordinary_log_sha256": "06eff1e18299a61ccb9b6380358c417d10a2cfaafe195d798fb57367a0d64c54",
+    "native_correctness": "Separate rollback scope failed one metrics restart case; no current-branch performance qualification. See manifest cache experiment restoration evidence."
+  }
+}

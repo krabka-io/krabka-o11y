@@ -7,6 +7,12 @@ The [private GCP performance record](grafana-performance-gcp.md) describes the
 subsequent source changes and measurement contract.
 The tables below retain the historical issue 267 results.
 
+Current comparisons exclude MinIO from application CPU and peak RSS on both
+sides. Krabka's broker remains included. Object storage has the same separate
+2 vCPU / 2 GiB limit for both backends, and its measured costs are reported
+separately. The historical tables below include MinIO; do not mix their resource
+ratios with current application-only totals.
+
 Measured on 2026-10-04 using the installed [Cyclenerd Google Cloud GitHub runner](https://github.com/Cyclenerd/google-cloud-github-runner). This compares accepted API work in fixed, single-node deployment shapes, with one active signal at a time. The backends acknowledge writes at different durability boundaries; these are not equivalent durable-throughput results. The issue 267 [operating envelope](operating_envelope.md) and its durability qualification remain separate.
 
 ## Steady workload
@@ -192,7 +198,12 @@ python3 tools/summarize-grafana.py \
 ```
 
 Pass additional signal reports to summarize them together. The summarizer
-checks file hashes, telemetry coverage, and matching image identities.
+checks file hashes, telemetry coverage, and matching image identities. It
+recomputes CPU and peak RSS from verified raw samples in the current scope,
+including for historical reports. Peak RSS is the maximum simultaneous sum
+of application and broker RSS; subtracting independently timed MinIO peaks
+is incorrect. The output labels the accounting scope and records the accounting
+harness hash. MinIO costs and its separate budget remain visible.
 
 The harness self-test checks the payload encoder against independent bytes
 and checks CPU, S3, and RSS accounting. CI runs it on each pull request:

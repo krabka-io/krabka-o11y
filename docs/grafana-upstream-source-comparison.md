@@ -23,22 +23,25 @@ oracle; this audit did not reproduce the upstream image build.
 
 ## Rank against the measured workload
 
-The current metrics comparison has 1,000 series. It measures the entire
-application deployment, broker and MinIO. A technique that reduces one small
-label table cannot explain the entire RSS gap.
+The current metrics comparison has 1,000 series. Application CPU and peak RSS
+include the Krabka broker and exclude MinIO on both sides. Object storage
+receives the same separate budget and its costs remain available as diagnostics.
+Historical resource ratios in this audit included MinIO unless explicitly
+re-derived; see the [accounting correction](../qualification/grafana-object-storage-accounting.json).
 
 The preserved mapping capture measures about 68 MiB of resident querier code.
 At its final snapshot, querier anonymous memory is 30,732 KiB and MinIO
 anonymous memory is 234,544 KiB. These are historical diagnostic snapshots,
 not the current branch's performance. The earlier allocation capture measures
 16.85 MB of peak querier heap. These records establish different costs:
-resident code, allocation traffic and object-store memory.
+resident application code, application allocation traffic and separately
+budgeted object-store memory.
 See the [mapping evidence](../qualification/grafana-memory-mapping-investigation-gcp.json)
 and [allocation and object-traffic evidence](grafana-performance-profiling.md#cpu-and-object-store-memory).
 
 | Priority | Opportunity | Expected scope and limitation |
 | --- | --- | --- |
-| 1 | Reduce repeated object operations under the existing publication deadline | Best match to measured full-stack RSS. Deduplicate unchanged metadata work and batch work already due; preserve the two-second publication contract. No gain is established. |
+| 1 | Avoid repeated canonical label hashing in merged metrics scans | Current CPU profiles identify this work. Reuse a cold canonical key only after full label equality; preserve the fallback for different or absent cold labels. No gain is established. |
 | 2 | Stream cold rows and retain only needed columns | Missing in several explicit materialization paths. Most useful when the query reads cold blocks; profile that path before changing it. |
 | 3 | Store hot samples by series in sealed chunks | Can reduce repeated per-sample identity and label pointers. Larger change, with snapshot and retention risks. |
 | 4 | Resolve restrictive postings before negative matchers | Small read-path change. Useful for selective multi-matcher queries; the benchmark's simple selector may benefit little. |
@@ -354,7 +357,27 @@ delete-stream calls. This confirms avoided reads under the existing listing
 and publication cadence. Different VMs and instrumentation prevent a CPU,
 RSS or latency qualification from these captures. The
 [experiment record](../qualification/grafana-manifest-content-cache-experiment-gcp.json)
-records the completed exact-image comparison. The cache is rejected: median
-CPU, RSS, query p99 and ingest p99 ratios are 0.976, 1.004, 1.069 and
-1.082. Ingest p99 rises in all three pairs with disjoint ranges. Avoided
+records the completed exact-image comparison. The cache is rejected: historical
+median
+CPU, RSS, query p99 and ingest p99 ratios were 0.976, 1.004, 1.069 and
+1.082, with MinIO included in the resource totals. Ingest p99 rises in all three
+pairs with disjoint ranges. Avoided
 reads did not produce a consistent resource or query benefit.
+
+Re-deriving the same verified raw samples with MinIO excluded gives median
+candidate/baseline application CPU and RSS ratios of 0.968 and 1.005.
+Latency ratios stay unchanged. The native comparison for that historical
+candidate is 0.459× Mimir CPU and 1.406× Mimir RSS: 227.12 versus 161.49 MiB.
+These are measurements of the preserved candidate, not the current restored
+branch. The cache remains rejected for inconsistent resource gains and the
+repeatable ingest regression.
+
+MinIO live-heap captures also limit the object-traffic inference. Bootstrap
+allocation stacks account for 82.56% of sampled live heap in the baseline
+and 82.74% in the cache candidate. Cumulative stacks overlap; do not add
+them. Sampled live heap is not RSS, and these runs have no native Mimir
+object-store heap capture. The
+[cache record](../qualification/grafana-manifest-content-cache-experiment-gcp.json)
+preserves the raw profile hashes. MinIO is outside the application budget.
+These profiles neither establish
+application RSS savings nor qualify an application performance advantage.
