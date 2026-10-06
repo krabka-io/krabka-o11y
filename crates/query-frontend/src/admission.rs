@@ -30,7 +30,7 @@ impl Default for AdmissionLimits {
             max_concurrent_subqueries: 2_048,
             max_concurrent_subqueries_per_tenant: 256,
             estimated_bytes_per_subquery: 8 * 1024 * 1024,
-            max_estimated_bytes: 8 * 1024 * 1024 * 1024,
+            max_estimated_bytes: 8_usize.saturating_mul(1024 * 1024 * 1024),
             max_estimated_bytes_per_tenant: 1024 * 1024 * 1024,
             max_queued_requests: 1_024,
             max_queued_requests_per_tenant: 128,
@@ -300,17 +300,24 @@ fn fits(state: &State, work: &Waiting) -> bool {
     let tenant = state.tenants.get(&work.tenant).copied().unwrap_or_default();
     state.active.requests < work.tenant_limits.max_concurrent_requests
         && tenant.requests < work.tenant_limits.max_concurrent_requests_per_tenant
-        && state.active.subqueries.saturating_add(work.subqueries)
-            <= work.tenant_limits.max_concurrent_subqueries
-        && tenant.subqueries.saturating_add(work.subqueries)
-            <= work.tenant_limits.max_concurrent_subqueries_per_tenant
+        && state
+            .active
+            .subqueries
+            .checked_add(work.subqueries)
+            .is_some_and(|total| total <= work.tenant_limits.max_concurrent_subqueries)
+        && tenant
+            .subqueries
+            .checked_add(work.subqueries)
+            .is_some_and(|total| total <= work.tenant_limits.max_concurrent_subqueries_per_tenant)
         && state
             .active
             .estimated_bytes
-            .saturating_add(work.estimated_bytes)
-            <= work.tenant_limits.max_estimated_bytes
-        && tenant.estimated_bytes.saturating_add(work.estimated_bytes)
-            <= work.tenant_limits.max_estimated_bytes_per_tenant
+            .checked_add(work.estimated_bytes)
+            .is_some_and(|total| total <= work.tenant_limits.max_estimated_bytes)
+        && tenant
+            .estimated_bytes
+            .checked_add(work.estimated_bytes)
+            .is_some_and(|total| total <= work.tenant_limits.max_estimated_bytes_per_tenant)
 }
 
 fn add_usage(usage: &mut Usage, work: &Waiting) {
@@ -471,6 +478,43 @@ mod tests {
                 retry_after_seconds: 3,
             })
         ));
+    }
+
+    #[tokio::test]
+    async fn overflowing_aggregate_work_waits_for_capacity_and_releases_it() {
+        let over_half = usize::MAX / 2 + 1;
+        for (subqueries, estimated_bytes) in [(1, over_half), (over_half, 1)] {
+            let controller = AdmissionController::new(AdmissionLimits {
+                max_concurrent_subqueries: usize::MAX,
+                max_concurrent_subqueries_per_tenant: usize::MAX,
+                max_estimated_bytes: usize::MAX,
+                max_estimated_bytes_per_tenant: usize::MAX,
+                ..limits()
+            });
+            let active = controller
+                .acquire("a".into(), subqueries, estimated_bytes)
+                .await
+                .unwrap();
+            let mut waiting =
+                std::pin::pin!(controller.acquire("b".into(), subqueries, estimated_bytes,));
+            assert!(futures::poll!(&mut waiting).is_pending());
+
+            drop(active);
+            let granted = tokio::time::timeout(Duration::from_secs(1), &mut waiting)
+                .await
+                .unwrap()
+                .unwrap();
+            drop(granted);
+            assert!(
+                tokio::time::timeout(
+                    Duration::from_secs(1),
+                    controller.acquire("a".into(), subqueries, estimated_bytes),
+                )
+                .await
+                .unwrap()
+                .is_ok()
+            );
+        }
     }
 
     #[tokio::test]

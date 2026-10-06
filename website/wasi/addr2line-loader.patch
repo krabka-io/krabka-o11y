@@ -1,0 +1,141 @@
+--- a/src/loader.rs
++++ b/src/loader.rs
+@@ -8,7 +8,17 @@
+ use std::path::{Path, PathBuf};
+ 
+ use gimli::Reader;
+-use memmap2::Mmap;
++#[cfg(target_vendor = "wasmer")]
++use std::{
++    convert::TryFrom,
++    io::{Read, Seek, SeekFrom},
++};
++
++#[cfg(not(target_vendor = "wasmer"))]
++use memmap2::Mmap as FileData;
++
++#[cfg(target_vendor = "wasmer")]
++type FileData = Vec<u8>;
+ use object::{Object, ObjectMapFile, ObjectSection, SymbolMap, SymbolMapName};
+ use typed_arena::Arena;
+ 
+@@ -29,8 +39,36 @@
+ #[derive(Default)]
+ struct LoaderArena {
+     data: Arena<Vec<u8>>,
+-    mmap: Arena<Mmap>,
++    mmap: Arena<FileData>,
+     relocation: Arena<LoaderRelocationMap>,
++}
++
++fn map_file(file: &File) -> std::io::Result<FileData> {
++    #[cfg(target_vendor = "wasmer")]
++    {
++        let size = file.metadata()?.len();
++        let expected = usize::try_from(size).map_err(|_| {
++            std::io::Error::new(
++                std::io::ErrorKind::InvalidData,
++                "object file exceeds addressable memory",
++            )
++        })?;
++        let mut reader = file;
++        reader.seek(SeekFrom::Start(0))?;
++        let mut bytes = Vec::new();
++        reader.take(size).read_to_end(&mut bytes)?;
++        if bytes.len() != expected {
++            return Err(std::io::Error::new(
++                std::io::ErrorKind::UnexpectedEof,
++                "object file changed while reading",
++            ));
++        }
++        Ok(bytes)
++    }
++    #[cfg(not(target_vendor = "wasmer"))]
++    unsafe {
++        FileData::map(file)
++    }
+ }
+ 
+ /// A loader for the DWARF data required for a `Context`.
+@@ -156,7 +194,7 @@
+ impl<'a> LoaderInternal<'a> {
+     fn new(path: &Path, sup_path: Option<&Path>, arena: &'a LoaderArena) -> Result<Self> {
+         let file = File::open(path)?;
+-        let map = arena.mmap.alloc(unsafe { Mmap::map(&file)? });
++        let map = arena.mmap.alloc(map_file(&file)?);
+         let object = object::File::parse(&**map)?;
+ 
+         let relative_address_base = object.relative_address_base();
+@@ -170,7 +208,7 @@
+         let sup_map;
+         let sup_object = if let Some(sup_path) = sup_path {
+             let sup_file = File::open(sup_path)?;
+-            sup_map = arena.mmap.alloc(unsafe { Mmap::map(&sup_file)? });
++            sup_map = arena.mmap.alloc(map_file(&sup_file)?);
+             Some(object::File::parse(&**sup_map)?)
+         } else {
+             None
+@@ -190,7 +228,7 @@
+                     let candidate = candidate.ok()?;
+                     let path = candidate.path();
+                     let file = File::open(path).ok()?;
+-                    let map = unsafe { Mmap::map(&file) }.ok()?;
++                    let map = map_file(&file).ok()?;
+                     let object = object::File::parse(&*map).ok()?;
+                     if object.mach_uuid() == Ok(Some(uuid)) {
+                         Some(map)
+@@ -235,7 +273,7 @@
+                 .unwrap_or_else(|| "dwp".into());
+             dwp_path.set_extension(dwp_extension);
+             let dwp_file = File::open(&dwp_path).ok()?;
+-            let map = arena.mmap.alloc(unsafe { Mmap::map(&dwp_file) }.ok()?);
++            let map = arena.mmap.alloc(map_file(&dwp_file).ok()?);
+             let dwp_object = object::File::parse(&**map).ok()?;
+ 
+             let endian = if dwp_object.is_little_endian() {
+@@ -357,7 +395,7 @@
+         // Load the DWO file, ignoring errors.
+         let dwo = (|| {
+             let file = File::open(&path).ok()?;
+-            let map = arena.mmap.alloc(unsafe { Mmap::map(&file) }.ok()?);
++            let map = arena.mmap.alloc(map_file(&file).ok()?);
+             let object = object::File::parse(&**map).ok()?;
+             let endian = if object.is_little_endian() {
+                 gimli::RunTimeEndian::Little
+@@ -387,7 +425,7 @@
+ impl<'a> ObjectContext<'a> {
+     fn new(object: &ObjectMapFile<'a>, arena: &'a LoaderArena) -> Option<Self> {
+         let file = File::open(convert_path(object.path()).ok()?).ok()?;
+-        let map = &**arena.mmap.alloc(unsafe { Mmap::map(&file) }.ok()?);
++        let map = &**arena.mmap.alloc(map_file(&file).ok()?);
+         let data = if let Some(member_name) = object.member() {
+             let archive = object::read::archive::ArchiveFile::parse(map).ok()?;
+             let member = archive.members().find_map(|member| {
+@@ -510,3 +548,27 @@
+         <usize as gimli::ReaderOffset>::from_u64(self.0.relocate(offset as u64, value as u64))
+     }
+ }
++
++#[cfg(all(test, target_vendor = "wasmer"))]
++mod owned_file_tests {
++    use super::{map_file, File, Seek, SeekFrom};
++
++    #[test]
++    fn owned_file_view_reads_real_bytes_from_the_start() -> std::io::Result<()> {
++        let path = std::env::temp_dir().join(format!(
++            "addr2line-owned-view-{}.bin",
++            std::process::id(),
++        ));
++        let expected = [0, 255, 127, 69, 76, 70];
++        std::fs::write(&path, expected)?;
++        let file = File::open(&path)?;
++        let mut cursor = &file;
++        cursor.seek(SeekFrom::Start(3))?;
++        let data = map_file(&file)?;
++        std::fs::remove_file(&path)?;
++        if data.as_slice() != expected.as_slice() {
++            return Err(std::io::Error::other("owned file view changed the bytes"));
++        }
++        Ok(())
++    }
++}

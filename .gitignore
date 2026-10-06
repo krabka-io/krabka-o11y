@@ -42,6 +42,15 @@ sbom-*.spdx.json
 /website/static/images/
 /website/static/charts/
 /website/public/
+/website/content/
+/website/generated-static/
+/website/node_modules/
+/website/dist/
+/website/.astro/
+/website/.tools/
+/website/static/lab/*.wasm
+/website/static/lab/sdk/
+/website/static/lab/manifest.json
 
 # Generated WASM playground bundle (built by website/build-playground.sh).
 # The hand-written front-end (app.js, playground.css) stays tracked.

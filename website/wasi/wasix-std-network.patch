@@ -1,0 +1,27 @@
+--- a/library/std/src/sys/net/connection/wasix.rs
++++ b/library/std/src/sys/net/connection/wasix.rs
+@@ -485,20 +485,13 @@
+     }
+
+     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
+-        use crate::ops::Deref;
+-        let peer = self.peer.lock().unwrap();
+-        if let Some(peer) = peer.deref() {
+-            Ok(peer.clone())
+-        } else {
+-            Ok(match self.addr {
+-                SocketAddr::V4(..) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+-                SocketAddr::V6(..) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+-            })
+-        }
++        let addr = unsafe { wasi::sock_addr_peer(self.fd()).map_err(err2io)? };
++        Ok(conv_addr_port(addr))
+     }
+
+     pub fn socket_addr(&self) -> io::Result<SocketAddr> {
+-        Ok(self.addr.clone())
++        let addr = unsafe { wasi::sock_addr_local(self.fd()).map_err(err2io)? };
++        Ok(conv_addr_port(addr))
+     }
+
+     pub fn shutdown(&self, how: Shutdown) -> io::Result<()> {

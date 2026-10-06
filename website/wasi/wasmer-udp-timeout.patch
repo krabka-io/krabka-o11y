@@ -1,0 +1,239 @@
+--- a/lib/wasix/src/net/socket.rs
++++ b/lib/wasix/src/net/socket.rs
+@@ -99,6 +99,8 @@
+     UdpSocket {
+         socket: Box<dyn VirtualUdpSocket + Sync>,
+         peer: Option<SocketAddr>,
++        write_timeout: Option<Duration>,
++        read_timeout: Option<Duration>,
+     },
+     RemoteSocket {
+         props: SocketProperties,
+@@ -322,6 +324,8 @@
+                 addr: SocketAddr,
+                 reuse_port: bool,
+                 reuse_addr: bool,
++                write_timeout: Option<Duration>,
++                read_timeout: Option<Duration>,
+             },
+         }
+
+@@ -363,6 +367,8 @@
+                             addr,
+                             reuse_port: props.reuse_port,
+                             reuse_addr: props.reuse_addr,
++                            write_timeout: props.write_timeout,
++                            read_timeout: props.read_timeout,
+                         },
+                         _ => return Err(Errno::Inval),
+                     }
+@@ -407,6 +413,8 @@
+                             addr,
+                             reuse_port: props.reuse_port,
+                             reuse_addr: props.reuse_addr,
++                            write_timeout: props.write_timeout,
++                            read_timeout: props.read_timeout,
+                         },
+                         _ => return Err(Errno::Inval),
+                     }
+@@ -474,6 +482,8 @@
+                 addr,
+                 reuse_port,
+                 reuse_addr,
++                write_timeout,
++                read_timeout,
+             } => {
+                 tokio::select! {
+                     socket = net.bind_udp(addr, reuse_port, reuse_addr) => {
+@@ -481,6 +491,8 @@
+                             Ok(socket) => Ok(Some(InodeSocket::new(InodeSocketKind::UdpSocket {
+                                 socket,
+                                 peer: None,
++                                write_timeout,
++                                read_timeout,
+                             }))),
+                             Err(err) => {
+                                 let mut inner = self.inner.protected.write().unwrap();
+@@ -1118,6 +1130,11 @@
+                 write_timeout,
+                 read_timeout,
+                 ..
++            }
++            | InodeSocketKind::UdpSocket {
++                write_timeout,
++                read_timeout,
++                ..
+             } => {
+                 match ty {
+                     TimeType::WriteTimeout => *write_timeout = timeout,
+@@ -1153,6 +1170,11 @@
+         let inner = self.inner.protected.read().unwrap();
+         match &inner.kind {
+             InodeSocketKind::TcpStream {
++                read_timeout,
++                write_timeout,
++                ..
++            }
++            | InodeSocketKind::UdpSocket {
+                 read_timeout,
+                 write_timeout,
+                 ..
+@@ -1333,7 +1355,7 @@
+                     let res = match &mut inner.kind {
+                         InodeSocketKind::Raw(socket) => socket.try_send(self.data),
+                         InodeSocketKind::TcpStream { socket, .. } => socket.try_send(self.data),
+-                        InodeSocketKind::UdpSocket { socket, peer } => {
++                        InodeSocketKind::UdpSocket { socket, peer, .. } => {
+                             if let Some(peer) = peer {
+                                 socket.try_send_to(self.data, *peer)
+                             } else {
+@@ -1509,7 +1531,7 @@
+                         InodeSocketKind::TcpStream { socket, .. } => {
+                             socket.try_recv(self.data, peek)
+                         }
+-                        InodeSocketKind::UdpSocket { socket, peer } => match peer {
++                        InodeSocketKind::UdpSocket { socket, peer, .. } => match peer {
+                             Some(peer) => {
+                                 try_recv_from_connected_udp(socket.as_mut(), self.data, peek, peer)
+                                     .map(|(amt, _)| amt)
+@@ -1599,7 +1621,7 @@
+                 loop {
+                     let res = match &mut inner.kind {
+                         InodeSocketKind::Icmp(socket) => socket.try_recv_from(self.data, peek),
+-                        InodeSocketKind::UdpSocket { socket, peer } => match peer {
++                        InodeSocketKind::UdpSocket { socket, peer, .. } => match peer {
+                             Some(peer) => {
+                                 try_recv_from_connected_udp(socket.as_mut(), self.data, peek, peer)
+                             }
+@@ -1763,6 +1785,7 @@
+             InodeSocketKind::UdpSocket {
+                 socket,
+                 peer: Some(peer),
++                ..
+             } => loop {
+                 if let Err(err) = discard_non_matching_udp_datagrams(socket.as_mut(), peer) {
+                     break Poll::Ready(Err(err));
+@@ -1781,7 +1804,9 @@
+                     }
+                 }
+             },
+-            InodeSocketKind::UdpSocket { socket, peer: None } => socket.poll_read_ready(cx),
++            InodeSocketKind::UdpSocket {
++                socket, peer: None, ..
++            } => socket.poll_read_ready(cx),
+             InodeSocketKind::Raw(socket) => socket.poll_read_ready(cx),
+             InodeSocketKind::Icmp(socket) => socket.poll_read_ready(cx),
+             InodeSocketKind::BoundTcp { .. } => Poll::Pending,
+@@ -2171,4 +2196,112 @@
+             .unwrap_err();
+         assert_eq!(err, Errno::Timedout);
+     }
++
++    #[cfg(all(feature = "sys", feature = "host-vnet"))]
++    #[tokio::test(flavor = "current_thread")]
++    async fn inode_socket_udp_timeout_preserves_options_and_expires_real_receive() {
++        use super::TimeType;
++
++        let tasks = crate::runtime::task_manager::tokio::TokioTaskManager::default();
++        let net = virtual_net::host::LocalNetworking::new();
++        let local = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
++        for remote in [false, true] {
++            let props = SocketProperties {
++                family: Addressfamily::Inet4,
++                ty: Socktype::Dgram,
++                pt: SockProto::Udp,
++                only_v6: false,
++                reuse_port: false,
++                reuse_addr: false,
++                no_delay: None,
++                keep_alive: None,
++                dont_route: None,
++                send_buf_size: None,
++                recv_buf_size: None,
++                write_timeout: None,
++                read_timeout: None,
++                accept_timeout: None,
++                connect_timeout: None,
++                handler: None,
++            };
++            let inode = InodeSocket::new(if remote {
++                InodeSocketKind::RemoteSocket {
++                    props,
++                    local_addr: local,
++                    peer_addr: local,
++                    ttl: 64,
++                    multicast_ttl: 1,
++                    is_dead: false,
++                }
++            } else {
++                InodeSocketKind::PreSocket { props, addr: None }
++            });
++            let read_timeout = Some(Duration::from_millis(20));
++            let write_timeout = Some(Duration::from_millis(50));
++            inode
++                .set_opt_time(TimeType::ReadTimeout, read_timeout)
++                .unwrap();
++            inode
++                .set_opt_time(TimeType::WriteTimeout, write_timeout)
++                .unwrap();
++            let bound = inode.bind(&tasks, &net, local).await.unwrap().unwrap();
++            assert_ne!(bound.addr_local().unwrap().port(), 0);
++            assert_eq!(bound.opt_time(TimeType::ReadTimeout).unwrap(), read_timeout);
++            assert_eq!(
++                bound.opt_time(TimeType::WriteTimeout).unwrap(),
++                write_timeout
++            );
++
++            // Options are shared by descriptor clones, and can be cleared after bind.
++            let clone = bound.clone();
++            clone.set_opt_time(TimeType::ReadTimeout, None).unwrap();
++            assert_eq!(bound.opt_time(TimeType::ReadTimeout).unwrap(), None);
++            bound
++                .set_opt_time(TimeType::ReadTimeout, read_timeout)
++                .unwrap();
++            clone.set_opt_time(TimeType::WriteTimeout, None).unwrap();
++            assert_eq!(bound.opt_time(TimeType::WriteTimeout).unwrap(), None);
++            bound
++                .set_opt_time(TimeType::WriteTimeout, write_timeout)
++                .unwrap();
++            assert_eq!(
++                bound.set_opt_time(TimeType::AcceptTimeout, read_timeout),
++                Err(Errno::Inval)
++            );
++
++            // An empty native UDP socket must expire through the actual receiver poller.
++            let mut buf = [MaybeUninit::uninit(); 64];
++            let timed_out = tokio::time::timeout(
++                Duration::from_secs(2),
++                bound.recv_from(
++                    &tasks,
++                    &mut buf,
++                    bound.opt_time(TimeType::ReadTimeout).unwrap(),
++                    false,
++                    false,
++                ),
++            )
++            .await
++            .expect("UDP receive ignored its configured deadline");
++            assert_eq!(timed_out, Err(Errno::Timedout));
++
++            // Timeout cancellation must leave the socket and readiness handler usable.
++            let sender = std::net::UdpSocket::bind(local).unwrap();
++            let payload = b"receive after timeout";
++            sender
++                .send_to(payload, bound.addr_local().unwrap())
++                .unwrap();
++            let (received, peer) = bound
++                .recv_from(&tasks, &mut buf, Some(Duration::from_secs(2)), false, false)
++                .await
++                .unwrap();
++            assert_eq!(peer, sender.local_addr().unwrap());
++            assert_eq!(received, payload.len());
++            let bytes: Vec<_> = buf[..received]
++                .iter()
++                .map(|byte| unsafe { byte.assume_init() })
++                .collect();
++            assert_eq!(bytes, payload);
++        }
++    }
+ }

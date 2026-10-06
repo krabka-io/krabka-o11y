@@ -325,16 +325,15 @@ impl BlockStore {
         Ok(true)
     }
 
-    /// Composes each block's location with `Url::join` — a raw
-    /// `format!("{base}{key}")` concat omits the path separator, so a base like
-    /// `s3://krabka-traces` + key `traces/…` becomes `s3://krabka-tracestraces/…`
-    /// (the prefix merges into the bucket authority) and `DataFusion` cannot
-    /// resolve the store.
+    /// Resolves complete object-store keys from the scheme and authority
+    /// registered with `DataFusion`. The base path is a namespace prefix
+    /// already present in each key, so joining against it duplicates the prefix.
     fn block_urls(&self, keys: &[String]) -> Result<Vec<String>> {
+        let mut base = self.base.clone();
+        base.set_path("/");
         keys.iter()
             .map(|key| {
-                self.base
-                    .join(key.trim_start_matches('/'))
+                base.join(key.trim_start_matches('/'))
                     .map(|url| url.to_string())
                     .map_err(|error| {
                         BlockStoreError::InvalidBlock(format!(

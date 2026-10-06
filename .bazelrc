@@ -77,6 +77,9 @@ coverage --instrument_test_targets
 # additive: naming only `-timing-sensitive` here replaced the `-docker` set for
 # `test` above, and the coverage run started trying to drive containers.
 coverage --test_tag_filters=-docker,-scale,-timing-sensitive
+# Apply the test filters before analysis so excluded container suites do not
+# fetch images for a coverage report that never runs them.
+coverage --build_tests_only
 
 # Download a JDK rather than resolving the machine's. `jvm_tiered_storage` runs
 # a small Java probe against Kafka's own storage classes; without this the

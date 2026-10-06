@@ -516,19 +516,115 @@ jobs:
           name: rustdoc
           path: target/doc
           if-no-files-found: error
-  publish-docs:
-    name: publish rustdoc
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  website:
+    name: website · full WASI lab
+    if: github.event_name != 'schedule'
     needs: docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    env:
+      CARGO_BUILD_JOBS: 2
+    defaults:
+      run:
+        working-directory: website
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - id: toolchain
+        run: |
+          set -euo pipefail
+          channel="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' ../rust-toolchain.toml)"
+          test -n "${channel}"
+          echo "channel=${channel}" >>"${GITHUB_OUTPUT}"
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: clippy
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.22.1
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: free disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/share/swift /usr/share/miniconda \
+            /usr/local/lib/android /usr/local/.ghcup /opt/ghc \
+            /usr/local/share/powershell /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+      - run: npm ci
+      - name: check documentation import and source staging
+        run: |
+          npm test
+          node scripts/check-site.mjs --self-test
+          python3 -B scripts/prepare-wasix-test.py
+          CARGO_TARGET_DIR="${PWD}/.tools/http-native-target" cargo clippy --manifest-path wasi-client/Cargo.toml --locked --all-targets -- -D warnings
+          CARGO_TARGET_DIR="${PWD}/.tools/http-native-target" cargo test --manifest-path wasi-client/Cargo.toml --locked
+      - name: build production services and static site
+        run: |
+          mkdir -p .tools
+          npm run build 2>&1 | tee .tools/lab-build.log
+          npm run check
+      - uses: actions/download-artifact@v8
+        with:
+          name: rustdoc
+          path: website/.tools/site-combined
+      - name: check website links into the Rust API reference
+        run: |
+          cp -R dist/. .tools/site-combined/
+          node scripts/check-site.mjs .tools/site-combined --rustdoc
+      - run: npx playwright install --with-deps chromium
+      - name: verify website and real browser services
+        run: |
+          set -euo pipefail
+          node scripts/preview.mjs --dir .tools/site-combined --port 4322 >.tools/preview.log 2>&1 &
+          site_preview_pid=$!
+          trap 'kill "${site_preview_pid}" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4322/krabka-o11y/ >/dev/null; then break; fi
+            sleep 1
+          done
+          node scripts/browser-check.mjs --url http://127.0.0.1:4322/krabka-o11y/ 2>&1 | tee .tools/browser-check.log
+          node scripts/network-check.mjs 2>&1 | tee .tools/network-check.log
+          node scripts/lab-check.mjs 2>&1 | tee .tools/lab-check.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: website-check-evidence
+          include-hidden-files: true
+          path: |
+            website/.tools/*.log
+            website/.tools/screenshots
+            website/static/lab/manifest.json
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: website
+          path: website/dist
+          if-no-files-found: error
+  publish-docs:
+    name: publish website and rustdoc
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [docs, website]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.22.1
+          package-manager-cache: false
       - uses: actions/download-artifact@v8
         with:
           name: rustdoc
+          path: _site
+      - uses: actions/download-artifact@v8
+        with:
+          name: website
           path: _site
       - name: verify site
         run: |
@@ -536,6 +632,15 @@ jobs:
           touch _site/.nojekyll
           test -f _site/krabka_blockstore/index.html
           test -f _site/krabka_traces/index.html
+          test -f _site/lab/manifest.json
+          node website/scripts/check-site.mjs _site --rustdoc
+          python3 - <<'PY'
+          from pathlib import Path
+          size = sum(path.stat().st_size for path in Path('_site').rglob('*') if path.is_file())
+          if size > 1_000_000_000:
+              raise SystemExit(f'The {size:,}-byte site exceeds the GitHub Pages limit.')
+          print(f'Combined website and Rust API reference: {size:,} bytes.')
+          PY
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

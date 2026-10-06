@@ -1,0 +1,14 @@
+---
+import Site from '../../layouts/Site.astro';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const crates = ['blockstore', 'integration', 'logql', 'metrics', 'metrics_service', 'observability', 'pprof', 'profiles', 'promql', 'query_frontend', 'traceql', 'traces', 'o11y_verified'];
+---
+<Site title="Rust API reference" description="Rust API documentation for the krabka-o11y storage, query, ingest, and service crates.">
+  <section class="shell section">
+    <span class="eyebrow">REFERENCE / RUSTDOC</span><h1>Rust API reference</h1>
+    <p class="hero-description">The reference is built from the same source revision as the website. Existing crate URLs remain available.</p>
+    <div class="evidence-list" style="margin-top:32px">
+      {crates.map((crate, index) => <a href={`${base}/krabka_${crate}/`}><span class="evidence-index">{String(index + 1).padStart(2, '0')}</span><h3>krabka-{crate.replaceAll('_', '-')}</h3><span style="margin-left:auto" aria-hidden="true">↗</span></a>)}
+    </div>
+  </section>
+</Site>

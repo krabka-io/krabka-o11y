@@ -1,0 +1,15 @@
+--- a/src/sys/wasi/net.rs
++++ b/src/sys/wasi/net.rs
+@@ -65,6 +65,12 @@
+         ).map_err(|errno| io::Error::from_raw_os_error(errno.raw() as i32))?
+     };
+ 
++    if let Err(errno) = unsafe { wasi::fd_fdstat_set_flags(socket, wasi::FDFLAGS_NONBLOCK) } {
++        // Mio requires EAGAIN instead of blocking after a stale readiness edge.
++        let _ = unsafe { wasi::fd_close(socket) };
++        return Err(io::Error::from_raw_os_error(errno.raw() as i32));
++    }
++
+     Ok(
+         socket as libc::c_int
+     )

@@ -1,0 +1,34 @@
+---
+import { existsSync, readFileSync } from 'node:fs';
+import Site from '../../layouts/Site.astro';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const manifest = existsSync('static/lab/manifest.json') ? JSON.parse(readFileSync('static/lab/manifest.json', 'utf8')) : undefined;
+const loadNote = manifest ? `Starting loads about ${Math.ceil((manifest.totalBytes + manifest.runtime.bytes) / 1_000_000)} MB of WebAssembly.` : 'Services download when you start the lab.';
+---
+<Site title="Observability lab" description="Run real krabka-o11y services in a browser WASI sandbox. Ingest sample metrics, logs, traces, and profiles, then query their public APIs.">
+  <section class="shell section lab-page">
+    <div class="section-intro"><div><span class="eyebrow">OBSERVABILITY LAB / WASI</span><h1>Run the stack.<br /><span>Follow the signal.</span></h1><p class="hero-description">Start real services, send sample telemetry, and query the public APIs.<br />The stack runs locally in your browser.</p></div><a class="text-link" href={`${base}/docs/getting_started/`}>Prefer Docker? Get started locally →</a></div>
+    <div class="lab-toolbar"><div><span class="lab-indicator" id="lab-indicator"></span><span id="lab-status" role="status">Stopped</span></div><div class="lab-controls"><button id="lab-start" class="button primary" type="button">Start the stack</button><button id="lab-seed" class="button secondary" type="button" disabled>Send sample telemetry</button><button id="lab-stop" class="button secondary" type="button" disabled>Stop</button></div></div>
+    <p class="small lab-runtime-note" id="lab-runtime-note">{loadNote} Data stays in this sandbox and clears when you stop or close it.</p>
+    <div class="lab-error" id="lab-error" role="alert" hidden></div>
+    <div class="lab-service-grid" aria-label="Service status">{['Broker', 'Metrics', 'Logs', 'Traces', 'Profiles'].map(name => <div class="lab-service" data-service={name.toLowerCase()}><span class="status-dot"></span><strong>{name}</strong><small>Stopped</small></div>)}</div>
+    <div class="lab-workbench">
+      <div class="lab-query-panel">
+        <div class="lab-panel-heading"><span class="eyebrow">QUERY EXPLORER</span><label for="lab-tenant">Tenant <input id="lab-tenant" value="lab" maxlength="64" autocomplete="off" /></label></div>
+        <div class="lab-tabs" role="tablist" aria-label="Signal"><button id="tab-metrics" role="tab" aria-selected="true" aria-controls="lab-query-body" data-signal="metrics">Metrics</button><button id="tab-logs" role="tab" aria-selected="false" tabindex="-1" aria-controls="lab-query-body" data-signal="logs">Logs</button><button id="tab-traces" role="tab" aria-selected="false" tabindex="-1" aria-controls="lab-query-body" data-signal="traces">Traces</button><button id="tab-profiles" role="tab" aria-selected="false" tabindex="-1" aria-controls="lab-query-body" data-signal="profiles">Profiles</button></div>
+        <div id="lab-query-body" role="tabpanel" aria-labelledby="tab-metrics">
+          <label class="lab-query-label" for="lab-query" id="lab-query-label">PromQL query</label>
+          <textarea id="lab-query" rows="3" spellcheck="false">lab_requests_total</textarea>
+          <div class="lab-query-actions"><select id="lab-example" aria-label="Example query"><option value="0">Requests by service</option><option value="1">Sum all requests</option></select><button id="lab-run" class="button primary" type="button" disabled>Run query →</button></div>
+          <p class="small" id="lab-endpoint">GET /api/v1/query</p>
+        </div>
+      </div>
+      <div class="lab-result-panel"><div class="lab-panel-heading"><span class="eyebrow">API RESPONSE</span><span class="small" id="lab-response-meta">No query yet</span></div><div class="lab-chart" id="lab-chart" hidden></div><pre id="lab-result" tabindex="0" aria-label="Query response"><code>Start the stack, send sample telemetry, then run a query.</code></pre></div>
+    </div>
+    <details class="lab-logs"><summary>Service logs <span class="small">Live stdout and stderr</span></summary><pre id="lab-logs-output" tabindex="0" aria-label="Service logs">The stack has not started.</pre></details>
+    <div class="inline-note"><span class="status-dot"></span><p>The browser lab demonstrates service behavior with sample data. Published performance measurements use a separate fixed deployment.</p><a href={`${base}/docs/operating_envelope/`}>Read performance evidence →</a></div>
+  </section>
+</Site>
+<script>
+  import '../../lab/app.js';
+</script>

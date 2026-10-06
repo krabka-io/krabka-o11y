@@ -404,6 +404,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn named_block_scan_resolves_keys_from_the_registered_store_root() {
+        for (base, key) in [
+            ("memory:///evaluation/team", "evaluation/team/block.parquet"),
+            (
+                "memory://bucket/evaluation/team",
+                "evaluation/team/trace block.parquet",
+            ),
+        ] {
+            let (mut bs, schema) = seeded_store().await;
+            bs.object_store()
+                .copy(
+                    &ObjectPath::from("blocks/b1.parquet"),
+                    &ObjectPath::from(key),
+                )
+                .await
+                .unwrap();
+            bs.base = Url::parse(base).unwrap();
+
+            let (ctx, table) = bs.scan_block_keys(&[key.to_owned()], schema).await.unwrap();
+            assert2::assert!(table_lines(&ctx, &table).await == ["hello", "world"]);
+        }
+    }
+
+    #[tokio::test]
     async fn scan_block_row_groups_reads_selected_groups() {
         let (bs, schema) = seeded_store().await;
         let (ctx, table) = bs
