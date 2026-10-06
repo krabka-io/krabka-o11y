@@ -1,0 +1,1 @@
+variants(absent_over_time({app="original"}[1m])) of ({app="missing"}[1m])
