@@ -20,6 +20,7 @@ categories = ["command-line-utilities"]
 heap-profiling = ["krabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
 
 [dependencies]
+krabka-domain-macros.workspace = true
 async-trait = { workspace = true }
 axum = { workspace = true, features = ["http2", "json", "query", "ws"] }
 base64 = { workspace = true }
@@ -85,6 +86,7 @@ x509-parser = { workspace = true }
 tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
 
 [dev-dependencies]
+futures.workspace = true
 assert2 = { workspace = true }
 # `wal_live_broker` builds a native Kafka record by hand -- the key, the value
 # and the `krabka-log-*` headers -- to show that the WAL topic is an interface

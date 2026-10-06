@@ -10,75 +10,18 @@ use crate::compactor::runtime::spawn_compaction_frontier_refresher;
 /// A refresh that returns an error is not the case under test: the loop logs
 /// that and carries on. What ends the task without a word is a panic, and a
 /// store that panics on `get` is the shortest way to one.
-#[derive(Debug)]
+#[derive(Debug, krabka_domain_macros::TypeNameDisplay)]
 struct PanicOnGetStore(object_store::memory::InMemory);
 
-impl std::fmt::Display for PanicOnGetStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("PanicOnGetStore")
-    }
-}
-
+#[krabka_domain_macros::delegate_object_store(self.0)]
 #[async_trait::async_trait]
 impl ObjectStore for PanicOnGetStore {
-    async fn put_opts(
-        &self,
-        location: &object_store::path::Path,
-        payload: object_store::PutPayload,
-        opts: object_store::PutOptions,
-    ) -> object_store::Result<object_store::PutResult> {
-        self.0.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &object_store::path::Path,
-        opts: object_store::PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
-        self.0.put_multipart_opts(location, opts).await
-    }
-
     async fn get_opts(
         &self,
         _location: &object_store::path::Path,
         _options: object_store::GetOptions,
     ) -> object_store::Result<object_store::GetResult> {
         panic!("the frontier object could not be read");
-    }
-
-    fn delete_stream(
-        &self,
-        locations: futures_util::stream::BoxStream<
-            'static,
-            object_store::Result<object_store::path::Path>,
-        >,
-    ) -> futures_util::stream::BoxStream<'static, object_store::Result<object_store::path::Path>>
-    {
-        self.0.delete_stream(locations)
-    }
-
-    fn list(
-        &self,
-        prefix: Option<&object_store::path::Path>,
-    ) -> futures_util::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
-    {
-        self.0.list(prefix)
-    }
-
-    async fn list_with_delimiter(
-        &self,
-        prefix: Option<&object_store::path::Path>,
-    ) -> object_store::Result<object_store::ListResult> {
-        self.0.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &object_store::path::Path,
-        to: &object_store::path::Path,
-        options: object_store::CopyOptions,
-    ) -> object_store::Result<()> {
-        self.0.copy_opts(from, to, options).await
     }
 }
 

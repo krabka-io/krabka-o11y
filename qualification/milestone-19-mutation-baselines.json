@@ -183,6 +183,9 @@
     }
   },
   "unseeded": [
+    "codegen",
+    "column-macros",
+    "domain-macros",
     "observability",
     "profiles",
     "promql",

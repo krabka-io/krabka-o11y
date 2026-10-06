@@ -141,7 +141,9 @@ mod span_block_schema_with_promoted_attrs;
 mod span_kind;
 mod status_code;
 
+pub(crate) use event_struct::event_fields;
 use event_struct::event_struct;
+pub(crate) use link_struct::link_fields;
 use link_struct::link_struct;
 use list_list_of::list_list_of;
 use list_of::list_of;

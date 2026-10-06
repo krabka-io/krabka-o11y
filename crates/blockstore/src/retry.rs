@@ -16,10 +16,9 @@
 use std::{error::Error, future::Future, num::NonZeroU32, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
-use futures::stream::BoxStream;
 use object_store::{
-    CopyOptions, Error as ObjectStoreError, GetOptions, GetResult, ListResult, MultipartUpload,
-    ObjectMeta, ObjectStore, PutMultipartOptions, PutOptions, PutPayload, PutResult, path::Path,
+    CopyOptions, Error as ObjectStoreError, GetOptions, GetResult, ListResult, ObjectStore,
+    PutOptions, PutPayload, PutResult, path::Path,
 };
 use tokio::time::sleep;
 use tracing::warn;
@@ -36,7 +35,8 @@ mod tests {
     use assert2::check;
     use futures::StreamExt as _;
     use object_store::{
-        ObjectStore, ObjectStoreExt as _, PutPayload, memory::InMemory, path::Path,
+        MultipartUpload, ObjectStore, ObjectStoreExt as _, PutMultipartOptions, PutPayload,
+        memory::InMemory, path::Path,
     };
     use parquet::errors::ParquetError;
 
@@ -59,7 +59,7 @@ mod tests {
     /// fail with `error`, and which counts every attempt at it. Everything
     /// else delegates to an in-memory store, so what a retry actually wrote
     /// can be read back.
-    #[derive(Debug)]
+    #[derive(Debug, krabka_domain_macros::TypeNameDisplay)]
     struct FlakyObjectStore {
         inner: Arc<InMemory>,
         flaky: FlakyOperation,
@@ -121,12 +121,7 @@ mod tests {
         }
     }
 
-    impl std::fmt::Display for FlakyObjectStore {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("FlakyObjectStore")
-        }
-    }
-
+    #[krabka_domain_macros::delegate_object_store(self.inner)]
     #[async_trait]
     impl ObjectStore for FlakyObjectStore {
         async fn put_opts(
@@ -152,21 +147,6 @@ mod tests {
             self.inner.put_multipart_opts(location, options).await
         }
 
-        async fn get_opts(
-            &self,
-            location: &Path,
-            options: GetOptions,
-        ) -> object_store::Result<GetResult> {
-            self.inner.get_opts(location, options).await
-        }
-
-        fn list(
-            &self,
-            prefix: Option<&Path>,
-        ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-            self.inner.list(prefix)
-        }
-
         async fn list_with_delimiter(
             &self,
             prefix: Option<&Path>,
@@ -187,13 +167,6 @@ mod tests {
                 return Err(error);
             }
             self.inner.copy_opts(from, to, options).await
-        }
-
-        fn delete_stream(
-            &self,
-            locations: BoxStream<'static, object_store::Result<Path>>,
-        ) -> BoxStream<'static, object_store::Result<Path>> {
-            self.inner.delete_stream(locations)
         }
     }
 

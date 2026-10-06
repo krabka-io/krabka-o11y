@@ -383,8 +383,7 @@ mod tests {
     use krabka_promql::{AlertmanagerSink, MetricStore};
     use krabka_units::prelude::*;
     use object_store::{
-        CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-        PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
+        GetOptions, GetResult, ObjectMeta, ObjectStore, PutPayload, memory::InMemory, path::Path,
     };
     use tower::ServiceExt;
 
@@ -435,6 +434,7 @@ mod tests {
         replacement: Option<(Path, PutPayload)>,
     }
 
+    #[derive(krabka_domain_macros::TypeNameDisplay)]
     struct CountingObjectStore {
         inner: Arc<InMemory>,
         list_calls: Arc<AtomicUsize>,
@@ -471,31 +471,9 @@ mod tests {
         }
     }
 
-    impl std::fmt::Display for CountingObjectStore {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_str("CountingObjectStore")
-        }
-    }
-
+    #[krabka_domain_macros::delegate_object_store(self.inner)]
     #[async_trait::async_trait]
     impl ObjectStore for CountingObjectStore {
-        async fn put_opts(
-            &self,
-            location: &Path,
-            payload: PutPayload,
-            opts: PutOptions,
-        ) -> object_store::Result<PutResult> {
-            self.inner.put_opts(location, payload, opts).await
-        }
-
-        async fn put_multipart_opts(
-            &self,
-            location: &Path,
-            opts: PutMultipartOptions,
-        ) -> object_store::Result<Box<dyn MultipartUpload>> {
-            self.inner.put_multipart_opts(location, opts).await
-        }
-
         async fn get_opts(
             &self,
             location: &Path,
@@ -558,13 +536,6 @@ mod tests {
             self.inner.get_ranges(location, ranges).await
         }
 
-        fn delete_stream(
-            &self,
-            locations: BoxStream<'static, object_store::Result<Path>>,
-        ) -> BoxStream<'static, object_store::Result<Path>> {
-            self.inner.delete_stream(locations)
-        }
-
         fn list(
             &self,
             prefix: Option<&Path>,
@@ -575,22 +546,6 @@ mod tests {
                 tokio::time::sleep(delay).await;
                 item
             }))
-        }
-
-        async fn list_with_delimiter(
-            &self,
-            prefix: Option<&Path>,
-        ) -> object_store::Result<ListResult> {
-            self.inner.list_with_delimiter(prefix).await
-        }
-
-        async fn copy_opts(
-            &self,
-            from: &Path,
-            to: &Path,
-            options: CopyOptions,
-        ) -> object_store::Result<()> {
-            self.inner.copy_opts(from, to, options).await
         }
     }
 

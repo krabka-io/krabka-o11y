@@ -35,7 +35,9 @@ use crate::{
         wire::parse_hex16,
     },
     limits::overrides_api_response,
+    query_param::query_param,
     readiness::tempo_readiness_routes,
+    scope_param::scope_param,
 };
 
 // --- param helpers (mirror the querier's contract) --------------------------
@@ -336,19 +338,15 @@ mod parse_duration_component_ns;
 mod parse_go_duration_ns;
 mod parse_logfmt_tags;
 mod parse_logfmt_value;
-mod parse_scope;
 mod parse_seconds_to_ns;
 mod parse_step_to_ns;
 mod query_instant;
-mod query_param;
 mod query_range;
 mod request_tenant;
 mod required_seconds;
 mod required_step;
 mod required_time_bounds;
 mod router_with_backend;
-mod scope_name;
-mod scope_param;
 mod search;
 mod search_query;
 mod search_stream;
@@ -374,19 +372,15 @@ use parse_duration_component_ns::parse_duration_component_ns;
 use parse_go_duration_ns::parse_go_duration_ns;
 use parse_logfmt_tags::parse_logfmt_tags;
 use parse_logfmt_value::parse_logfmt_value;
-use parse_scope::parse_scope;
 use parse_seconds_to_ns::parse_seconds_to_ns;
 use parse_step_to_ns::parse_step_to_ns;
 use query_instant::query_instant;
-use query_param::query_param;
 use query_range::query_range;
 use request_tenant::request_tenant;
 use required_seconds::required_seconds;
 use required_step::required_step;
 use required_time_bounds::required_time_bounds;
 pub use router_with_backend::router_with_backend;
-use scope_name::scope_name;
-use scope_param::scope_param;
 use search::search;
 use search_query::search_query;
 use search_stream::search_stream;

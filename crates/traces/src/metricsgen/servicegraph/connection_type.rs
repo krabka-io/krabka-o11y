@@ -1,20 +1,15 @@
-/// Tempo service-graph connection classification.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ConnectionType {
-    Unset,
-    VirtualNode,
-    MessagingSystem,
-    Database,
-}
+use krabka_domain_macros::EnumName;
 
-impl ConnectionType {
-    #[must_use]
-    pub fn as_label(self) -> &'static str {
-        match self {
-            Self::Unset => "unset",
-            Self::VirtualNode => "virtual_node",
-            Self::MessagingSystem => "messaging_system",
-            Self::Database => "database",
-        }
-    }
+/// Tempo service-graph connection classification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumName)]
+#[enum_name(accessor = "as_label")]
+pub enum ConnectionType {
+    #[name(value = "unset")]
+    Unset,
+    #[name(value = "virtual_node")]
+    VirtualNode,
+    #[name(value = "messaging_system")]
+    MessagingSystem,
+    #[name(value = "database")]
+    Database,
 }

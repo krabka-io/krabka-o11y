@@ -1,0 +1,22 @@
+[package]
+name = "krabka-column-macros"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Moxy derives for ordered Arrow column builders"
+
+[lib]
+proc-macro = true
+
+[lints]
+workspace = true
+
+[dependencies]
+moxy = { workspace = true, features = ["macros", "template", "diagnostic"] }
+
+[dev-dependencies]
+arrow.workspace = true
+assert2.workspace = true

@@ -1,17 +1,25 @@
+use krabka_domain_macros::EnumName;
+
 use super::{Deserialize, Serialize};
 
 /// Where a clock gets its time.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, EnumName)]
+#[enum_name(accessor = "as_label")]
 pub enum ClockSourceKind {
     /// IEEE 1588 Precision Time Protocol.
+    #[name(value = "ptp")]
     Ptp,
     /// Network Time Protocol.
+    #[name(value = "ntp")]
     Ntp,
     /// A satellite receiver.
+    #[name(value = "gnss")]
     Gnss,
     /// The kernel clock discipline that `adjtimex(2)` reports.
+    #[name(value = "kernel_timex")]
     KernelTimex,
     /// A PTP hardware clock device.
+    #[name(value = "phc")]
     Phc,
 }
 
@@ -24,16 +32,4 @@ impl ClockSourceKind {
         Self::KernelTimex,
         Self::Phc,
     ];
-
-    /// The label and dictionary value for this source kind.
-    #[must_use]
-    pub const fn as_label(self) -> &'static str {
-        match self {
-            Self::Ptp => "ptp",
-            Self::Ntp => "ntp",
-            Self::Gnss => "gnss",
-            Self::KernelTimex => "kernel_timex",
-            Self::Phc => "phc",
-        }
-    }
 }

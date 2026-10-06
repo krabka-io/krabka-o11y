@@ -1,4 +1,4 @@
-use super::{BTreeSet, Metrics, ScopedTag, TagNamesPartial, TagScope, scope_key};
+use super::{BTreeSet, Metrics, ScopedTag, TagNamesPartial, TagScope};
 
 /// Union scoped tag names across jobs, then dedup and sort per scope. This also
 /// accumulates metrics.
@@ -13,7 +13,7 @@ pub fn merge_tag_names(partials: Vec<TagNamesPartial>) -> (Vec<ScopedTag>, Metri
     for partial in partials {
         metrics.add(&partial.metrics);
         for st in partial.tags {
-            let key = scope_key(st.scope);
+            let key = st.scope.as_str();
             let entry = by_scope
                 .entry(key)
                 .or_insert_with(|| (st.scope, BTreeSet::new()));

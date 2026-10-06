@@ -1,3 +1,5 @@
+use krabka_domain_macros::EnumName;
+
 use super::{
     BinModifier, InstantSample, Labels, NativeHistogram, PromqlError, Result, SampleValue,
     ScalarSide, T_ADD, T_ATAN2, T_DIV, T_EQLC, T_GTE, T_GTR, T_LAND, T_LOR, T_LSS, T_LTE,
@@ -10,22 +12,38 @@ use crate::{
     planner::histogram_trim_operators::{HISTOGRAM_TRIM_LOWER, HISTOGRAM_TRIM_UPPER},
 };
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, EnumName)]
+#[enum_name(accessor = "symbol")]
 pub(crate) enum BinaryOp {
+    #[name(value = "+")]
     Add,
+    #[name(value = "-")]
     Sub,
+    #[name(value = "*")]
     Mul,
+    #[name(value = "/")]
     Div,
+    #[name(value = "%")]
     Mod,
+    #[name(value = "^")]
     Pow,
+    #[name(value = "atan2")]
     Atan2,
+    #[name(value = "</")]
     TrimUpper,
+    #[name(value = ">/")]
     TrimLower,
+    #[name(value = "==")]
     Eq,
+    #[name(value = "!=")]
     Neq,
+    #[name(value = ">")]
     Gt,
+    #[name(value = "<")]
     Lt,
+    #[name(value = ">=")]
     Gte,
+    #[name(value = "<=")]
     Lte,
 }
 
@@ -74,30 +92,6 @@ impl BinaryOp {
             self,
             Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Mod | Self::Pow | Self::Atan2
         )
-    }
-
-    /// Returns the `PromQL` surface symbol for this operator.
-    ///
-    /// The symbol matches the Prometheus annotation text, for example `==`,
-    /// `!=`, `>`, and `>=`.
-    pub(crate) fn symbol(self) -> &'static str {
-        match self {
-            Self::Add => "+",
-            Self::Sub => "-",
-            Self::Mul => "*",
-            Self::Div => "/",
-            Self::Mod => "%",
-            Self::Pow => "^",
-            Self::Atan2 => "atan2",
-            Self::TrimUpper => "</",
-            Self::TrimLower => ">/",
-            Self::Eq => "==",
-            Self::Neq => "!=",
-            Self::Gt => ">",
-            Self::Lt => "<",
-            Self::Gte => ">=",
-            Self::Lte => "<=",
-        }
     }
 
     pub(crate) fn apply_scalar(

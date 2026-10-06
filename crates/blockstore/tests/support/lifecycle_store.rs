@@ -17,6 +17,7 @@ use std::{
 };
 
 use krabka_blockstore::{MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation};
+use krabka_domain_macros::EnumName;
 use object_store::{
     ObjectStore, ObjectStoreExt as _, ObjectStoreScheme, memory::InMemory, path::Path,
     prefix::PrefixStore,
@@ -31,27 +32,20 @@ const CONTRACT_URL_VAR: &str = "KRABKA_OBJECT_STORE_CONTRACT_URL";
 const CONTRACT_PREFIX: &str = "krabka-contract/";
 
 /// A step of the lifecycle that a test ran and checked.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, EnumName)]
 pub enum LifecycleStep {
+    #[name(value = "flush")]
     Flush,
+    #[name(value = "query")]
     Query,
+    #[name(value = "compaction")]
     Compaction,
+    #[name(value = "retention")]
     Retention,
+    #[name(value = "orphan_reconciliation")]
     OrphanReconciliation,
+    #[name(value = "restart")]
     Restart,
-}
-
-impl LifecycleStep {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Flush => "flush",
-            Self::Query => "query",
-            Self::Compaction => "compaction",
-            Self::Retention => "retention",
-            Self::OrphanReconciliation => "orphan_reconciliation",
-            Self::Restart => "restart",
-        }
-    }
 }
 
 enum Backing {

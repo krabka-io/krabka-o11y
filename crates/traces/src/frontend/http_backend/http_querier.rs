@@ -3,7 +3,7 @@ use super::{
     QuerierBackend, QuerierScheme, SearchJobRequest, SearchPartial, SearchResponseJson,
     TENANT_HEADER, TagNamesJobRequest, TagNamesPartial, TagValuesBody, TagValuesJobRequest,
     TagValuesPartial, TagsBody, TraceByIdJobRequest, TraceByIdResponseJson, TracePartial,
-    async_trait, build_url, error_for_status, ns_to_seconds, push_shard_params, scope_param,
+    async_trait, build_url, error_for_status, ns_to_seconds, push_shard_params,
 };
 
 /// The HTTP transport to one querier at a time.
@@ -137,7 +137,7 @@ impl QuerierBackend for HttpQuerier {
             ("end", ns_to_seconds(req.end_ns)),
         ];
         if let Some(scope) = req.scope {
-            params.push(("scope", scope_param(scope).to_string()));
+            params.push(("scope", scope.as_str().to_string()));
         }
         push_shard_params(&mut params, &req.shard);
         let resp = self

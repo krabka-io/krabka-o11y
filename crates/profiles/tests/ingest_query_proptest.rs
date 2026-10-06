@@ -202,17 +202,7 @@ fn arb_ingest_query() -> impl Strategy<Value = IngestQuery> {
 // -- The renderer --------------------------------------------------------
 
 fn format_text(format: IngestFormat) -> &'static str {
-    match format {
-        IngestFormat::Pprof => "pprof",
-        IngestFormat::Jfr => "jfr",
-        IngestFormat::Trie => "trie",
-        IngestFormat::Tree => "tree",
-        IngestFormat::Lines => "lines",
-        IngestFormat::Speedscope => "speedscope",
-        // Anything the parser does not recognise falls back to `Groups`, and
-        // `groups` is the spelling a Pyroscope client sends for it.
-        IngestFormat::Groups => "groups",
-    }
+    format.as_str()
 }
 
 /// Percent-encodes everything outside the unreserved set, the way a client

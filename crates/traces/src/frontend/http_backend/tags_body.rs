@@ -1,4 +1,4 @@
-use super::{ScopeTagsJson, parse_scope};
+use super::ScopeTagsJson;
 
 /// The `/api/v2/search/tags` body: `{ scopes: [{ name, tags }], metrics }`.
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -14,7 +14,8 @@ impl TagsBody {
         self.scopes
             .iter()
             .map(|s| krabka_traceql::ScopedTag {
-                scope: parse_scope(&s.name),
+                scope: krabka_traceql::TagScope::from_name(&s.name)
+                    .unwrap_or(krabka_traceql::TagScope::Span),
                 tags: s.tags.clone(),
             })
             .collect()

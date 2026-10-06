@@ -376,7 +376,7 @@ impl SpanStore for KrabkaSpanStore {
         }
         if let Some(live) = &self.live {
             for scoped in live.tag_names(tenant, scope, start_ns, end_ns).await? {
-                let key = tag_scope_key(scoped.scope);
+                let key = scoped.scope.as_str();
                 let (_, tags) = by_scope
                     .entry(key)
                     .or_insert((scoped.scope, BTreeSet::new()));
@@ -385,7 +385,7 @@ impl SpanStore for KrabkaSpanStore {
         }
         Ok(SCOPE_ORDER
             .iter()
-            .filter_map(|scope| by_scope.remove(tag_scope_key(*scope)))
+            .filter_map(|scope| by_scope.remove(scope.as_str()))
             .filter_map(|(scope, tags)| {
                 (!tags.is_empty()).then_some(ScopedTag {
                     scope,

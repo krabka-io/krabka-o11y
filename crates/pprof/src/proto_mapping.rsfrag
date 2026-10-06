@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]
 pub struct Mapping {
     pub id: u64,
     pub memory_start: u64,
@@ -7,12 +7,6 @@ pub struct Mapping {
     pub filename: i64,
     pub build_id: i64,
     pub symbolization: MappingSymbolization,
-}
-
-impl ::core::fmt::Debug for Mapping {
-    fn fmt(&self, formatter: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        formatter.debug_struct("Mapping").field("id", &self.id).field("memory_start", &self.memory_start).field("memory_limit", &self.memory_limit).field("file_offset", &self.file_offset).field("filename", &self.filename).field("build_id", &self.build_id).field("symbolization", &self.symbolization).finish()
-    }
 }
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]

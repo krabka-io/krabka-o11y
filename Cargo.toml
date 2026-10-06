@@ -52,6 +52,10 @@ split-debuginfo = "packed"
 debug = "line-tables-only"
 
 [workspace.dependencies]
+moxy = { git = "https://github.com/aacebo/moxy", rev = "de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450" }
+krabka-codegen = { path = "crates/codegen" }
+krabka-column-macros = { path = "crates/column-macros" }
+krabka-domain-macros = { path = "crates/domain-macros" }
 addr2line = "0.27"
 ahash = "0.8.12"
 arc-swap = "1"

@@ -1,4 +1,4 @@
-use super::{BTreeMap, BTreeSet, TagScope, tag_scope_key};
+use super::{BTreeMap, BTreeSet, TagScope};
 
 pub(crate) fn merge_dynamic_scope(
     by_scope: &mut BTreeMap<&'static str, (TagScope, BTreeSet<String>)>,
@@ -10,7 +10,7 @@ pub(crate) fn merge_dynamic_scope(
         return;
     }
     let (_, out) = by_scope
-        .entry(tag_scope_key(scope))
+        .entry(scope.as_str())
         .or_insert((scope, BTreeSet::new()));
     out.extend(tags);
 }

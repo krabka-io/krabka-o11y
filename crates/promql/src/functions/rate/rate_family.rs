@@ -1,31 +1,29 @@
+use krabka_domain_macros::EnumName;
+
 use super::{InstantKind, RangeKind, Time, TimeExt, extrapolated_rate, instant_delta};
 
 /// Which rate-family function a [`RateUdf`] evaluates.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, EnumName)]
+#[enum_name(accessor = "udf_name")]
 pub(crate) enum RateFamily {
     /// Windowed, reset-corrected, per-second rate.
+    #[name(value = "prom_rate")]
     Rate,
     /// Windowed, reset-corrected total increase.
+    #[name(value = "prom_increase")]
     Increase,
     /// Windowed gauge delta (first..last, no reset correction).
+    #[name(value = "prom_delta")]
     Delta,
     /// Instant per-second rate from the last two samples.
+    #[name(value = "prom_irate")]
     Irate,
     /// Instant gauge delta from the last two samples.
+    #[name(value = "prom_idelta")]
     Idelta,
 }
 
 impl RateFamily {
-    pub(crate) fn udf_name(self) -> &'static str {
-        match self {
-            Self::Rate => "prom_rate",
-            Self::Increase => "prom_increase",
-            Self::Delta => "prom_delta",
-            Self::Irate => "prom_irate",
-            Self::Idelta => "prom_idelta",
-        }
-    }
-
     /// Evaluates one window and returns `None` where Prometheus has no value.
     ///
     /// `eval_ts` is `range_end_ms`. `range` is the selector width.

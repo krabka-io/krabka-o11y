@@ -82,6 +82,8 @@ pull_image = use_repo_rule("@rules_img//img:pull.bzl", "pull")
         name = name,
         digest = digest,
         layer_handling = "eager",
+        # The mirror can lack a pinned layer. Try Docker Hub for the same bytes.
+        registries = ["index.docker.io"] if registry == "mirror.gcr.io" else [],
         registry = registry,
         repository = repository,
         tag = tag,
@@ -301,6 +303,25 @@ SIBLING_MEMBERS = {
         workspace_cargo_toml = "Cargo.toml",
     )
     for crate_name, directory in SIBLING_MEMBERS.items()
+]
+
+# Moxy's syntax layers are members of a workspace with glob entries.
+[
+    crate.annotation(
+        crate = crate_name,
+        strip_prefix = directory,
+        workspace_cargo_toml = "Cargo.toml",
+    )
+    for crate_name, directory in {
+        "moxy": ".",
+        "moxy-ast": "crates/moxy-ast",
+        "moxy-build": "crates/moxy-build",
+        "moxy-diagnostic": "crates/moxy-diagnostic",
+        "moxy-fmt": "crates/moxy-fmt",
+        "moxy-macros": "crates/moxy-macros",
+        "moxy-template": "crates/moxy-template",
+        "moxy-token": "crates/moxy-token",
+    }.items()
 ]
 
 # krabka-protocol carries the same member annotation plus one more. Its build.rs

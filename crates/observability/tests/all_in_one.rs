@@ -368,7 +368,13 @@ fn block_keys(prefix: &std::path::Path) -> Vec<BlockKey> {
         .iter()
         .filter_map(|path| {
             let relative = path.strip_prefix(prefix).ok()?;
-            let parts: Vec<&str> = relative.to_str()?.split('/').collect();
+            let parts: Vec<&str> = relative
+                .components()
+                .filter_map(|component| match component {
+                    std::path::Component::Normal(part) => part.to_str(),
+                    _ => None,
+                })
+                .collect();
             let [tenant, partition, offsets, time] = parts.as_slice() else {
                 return None;
             };

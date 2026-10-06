@@ -1,4 +1,5 @@
 // Constants, so `try_from_token` matches on them rather than binding them.
+use krabka_domain_macros::EnumName;
 #[cfg(test)]
 use promql_parser::parser::token::{
     T_AVG, T_COUNT, T_GROUP, T_MAX, T_MIN, T_STDDEV, T_STDVAR, T_SUM,
@@ -8,15 +9,24 @@ use super::{AggregateState, SampleValue};
 #[cfg(test)]
 use super::{PromqlError, Result, TokenType};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, EnumName)]
+#[enum_name(accessor = "name")]
 pub(crate) enum AggregateOp {
+    #[name(value = "sum")]
     Sum,
+    #[name(value = "avg")]
     Avg,
+    #[name(value = "count")]
     Count,
+    #[name(value = "group")]
     Group,
+    #[name(value = "min")]
     Min,
+    #[name(value = "max")]
     Max,
+    #[name(value = "stddev")]
     Stddev,
+    #[name(value = "stdvar")]
     Stdvar,
 }
 
@@ -61,20 +71,6 @@ impl AggregateOp {
             Self::Stddev => SampleValue::Float(state.population_variance().sqrt()),
             Self::Stdvar => SampleValue::Float(state.population_variance()),
         })
-    }
-
-    /// The operator's own name, as Prometheus spells it in an annotation.
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Sum => "sum",
-            Self::Avg => "avg",
-            Self::Count => "count",
-            Self::Group => "group",
-            Self::Min => "min",
-            Self::Max => "max",
-            Self::Stddev => "stddev",
-            Self::Stdvar => "stdvar",
-        }
     }
 
     pub(crate) fn ignores_histograms(self) -> bool {

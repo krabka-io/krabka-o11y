@@ -27,6 +27,9 @@
 # README.md, "Seeding a crate by hand".
 #
 blockstore       145
+codegen          unseeded
+column-macros    unseeded
+domain-macros    unseeded
 logql            91
 metrics          174
 metrics-service  119

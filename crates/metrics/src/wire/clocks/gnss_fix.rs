@@ -1,29 +1,25 @@
+use krabka_domain_macros::EnumName;
+
 use super::{ClockWireError, Deserialize, Serialize, pb};
 
 /// The quality of a GNSS position solution.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, EnumName)]
+#[enum_name(accessor = "as_label")]
 pub enum GnssFix {
     /// The receiver has no fix.
+    #[name(value = "none")]
     None,
     /// The receiver has a two-dimensional fix.
+    #[name(value = "2d")]
     TwoD,
     /// The receiver has a three-dimensional fix.
+    #[name(value = "3d")]
     ThreeD,
 }
 
 impl GnssFix {
     /// Every fix quality, in wire order.
     pub const ALL: [Self; 3] = [Self::None, Self::TwoD, Self::ThreeD];
-
-    /// The label and dictionary value for this fix quality.
-    #[must_use]
-    pub const fn as_label(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::TwoD => "2d",
-            Self::ThreeD => "3d",
-        }
-    }
 }
 
 /// Reads the GNSS fix quality, where the unspecified value means the receiver

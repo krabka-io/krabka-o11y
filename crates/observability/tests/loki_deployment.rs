@@ -1,6 +1,7 @@
 //! Loki integration scenarios against real Krabka roles, broker WAL, and `MinIO`.
 //! Fixed inputs supply the oracle; a querier tailing an empty WAL proves
 //! that stored blocks supply the answer. See `loki_deployment.md` for upstream mapping.
+#![cfg(unix)]
 
 use std::{
     os::unix::fs::MetadataExt as _,

@@ -1,9 +1,7 @@
 //! Build profile-samples `RecordBatch`es.
 
-use std::sync::Arc;
-
 use arrow::{
-    array::{ArrayRef, BinaryBuilder, Int64Builder, StringDictionaryBuilder, UInt64Builder},
+    array::{BinaryBuilder, Int64Builder, StringDictionaryBuilder, UInt64Builder},
     datatypes::Int32Type,
     record_batch::RecordBatch,
 };
@@ -45,6 +43,18 @@ mod tests {
             row(1, 100, 9, 30, None),
         ];
         let batch = encode_profile_samples(&rows).unwrap();
+        let fingerprints = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<UInt64Array>()
+            .unwrap();
+        let timestamps = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert2::assert!(fingerprints.value(0) == 1);
+        assert2::assert!(timestamps.value(0) == 100);
         validate_against(&batch.schema(), &profile_samples_decl()).unwrap();
 
         let stacks = batch

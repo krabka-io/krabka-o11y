@@ -1,6 +1,7 @@
 //! Tempo deployment scenarios against Krabka roles, the broker WAL, and `MinIO`.
 //! Fixed inputs supply expected spans. Cold queriers have no live store.
 //! See `tempo_deployment.md` for the pinned upstream scenarios.
+#![cfg(unix)]
 
 use std::{io::Write as _, os::unix::fs::MetadataExt as _, time::Duration};
 

@@ -1,6 +1,6 @@
 use super::{
-    Arc, ArrayRef, BinaryBuilder, BlockStoreError, Int32Type, Int64Builder, ProfileSampleRow,
-    RecordBatch, Result, StringDictionaryBuilder, UInt64Builder, profile_samples_schema,
+    BinaryBuilder, BlockStoreError, Int32Type, Int64Builder, ProfileSampleRow, RecordBatch, Result,
+    StringDictionaryBuilder, UInt64Builder, profile_samples_schema,
 };
 
 /// Encodes rows into a `RecordBatch` that matches `profile_samples_schema()`.
@@ -8,54 +8,48 @@ use super::{
 /// # Errors
 /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
 pub fn encode_profile_samples(rows: &[ProfileSampleRow]) -> Result<RecordBatch> {
-    let mut fp = UInt64Builder::new();
-    let mut ts = Int64Builder::new();
-    let mut profile_type = StringDictionaryBuilder::<Int32Type>::new();
-    let mut stacktrace_id = UInt64Builder::new();
-    let mut value = Int64Builder::new();
-    let mut partition = UInt64Builder::new();
-    let mut total_value = Int64Builder::new();
-    let mut span_id = UInt64Builder::new();
-    let mut trace_id = BinaryBuilder::new();
-    let mut wal_sample_ids = arrow::array::ListBuilder::new(BinaryBuilder::new());
+    let mut columns = ProfileSampleColumns::new();
 
     for row in rows {
-        fp.append_value(row.series_fingerprint);
-        ts.append_value(row.timestamp);
-        profile_type
+        columns.fp.append_value(row.series_fingerprint);
+        columns.ts.append_value(row.timestamp);
+        columns
+            .profile_type
             .append(&row.profile_type)
             .map_err(|err| BlockStoreError::InvalidBlock(err.to_string()))?;
-        stacktrace_id.append_value(row.stacktrace_id);
-        value.append_value(row.value);
-        partition.append_value(row.stacktrace_partition);
-        total_value.append_value(row.total_value);
+        columns.stacktrace_id.append_value(row.stacktrace_id);
+        columns.value.append_value(row.value);
+        columns.partition.append_value(row.stacktrace_partition);
+        columns.total_value.append_value(row.total_value);
         match row.span_id {
-            Some(value) => span_id.append_value(value),
-            None => span_id.append_null(),
+            Some(value) => columns.span_id.append_value(value),
+            None => columns.span_id.append_null(),
         }
         for id in &row.wal_sample_ids {
-            wal_sample_ids.values().append_value(id);
+            columns.wal_sample_ids.values().append_value(id);
         }
-        wal_sample_ids.append(true);
+        columns.wal_sample_ids.append(true);
         match &row.trace_id {
-            Some(value) => trace_id.append_value(value),
-            None => trace_id.append_null(),
+            Some(value) => columns.trace_id.append_value(value),
+            None => columns.trace_id.append_null(),
         }
     }
 
-    let columns: Vec<ArrayRef> = vec![
-        Arc::new(fp.finish()),
-        Arc::new(ts.finish()),
-        Arc::new(profile_type.finish()),
-        Arc::new(stacktrace_id.finish()),
-        Arc::new(value.finish()),
-        Arc::new(partition.finish()),
-        Arc::new(total_value.finish()),
-        Arc::new(span_id.finish()),
-        Arc::new(trace_id.finish()),
-        Arc::new(wal_sample_ids.finish()),
-    ];
-
-    RecordBatch::try_new(profile_samples_schema(), columns)
+    RecordBatch::try_new(profile_samples_schema(), columns.finish())
         .map_err(|err| BlockStoreError::InvalidBlock(err.to_string()))
+}
+
+#[derive(krabka_column_macros::ColumnBuilders)]
+struct ProfileSampleColumns {
+    fp: UInt64Builder,
+    ts: Int64Builder,
+    profile_type: StringDictionaryBuilder<Int32Type>,
+    stacktrace_id: UInt64Builder,
+    value: Int64Builder,
+    partition: UInt64Builder,
+    total_value: Int64Builder,
+    span_id: UInt64Builder,
+    trace_id: BinaryBuilder,
+    #[column(init = "arrow::array::ListBuilder::new(BinaryBuilder::new())")]
+    wal_sample_ids: arrow::array::ListBuilder<BinaryBuilder>,
 }

@@ -1,7 +1,7 @@
 use super::{
     Arc, BlockCatalog, Extension, HeaderMap, IntoResponse, Json, Principal, QuerierBackend,
     QueryFrontend, Response, State, StatusCode, Uri, backend_error_response, json,
-    optional_time_bounds, request_tenant, scope_name, scope_param,
+    optional_time_bounds, request_tenant, scope_param,
 };
 
 pub(crate) async fn search_tags_v2<B, C>(
@@ -32,7 +32,7 @@ where
     };
     let scopes: Vec<_> = tags
         .iter()
-        .map(|st| json!({ "name": scope_name(st.scope), "tags": &st.tags }))
+        .map(|st| json!({ "name": st.scope.as_str(), "tags": &st.tags }))
         .collect();
     let mut body = json!({ "scopes": scopes, "metrics": { "inspectedBytes": "0" } });
     // Absent unless there is something to say, so a complete answer stays the

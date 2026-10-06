@@ -1,6 +1,6 @@
 use super::{
-    Arc, ArrayRef, BooleanBuilder, Float64Builder, HistogramCodecError, Int8Builder, Int64Builder,
-    NativeHistogram, RecordBatch, UInt64Builder, append_f64_list, append_spans,
+    BooleanBuilder, Float64Builder, HistogramCodecError, Int8Builder, Int64Builder, ListBuilder,
+    NativeHistogram, RecordBatch, StructBuilder, UInt64Builder, append_f64_list, append_spans,
     native_histogram_schema, new_f64_list_builder, new_span_list_builder,
     validate_span_count_consistency,
 };
@@ -17,63 +17,62 @@ pub fn encode_native_histograms(
         validate_span_count_consistency(&histogram.negative_spans, &histogram.negative_counts)?;
     }
 
-    let mut fingerprints = UInt64Builder::new();
-    let mut timestamps = Int64Builder::new();
-    let mut schemas = Int8Builder::new();
-    let mut is_floats = BooleanBuilder::new();
-    let mut reset_hints = Int8Builder::new();
-    let mut zero_thresholds = Float64Builder::new();
-    let mut zero_counts = Float64Builder::new();
-    let mut counts = Float64Builder::new();
-    let mut sums = Float64Builder::new();
-    let mut positive_spans = new_span_list_builder();
-    let mut positive_counts = new_f64_list_builder();
-    let mut negative_spans = new_span_list_builder();
-    let mut negative_counts = new_f64_list_builder();
-    let mut custom_values = new_f64_list_builder();
-    let mut start_timestamps = Int64Builder::new();
+    let mut columns = NativeHistogramColumns::new();
 
     for (fingerprint, timestamp, histogram) in rows {
-        fingerprints.append_value(*fingerprint);
-        timestamps.append_value(*timestamp);
-        schemas.append_value(histogram.schema);
-        is_floats.append_value(histogram.is_float);
-        reset_hints.append_value(histogram.reset_hint.as_i8());
-        zero_thresholds.append_value(histogram.zero_threshold);
-        zero_counts.append_value(histogram.zero_count);
-        counts.append_value(histogram.count);
-        sums.append_value(histogram.sum);
-        append_spans(&mut positive_spans, &histogram.positive_spans);
-        append_f64_list(&mut positive_counts, &histogram.positive_counts);
-        append_spans(&mut negative_spans, &histogram.negative_spans);
-        append_f64_list(&mut negative_counts, &histogram.negative_counts);
+        columns.fingerprints.append_value(*fingerprint);
+        columns.timestamps.append_value(*timestamp);
+        columns.schemas.append_value(histogram.schema);
+        columns.is_floats.append_value(histogram.is_float);
+        columns
+            .reset_hints
+            .append_value(histogram.reset_hint.as_i8());
+        columns
+            .zero_thresholds
+            .append_value(histogram.zero_threshold);
+        columns.zero_counts.append_value(histogram.zero_count);
+        columns.counts.append_value(histogram.count);
+        columns.sums.append_value(histogram.sum);
+        append_spans(&mut columns.positive_spans, &histogram.positive_spans);
+        append_f64_list(&mut columns.positive_counts, &histogram.positive_counts);
+        append_spans(&mut columns.negative_spans, &histogram.negative_spans);
+        append_f64_list(&mut columns.negative_counts, &histogram.negative_counts);
         match &histogram.custom_values {
-            Some(values) => append_f64_list(&mut custom_values, values),
-            None => custom_values.append(false),
+            Some(values) => append_f64_list(&mut columns.custom_values, values),
+            None => columns.custom_values.append(false),
         }
         match histogram.start_timestamp_ms {
-            Some(start_timestamp) => start_timestamps.append_value(start_timestamp),
-            None => start_timestamps.append_null(),
+            Some(start_timestamp) => columns.start_timestamps.append_value(start_timestamp),
+            None => columns.start_timestamps.append_null(),
         }
     }
 
-    let columns: Vec<ArrayRef> = vec![
-        Arc::new(fingerprints.finish()),
-        Arc::new(timestamps.finish()),
-        Arc::new(schemas.finish()),
-        Arc::new(is_floats.finish()),
-        Arc::new(reset_hints.finish()),
-        Arc::new(zero_thresholds.finish()),
-        Arc::new(zero_counts.finish()),
-        Arc::new(counts.finish()),
-        Arc::new(sums.finish()),
-        Arc::new(positive_spans.finish()),
-        Arc::new(positive_counts.finish()),
-        Arc::new(negative_spans.finish()),
-        Arc::new(negative_counts.finish()),
-        Arc::new(custom_values.finish()),
-        Arc::new(start_timestamps.finish()),
-    ];
+    Ok(RecordBatch::try_new(
+        native_histogram_schema(),
+        columns.finish(),
+    )?)
+}
 
-    Ok(RecordBatch::try_new(native_histogram_schema(), columns)?)
+#[derive(krabka_column_macros::ColumnBuilders)]
+struct NativeHistogramColumns {
+    fingerprints: UInt64Builder,
+    timestamps: Int64Builder,
+    schemas: Int8Builder,
+    is_floats: BooleanBuilder,
+    reset_hints: Int8Builder,
+    zero_thresholds: Float64Builder,
+    zero_counts: Float64Builder,
+    counts: Float64Builder,
+    sums: Float64Builder,
+    #[column(init = "new_span_list_builder()")]
+    positive_spans: ListBuilder<StructBuilder>,
+    #[column(init = "new_f64_list_builder()")]
+    positive_counts: ListBuilder<Float64Builder>,
+    #[column(init = "new_span_list_builder()")]
+    negative_spans: ListBuilder<StructBuilder>,
+    #[column(init = "new_f64_list_builder()")]
+    negative_counts: ListBuilder<Float64Builder>,
+    #[column(init = "new_f64_list_builder()")]
+    custom_values: ListBuilder<Float64Builder>,
+    start_timestamps: Int64Builder,
 }

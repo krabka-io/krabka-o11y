@@ -26,7 +26,7 @@ use std::{
 
 use assert2::{assert, check};
 use async_trait::async_trait;
-use futures::{TryStreamExt as _, stream::BoxStream};
+use futures::TryStreamExt as _;
 use krabka_metrics_service::{
     DEFAULT_UNBOUNDED_COMPATIBILITY_LOOKBACK, MimirTenantAdminState, RefreshingMetricBlockStore,
     mimir_tenant_admin_router, serve_prometheus_router,
@@ -34,10 +34,7 @@ use krabka_metrics_service::{
 use krabka_observability::server_security::ServerSecurity;
 use krabka_promql::{EngineOpts, PrometheusApiState, WalHead, prometheus_router};
 use krabka_units::prelude::*;
-use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
-};
+use object_store::{GetOptions, GetResult, ObjectStore, memory::InMemory, path::Path};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use testcontainers::{
@@ -642,37 +639,15 @@ async fn accepted_external_labels_are_not_added_to_the_imported_series() -> Test
 
 /// An in-memory store whose ranged reads fail while [`Self::fail_ranges`] is
 /// set.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, krabka_domain_macros::TypeNameDisplay)]
 struct RangeFailingStore {
     inner: InMemory,
     fail_ranges: AtomicBool,
 }
 
-impl std::fmt::Display for RangeFailingStore {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("RangeFailingStore")
-    }
-}
-
+#[krabka_domain_macros::delegate_object_store(self.inner)]
 #[async_trait]
 impl ObjectStore for RangeFailingStore {
-    async fn put_opts(
-        &self,
-        location: &Path,
-        payload: PutPayload,
-        options: PutOptions,
-    ) -> object_store::Result<PutResult> {
-        self.inner.put_opts(location, payload, options).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        options: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, options).await
-    }
-
     async fn get_opts(
         &self,
         location: &Path,
@@ -685,30 +660,6 @@ impl ObjectStore for RangeFailingStore {
             });
         }
         self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 }
 

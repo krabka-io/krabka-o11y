@@ -506,12 +506,9 @@ mod tests {
         check!(trace.spans.len() == 2, "and both batches contribute spans");
     }
 
-    /// `tag_scope_name` names a scope for the wire. The six names are
-    /// asserted to be pairwise distinct, so an arm returning a neighbour's
-    /// name cannot pass for its own.
     #[test]
     fn every_tag_scope_has_its_own_wire_name() {
-        let name = super::tag_scope_name;
+        let name = TagScope::as_str;
 
         check!(name(TagScope::Resource) == "resource");
         check!(name(TagScope::Span) == "span");
@@ -589,25 +586,32 @@ mod tests {
         check!(ceil(-1_000_000_001) == -1);
     }
 
-    /// `tag_scope_from_name` refuses what it does not know, rather than
-    /// falling back to a scope. Every entry is checked, since a table is where
-    /// two names quietly map to one variant.
     #[test]
-    fn a_tag_scope_name_maps_only_to_its_own_scope() {
-        use super::TagScope;
-        let scope = super::tag_scope_from_name;
-
-        check!(scope("resource") == Some(TagScope::Resource));
-        check!(scope("span") == Some(TagScope::Span));
-        check!(scope("intrinsic") == Some(TagScope::Intrinsic));
-        check!(scope("event") == Some(TagScope::Event));
-        check!(scope("link") == Some(TagScope::Link));
-        check!(scope("instrumentation") == Some(TagScope::Instrumentation));
-
-        check!(scope("") == None);
-        check!(scope("Span") == None, "case-sensitive");
-        check!(scope("spans") == None, "not a prefix match");
-        check!(scope("unknown") == None);
+    fn remote_live_scope_names_keep_known_scopes_and_skip_unknown_names() {
+        for (name, scope) in [
+            ("resource", TagScope::Resource),
+            ("span", TagScope::Span),
+            ("intrinsic", TagScope::Intrinsic),
+            ("event", TagScope::Event),
+            ("link", TagScope::Link),
+            ("instrumentation", TagScope::Instrumentation),
+        ] {
+            let body = serde_json::json!({"scopes": [{"name": name, "tags": ["tag"]}]});
+            check!(
+                super::scoped_tags_from_json(&body).unwrap()
+                    == vec![ScopedTag {
+                        scope,
+                        tags: vec!["tag".into()],
+                    }]
+            );
+        }
+        for name in ["", "Span", "spans", "unknown"] {
+            let body = serde_json::json!({"scopes": [{"name": name, "tags": ["tag"]}]});
+            check!(
+                super::scoped_tags_from_json(&body).unwrap().is_empty(),
+                "{name}"
+            );
+        }
     }
     use std::{collections::BTreeMap, sync::Arc};
 
@@ -757,8 +761,6 @@ mod ns_floor_seconds;
 mod remote_live_source;
 mod result;
 mod scoped_tags_from_json;
-mod tag_scope_from_name;
-mod tag_scope_name;
 mod time_from_nanos_u64;
 mod trace_spans_from_otlp;
 mod typed_values_from_json;
@@ -777,8 +779,6 @@ use ns_floor_seconds::ns_floor_seconds;
 pub use remote_live_source::RemoteLiveSource;
 pub use result::Result;
 use scoped_tags_from_json::scoped_tags_from_json;
-use tag_scope_from_name::tag_scope_from_name;
-use tag_scope_name::tag_scope_name;
 use time_from_nanos_u64::time_from_nanos_u64;
 use trace_spans_from_otlp::trace_spans_from_otlp;
 use typed_values_from_json::typed_values_from_json;

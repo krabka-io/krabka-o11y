@@ -1,10 +1,7 @@
 use std::sync::Mutex;
 
 use futures::stream::BoxStream;
-use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta,
-    PutMultipartOptions, PutOptions, PutResult,
-};
+use object_store::{GetOptions, GetResult, ListResult, ObjectMeta};
 
 use super::*;
 
@@ -42,25 +39,9 @@ impl std::fmt::Display for CountingObjectStore {
     }
 }
 
+#[krabka_domain_macros::delegate_object_store(self.inner)]
 #[async_trait::async_trait]
 impl ObjectStore for CountingObjectStore {
-    async fn put_opts(
-        &self,
-        location: &ObjectPath,
-        payload: PutPayload,
-        opts: PutOptions,
-    ) -> object_store::Result<PutResult> {
-        self.inner.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &ObjectPath,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
     // `get_ranges` keeps its default, which issues one ranged `get_opts` per
     // coalesced range. That is the request count a remote store would see.
     async fn get_opts(
@@ -76,13 +57,6 @@ impl ObjectStore for CountingObjectStore {
             self.count(|counts| counts.full_gets += 1);
         }
         self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<ObjectPath>>,
-    ) -> BoxStream<'static, object_store::Result<ObjectPath>> {
-        self.inner.delete_stream(locations)
     }
 
     fn list(
@@ -108,14 +82,5 @@ impl ObjectStore for CountingObjectStore {
     ) -> object_store::Result<ListResult> {
         self.count(|counts| counts.lists += 1);
         self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &ObjectPath,
-        to: &ObjectPath,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 }
