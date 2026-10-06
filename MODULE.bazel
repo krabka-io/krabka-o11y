@@ -303,6 +303,25 @@ SIBLING_MEMBERS = {
     for crate_name, directory in SIBLING_MEMBERS.items()
 ]
 
+# Moxy's syntax layers are members of a workspace with glob entries.
+[
+    crate.annotation(
+        crate = crate_name,
+        strip_prefix = directory,
+        workspace_cargo_toml = "Cargo.toml",
+    )
+    for crate_name, directory in {
+        "moxy": ".",
+        "moxy-ast": "crates/moxy-ast",
+        "moxy-build": "crates/moxy-build",
+        "moxy-diagnostic": "crates/moxy-diagnostic",
+        "moxy-fmt": "crates/moxy-fmt",
+        "moxy-macros": "crates/moxy-macros",
+        "moxy-template": "crates/moxy-template",
+        "moxy-token": "crates/moxy-token",
+    }.items()
+]
+
 # krabka-protocol carries the same member annotation plus one more. Its build.rs
 # only checks that its checked-in `generated/`
 # sources still match the `schemas/` SHAs; it emits no code. It reads its own

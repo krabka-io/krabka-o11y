@@ -12,6 +12,7 @@ load("@crates//:defs.bzl", "all_crate_deps", "crate_name", "edition")
 load("@rules_rs//rs:cargo_build_script.bzl", "cargo_build_script")
 load("@rules_rs//rs:rust_binary.bzl", "rust_binary")
 load("@rules_rs//rs:rust_library.bzl", "rust_library")
+load("@rules_rs//rs:rust_proc_macro.bzl", "rust_proc_macro")
 load("@rules_rs//rs:rust_test.bzl", "rust_test")
 load("@rules_rs_mutants//mutants:cargo_mutants_test.bzl", "cargo_mutants_test")
 load("@rules_rust//rust:defs.bzl", "rust_doc", "rust_doc_test")
@@ -198,6 +199,24 @@ def crate_library(
                 name = target + "_doc",
                 crate = ":" + target,
             )
+
+def crate_proc_macro(name):
+    """Build a workspace procedural macro from its Cargo metadata."""
+    rust_proc_macro(
+        name = name,
+        srcs = native.glob(["src/**/*.rs"]),
+        aliases = _aliases(["deps"]),
+        crate_features = _features(),
+        crate_name = crate_name(),
+        edition = edition(),
+        rustc_flags = WORKSPACE_RUSTC_FLAGS,
+        visibility = ["//visibility:public"],
+        deps = all_crate_deps(normal = True),
+    )
+    clippy_test(
+        name = name + "_clippy",
+        srcs = [":" + name],
+    )
 
 def crate_binary(name, crate_root, lib, tests = True, **kwargs):
     """`rust_binary` for a `[[bin]]` target that links its own crate's library.

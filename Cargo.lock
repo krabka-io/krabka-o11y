@@ -3923,6 +3923,7 @@ dependencies = [
  "derive_more",
  "futures",
  "hex",
+ "krabka-column-macros",
  "krabka-o11y-verified",
  "krabka-object-store",
  "krabka-units",
@@ -4150,6 +4151,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "krabka-codegen"
+version = "0.4.0"
+dependencies = [
+ "assert2",
+ "moxy",
+]
+
+[[package]]
+name = "krabka-column-macros"
+version = "0.4.0"
+dependencies = [
+ "arrow",
+ "assert2",
+ "moxy",
+]
+
+[[package]]
 name = "krabka-compression"
 version = "0.5.0"
 source = "git+https://github.com/krabka-io/krabka-protocol?rev=e06aa582b1a2cd8d5961e822bc0a9b27d660031d#e06aa582b1a2cd8d5961e822bc0a9b27d660031d"
@@ -4350,6 +4368,8 @@ dependencies = [
  "krabka-client-consumer",
  "krabka-client-core",
  "krabka-client-producer",
+ "krabka-codegen",
+ "krabka-column-macros",
  "krabka-ids",
  "krabka-observability",
  "krabka-query-frontend",
@@ -4545,6 +4565,7 @@ dependencies = [
  "datafusion",
  "futures-util",
  "krabka-blockstore",
+ "krabka-codegen",
  "krabka-query-frontend",
  "krabka-units",
  "mutants",
@@ -4590,6 +4611,7 @@ dependencies = [
  "krabka-client-consumer",
  "krabka-client-core",
  "krabka-client-producer",
+ "krabka-codegen",
  "krabka-metrics",
  "krabka-observability",
  "krabka-pprof",
@@ -4934,6 +4956,7 @@ dependencies = [
  "derive_more",
  "futures",
  "krabka-blockstore",
+ "krabka-column-macros",
  "krabka-units",
  "num-traits",
  "proptest",
@@ -4970,6 +4993,7 @@ dependencies = [
  "krabka-client-consumer",
  "krabka-client-core",
  "krabka-client-producer",
+ "krabka-codegen",
  "krabka-metrics",
  "krabka-observability",
  "krabka-protocol",
@@ -5548,6 +5572,81 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "moxy"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-ast",
+ "moxy-diagnostic",
+ "moxy-fmt",
+ "moxy-macros",
+ "moxy-template",
+ "moxy-token",
+]
+
+[[package]]
+name = "moxy-ast"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-token",
+]
+
+[[package]]
+name = "moxy-build"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+
+[[package]]
+name = "moxy-diagnostic"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-ast",
+ "moxy-build",
+ "moxy-token",
+]
+
+[[package]]
+name = "moxy-fmt"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-ast",
+ "moxy-token",
+]
+
+[[package]]
+name = "moxy-macros"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-ast",
+ "moxy-diagnostic",
+ "moxy-fmt",
+ "moxy-template",
+ "moxy-token",
+]
+
+[[package]]
+name = "moxy-template"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-ast",
+ "moxy-token",
+]
+
+[[package]]
+name = "moxy-token"
+version = "0.5.3"
+source = "git+https://github.com/aacebo/moxy?rev=de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450#de2c3bdd28b4dcbe4cdf21d90aa98b2a1f849450"
+dependencies = [
+ "moxy-build",
+ "unicode-ident",
 ]
 
 [[package]]

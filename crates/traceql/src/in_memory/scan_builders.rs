@@ -1,8 +1,13 @@
 use super::*;
 
+#[derive(krabka_column_macros::ColumnBuilders)]
+#[columns(args = "row_count: usize")]
 pub(crate) struct ScanBuilders {
+    #[column(init = "FixedSizeBinaryBuilder::with_capacity(row_count, 16)")]
     pub(crate) trace_id: FixedSizeBinaryBuilder,
+    #[column(init = "FixedSizeBinaryBuilder::with_capacity(row_count, 8)")]
     pub(crate) span_id: FixedSizeBinaryBuilder,
+    #[column(init = "FixedSizeBinaryBuilder::with_capacity(row_count, 8)")]
     pub(crate) parent_span_id: FixedSizeBinaryBuilder,
     pub(crate) ns_left: Int32Builder,
     pub(crate) ns_right: Int32Builder,
@@ -22,39 +27,13 @@ pub(crate) struct ScanBuilders {
     pub(crate) instrumentation_version: StringBuilder,
     pub(crate) event_name: StringBuilder,
     pub(crate) event_time_since_start: Int64Builder,
+    #[column(init = "FixedSizeBinaryBuilder::with_capacity(row_count, 16)")]
     pub(crate) link_trace_id: FixedSizeBinaryBuilder,
+    #[column(init = "FixedSizeBinaryBuilder::with_capacity(row_count, 8)")]
     pub(crate) link_span_id: FixedSizeBinaryBuilder,
 }
 
 impl ScanBuilders {
-    pub(crate) fn new(row_count: usize) -> Self {
-        Self {
-            trace_id: FixedSizeBinaryBuilder::with_capacity(row_count, 16),
-            span_id: FixedSizeBinaryBuilder::with_capacity(row_count, 8),
-            parent_span_id: FixedSizeBinaryBuilder::with_capacity(row_count, 8),
-            ns_left: Int32Builder::new(),
-            ns_right: Int32Builder::new(),
-            parent_id: Int32Builder::new(),
-            child_count: Int32Builder::new(),
-            root_service: StringBuilder::new(),
-            root_span: StringBuilder::new(),
-            trace_start: Int64Builder::new(),
-            trace_duration: Int64Builder::new(),
-            name: StringBuilder::new(),
-            kind: Int32Builder::new(),
-            start: Int64Builder::new(),
-            duration: Int64Builder::new(),
-            status_code: Int32Builder::new(),
-            status_message: StringBuilder::new(),
-            instrumentation_name: StringBuilder::new(),
-            instrumentation_version: StringBuilder::new(),
-            event_name: StringBuilder::new(),
-            event_time_since_start: Int64Builder::new(),
-            link_trace_id: FixedSizeBinaryBuilder::with_capacity(row_count, 16),
-            link_span_id: FixedSizeBinaryBuilder::with_capacity(row_count, 8),
-        }
-    }
-
     pub(crate) fn append(
         &mut self,
         trace: &StoredTrace,
@@ -130,33 +109,5 @@ impl ScanBuilders {
             self.link_span_id.append_null();
         }
         Ok(())
-    }
-
-    pub(crate) fn finish(mut self) -> Vec<ArrayRef> {
-        vec![
-            Arc::new(self.trace_id.finish()),
-            Arc::new(self.span_id.finish()),
-            Arc::new(self.parent_span_id.finish()),
-            Arc::new(self.ns_left.finish()),
-            Arc::new(self.ns_right.finish()),
-            Arc::new(self.parent_id.finish()),
-            Arc::new(self.child_count.finish()),
-            Arc::new(self.root_service.finish()),
-            Arc::new(self.root_span.finish()),
-            Arc::new(self.trace_start.finish()),
-            Arc::new(self.trace_duration.finish()),
-            Arc::new(self.name.finish()),
-            Arc::new(self.kind.finish()),
-            Arc::new(self.start.finish()),
-            Arc::new(self.duration.finish()),
-            Arc::new(self.status_code.finish()),
-            Arc::new(self.status_message.finish()),
-            Arc::new(self.instrumentation_name.finish()),
-            Arc::new(self.instrumentation_version.finish()),
-            Arc::new(self.event_name.finish()),
-            Arc::new(self.event_time_since_start.finish()),
-            Arc::new(self.link_trace_id.finish()),
-            Arc::new(self.link_span_id.finish()),
-        ]
     }
 }

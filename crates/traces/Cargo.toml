@@ -94,6 +94,7 @@ tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [build-dependencies]
+krabka-codegen.workspace = true
 protox = { workspace = true }
 tonic-prost-build = { workspace = true }
 

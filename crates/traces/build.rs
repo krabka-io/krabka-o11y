@@ -18,11 +18,6 @@ fn normalize_generated_code() -> Result<(), Box<dyn std::error::Error>> {
         }
         let indent_len = line.len() - line.trim_start().len();
         let trimmed = line.trim_start();
-        if trimmed.starts_with("pub fn as_str_name") || trimmed.starts_with("pub fn from_str_name")
-        {
-            normalized.push_str(&line[..indent_len]);
-            normalized.push_str("#[must_use]\n");
-        }
         if trimmed.starts_with("pub async fn ") || trimmed.starts_with("pub fn ") {
             normalized.push_str(&line[..indent_len]);
             normalized.push_str("///\n");
@@ -43,6 +38,8 @@ fn normalize_generated_code() -> Result<(), Box<dyn std::error::Error>> {
             "send_compression_encodings: Default::default()",
             "send_compression_encodings: EnabledCompressionEncodings::default()",
         );
+    let normalized =
+        krabka_codegen::annotate_must_use(&normalized, krabka_codegen::MustUse::EnumNames, &[])?;
     std::fs::write(generated, normalized)?;
     Ok(())
 }

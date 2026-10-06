@@ -1,0 +1,18 @@
+[package]
+name = "krabka-codegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Syntax-aware normalization of generated Rust protocol types"
+
+[lints]
+workspace = true
+
+[dependencies]
+moxy = { workspace = true, features = ["template", "fmt"] }
+
+[dev-dependencies]
+assert2.workspace = true

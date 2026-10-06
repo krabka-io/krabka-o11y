@@ -39,6 +39,7 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 wincode = { workspace = true }
 
 [build-dependencies]
+krabka-codegen.workspace = true
 prost-build = { workspace = true }
 protox = { workspace = true }
 

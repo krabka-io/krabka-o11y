@@ -14,10 +14,11 @@ one writes it. That module registers a Rust toolchain of its own; see
 """
 
 load("@aspect_rules_lint//lint:lint_test.bzl", "lint_test")
-load("@aspect_rules_lint_rust//:clippy.bzl", "lint_clippy_aspect")
+load("@aspect_rules_lint_rust//:clippy.bzl", "DEFAULT_RULE_KINDS", "lint_clippy_aspect")
 
 clippy = lint_clippy_aspect(
     config = Label("//:clippy.toml"),
+    rule_kinds = DEFAULT_RULE_KINDS + ["rust_proc_macro"],
 )
 
 clippy_test = lint_test(aspect = clippy)

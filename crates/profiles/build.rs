@@ -91,19 +91,7 @@ fn normalize_generated_code() -> Result<(), Box<dyn std::error::Error>> {
                 normalized.push_str("#[allow(clippy::struct_excessive_bools)]\n");
             }
 
-            let indent_len = line.len() - line.trim_start().len();
-            if line.trim_start().starts_with("pub fn ") {
-                normalized.push_str(&line[..indent_len]);
-                normalized.push_str("#[must_use]\n");
-            }
-
             let mut line = line.to_owned();
-            for builder in BUILDERS {
-                line = line.replace(
-                    &format!("pub struct {builder}"),
-                    &format!("# [must_use] pub struct {builder}"),
-                );
-            }
             line = line.replace("&FIELDS)", "FIELDS)");
             line = line.replace(
                 "write!(formatter, \"expected one of: {:?}\", FIELDS)",
@@ -114,40 +102,17 @@ fn normalize_generated_code() -> Result<(), Box<dyn std::error::Error>> {
             normalized.push('\n');
         }
 
+        let mut normalized = krabka_codegen::annotate_must_use(
+            &normalized,
+            krabka_codegen::MustUse::PublicMethods,
+            BUILDERS,
+        )?;
         if *filename == "google.v1.rs" {
-            normalized = compact_profile_deserializer(&normalized)?;
+            normalized = krabka_codegen::compact_impl(&normalized, "Deserialize", "Profile")?;
         }
         std::fs::write(path, normalized)?;
     }
     Ok(())
-}
-
-fn compact_profile_deserializer(source: &str) -> Result<String, Box<dyn std::error::Error>> {
-    const START: &str = "impl<'de> serde::Deserialize<'de> for Profile {";
-    let start = source
-        .find(START)
-        .ok_or("generated Profile deserializer is missing")?;
-    let mut depth = 0_usize;
-    let mut end = None;
-    for (offset, byte) in source[start..].bytes().enumerate() {
-        match byte {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    end = Some(start + offset + 1);
-                    break;
-                }
-            }
-            _ => {}
-        }
-    }
-    let end = end.ok_or("generated Profile deserializer is unbalanced")?;
-    let compact: String = source[start..end]
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    Ok(format!("{}{}{}", &source[..start], compact, &source[end..]))
 }
 
 /// The `protoc` this build should drive.

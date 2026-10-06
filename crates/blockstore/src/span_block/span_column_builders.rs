@@ -1,11 +1,15 @@
 use super::{
-    Arc, ArrayRef, BlockStoreError, FixedSizeBinaryBuilder, Int32Builder, Int64Builder, Result,
-    SpanRow, StringBuilder, TimeExt,
+    BlockStoreError, FixedSizeBinaryBuilder, Int32Builder, Int64Builder, Result, SpanRow,
+    StringBuilder, TimeExt,
 };
 
+#[derive(krabka_column_macros::ColumnBuilders)]
 pub(crate) struct SpanColumnBuilders {
+    #[column(init = "FixedSizeBinaryBuilder::new(16)")]
     pub(crate) trace_id: FixedSizeBinaryBuilder,
+    #[column(init = "FixedSizeBinaryBuilder::new(8)")]
     pub(crate) span_id: FixedSizeBinaryBuilder,
+    #[column(init = "FixedSizeBinaryBuilder::new(8)")]
     pub(crate) parent_span_id: FixedSizeBinaryBuilder,
     pub(crate) ns_left: Int32Builder,
     pub(crate) ns_right: Int32Builder,
@@ -26,30 +30,6 @@ pub(crate) struct SpanColumnBuilders {
 }
 
 impl SpanColumnBuilders {
-    pub(crate) fn new() -> Self {
-        Self {
-            trace_id: FixedSizeBinaryBuilder::new(16),
-            span_id: FixedSizeBinaryBuilder::new(8),
-            parent_span_id: FixedSizeBinaryBuilder::new(8),
-            ns_left: Int32Builder::new(),
-            ns_right: Int32Builder::new(),
-            parent_id: Int32Builder::new(),
-            child_count: Int32Builder::new(),
-            root_svc: StringBuilder::new(),
-            root_name: StringBuilder::new(),
-            trace_start: Int64Builder::new(),
-            trace_dur: Int64Builder::new(),
-            name: StringBuilder::new(),
-            kind: Int32Builder::new(),
-            start: Int64Builder::new(),
-            dur: Int64Builder::new(),
-            status: Int32Builder::new(),
-            status_msg: StringBuilder::new(),
-            instrumentation_name: StringBuilder::new(),
-            instrumentation_version: StringBuilder::new(),
-        }
-    }
-
     pub(crate) fn append(&mut self, row: &SpanRow) -> Result<()> {
         self.trace_id
             .append_value(row.trace_id)
@@ -84,29 +64,5 @@ impl SpanColumnBuilders {
         self.instrumentation_version
             .append_option(row.instrumentation_version.as_deref());
         Ok(())
-    }
-
-    pub(crate) fn finish(mut self) -> Vec<ArrayRef> {
-        vec![
-            Arc::new(self.trace_id.finish()),
-            Arc::new(self.span_id.finish()),
-            Arc::new(self.parent_span_id.finish()),
-            Arc::new(self.ns_left.finish()),
-            Arc::new(self.ns_right.finish()),
-            Arc::new(self.parent_id.finish()),
-            Arc::new(self.child_count.finish()),
-            Arc::new(self.root_svc.finish()),
-            Arc::new(self.root_name.finish()),
-            Arc::new(self.trace_start.finish()),
-            Arc::new(self.trace_dur.finish()),
-            Arc::new(self.name.finish()),
-            Arc::new(self.kind.finish()),
-            Arc::new(self.start.finish()),
-            Arc::new(self.dur.finish()),
-            Arc::new(self.status.finish()),
-            Arc::new(self.status_msg.finish()),
-            Arc::new(self.instrumentation_name.finish()),
-            Arc::new(self.instrumentation_version.finish()),
-        ]
     }
 }

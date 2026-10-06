@@ -37,24 +37,9 @@ fn rewrite_generated_enums() -> Result<(), Box<dyn std::error::Error>> {
     ] {
         let path = out_dir.join(file);
         let generated = std::fs::read_to_string(&path)?;
-        let rewritten = generated
-            .replace("the ProtoBuf definition", "the `ProtoBuf` definition")
-            .replace(
-                "\n        pub fn as_str_name(&self)",
-                "\n        #[must_use]\n        pub fn as_str_name(&self)",
-            )
-            .replace(
-                "\n    pub fn as_str_name(&self)",
-                "\n    #[must_use]\n    pub fn as_str_name(&self)",
-            )
-            .replace(
-                "\n        pub fn from_str_name(value: &str)",
-                "\n        #[must_use]\n        pub fn from_str_name(value: &str)",
-            )
-            .replace(
-                "\n    pub fn from_str_name(value: &str)",
-                "\n    #[must_use]\n    pub fn from_str_name(value: &str)",
-            );
+        let generated = generated.replace("the ProtoBuf definition", "the `ProtoBuf` definition");
+        let rewritten =
+            krabka_codegen::annotate_must_use(&generated, krabka_codegen::MustUse::EnumNames, &[])?;
         std::fs::write(path, rewritten)?;
     }
     Ok(())

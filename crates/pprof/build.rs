@@ -20,13 +20,11 @@ fn rewrite_mapping_flags() -> Result<(), Box<dyn std::error::Error>> {
     let out_dir = std::env::var("OUT_DIR")?;
     let path = std::path::Path::new(&out_dir).join("perftools.profiles.rs");
     let generated = std::fs::read_to_string(&path)?;
-    let updated = generated.replace(
+    let updated = krabka_codegen::replace_struct(
+        &generated,
         generated_mapping(),
         include_str!("src/proto_mapping.rsfrag"),
-    );
-    if updated == generated {
-        return Err("generated Mapping shape changed".into());
-    }
+    )?;
     std::fs::write(path, updated)?;
     Ok(())
 }
