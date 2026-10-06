@@ -119,6 +119,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_cold_selection_preserves_all_hot_rows_and_symbols() {
+        use arrow::array::UInt64Array;
+
+        use crate::{PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION};
+
+        for cold in [
+            InMemoryProfileStore::new(),
+            store_with_provenance("cold", 5, 200, 0, vec![vec![1]]),
+        ] {
+            for has_hot_rows in [false, true] {
+                let mut hot = store_with_provenance("hot", 7, 20, 0, vec![vec![1]]);
+                // These rows remain independent even with equal WAL identities.
+                let duplicate = hot.samples["tenant-a"][0].clone();
+                let mut without_identity = duplicate.clone();
+                without_identity.wal_sample_ids.clear();
+                hot.samples
+                    .get_mut("tenant-a")
+                    .unwrap()
+                    .extend([duplicate, without_identity]);
+                let start_ms = if has_hot_rows { 0 } else { 21 };
+                let expected = hot
+                    .select("tenant-a", PT, &[], start_ms, 100)
+                    .await
+                    .unwrap();
+                let expected = expected.ctx.table(&expected.samples_table).await.unwrap();
+                let expected = expected.collect().await.unwrap();
+                let mut expected_batches = Vec::new();
+                for batch in expected {
+                    let index = batch.schema().index_of(PCOL_STACKTRACE_PARTITION).unwrap();
+                    let mut columns = batch.columns().to_vec();
+                    columns[index] = Arc::new(UInt64Array::from(vec![
+                        0x0100_0000_0000_0000;
+                        batch.num_rows()
+                    ]));
+                    expected_batches
+                        .push(super::RecordBatch::try_new(batch.schema(), columns).unwrap());
+                }
+                let union =
+                    super::UnionProfileStore::new(Arc::new(hot.clone()), Arc::new(cold.clone()));
+                let actual = union
+                    .select("tenant-a", PT, &[], start_ms, 100)
+                    .await
+                    .unwrap();
+                let table = actual.ctx.table(&actual.samples_table).await.unwrap();
+                let actual_batches = table.collect().await.unwrap();
+                assert!(actual_batches == expected_batches);
+                for batch in &actual_batches {
+                    let ids = batch
+                        .column_by_name(PCOL_STACKTRACE_ID)
+                        .unwrap()
+                        .as_primitive::<UInt64Type>();
+                    for id in ids.values() {
+                        let id = u32::try_from(*id).unwrap();
+                        assert!(
+                            actual.symbols.resolve(0x0100_0000_0000_0000, id)
+                                == hot.symbols.resolve(0, id)
+                        );
+                        assert!(
+                            actual.symbols.resolve_locations(0x0100_0000_0000_0000, id)
+                                == hot.symbols.resolve_locations(0, id)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn hot_cold_union_merges_metadata_and_stats() {
         let mut hot = store_with_frame("hot", 7, 20);
         hot.push_sample(
