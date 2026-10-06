@@ -1,28 +1,9 @@
-use super::{
-    Arc, DataType, Field, Fields, FixedSizeBinaryBuilder, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE,
-    StructBuilder, new_str_list, new_str_list_list,
-};
+use super::{FixedSizeBinaryBuilder, StructBuilder, new_str_list, new_str_list_list};
+use crate::span_schema::link_fields;
 
 pub(crate) fn new_link_struct_builder() -> StructBuilder {
     StructBuilder::new(
-        Fields::from(vec![
-            Field::new("linked_trace_id", DataType::FixedSizeBinary(16), true),
-            Field::new("linked_span_id", DataType::FixedSizeBinary(8), true),
-            Field::new(
-                SCOL_ATTR_KEYS,
-                DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-                true,
-            ),
-            Field::new(
-                SCOL_ATTR_VALUE,
-                DataType::List(Arc::new(Field::new(
-                    "item",
-                    DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
-                    true,
-                ))),
-                true,
-            ),
-        ]),
+        link_fields(),
         vec![
             Box::new(FixedSizeBinaryBuilder::new(16)),
             Box::new(FixedSizeBinaryBuilder::new(8)),
@@ -30,4 +11,26 @@ pub(crate) fn new_link_struct_builder() -> StructBuilder {
             Box::new(new_str_list_list()),
         ],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use arrow::array::Array;
+
+    use super::*;
+
+    #[test]
+    fn empty_builder_matches_the_nested_block_schema() {
+        let schema = crate::span_schema::span_block_schema();
+        let data_type = schema
+            .field_with_name(crate::span_schema::SCOL_LINKS)
+            .unwrap()
+            .data_type();
+        let arrow::datatypes::DataType::List(item) = data_type else {
+            panic!("expected a list of structs");
+        };
+        let array = new_link_struct_builder().finish();
+        assert2::assert!(array.data_type() == item.data_type());
+        assert2::assert!(array.is_empty());
+    }
 }

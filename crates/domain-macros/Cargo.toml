@@ -1,0 +1,21 @@
+[package]
+name = "krabka-domain-macros"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Moxy derives for explicit domain names"
+
+[lib]
+proc-macro = true
+
+[lints]
+workspace = true
+
+[dependencies]
+moxy = { workspace = true, features = ["macros", "template", "diagnostic"] }
+
+[dev-dependencies]
+assert2.workspace = true

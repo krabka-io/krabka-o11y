@@ -3924,6 +3924,7 @@ dependencies = [
  "futures",
  "hex",
  "krabka-column-macros",
+ "krabka-domain-macros",
  "krabka-o11y-verified",
  "krabka-object-store",
  "krabka-units",
@@ -4182,6 +4183,14 @@ dependencies = [
  "snap",
  "thiserror 2.0.20",
  "zstd 0.14.0",
+]
+
+[[package]]
+name = "krabka-domain-macros"
+version = "0.4.0"
+dependencies = [
+ "assert2",
+ "moxy",
 ]
 
 [[package]]
@@ -4506,6 +4515,7 @@ dependencies = [
  "krabka-client-consumer",
  "krabka-client-core",
  "krabka-client-producer",
+ "krabka-domain-macros",
  "krabka-ids",
  "krabka-logfmt",
  "krabka-logql",

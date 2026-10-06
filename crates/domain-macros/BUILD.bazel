@@ -1,0 +1,9 @@
+load("//bazel:defs.bzl", "crate_proc_macro", "crate_tests")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Cargo.toml"])
+
+crate_proc_macro(name = "domain-macros")
+
+crate_tests(lib = "domain-macros")

@@ -11,11 +11,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn normalize_generated_code() -> Result<(), Box<dyn std::error::Error>> {
     let generated = std::path::PathBuf::from(std::env::var("OUT_DIR")?).join("jaeger.api_v2.rs");
     let source = std::fs::read_to_string(&generated)?;
+    let source = krabka_codegen::strip_documentation(&source)?;
     let mut normalized = String::with_capacity(source.len());
     for line in source.lines() {
-        if line.trim_start().starts_with("///") {
-            continue;
-        }
         let indent_len = line.len() - line.trim_start().len();
         let trimmed = line.trim_start();
         if trimmed.starts_with("pub async fn ") || trimmed.starts_with("pub fn ") {

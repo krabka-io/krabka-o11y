@@ -7,7 +7,7 @@ use arrow::{
         ArrayRef, BooleanBuilder, FixedSizeBinaryBuilder, Float64Builder, Int32Builder,
         Int64Builder, ListBuilder, StringBuilder, StringDictionaryBuilder, StructBuilder,
     },
-    datatypes::{DataType, Field, Fields, Int32Type},
+    datatypes::Int32Type,
     record_batch::RecordBatch,
 };
 use krabka_units::prelude::*;
@@ -16,8 +16,8 @@ use crate::{
     error::{BlockStoreError, Result},
     nested_set::NestedSet,
     span_schema::{
-        PromotedSpanAttr, PromotedSpanAttrType, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, SpanKind,
-        StatusCode, span_block_schema_with_promoted_attrs,
+        PromotedSpanAttr, PromotedSpanAttrType, SpanKind, StatusCode,
+        span_block_schema_with_promoted_attrs,
     },
 };
 

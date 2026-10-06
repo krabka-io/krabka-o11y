@@ -32,7 +32,6 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fmt,
     io::Write,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},

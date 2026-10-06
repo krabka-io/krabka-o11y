@@ -8,9 +8,8 @@ use std::{
 
 use arrow::{
     array::{
-        ArrayRef, BooleanArray, BooleanBuilder, Float64Builder, Int64Array, Int64Builder,
-        MapBuilder, StringBuilder, StringDictionaryBuilder, UInt32Builder, UInt64Array,
-        UInt64Builder,
+        BooleanArray, BooleanBuilder, Float64Builder, Int64Array, Int64Builder, MapBuilder,
+        StringBuilder, StringDictionaryBuilder, UInt32Builder, UInt64Array, UInt64Builder,
     },
     compute::filter_record_batch,
     datatypes::{DataType, Field, Int32Type},

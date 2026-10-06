@@ -80,31 +80,20 @@ fn normalize_generated_code() -> Result<(), Box<dyn std::error::Error>> {
     for filename in GENERATED_FILES {
         let path = out_dir.join(filename);
         let source = std::fs::read_to_string(&path)?;
-        let mut normalized = String::with_capacity(source.len());
-
-        for line in source.lines() {
-            if line.trim_start().starts_with("///") {
-                continue;
-            }
-
-            if *filename == "google.v1.rs" && line == "pub struct Mapping {" {
-                normalized.push_str("#[allow(clippy::struct_excessive_bools)]\n");
-            }
-
-            let mut line = line.to_owned();
-            line = line.replace("&FIELDS)", "FIELDS)");
-            line = line.replace(
-                "write!(formatter, \"expected one of: {:?}\", FIELDS)",
-                "write!(formatter, \"expected one of: {FIELDS:?}\")",
-            );
-            line = line.replace("[`build()`]", "`build()`");
-            normalized.push_str(&line);
-            normalized.push('\n');
-        }
+        let normalized = krabka_codegen::strip_documentation(&source)?;
+        let normalized = krabka_codegen::normalize_pbjson(&normalized)?;
+        let normalized = if *filename == "google.v1.rs" {
+            normalized.replace(
+                "pub struct Mapping {",
+                "#[allow(clippy::struct_excessive_bools)]\npub struct Mapping {",
+            )
+        } else {
+            normalized
+        };
 
         let mut normalized = krabka_codegen::annotate_must_use(
             &normalized,
-            krabka_codegen::MustUse::PublicMethods,
+            krabka_codegen::MustUse::EnumNames,
             BUILDERS,
         )?;
         if *filename == "google.v1.rs" {

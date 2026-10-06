@@ -4,7 +4,7 @@ use std::{error::Error, ops::Range};
 
 use moxy::{
     ast::{Attribute, ItemImpl, ItemStruct},
-    token::{Span, ToTokenStream, TokenStream, TokenTree, source::SourceMap},
+    token::{Span, TokenStream, TokenTree, source::SourceMap},
 };
 
 type CodegenResult<T> = Result<T, Box<dyn Error>>;
@@ -27,12 +27,12 @@ pub fn annotate_must_use(
     policy: MustUse,
     builders: &[&str],
 ) -> CodegenResult<String> {
-    let tokens: TokenStream = source.parse()?;
+    let (tokens, offsets) = parse_source(source)?;
     let attribute_tokens = moxy::template! { #[must_use] };
     let attribute: Attribute = moxy::parse!(attribute_tokens)?;
     let rendered = format!("{}\n", moxy::fmt!(&attribute)?);
     let mut positions = Vec::new();
-    collect_annotations(&tokens, policy, builders, &mut positions);
+    collect_annotations(&tokens, offsets, policy, builders, &mut positions);
     let mut output = source.to_owned();
     positions.sort_unstable();
     for position in positions.into_iter().rev() {
@@ -43,6 +43,7 @@ pub fn annotate_must_use(
 
 fn collect_annotations(
     tokens: &TokenStream,
+    offsets: SourceOffsets,
     policy: MustUse,
     builders: &[&str],
     positions: &mut Vec<usize>,
@@ -51,7 +52,7 @@ fn collect_annotations(
         if let TokenTree::Group(group) = token {
             // Macro inputs are opaque Rust tokens, not declarations.
             if index == 0 || tokens[index - 1].to_string() != "!" {
-                collect_annotations(&group.tokens, policy, builders, positions);
+                collect_annotations(&group.tokens, offsets, policy, builders, positions);
             }
         }
         if token.text() != Some("pub") {
@@ -84,21 +85,169 @@ fn collect_annotations(
             start -= 2;
         }
         if !already_marked {
-            positions.push(source_range(tokens[start].span()).start);
+            positions.push(offsets.range(tokens[start].span()).start);
         }
     }
 }
 
-fn source_range(span: Span) -> Range<usize> {
-    // Resolve global lexer offsets against their source before editing. The
-    // lexer reports UTF-8 byte offsets, including text after non-ASCII literals.
-    match span {
-        Span::Fallback(span) => SourceMap::with(|map| {
-            let source = map.find(span).expect("parsed span has a source");
-            source.location(span.byte_range().start).index()
-                ..source.location(span.byte_range().end).index()
-        }),
-        Span::Compiler(_) => unreachable!("build scripts parse source outside procedural macros"),
+/// Removes generated documentation without changing literals or ordinary comments.
+///
+/// # Errors
+/// Returns an error if the generated Rust cannot be parsed.
+pub fn strip_documentation(source: &str) -> CodegenResult<String> {
+    let (tokens, offsets) = parse_source(source)?;
+    let mut edits = Vec::new();
+    collect_documentation(&tokens, offsets, &mut edits);
+    Ok(apply_edits(source, edits))
+}
+
+fn collect_documentation(
+    tokens: &TokenStream,
+    offsets: SourceOffsets,
+    edits: &mut Vec<(Range<usize>, String)>,
+) {
+    for (index, token) in tokens.iter().enumerate() {
+        if token.to_string() == "#" {
+            let group_index = index
+                + 1
+                + usize::from(
+                    tokens
+                        .get(index + 1)
+                        .is_some_and(|token| token.to_string() == "!"),
+                );
+            if let Some(group) = tokens.get(group_index).and_then(TokenTree::as_group)
+                && group.delim == moxy::token::Delim::Bracket
+                && group.tokens.first().and_then(TokenTree::text) == Some("doc")
+                && group
+                    .tokens
+                    .get(1)
+                    .is_some_and(|token| token.to_string() == "=")
+            {
+                edits.push((
+                    offsets.range(token.span()).start
+                        ..offsets.token_range(&tokens[group_index]).end,
+                    String::new(),
+                ));
+                continue;
+            }
+        }
+        if let TokenTree::Group(group) = token {
+            // Macro inputs can contain attribute syntax as data.
+            if index == 0 || tokens[index - 1].to_string() != "!" {
+                collect_documentation(&group.tokens, offsets, edits);
+            }
+        }
+    }
+}
+
+/// Normalizes pbjson field diagnostics without changing string literals.
+///
+/// # Errors
+/// Returns an error if the generated Rust cannot be parsed.
+pub fn normalize_pbjson(source: &str) -> CodegenResult<String> {
+    let (tokens, offsets) = parse_source(source)?;
+    let rules = [
+        (
+            moxy::template! { write!(formatter, "expected one of: {:?}", &FIELDS) },
+            moxy::template! { write!(formatter, "expected one of: {FIELDS:?}") }.to_string(),
+        ),
+        (
+            moxy::template! { write!(formatter, "expected one of: {:?}", FIELDS) },
+            moxy::template! { write!(formatter, "expected one of: {FIELDS:?}") }.to_string(),
+        ),
+    ];
+    let mut edits = Vec::new();
+    collect_replacements(&tokens, offsets, &rules, &mut edits);
+    Ok(apply_edits(source, edits))
+}
+
+fn collect_replacements(
+    tokens: &TokenStream,
+    offsets: SourceOffsets,
+    rules: &[(TokenStream, String)],
+    edits: &mut Vec<(Range<usize>, String)>,
+) {
+    let mut index = 0;
+    while index < tokens.len() {
+        if let Some((pattern, replacement)) = rules.iter().find(|(pattern, _)| {
+            tokens
+                .get(index..index + pattern.len())
+                .is_some_and(|candidate| {
+                    candidate
+                        .iter()
+                        .zip(pattern.iter())
+                        .all(|(left, right)| same_token(left, right))
+                })
+        }) {
+            edits.push((
+                offsets.range(tokens[index].span()).start
+                    ..offsets.token_range(&tokens[index + pattern.len() - 1]).end,
+                replacement.clone(),
+            ));
+            index += pattern.len();
+            continue;
+        }
+        if let TokenTree::Group(group) = &tokens[index] {
+            collect_replacements(&group.tokens, offsets, rules, edits);
+        }
+        index += 1;
+    }
+}
+
+fn same_token(left: &TokenTree, right: &TokenTree) -> bool {
+    match (left, right) {
+        (TokenTree::Group(left), TokenTree::Group(right)) => {
+            left.delim == right.delim
+                && left.tokens.len() == right.tokens.len()
+                && left
+                    .tokens
+                    .iter()
+                    .zip(right.tokens.iter())
+                    .all(|(left, right)| same_token(left, right))
+        }
+        _ => left.to_string() == right.to_string(),
+    }
+}
+
+fn apply_edits(source: &str, mut edits: Vec<(Range<usize>, String)>) -> String {
+    edits.sort_unstable_by_key(|(range, _)| range.start);
+    let mut output = source.to_owned();
+    for (range, replacement) in edits.into_iter().rev() {
+        output.replace_range(range, &replacement);
+    }
+    output
+}
+
+#[derive(Clone, Copy)]
+struct SourceOffsets {
+    origin: usize,
+}
+
+fn parse_source(source: &str) -> CodegenResult<(TokenStream, SourceOffsets)> {
+    let source_index = SourceMap::with(SourceMap::len);
+    let tokens = source.parse()?;
+    let origin = SourceMap::with(|map| map.as_slice()[source_index].span().byte_range().start);
+    Ok((tokens, SourceOffsets { origin }))
+}
+
+impl SourceOffsets {
+    fn range(self, span: Span) -> Range<usize> {
+        // Lexer spans use global UTF-8 byte offsets. The source map records
+        // character counts, so range searches cannot select their source.
+        let range = span.byte_range();
+        range.start - self.origin..range.end - self.origin
+    }
+
+    fn token_range(self, token: &TokenTree) -> Range<usize> {
+        let mut range = self.range(token.span());
+        if let TokenTree::Group(group) = token
+            && group.span.open() != group.span.close()
+        {
+            // The lexer puts the close cursor after the delimiter and includes
+            // the next byte in its span.
+            range.end -= 1;
+        }
+        range
     }
 }
 
@@ -108,7 +257,7 @@ fn source_range(span: Span) -> Range<usize> {
 /// Returns an error if parsing fails or the selected implementation is absent
 /// or appears more than once.
 pub fn compact_impl(source: &str, trait_name: &str, type_name: &str) -> CodegenResult<String> {
-    let tokens: TokenStream = source.parse()?;
+    let (tokens, offsets) = parse_source(source)?;
     let mut selected = Vec::new();
     for (start, token) in tokens.iter().enumerate() {
         if token.text() != Some("impl") {
@@ -147,7 +296,7 @@ pub fn compact_impl(source: &str, trait_name: &str, type_name: &str) -> CodegenR
         return Err("generated trait implementation is missing or ambiguous".into());
     };
     let implementation: TokenStream = tokens[*start..=*end].iter().cloned().collect();
-    let range = source_range(implementation.span());
+    let range = offsets.range(tokens[*start].span()).start..offsets.token_range(&tokens[*end]).end;
     let mut output = source.to_owned();
     output.replace_range(range, &implementation.to_string());
     Ok(output)
@@ -161,7 +310,7 @@ pub fn compact_impl(source: &str, trait_name: &str, type_name: &str) -> CodegenR
 /// Returns an error if parsing fails, the struct is absent or ambiguous, or its
 /// field schema differs from the expected definition.
 pub fn replace_struct(source: &str, expected: &str, replacement: &str) -> CodegenResult<String> {
-    let tokens: TokenStream = source.parse()?;
+    let (tokens, offsets) = parse_source(source)?;
     let expected: ItemStruct = moxy::parse!(expected)?;
     let _: TokenStream = replacement.parse()?;
     let mut selected = Vec::new();
@@ -190,16 +339,18 @@ pub fn replace_struct(source: &str, expected: &str, replacement: &str) -> Codege
         }
         let definition: TokenStream = tokens[start..=end].iter().cloned().collect();
         let record: ItemStruct = moxy::parse!(definition)?;
-        selected.push(record);
+        let range =
+            offsets.range(tokens[start].span()).start..offsets.token_range(&tokens[end]).end;
+        selected.push((record, range));
     }
-    let [record] = selected.as_slice() else {
+    let [(record, range)] = selected.as_slice() else {
         return Err("generated struct is missing or ambiguous".into());
     };
     if field_schema(record)? != field_schema(&expected)? {
         return Err("generated struct field schema changed".into());
     }
     let mut output = source.to_owned();
-    output.replace_range(source_range(record.to_token_stream().span()), replacement);
+    output.replace_range(range.clone(), replacement);
     Ok(output)
 }
 
@@ -230,7 +381,10 @@ fn field_schema(record: &ItemStruct) -> CodegenResult<Vec<(String, String, Vec<S
 #[cfg(test)]
 mod tests {
     use assert2::assert;
-    use moxy::ast::{Attributed, File, ImplItem, Item};
+    use moxy::{
+        ast::{Attributed, File, ImplItem, Item},
+        token::ToTokenStream,
+    };
 
     use super::*;
 
@@ -270,6 +424,112 @@ mod tests {
             }
         }
         values
+    }
+
+    #[test]
+    fn documentation_removal_preserves_literals_and_macro_inputs() {
+        let source = r##"//! generated module
+            /// generated record
+            #[derive(Clone)]
+            pub struct Record;
+            mod nested {
+                /** generated item */
+                #[doc = "generated attribute"]
+                pub struct Inner;
+                #[doc(hidden)]
+                pub struct Hidden;
+            }
+            const TEXT: &str = r#"first
+/// this line is literal text
+last"#;
+            emit!(#[doc = "macro input"] pub struct Generated;);
+            // ordinary comment
+        "##;
+        let updated = strip_documentation(source).unwrap();
+        let expected = r##"#[derive(Clone)] pub struct Record;
+            mod nested { pub struct Inner; #[doc(hidden)] pub struct Hidden; }
+            const TEXT: &str = r#"first
+/// this line is literal text
+last"#;
+            emit!(#[doc = "macro input"] pub struct Generated;);
+        "##;
+        let actual: TokenStream = updated.parse().unwrap();
+        let expected: TokenStream = expected.parse().unwrap();
+        assert!(token_values(&actual) == token_values(&expected));
+        assert!(strip_documentation(&updated).unwrap() == updated);
+    }
+
+    #[test]
+    fn pbjson_normalization_matches_tokens_and_preserves_literal_data() {
+        let source = r#"fn visit() {
+            unknown_field(name, & FIELDS);
+            write! ( formatter, "expected one of: {:?}", FIELDS );
+            write!(formatter, "expected one of: {:?}", &FIELDS);
+            let text = "&FIELDS) write!(formatter, \"expected one of: {:?}\", FIELDS)";
+            let other = write!(formatter, "other: {:?}", FIELDS);
+            let borrows = (&FIELDS, &&FIELDS, &FIELDS::ITEM);
+        }"#;
+        let expected = r#"fn visit() {
+            unknown_field(name, & FIELDS);
+            write!(formatter, "expected one of: {FIELDS:?}");
+            write!(formatter, "expected one of: {FIELDS:?}");
+            let text = "&FIELDS) write!(formatter, \"expected one of: {:?}\", FIELDS)";
+            let other = write!(formatter, "other: {:?}", FIELDS);
+            let borrows = (&FIELDS, &&FIELDS, &FIELDS::ITEM);
+        }"#;
+        let updated = normalize_pbjson(source).unwrap();
+        let actual: TokenStream = updated.parse().unwrap();
+        let expected: TokenStream = expected.parse().unwrap();
+        assert!(token_values(&actual) == token_values(&expected));
+        assert!(normalize_pbjson(&updated).unwrap() == updated);
+    }
+
+    #[test]
+    fn edits_near_eof_use_byte_offsets_after_long_unicode_prefixes() {
+        let prefix = format!(
+            "// {}\nconst TEXT: &str = \"{}\";\n",
+            "é".repeat(200),
+            "é".repeat(200)
+        );
+        let source = format!("{prefix}impl Mode {{ pub fn as_str_name() {{}} }}");
+        let annotated = annotate_must_use(&source, MustUse::EnumNames, &[]).unwrap();
+        assert!(
+            annotated == format!("{prefix}impl Mode {{ #[must_use]\npub fn as_str_name() {{}} }}")
+        );
+
+        let source = format!("{prefix}/// generated\npub struct Record;");
+        assert!(strip_documentation(&source).unwrap() == format!("{prefix}pub struct Record;"));
+
+        let source = format!(
+            "{prefix}fn visit() {{ write!(formatter, \"expected one of: {{:?}}\", &FIELDS); }}"
+        );
+        let normalized = normalize_pbjson(&source).unwrap();
+        let expected = format!(
+            "{prefix}fn visit() {{ write!(formatter, \"expected one of: {{FIELDS:?}}\"); }}"
+        );
+        assert!(
+            token_values(&normalized.parse().unwrap()) == token_values(&expected.parse().unwrap())
+        );
+        assert!(normalize_pbjson(&normalized).unwrap() == normalized);
+
+        let source = format!(
+            "{prefix}impl Trait for Profile {{ fn value() -> u8 {{ 1 }} }}const END: u8 = 2;"
+        );
+        let compacted = compact_impl(&source, "Trait", "Profile").unwrap();
+        assert!(
+            token_values(&compacted.parse().unwrap()) == token_values(&source.parse().unwrap())
+        );
+
+        let source = format!("{prefix}pub struct Mapping {{ pub id: u64 }}const END: u8 = 2;");
+        let replaced = replace_struct(
+            &source,
+            "pub struct Mapping { pub id: u64 }",
+            "pub struct Mapping { pub key: u64 }",
+        )
+        .unwrap();
+        assert!(
+            replaced == format!("{prefix}pub struct Mapping {{ pub key: u64 }}const END: u8 = 2;")
+        );
     }
 
     #[test]
@@ -329,7 +589,7 @@ mod tests {
 
     #[test]
     fn compaction_preserves_literals_and_neighboring_items() {
-        let source = "const PREFIX: &str = \"é\"; impl Trait for Profile { fn message() -> &'static str { \"}  spaced   { text\" } } const SUFFIX: u8 = 3;";
+        let source = "const PREFIX: &str = \"é\"; impl Trait for Profile { fn message() -> &'static str { \"}  spaced   { text\" } }const SUFFIX: u8 = 3;";
         let updated = compact_impl(source, "Trait", "Profile").unwrap();
         let original: File = moxy::parse!(source).unwrap();
         let compacted: File = moxy::parse!(updated).unwrap();
@@ -359,7 +619,7 @@ mod tests {
     #[test]
     fn struct_replacement_checks_schema_without_derive_or_field_order_dependency() {
         let expected = "#[derive(Clone, Copy)] pub struct Mapping { #[prost(uint64, tag = \"1\")] pub id: u64, #[prost(bool, tag = \"7\")] pub has_functions: bool }";
-        let source = "#[derive(Copy, Clone)] pub struct Mapping { #[prost(bool, tag = \"7\")] pub has_functions: bool, #[prost(uint64, tag = \"1\")] pub id: u64 } struct Neighbor;";
+        let source = "#[derive(Copy, Clone)] pub struct Mapping { #[prost(bool, tag = \"7\")] pub has_functions: bool, #[prost(uint64, tag = \"1\")] pub id: u64 }struct Neighbor;";
         let replacement = "pub struct Mapping { pub id: u64, pub flags: u8 }";
         let updated = replace_struct(source, expected, replacement).unwrap();
         let file: File = moxy::parse!(updated).unwrap();
