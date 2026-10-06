@@ -1,9 +1,9 @@
 use std::sync::{Arc, Weak};
 
 use super::{
-    BTreeMap, DEFAULT_RETENTION, ExemplarRow, FloatRow, HashMap, HistRow, LabelMatcher, Labels,
-    MetadataRecord, PartitionIndex, PartitionWatermark, Result, RowChunks, SeriesFingerprint, Time,
-    TsdbBlock, prepare_matchers, row_matches,
+    BTreeMap, DEFAULT_RETENTION, ExemplarRow, FloatHeadSummary, FloatRow, HashMap, HistRow,
+    LabelMatcher, Labels, MetadataRecord, PartitionIndex, PartitionWatermark, Result, RowChunks,
+    SeriesFingerprint, Time, TsdbBlock, prepare_matchers, row_matches,
 };
 
 type SeriesLabelCache = HashMap<SeriesFingerprint, Vec<Weak<Labels>>>;
@@ -13,10 +13,14 @@ type SeriesLabelCache = HashMap<SeriesFingerprint, Vec<Weak<Labels>>>;
 /// Everything the WAL appends to lives in `RowChunks`, so cloning the
 /// store -- which is what `Arc::make_mut` does in [`WalHead`](super::WalHead)
 /// while a query holds a snapshot -- shares the sealed chunks by pointer and
-/// copies only each tenant's open chunk.
+/// copies only each tenant's open chunk. A float append also copies the
+/// affected tenant's shared series summary once per WAL batch.
 #[derive(Clone)]
 pub struct InMemoryMetricStore {
     pub(crate) floats: HashMap<String, RowChunks<FloatRow>>,
+    /// Shared with snapshots; a WAL batch copies the affected tenant's series
+    /// summary on its first float append.
+    pub(crate) float_head_summaries: HashMap<String, Arc<FloatHeadSummary>>,
     pub(crate) hists: HashMap<String, RowChunks<HistRow>>,
     pub(crate) exemplars: HashMap<String, RowChunks<ExemplarRow>>,
     pub(crate) metadata: HashMap<String, RowChunks<MetadataRecord>>,
@@ -42,6 +46,7 @@ impl Default for InMemoryMetricStore {
     fn default() -> Self {
         Self {
             floats: HashMap::new(),
+            float_head_summaries: HashMap::new(),
             hists: HashMap::new(),
             exemplars: HashMap::new(),
             metadata: HashMap::new(),

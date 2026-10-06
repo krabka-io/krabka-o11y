@@ -32,11 +32,11 @@ use crate::{
 /// unwind drops the copy and leaves the previous store exactly as it was, so
 /// the poison flag carries no information and both paths below clear it.
 ///
-/// The copy is cheap by construction: the store keeps its rows in chunks that
-/// a clone shares by pointer, so it is bounded by each tenant's open chunk
-/// rather than by the size of the head. A WAL-tail poll also applies its whole
-/// batch through [`WalHead::apply_wal_records_at`], under one lock and one
-/// copy, rather than one per record.
+/// Rows in sealed chunks are shared by pointer; cloning copies only each
+/// tenant's open chunk. A float append also copies that tenant's latest-series
+/// summary on its first write. A WAL-tail poll applies its whole batch through
+/// [`WalHead::apply_wal_records_at`], under one lock and one copy, rather than
+/// one per record.
 ///
 /// A reader never sees a half-applied batch. The writer mutates a store that
 /// nothing else can reach, and the mutated store becomes visible only when the

@@ -7,7 +7,10 @@ use krabka_blockstore::{Labels, SeriesFingerprint};
 use krabka_metrics::{NativeHistogram, SamplePayload, WalRecord};
 use krabka_units::prelude::*;
 
-use super::{ExemplarRow, FloatRow, HistRow, InMemoryMetricStore, PartitionWatermark, PruneStats};
+use super::{
+    ExemplarRow, FloatHeadSummary, FloatRow, HistRow, InMemoryMetricStore, PartitionWatermark,
+    PruneStats,
+};
 use crate::{
     ids::{Offset, PartitionIndex},
     store::{MetadataRecord, TsdbBlock},
@@ -30,6 +33,7 @@ impl InMemoryMetricStore {
     /// Removes every queryable value owned by `tenant`.
     pub fn delete_tenant(&mut self, tenant: &str) {
         self.floats.remove(tenant);
+        self.float_head_summaries.remove(tenant);
         self.hists.remove(tenant);
         self.exemplars.remove(tenant);
         self.metadata.remove(tenant);
@@ -96,16 +100,22 @@ impl InMemoryMetricStore {
     ) {
         self.observe_sample_timestamp(ts_ms);
         let (fp, labels) = self.intern_series_labels(tenant, labels.into());
-        self.floats
-            .entry(tenant.to_string())
-            .or_default()
-            .push(FloatRow {
-                fp,
-                labels,
-                ts_ms,
-                value,
-                start_timestamp_ms,
-            });
+        let row = FloatRow {
+            fp,
+            labels,
+            ts_ms,
+            value,
+            start_timestamp_ms,
+        };
+        // ponytail: copy O(live series) once per affected WAL batch; measure
+        // this against the full hot-head traversal removed from instant reads.
+        Arc::make_mut(
+            self.float_head_summaries
+                .entry(tenant.to_string())
+                .or_default(),
+        )
+        .observe(&row);
+        self.floats.entry(tenant.to_string()).or_default().push(row);
     }
 
     /// Appends a native-histogram sample. See [`InMemoryMetricStore::push_float`]
@@ -310,16 +320,26 @@ impl InMemoryMetricStore {
         // Fingerprints that had a sample before pruning.
         let mut seen: BTreeSet<SeriesFingerprint> = BTreeSet::new();
 
-        for rows in self.floats.values_mut() {
+        for (tenant, rows) in &mut self.floats {
             for row in rows.iter() {
                 seen.insert(row.fp);
             }
             let before = rows.len();
             rows.retain(|row| row.ts_ms >= cutoff);
             stats.samples_dropped += before - rows.len();
+            // Rebuild in the survivor pass already needed for retention.
+            // Never mutate from retain's predicate: it may run twice per row.
+            let mut summary = FloatHeadSummary::default();
             for row in rows.iter() {
+                summary.observe(row);
                 live.insert(row.fp);
                 oldest = Some(oldest.map_or(row.ts_ms, |current| current.min(row.ts_ms)));
+            }
+            if rows.is_empty() {
+                self.float_head_summaries.remove(tenant);
+            } else {
+                self.float_head_summaries
+                    .insert(tenant.clone(), Arc::new(summary));
             }
         }
         for rows in self.hists.values_mut() {

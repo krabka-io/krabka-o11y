@@ -73,23 +73,76 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
             return Ok(None);
         }
         let prepared = prepare_matchers(matchers)?;
+        let index = self.cold.floats.index();
+        // Keep resolution errors pending until the original cold-read point.
+        // An exact hot count can still require the ordinary scan before then.
+        let cold_candidates = index.resolve(tenant, matchers).map(|fps| {
+            let keys = index.candidate_blocks(tenant, &fps, start_ms, end_ms);
+            let blocks = index.all_blocks(tenant);
+            (fps, keys, blocks)
+        });
         let mut latest = HashMap::<u64, LatestSeries, ahash::RandomState>::default();
         let mut upper_count = 0_usize;
         if let Some(rows) = hot.floats.get(tenant) {
-            for row in rows.iter() {
-                if row.ts_ms < label_start_ms || row.ts_ms > end_ms {
-                    continue;
+            let summary = hot
+                .float_head_summaries
+                .get(tenant)
+                .and_then(|summary| {
+                    summary.matching_series(rows.len(), &prepared, label_start_ms, start_ms, end_ms)
+                })
+                .filter(|(_, count)| {
+                    // A loose bound must use the exact hot loop, not the full
+                    // scan: its boundary and duplicate limit behavior differs.
+                    cold_candidates.as_ref().is_ok_and(|(_, keys, blocks)| {
+                        blocks
+                            .iter()
+                            .filter(|block| keys.contains(&block.object_key))
+                            .fold(*count, |count, block| count.saturating_add(block.row_count))
+                            <= max_samples
+                    })
+                });
+            if let Some((series, count)) = summary {
+                upper_count = count;
+                for entry in series {
+                    latest.insert(
+                        entry.latest.0,
+                        LatestSeries {
+                            sample: (entry.latest.1 >= start_ms).then_some(entry.latest),
+                            labels: Some(Arc::clone(&entry.labels)),
+                            ..LatestSeries::default()
+                        },
+                    );
                 }
-                let series = match latest.entry(row.fp) {
-                    Entry::Occupied(entry) => {
-                        let series = entry.into_mut();
-                        // A shared immutable label set has the same matcher
-                        // result at every in-window row of this fingerprint.
-                        if !series
-                            .matching_labels
-                            .as_ref()
-                            .is_some_and(|labels| Arc::ptr_eq(labels, &row.labels))
-                        {
+            } else {
+                for row in rows.iter() {
+                    if row.ts_ms < label_start_ms || row.ts_ms > end_ms {
+                        continue;
+                    }
+                    let series = match latest.entry(row.fp) {
+                        Entry::Occupied(entry) => {
+                            let series = entry.into_mut();
+                            // A shared immutable label set has the same matcher
+                            // result at every in-window row of this fingerprint.
+                            if !series
+                                .matching_labels
+                                .as_ref()
+                                .is_some_and(|labels| Arc::ptr_eq(labels, &row.labels))
+                            {
+                                if !row_matches(
+                                    row.fp,
+                                    &row.labels,
+                                    row.ts_ms,
+                                    &prepared,
+                                    label_start_ms,
+                                    end_ms,
+                                ) {
+                                    continue;
+                                }
+                                series.matching_labels = Some(Arc::clone(&row.labels));
+                            }
+                            series
+                        }
+                        Entry::Vacant(entry) => {
                             if !row_matches(
                                 row.fp,
                                 &row.labels,
@@ -100,40 +153,26 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
                             ) {
                                 continue;
                             }
-                            series.matching_labels = Some(Arc::clone(&row.labels));
+                            entry.insert(LatestSeries {
+                                sample: None,
+                                labels: Some(Arc::clone(&row.labels)),
+                                matching_labels: Some(Arc::clone(&row.labels)),
+                            })
                         }
-                        series
+                    };
+                    if row.ts_ms < start_ms {
+                        continue;
                     }
-                    Entry::Vacant(entry) => {
-                        if !row_matches(
-                            row.fp,
-                            &row.labels,
-                            row.ts_ms,
-                            &prepared,
-                            label_start_ms,
-                            end_ms,
-                        ) {
-                            continue;
-                        }
-                        entry.insert(LatestSeries {
-                            sample: None,
-                            labels: Some(Arc::clone(&row.labels)),
-                            matching_labels: Some(Arc::clone(&row.labels)),
-                        })
+                    upper_count += 1;
+                    if upper_count > max_samples {
+                        return Ok(None);
                     }
-                };
-                if row.ts_ms < start_ms {
-                    continue;
-                }
-                upper_count += 1;
-                if upper_count > max_samples {
-                    return Ok(None);
-                }
-                let sample = (row.fp, row.ts_ms, row.value, row.start_timestamp_ms);
-                // Keep the first hot row at equal timestamps, including stale
-                // markers and creation timestamps.
-                if series.sample.is_none_or(|previous| row.ts_ms > previous.1) {
-                    series.sample = Some(sample);
+                    let sample = (row.fp, row.ts_ms, row.value, row.start_timestamp_ms);
+                    // Keep the first hot row at equal timestamps, including stale
+                    // markers and creation timestamps.
+                    if series.sample.is_none_or(|previous| row.ts_ms > previous.1) {
+                        series.sample = Some(sample);
+                    }
                 }
             }
         }
@@ -162,14 +201,11 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
                 }
             }
         }
-        let index = self.cold.floats.index();
-        let fps = index
-            .resolve(tenant, matchers)
-            .map_err(|error| PromqlError::Store(error.to_string()))?;
-        let keys = index.candidate_blocks(tenant, &fps, start_ms, end_ms);
+        let (fps, keys, blocks) =
+            cold_candidates.map_err(|error| PromqlError::Store(error.to_string()))?;
         let mut covered_blocks = 0;
         let mut uncovered = Vec::new();
-        for block in index.all_blocks(tenant) {
+        for block in blocks {
             if !keys.contains(&block.object_key) {
                 continue;
             }
