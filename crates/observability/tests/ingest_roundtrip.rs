@@ -31,9 +31,9 @@ use krabka_client_admin::{
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_observability::{
-    KafkaLogWalConsumer, Offset, PartitionIndex, QuerierIndexSource, Role, ServiceConfig,
+    ClientResourcePolicy, KafkaLogWalConsumer, Offset, PartitionIndex, QuerierIndexSource, Role, ServiceConfig,
     ServiceDependencies, WalLogRecord, WalPosition, build_service_dependencies,
-    build_service_router, decode_kafka_wal_record, metrics::ServiceMetrics,
+    build_service_dependencies_with_client_resource_policy, build_service_router, decode_kafka_wal_record, metrics::ServiceMetrics,
     run_compactor_until_idle, wal_consumer_metrics::WalConsumerMetrics,
 };
 use krabka_units::{days, secs};
@@ -57,6 +57,86 @@ const INDEX_PREFIX: &str = "observability/logs";
 /// partition, so the first poll of a fresh group can legitimately return
 /// nothing. That is a retry, not a failure; this bounds the retrying.
 const BROKER_DEADLINE: Duration = Duration::from_secs(20);
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn loki_push_preserves_all_wal_records_with_default_and_small_frames() {
+    for frame_max in [krabka_units::kibibytes(32), krabka_client_core::DEFAULT_CLIENT_FRAME_MAX] {
+        let broker_dir = tempfile::tempdir().expect("broker tempdir");
+        let mut broker_config = BrokerConfig::for_tests(broker_dir.path().to_path_buf());
+        broker_config.authorizer = Arc::new(SimpleAclAuthorizer::new(
+            std::iter::once("ANONYMOUS".to_owned()).collect(),
+        ));
+        let broker = Broker::start(broker_config).await.expect("broker start");
+        let bootstrap = broker.listen_addr().to_string();
+        let wal_topic = ServiceConfig::default().wal_topic;
+        create_wal_topic(&bootstrap, &wal_topic).await;
+        grant_tenant_wal_access_for_test(&bootstrap, &wal_topic, TENANT).await;
+        let distributor_root = tempfile::tempdir().expect("distributor root");
+        let mut config = roundtrip_config(
+            Role::Distributor,
+            distributor_root.path().to_path_buf(),
+            &bootstrap,
+            &wal_topic,
+            None,
+        );
+        config.reject_old_samples_max_age = days(36_500);
+        let policy = ClientResourcePolicy {
+            frame_max: krabka_client_core::ClientFrameMax::try_from(frame_max).unwrap(),
+            ..ClientResourcePolicy::default()
+        };
+        let dependencies = build_service_dependencies_with_client_resource_policy(
+            &config,
+            policy,
+            None,
+            WalConsumerMetrics::unregistered(),
+        )
+        .await
+        .expect("distributor dependencies");
+        let distributor = build_service_router(&config, dependencies, None)
+            .await
+            .expect("distributor router");
+
+        // One record fits the small frame; a 64 KiB batch of these does not.
+        let expected = (0..100)
+            .map(|index| WalLogRecord {
+                tenant: TENANT.into(),
+                labels: labels([("app", "api"), ("service_name", "api")]),
+                timestamp_ns: 10 + index,
+                line: format!("payload-{index:03} {}", "x".repeat(20 * 1024)),
+                structured_metadata: BTreeMap::from([("trace_id".into(), index.to_string())]),
+                position: Some(WalPosition {
+                    partition: PartitionIndex(0),
+                    offset: Offset(index),
+                }),
+            })
+            .collect::<Vec<_>>();
+        let body = json!({"streams": [{
+            "stream": {"app": "api", "service_name": "api"},
+            "values": expected.iter().map(|record| json!([
+                record.timestamp_ns.to_string(), record.line, record.structured_metadata
+            ])).collect::<Vec<_>>()
+        }]});
+        let response = tokio::time::timeout(
+            BROKER_DEADLINE,
+            distributor.oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/loki/api/v1/push")
+                    .header("content-type", "application/json")
+                    .header("X-Scope-OrgID", TENANT)
+                    .body(Body::from(body.to_string()))
+                    .expect("push request"),
+            ),
+        )
+        .await
+        .expect("push acknowledged within deadline")
+        .expect("push response");
+        assert!(response.status() == StatusCode::NO_CONTENT, "{frame_max:?}");
+        let actual = consume_wal_records(&bootstrap, &wal_topic, expected.len()).await;
+        assert!(actual == expected, "{frame_max:?}");
+        broker.shutdown().await;
+    }
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn loki_push_reaches_a_block_through_the_broker_wal_and_answers_a_query() {

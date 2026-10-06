@@ -55,6 +55,17 @@ impl KafkaLogWalSink {
         let producer = Producer::builder()
             .bootstrap(bootstrap)
             .client_id("krabka-observability-distributor")
+            // Log pushes enqueue many records before awaiting their acks.
+            // Keep the default batch size for custom frame limits.
+            .batch_size(
+                if client_resource_policy.frame_max.size()
+                    == krabka_client_core::DEFAULT_CLIENT_FRAME_MAX
+                {
+                    64 * 1024
+                } else {
+                    krabka_client_producer::DEFAULT_PRODUCER_BATCH_BYTES
+                },
+            )
             .dispatch_queue_capacity(client_resource_policy.dispatch_queue_capacity.get())
             .frame_max(client_resource_policy.frame_max.size())
             .maybe_security(security)
