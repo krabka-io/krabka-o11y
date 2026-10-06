@@ -1,7 +1,8 @@
 use clap::ValueEnum;
 use krabka_domain_macros::EnumName;
 
-#[derive(Clone, Copy, EnumName)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumName)]
+#[enum_name(parse)]
 pub enum Operation {
     #[name(value = "put_multipart")]
     PutMultipart,
@@ -14,6 +15,7 @@ pub enum Operation {
 }
 
 #[derive(EnumName)]
+#[enum_name(parse)]
 #[repr(u8)]
 enum NonCopy {
     #[name(value = "first")]
@@ -34,6 +36,7 @@ fn preserves_explicit_spelling_in_const_accessor_and_display() {
         (Operation::Http2, "HTTP/2"),
         (Operation::Escaped, "quoted \"name\"\nnext line"),
     ] {
+        assert2::assert!(Operation::from_name(expected) == Some(operation));
         assert2::assert!(operation.as_str() == expected);
         assert2::assert!(operation.to_string() == expected);
     }
@@ -45,10 +48,14 @@ fn display_does_not_consume_non_copy_variants() {
     let value = NonCopy::Second;
     assert2::assert!(value.to_string() == "second");
     assert2::assert!(value.as_str() == "second");
+    assert2::assert!(matches!(
+        NonCopy::from_name("second"),
+        Some(NonCopy::Second)
+    ));
 }
 
 #[derive(Clone, Copy, clap::ValueEnum, EnumName)]
-#[enum_name(clap)]
+#[enum_name(clap, parse)]
 enum Protocol {
     #[value(name = "SASL_SSL")]
     SaslSsl,
@@ -68,10 +75,24 @@ fn clap_names_match_parsing_const_access_and_display() {
         (Protocol::Gssapi, "GSSAPI"),
         (Protocol::Plain, "PLAIN"),
     ] {
+        assert2::assert!(Protocol::from_name(expected).unwrap().as_str() == expected);
         assert2::assert!(protocol.as_str() == expected);
         assert2::assert!(protocol.to_string() == expected);
         assert2::assert!(Protocol::from_str(expected, false).unwrap().as_str() == expected);
     }
     assert2::assert!(Protocol::Gssapi.to_possible_value().unwrap().is_hide_set());
     assert2::assert!(Protocol::from_str("sasl_ssl", false).is_err());
+}
+
+#[test]
+fn parsing_preserves_case_punctuation_and_non_copy_discriminants() {
+    assert2::assert!(matches!(NonCopy::from_name("first"), Some(NonCopy::First)));
+    assert2::assert!(matches!(
+        NonCopy::from_name("second"),
+        Some(NonCopy::Second)
+    ));
+    for name in ["", "unknown", "http/2", "HTTP/2 ", "put", "put-multipart"] {
+        assert2::assert!(Operation::from_name(name).is_none(), "{name}");
+    }
+    assert2::assert!(Protocol::from_name("sasl_ssl").is_none());
 }

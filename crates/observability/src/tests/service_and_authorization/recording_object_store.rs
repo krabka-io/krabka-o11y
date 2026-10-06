@@ -102,6 +102,7 @@ impl std::fmt::Display for RecordingObjectStore {
     }
 }
 
+#[krabka_domain_macros::delegate_object_store(self.inner)]
 #[async_trait::async_trait]
 impl ObjectStore for RecordingObjectStore {
     async fn put_opts(
@@ -112,14 +113,6 @@ impl ObjectStore for RecordingObjectStore {
     ) -> object_store::Result<object_store::PutResult> {
         self.put_paths.lock().unwrap().push(location.to_string());
         self.inner.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &object_store::path::Path,
-        opts: object_store::PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
     }
 
     async fn get_opts(
@@ -135,17 +128,6 @@ impl ObjectStore for RecordingObjectStore {
         let result = self.inner.get_opts(location, options).await;
         self.record_get_end();
         result
-    }
-
-    fn delete_stream(
-        &self,
-        locations: futures_util::stream::BoxStream<
-            'static,
-            object_store::Result<object_store::path::Path>,
-        >,
-    ) -> futures_util::stream::BoxStream<'static, object_store::Result<object_store::path::Path>>
-    {
-        self.inner.delete_stream(locations)
     }
 
     fn list(
@@ -172,21 +154,5 @@ impl ObjectStore for RecordingObjectStore {
             .push(prefix.map_or_else(String::new, ToString::to_string));
         self.list_offsets.lock().unwrap().push(offset.to_string());
         self.inner.list_with_offset(prefix, offset)
-    }
-
-    async fn list_with_delimiter(
-        &self,
-        prefix: Option<&object_store::path::Path>,
-    ) -> object_store::Result<object_store::ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &object_store::path::Path,
-        to: &object_store::path::Path,
-        options: object_store::CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 }

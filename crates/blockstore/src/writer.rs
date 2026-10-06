@@ -46,10 +46,10 @@ mod tests {
     };
     use async_trait::async_trait;
     use bytes::Bytes;
-    use futures::{FutureExt, StreamExt as _, stream::BoxStream};
+    use futures::{FutureExt, StreamExt as _};
     use object_store::{
-        CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-        ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, UploadPart,
+        MultipartUpload, ObjectStore, ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload,
+        PutResult, UploadPart,
         memory::InMemory,
         path::{Path, Path as ObjectPath},
     };
@@ -101,17 +101,9 @@ mod tests {
         }
     }
 
+    #[krabka_domain_macros::delegate_object_store(self.inner)]
     #[async_trait]
     impl ObjectStore for AbortStore {
-        async fn put_opts(
-            &self,
-            location: &ObjectPath,
-            payload: PutPayload,
-            options: PutOptions,
-        ) -> object_store::Result<PutResult> {
-            self.inner.put_opts(location, payload, options).await
-        }
-
         async fn put_multipart_opts(
             &self,
             location: &ObjectPath,
@@ -122,44 +114,6 @@ mod tests {
                 aborted: Arc::clone(&self.aborted),
                 fail_parts: self.fail_parts,
             }))
-        }
-
-        async fn get_opts(
-            &self,
-            location: &ObjectPath,
-            options: GetOptions,
-        ) -> object_store::Result<GetResult> {
-            self.inner.get_opts(location, options).await
-        }
-
-        fn list(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-            self.inner.list(prefix)
-        }
-
-        async fn list_with_delimiter(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> object_store::Result<ListResult> {
-            self.inner.list_with_delimiter(prefix).await
-        }
-
-        async fn copy_opts(
-            &self,
-            from: &ObjectPath,
-            to: &ObjectPath,
-            options: CopyOptions,
-        ) -> object_store::Result<()> {
-            self.inner.copy_opts(from, to, options).await
-        }
-
-        fn delete_stream(
-            &self,
-            locations: BoxStream<'static, object_store::Result<ObjectPath>>,
-        ) -> BoxStream<'static, object_store::Result<ObjectPath>> {
-            self.inner.delete_stream(locations)
         }
     }
 
@@ -257,6 +211,7 @@ mod tests {
         }
     }
 
+    #[krabka_domain_macros::delegate_object_store(self.inner)]
     #[async_trait]
     impl ObjectStore for FlakyPutStore {
         async fn put_opts(
@@ -276,52 +231,6 @@ mod tests {
                 return Err((self.error)());
             }
             self.inner.put_opts(location, payload, options).await
-        }
-
-        async fn put_multipart_opts(
-            &self,
-            location: &ObjectPath,
-            options: PutMultipartOptions,
-        ) -> object_store::Result<Box<dyn MultipartUpload>> {
-            self.inner.put_multipart_opts(location, options).await
-        }
-
-        async fn get_opts(
-            &self,
-            location: &ObjectPath,
-            options: GetOptions,
-        ) -> object_store::Result<GetResult> {
-            self.inner.get_opts(location, options).await
-        }
-
-        fn list(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-            self.inner.list(prefix)
-        }
-
-        async fn list_with_delimiter(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> object_store::Result<ListResult> {
-            self.inner.list_with_delimiter(prefix).await
-        }
-
-        async fn copy_opts(
-            &self,
-            from: &ObjectPath,
-            to: &ObjectPath,
-            options: CopyOptions,
-        ) -> object_store::Result<()> {
-            self.inner.copy_opts(from, to, options).await
-        }
-
-        fn delete_stream(
-            &self,
-            locations: BoxStream<'static, object_store::Result<ObjectPath>>,
-        ) -> BoxStream<'static, object_store::Result<ObjectPath>> {
-            self.inner.delete_stream(locations)
         }
     }
 

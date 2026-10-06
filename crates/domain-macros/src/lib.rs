@@ -4,6 +4,8 @@
 //! generates a constant accessor and a display implementation from that name.
 //! [`delegate_object_store`] adds required forwarding methods to store wrappers.
 
+use std::collections::HashSet;
+
 use moxy::{
     ast::{Attributed, Declaration, ParseError},
     diagnostic::SpanExt,
@@ -19,6 +21,8 @@ struct Name {
 struct EnumNameOptions {
     #[meta(default)]
     clap: bool,
+    #[meta(default)]
+    parse: bool,
 }
 
 #[derive(moxy::FromMeta)]
@@ -33,7 +37,10 @@ struct ClapName {
 /// Every variant needs `#[name(value = "spelling")]`. The enum must have
 /// at least one unit variant and no generic parameters. The generated `as_str` is a
 /// `const fn` and has the same visibility as the enum. Neither method changes
-/// case or punctuation. Other derives control serialization and parsing.
+/// case or punctuation. Other derives control serialization.
+/// `#[enum_name(parse)]` also generates `from_name(&str)`, which returns `None`
+/// for unknown names. It compares the full name with exact case.
+/// Names must be unique when parsing is enabled.
 /// `#[enum_name(clap)]` reads explicit `#[value(name = "spelling")]` names
 /// instead. Hidden clap variants keep their names; skipped variants are rejected.
 /// Conditional variants are rejected.
@@ -153,6 +160,17 @@ fn expand(declaration: Declaration) -> Result<TokenStream, ParseError> {
             Ok((&variant.ident, name))
         })
         .collect::<Result<Vec<_>, ParseError>>()?;
+    if options.parse {
+        let mut names = HashSet::new();
+        for (variant, name) in &variants {
+            if !names.insert(name) {
+                return variant
+                    .span()
+                    .error("EnumName parsing requires unique variant names")
+                    .into();
+            }
+        }
+    }
     Ok(moxy::template! {
         impl {{ &item.ident }} {
             /// The explicit name of this variant.
@@ -161,6 +179,18 @@ fn expand(declaration: Declaration) -> Result<TokenStream, ParseError> {
                 match self {
                     @for (variant, name) in &variants {
                         Self::{{ variant }} => {{ name }},
+                    }
+                }
+            }
+            @if options.parse {
+                /// The variant with this exact name, or `None` for an unknown name.
+                #[must_use]
+                {{ &item.vis }} fn from_name(name: &str) -> ::core::option::Option<Self> {
+                    match name {
+                        @for (variant, name) in &variants {
+                            {{ name }} => ::core::option::Option::Some(Self::{{ variant }}),
+                        }
+                        _ => ::core::option::Option::None,
                     }
                 }
             }
@@ -195,6 +225,8 @@ mod tests {
             "#[enum_name(clap)] #[enum_name(clap)] enum DuplicateOptions { #[value(name = \"a\")] A }",
             "enum Conditional { #[cfg(unix)] #[name(value = \"a\")] A }",
             "enum ConditionalAttr { #[cfg_attr(unix, name(value = \"a\"))] A }",
+            "#[enum_name(parse)] enum Ambiguous { #[name(value = \"a\")] A, #[name(value = \"a\")] B }",
+            "#[enum_name(clap, parse)] enum AmbiguousClap { #[value(name = \"a\")] A, #[value(name = \"a\")] B }",
             "struct NotAnEnum;",
             "enum Empty {}",
             "enum Generic<T> { #[name(value = \"a\")] A(T) }",

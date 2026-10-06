@@ -4513,6 +4513,7 @@ dependencies = [
  "clap",
  "datafusion",
  "flate2",
+ "futures",
  "futures-util",
  "krabka-audit",
  "krabka-blockstore",

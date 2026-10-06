@@ -46,9 +46,8 @@ use krabka_observability::{
 };
 use krabka_units::{Time, bytes, hours, millis, minutes};
 use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, local::LocalFileSystem,
-    path::Path as ObjectPath,
+    GetOptions, GetResult, ObjectMeta, ObjectStore, ObjectStoreExt, PutOptions, PutPayload,
+    PutResult, local::LocalFileSystem, path::Path as ObjectPath,
 };
 use prost::bytes::Bytes;
 use tokio::{
@@ -126,6 +125,7 @@ async fn read_all_tenant_shard_indexes(
     .await
 }
 
+#[krabka_domain_macros::delegate_object_store(self.inner)]
 #[async_trait]
 impl ObjectStore for RecordingObjectStore {
     async fn put_opts(
@@ -143,14 +143,6 @@ impl ObjectStore for RecordingObjectStore {
             .unwrap()
             .push(ObjectStoreWrite::Put(location.to_string()));
         self.inner.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &ObjectPath,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
     }
 
     async fn get_opts(
@@ -180,29 +172,6 @@ impl ObjectStore for RecordingObjectStore {
                 }
             })
             .boxed()
-    }
-
-    fn list(
-        &self,
-        prefix: Option<&ObjectPath>,
-    ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(
-        &self,
-        prefix: Option<&ObjectPath>,
-    ) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &ObjectPath,
-        to: &ObjectPath,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 }
 
@@ -2137,6 +2106,7 @@ impl<S> fmt::Display for FailingPutObjectStore<S> {
     }
 }
 
+#[krabka_domain_macros::delegate_object_store(self.inner)]
 #[async_trait]
 impl<S> ObjectStore for FailingPutObjectStore<S>
 where
@@ -2154,12 +2124,11 @@ where
                 .matching_path
                 .as_ref()
                 .is_none_or(|matching_path| location.as_ref().contains(matching_path));
-            if *remaining > 0 && matches_path {
+            let should_fail = *remaining > 0 && matches_path;
+            if should_fail {
                 *remaining -= 1;
-                true
-            } else {
-                false
             }
+            should_fail
         };
         if should_fail {
             self.failed_puts
@@ -2172,22 +2141,6 @@ where
         self.inner.put_opts(location, payload, opts).await
     }
 
-    async fn put_multipart_opts(
-        &self,
-        location: &ObjectPath,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &ObjectPath,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
     async fn get_ranges(
         &self,
         location: &ObjectPath,
@@ -2196,42 +2149,12 @@ where
         self.inner.get_ranges(location, ranges).await
     }
 
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<ObjectPath>>,
-    ) -> BoxStream<'static, object_store::Result<ObjectPath>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(
-        &self,
-        prefix: Option<&ObjectPath>,
-    ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
     fn list_with_offset(
         &self,
         prefix: Option<&ObjectPath>,
         offset: &ObjectPath,
     ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
         self.inner.list_with_offset(prefix, offset)
-    }
-
-    async fn list_with_delimiter(
-        &self,
-        prefix: Option<&ObjectPath>,
-    ) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &ObjectPath,
-        to: &ObjectPath,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 }
 

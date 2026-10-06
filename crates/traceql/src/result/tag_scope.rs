@@ -2,6 +2,7 @@ use krabka_domain_macros::EnumName;
 
 /// Tag discovery scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, EnumName)]
+#[enum_name(parse)]
 pub enum TagScope {
     #[name(value = "resource")]
     Resource,

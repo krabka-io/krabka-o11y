@@ -540,25 +540,9 @@ mod tests {
         }
     }
 
+    #[krabka_domain_macros::delegate_object_store(self.inner)]
     #[async_trait::async_trait]
     impl ObjectStore for TestStore {
-        async fn put_opts(
-            &self,
-            location: &ObjectPath,
-            payload: object_store::PutPayload,
-            opts: object_store::PutOptions,
-        ) -> object_store::Result<object_store::PutResult> {
-            self.inner.put_opts(location, payload, opts).await
-        }
-
-        async fn put_multipart_opts(
-            &self,
-            location: &ObjectPath,
-            opts: object_store::PutMultipartOptions,
-        ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
-            self.inner.put_multipart_opts(location, opts).await
-        }
-
         async fn get_opts(
             &self,
             location: &ObjectPath,
@@ -589,37 +573,6 @@ mod tests {
                 .other_gets
                 .fetch_add(ranges.len(), Ordering::Relaxed);
             self.inner.get_ranges(location, ranges).await
-        }
-
-        fn delete_stream(
-            &self,
-            locations: futures::stream::BoxStream<'static, object_store::Result<ObjectPath>>,
-        ) -> futures::stream::BoxStream<'static, object_store::Result<ObjectPath>> {
-            self.inner.delete_stream(locations)
-        }
-
-        fn list(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
-        {
-            self.inner.list(prefix)
-        }
-
-        async fn list_with_delimiter(
-            &self,
-            prefix: Option<&ObjectPath>,
-        ) -> object_store::Result<object_store::ListResult> {
-            self.inner.list_with_delimiter(prefix).await
-        }
-
-        async fn copy_opts(
-            &self,
-            from: &ObjectPath,
-            to: &ObjectPath,
-            options: object_store::CopyOptions,
-        ) -> object_store::Result<()> {
-            self.inner.copy_opts(from, to, options).await
         }
     }
 
