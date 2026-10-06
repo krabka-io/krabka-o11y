@@ -31,10 +31,11 @@ use krabka_client_admin::{
 };
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_observability::{
-    ClientResourcePolicy, KafkaLogWalConsumer, Offset, PartitionIndex, QuerierIndexSource, Role, ServiceConfig,
-    ServiceDependencies, WalLogRecord, WalPosition, build_service_dependencies,
-    build_service_dependencies_with_client_resource_policy, build_service_router, decode_kafka_wal_record, metrics::ServiceMetrics,
-    run_compactor_until_idle, wal_consumer_metrics::WalConsumerMetrics,
+    ClientResourcePolicy, KafkaLogWalConsumer, Offset, PartitionIndex, QuerierIndexSource, Role,
+    ServiceConfig, ServiceDependencies, WalLogRecord, WalPosition, build_service_dependencies,
+    build_service_dependencies_with_client_resource_policy, build_service_router,
+    decode_kafka_wal_record, metrics::ServiceMetrics, run_compactor_until_idle,
+    wal_consumer_metrics::WalConsumerMetrics,
 };
 use krabka_units::{days, secs};
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
@@ -60,7 +61,10 @@ const BROKER_DEADLINE: Duration = Duration::from_secs(20);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn loki_push_preserves_all_wal_records_with_default_and_small_frames() {
-    for frame_max in [krabka_units::kibibytes(32), krabka_client_core::DEFAULT_CLIENT_FRAME_MAX] {
+    for frame_max in [
+        krabka_units::kibibytes(32),
+        krabka_client_core::DEFAULT_CLIENT_FRAME_MAX,
+    ] {
         let broker_dir = tempfile::tempdir().expect("broker tempdir");
         let mut broker_config = BrokerConfig::for_tests(broker_dir.path().to_path_buf());
         broker_config.authorizer = Arc::new(SimpleAclAuthorizer::new(
