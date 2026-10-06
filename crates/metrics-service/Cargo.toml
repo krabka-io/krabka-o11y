@@ -18,7 +18,9 @@ categories = ["database-implementations"]
 workspace = true
 
 [features]
-heap-profiling = ["krabka-telemetry/heap-profiling", "dep:tikv-jemallocator"]
+default = ["jemalloc"]
+jemalloc = ["dep:tikv-jemallocator"]
+heap-profiling = ["krabka-telemetry/heap-profiling", "jemalloc"]
 
 [dependencies]
 assert2 = { workspace = true }
