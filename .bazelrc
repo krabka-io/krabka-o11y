@@ -18,6 +18,10 @@ build --linkopt=-Wno-unused-command-line-argument
 # `--linkopt` does not reach, so the warning survived there alone.
 build --host_linkopt=-Wno-unused-command-line-argument
 
+# Optimize metrics query code as one unit per crate.
+build --@rules_rust//rust/settings:per_crate_rustc_flag=//crates/metrics-service:@-Ccodegen-units=1
+build --@rules_rust//rust/settings:per_crate_rustc_flag=//crates/promql:@-Ccodegen-units=1
+
 # Keep the autodetected host C++ toolchain from outranking the hermetic @llvm one
 # registered in MODULE.bazel.
 common --repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1
