@@ -950,6 +950,7 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
 
 #[tokio::test]
 async fn manifest_listing_follows_publication_replacement_and_removal() {
+    const IMPORT: &str = "metrics/tenant-a/uploaded/01M3MJXM7R4M5X4Q4CKHW5Q8N1-0123456789abcdef";
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let sink = ObjectStoreCompactionIndexSink::new(store.clone());
     let mut first = manifest(
@@ -1009,7 +1010,6 @@ async fn manifest_listing_follows_publication_replacement_and_removal() {
     );
 
     // An import disappears again when its publication marker is removed.
-    const IMPORT: &str = "metrics/tenant-a/uploaded/01M3MJXM7R4M5X4Q4CKHW5Q8N1-0123456789abcdef";
     let imported = manifest(
         "tenant-a",
         MetricBlockKind::Float,

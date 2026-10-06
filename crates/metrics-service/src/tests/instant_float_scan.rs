@@ -50,7 +50,7 @@ async fn fixture(cold: &[(&str, i64)]) -> Fixture {
             job,
             stamp,
             &format!("metrics/tenant-a/float/{offset}.parquet"),
-            offset as i64,
+            i64::try_from(offset).unwrap(),
         )
         .await;
     }
@@ -337,7 +337,7 @@ async fn cold_newer_or_missing_series_are_read_and_stale_hot_markers_stay_select
             labels(),
             13_000,
             f64::from_bits(0x7ff0_0000_0000_0002),
-        )
+        );
     });
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
     assert!(
@@ -358,7 +358,7 @@ async fn cold_newer_or_missing_series_are_read_and_stale_hot_markers_stay_select
             Labels::from_pairs([("__name__", "up"), ("job", "db")]),
             13_000,
             9.0,
-        )
+        );
     });
     assert!(matches!(
         limited.query_instant(&tenant, "up", 14_000).await,
@@ -658,7 +658,7 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
         captured
             .labels
             .values()
-            .map(|labels| labels.as_ref())
+            .map(AsRef::as_ref)
             .collect::<Vec<_>>()
             == expected_labels.iter().collect::<Vec<_>>()
     );
@@ -685,7 +685,7 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
         lookback_delta: secs(3),
         ..EngineOpts::default()
     };
-    let engine = PromqlEngine::new(Arc::clone(&fixture.store), opts.clone());
+    let engine = PromqlEngine::new(Arc::clone(&fixture.store), opts);
     let expected: QueryResult = serde_json::from_value(serde_json::json!({
         "InstantVector": [{"labels": {"__name__": "up", "job": "api"},
             "ts_ms": 12_000, "value": {"Float": 7.0}}]
@@ -694,7 +694,7 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
     assert!(engine.query_instant(&tenant, "up", 12_000).await.unwrap() == expected);
     let control = PromqlEngine::new(
         Arc::new(fixture.store.current_store(5_000, 12_000).await.unwrap()),
-        opts.clone(),
+        opts,
     );
     for query in [
         "up",
@@ -715,7 +715,7 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
             EngineOpts {
                 max_samples,
                 max_fetched_series,
-                ..opts.clone()
+                ..opts
             },
         );
         let result = limited.query_instant(&tenant, "up", 12_000).await;
@@ -755,7 +755,7 @@ async fn latest_scan_keeps_boundary_labels_limits_and_captured_precedence() {
         captured
             .labels
             .values()
-            .map(|labels| labels.as_ref())
+            .map(AsRef::as_ref)
             .collect::<Vec<_>>()
             == expected_labels.iter().collect::<Vec<_>>()
     );

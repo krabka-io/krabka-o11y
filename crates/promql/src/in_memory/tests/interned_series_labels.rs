@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use assert2::assert;
 use krabka_blockstore::BlockStore;
@@ -165,4 +165,50 @@ async fn equal_fingerprints_do_not_reuse_matchers_for_different_labels() {
     assert!(scan.labels.len() == 1);
     assert!(scan.labels[&fp].as_ref() == wanted.as_ref());
     assert!(Arc::ptr_eq(&scan.labels[&fp], &wanted));
+}
+
+#[tokio::test]
+async fn cold_labels_do_not_hide_different_hot_labels_with_the_same_row_id() {
+    let cold_labels = Arc::new(Labels::from_pairs([("__name__", "up"), ("job", "api")]));
+    let hot_labels = Arc::new(Labels::from_pairs([("__name__", "up"), ("job", "worker")]));
+    let cold_fp = cold_labels.fingerprint();
+    let hot_fp = hot_labels.fingerprint();
+    let mut blocks = BlockStore::new(
+        Arc::new(InMemory::new()),
+        url::Url::parse("memory:///").unwrap(),
+    );
+    blocks
+        .index_mut()
+        .add_series("tenant-a", cold_fp ^ 1, &cold_labels);
+    let mut hot = InMemoryMetricStore::new();
+    // The row ID shares the cold label key. The hot labels still need their
+    // own canonical key in the returned label map.
+    hot.floats
+        .entry("tenant-a".into())
+        .or_default()
+        .push(FloatRow {
+            fp: cold_fp,
+            labels: Arc::clone(&hot_labels),
+            ts_ms: 10_000,
+            value: 7.0,
+            start_timestamp_ms: None,
+        });
+    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), WalHead::from_store(hot));
+    let scan = store
+        .try_latest_float_scan(
+            "tenant-a",
+            &[LabelMatcher::new("__name__", MatchOp::Eq, "up")],
+            9_000,
+            9_001,
+            11_000,
+            1,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(scan.samples == vec![(cold_fp, 10_000, 7.0, None)]);
+    assert!(
+        scan.labels == BTreeMap::from([(cold_fp, Arc::clone(&cold_labels)), (hot_fp, hot_labels),])
+    );
+    assert!(!Arc::ptr_eq(&scan.labels[&cold_fp], &cold_labels));
 }

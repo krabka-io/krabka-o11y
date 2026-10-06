@@ -1,19 +1,12 @@
 {
   "schema_version": 1,
   "base_main": "2ac3b9c6cfce1624bc94b32370a43cc2ed300deb",
-  "source_commit": "c7ed6004226c8de0afc4767736a8d2dad5daf47d",
+  "source_commit": "e7bd6789f0eeb72e4ffdbd31212ce8e2497cdb2b",
   "source_file_overrides_sha256": {
-    "crates/observability/src/querier/aggregate/record_matching/append_matching_hot_log_record.rs": "1f2ceac542ce2a2eb3112ba019f5c08c56dfa82d9ee61fe8c9f461943fdd7e51",
-    "crates/observability/src/querier/scan/stream_scans/stream_scan_options.rs": "60b43e214693d6da579140b792902be073035c1e14d7da6f3dd2fa4d488724cf",
-    "crates/observability/src/querier/state/types/dynamic_index_cache.rs": "b6097ae1255864eb2538086c72156a7c3fd79cc713a7827b6c01c43a8cefd461",
-    "crates/observability/src/tests/hot_tail_frontier/shared_snapshots_survive_pruning_and_reach_http_queries.rs": "c62b93c1af518d2737bd09344f41cd32fb8e6398d5b06cd1321b96b90d9f6ca2",
-    "crates/observability/src/tests/shard_index_cache/querier_state_with_request_tenant_index_reuses_shard_indexes_for_moving_ranges.rs": "afce06dffd2f4584c18b269d6f77ecb82debd5cb91cb857be0d6c5d0e9aff4fa",
-    "crates/profiles/src/bin/krabka-profiles/main.rs": "cfce5ed200b4c169e6545a3f808b36d77e3d3a66f6ea9be70afb14c40bb51897",
-    "crates/profiles/src/limits.rs": "c8b6604c106e380a0f355248b68d6a42a5e3a64bc0a3dd5c63dcac0e72bfcd3a",
-    "crates/profiles/src/limits/limits_type.rs": "3e215e05931ea8d63392a8307875b8cd4f6a8856b7634516893ba14a329ef33f",
-    "crates/profiles/src/limits/overrides.rs": "d0b53715fa88e7417753679ff0c44f62808802cf9e7aeb561e87d9c86b60251a",
-    "crates/promql/src/store/metric_store.rs": "a7a78d93b25c488431414fc76d1499615417ac5d208b235164291580cb3424dd",
-    ".bazelrc": "4232669e4ba5294a0345db7d44b9de6720cfe90cdb04e6390629acdc10840b20"
+    "crates/metrics/tests/level_compaction.rs": "df278dd13555936575a952b60c47b77117aaa35966299a27e4f591d91080ba11",
+    "crates/metrics/src/bin/krabka-metrics/run.rs": "4646968dffdb25e5778ed384851df9925c15be118f1b22b12210999ec855be5d",
+    "crates/promql/src/in_memory/tests/interned_series_labels.rs": "67b01e1408fde757c562429ae9f3c0ce4d7775b2eb3953dac7b370299baab5c7",
+    "crates/metrics-service/src/tests/instant_float_scan.rs": "fd1000cdc7123035b13b398e7a9c7044a9eeb84b7faa5c7329cfb5bb0b6385a3"
   },
   "correctness_qualified": false,
   "performance_qualified_current_branch": false,
@@ -21,20 +14,2013 @@
   "validation": {
     "ordinary": {
       "status": "passed",
+      "proof_path": "qualification/evidence/correctness/common-repairs-baseline-recovery-e7bd6789f0ee/ordinary/provenance.json",
+      "proof_sha256": "ff9f4e099690975907aba151f1fa22e36cd35ec4601f29e61952c4335995b665",
+      "targets": [
+        "//crates/blockstore:block_metadata_test",
+        "//crates/blockstore:block_metadata_test_clippy",
+        "//crates/blockstore:blockstore_clippy",
+        "//crates/blockstore:blockstore_doc_test",
+        "//crates/blockstore:blockstore_no_harness_check",
+        "//crates/blockstore:blockstore_test",
+        "//crates/blockstore:blockstore_test_clippy",
+        "//crates/blockstore:datafusion_test",
+        "//crates/blockstore:datafusion_test_clippy",
+        "//crates/blockstore:deployment_recovery_test",
+        "//crates/blockstore:deployment_recovery_test_clippy",
+        "//crates/blockstore:index_test",
+        "//crates/blockstore:index_test_clippy",
+        "//crates/blockstore:krabka-storage-admin_clippy",
+        "//crates/blockstore:krabka-storage-admin_test",
+        "//crates/blockstore:krabka-storage-admin_test_clippy",
+        "//crates/blockstore:label_fingerprint_test",
+        "//crates/blockstore:label_fingerprint_test_clippy",
+        "//crates/blockstore:lifecycle_test",
+        "//crates/blockstore:lifecycle_test_clippy",
+        "//crates/blockstore:nested_set_proptest_test",
+        "//crates/blockstore:nested_set_proptest_test_clippy",
+        "//crates/blockstore:object_store_faults_test",
+        "//crates/blockstore:object_store_faults_test_clippy",
+        "//crates/blockstore:object_store_semantics_test",
+        "//crates/blockstore:object_store_semantics_test_clippy",
+        "//crates/blockstore:parquet_test",
+        "//crates/blockstore:parquet_test_clippy",
+        "//crates/blockstore:persistence_test",
+        "//crates/blockstore:persistence_test_clippy",
+        "//crates/blockstore:roundtrip_proptest_test",
+        "//crates/blockstore:roundtrip_proptest_test_clippy",
+        "//crates/blockstore:span_block_roundtrip_test",
+        "//crates/blockstore:span_block_roundtrip_test_clippy",
+        "//crates/blockstore:span_id_proptest_test",
+        "//crates/blockstore:span_id_proptest_test_clippy",
+        "//crates/blockstore:storage_audit_test",
+        "//crates/blockstore:storage_audit_test_clippy",
+        "//crates/blockstore:storage_repair_test",
+        "//crates/blockstore:storage_repair_test_clippy",
+        "//crates/blockstore:tenant_path_proptest_test",
+        "//crates/blockstore:tenant_path_proptest_test_clippy",
+        "//crates/blockstore:trace_pipeline_e2e_test",
+        "//crates/blockstore:trace_pipeline_e2e_test_clippy",
+        "//crates/integration:alloy_client_test",
+        "//crates/integration:alloy_client_test_clippy",
+        "//crates/integration:backup_restore_test",
+        "//crates/integration:backup_restore_test_clippy",
+        "//crates/integration:integration_clippy",
+        "//crates/integration:integration_doc_test",
+        "//crates/integration:integration_no_harness_check",
+        "//crates/integration:integration_test",
+        "//crates/integration:integration_test_clippy",
+        "//crates/integration:logs_to_traces_trace_id_test",
+        "//crates/integration:logs_to_traces_trace_id_test_clippy",
+        "//crates/integration:prometheus_client_test",
+        "//crates/integration:prometheus_client_test_clippy",
+        "//crates/integration:traces_to_metrics_exemplars_test",
+        "//crates/integration:traces_to_metrics_exemplars_test_clippy",
+        "//crates/integration:traces_to_profiles_span_profiles_test",
+        "//crates/integration:traces_to_profiles_span_profiles_test_clippy",
+        "//crates/logql:logql_clippy",
+        "//crates/logql:logql_doc_test",
+        "//crates/logql:logql_no_harness_check",
+        "//crates/logql:logql_test",
+        "//crates/logql:logql_test_clippy",
+        "//crates/logql:parser_proptest_test",
+        "//crates/logql:parser_proptest_test_clippy",
+        "//crates/logql:parser_test",
+        "//crates/logql:parser_test_clippy",
+        "//crates/logql:planner_proptest_test",
+        "//crates/logql:planner_proptest_test_clippy",
+        "//crates/logql:planner_test",
+        "//crates/logql:planner_test_clippy",
+        "//crates/metrics-service:clock_rules_bundle_test",
+        "//crates/metrics-service:clock_rules_bundle_test_clippy",
+        "//crates/metrics-service:diff_mimir_test",
+        "//crates/metrics-service:diff_mimir_test_clippy",
+        "//crates/metrics-service:diff_prometheus_test",
+        "//crates/metrics-service:diff_prometheus_test_clippy",
+        "//crates/metrics-service:grafana_integration_test",
+        "//crates/metrics-service:grafana_integration_test_clippy",
+        "//crates/metrics-service:krabka-metrics-service_clippy",
+        "//crates/metrics-service:krabka-metrics-service_test",
+        "//crates/metrics-service:krabka-metrics-service_test_clippy",
+        "//crates/metrics-service:metrics-service_clippy",
+        "//crates/metrics-service:metrics-service_doc_test",
+        "//crates/metrics-service:metrics-service_no_harness_check",
+        "//crates/metrics-service:metrics-service_test",
+        "//crates/metrics-service:metrics-service_test_clippy",
+        "//crates/metrics-service:metrics_deployment_test",
+        "//crates/metrics-service:metrics_deployment_test_clippy",
+        "//crates/metrics-service:ruler_bundled_rules_test",
+        "//crates/metrics-service:ruler_bundled_rules_test_clippy",
+        "//crates/metrics-service:ruler_fencing_test",
+        "//crates/metrics-service:ruler_fencing_test_clippy",
+        "//crates/metrics-service:server_security_test",
+        "//crates/metrics-service:server_security_test_clippy",
+        "//crates/metrics-service:tsdb_import_test",
+        "//crates/metrics-service:tsdb_import_test_clippy",
+        "//crates/metrics:block_deletion_protocol_model_test",
+        "//crates/metrics:block_deletion_protocol_model_test_clippy",
+        "//crates/metrics:clock_decode_proptest_test",
+        "//crates/metrics:clock_decode_proptest_test_clippy",
+        "//crates/metrics:clock_ingest_test",
+        "//crates/metrics:clock_ingest_test_clippy",
+        "//crates/metrics:diff_corpus_selftest_test",
+        "//crates/metrics:diff_corpus_selftest_test_clippy",
+        "//crates/metrics:histogram_roundtrip_test",
+        "//crates/metrics:histogram_roundtrip_test_clippy",
+        "//crates/metrics:index_snapshot_protocol_model_test",
+        "//crates/metrics:index_snapshot_protocol_model_test_clippy",
+        "//crates/metrics:ingest_roundtrip_test",
+        "//crates/metrics:ingest_roundtrip_test_clippy",
+        "//crates/metrics:krabka-metrics_clippy",
+        "//crates/metrics:krabka-metrics_test",
+        "//crates/metrics:krabka-metrics_test_clippy",
+        "//crates/metrics:level_compaction_test",
+        "//crates/metrics:level_compaction_test_clippy",
+        "//crates/metrics:metrics_clippy",
+        "//crates/metrics:metrics_doc_test",
+        "//crates/metrics:metrics_no_harness_check",
+        "//crates/metrics:metrics_test",
+        "//crates/metrics:metrics_test_clippy",
+        "//crates/metrics:runtime_overrides_test",
+        "//crates/metrics:runtime_overrides_test_clippy",
+        "//crates/metrics:storage_protocol_model_test",
+        "//crates/metrics:storage_protocol_model_test_clippy",
+        "//crates/metrics:tenant_quota_isolation_test",
+        "//crates/metrics:tenant_quota_isolation_test_clippy",
+        "//crates/metrics:tsdb_import_test",
+        "//crates/metrics:tsdb_import_test_clippy",
+        "//crates/metrics:tsdb_publish_test",
+        "//crates/metrics:tsdb_publish_test_clippy",
+        "//crates/observability:all_in_one_drain_failure_test",
+        "//crates/observability:all_in_one_drain_failure_test_clippy",
+        "//crates/observability:all_in_one_test",
+        "//crates/observability:all_in_one_test_clippy",
+        "//crates/observability:analytics_test",
+        "//crates/observability:analytics_test_clippy",
+        "//crates/observability:audit_test",
+        "//crates/observability:audit_test_clippy",
+        "//crates/observability:cli_test",
+        "//crates/observability:cli_test_clippy",
+        "//crates/observability:compactor_test",
+        "//crates/observability:compactor_test_clippy",
+        "//crates/observability:config_file_test",
+        "//crates/observability:config_file_test_clippy",
+        "//crates/observability:crypto_provider_absent_test",
+        "//crates/observability:crypto_provider_absent_test_clippy",
+        "//crates/observability:crypto_provider_install_test",
+        "//crates/observability:crypto_provider_install_test_clippy",
+        "//crates/observability:deletes_test",
+        "//crates/observability:deletes_test_clippy",
+        "//crates/observability:distributor_loki_push_test",
+        "//crates/observability:distributor_loki_push_test_clippy",
+        "//crates/observability:distributor_otlp_test",
+        "//crates/observability:distributor_otlp_test_clippy",
+        "//crates/observability:environment_test",
+        "//crates/observability:environment_test_clippy",
+        "//crates/observability:format_query_test",
+        "//crates/observability:format_query_test_clippy",
+        "//crates/observability:grafana_e2e_test",
+        "//crates/observability:grafana_e2e_test_clippy",
+        "//crates/observability:grafana_integration_test",
+        "//crates/observability:grafana_integration_test_clippy",
+        "//crates/observability:ingest_roundtrip_test",
+        "//crates/observability:ingest_roundtrip_test_clippy",
+        "//crates/observability:krabka-o11y-bootstrap_clippy",
+        "//crates/observability:krabka-o11y-bootstrap_test",
+        "//crates/observability:krabka-o11y-bootstrap_test_clippy",
+        "//crates/observability:krabka-o11y-recovery_clippy",
+        "//crates/observability:krabka-o11y-recovery_test",
+        "//crates/observability:krabka-o11y-recovery_test_clippy",
+        "//crates/observability:krabka-observability_clippy",
+        "//crates/observability:krabka-observability_test",
+        "//crates/observability:krabka-observability_test_clippy",
+        "//crates/observability:log_level_fixed_test",
+        "//crates/observability:log_level_fixed_test_clippy",
+        "//crates/observability:log_level_test",
+        "//crates/observability:log_level_test_clippy",
+        "//crates/observability:logql_engine_proptest_test",
+        "//crates/observability:logql_engine_proptest_test_clippy",
+        "//crates/observability:loki_deployment_test",
+        "//crates/observability:loki_deployment_test_clippy",
+        "//crates/observability:loki_differential_test",
+        "//crates/observability:loki_differential_test_clippy",
+        "//crates/observability:metadata_test",
+        "//crates/observability:metadata_test_clippy",
+        "//crates/observability:observability_clippy",
+        "//crates/observability:observability_doc_test",
+        "//crates/observability:observability_no_harness_check",
+        "//crates/observability:observability_test",
+        "//crates/observability:observability_test_clippy",
+        "//crates/observability:panic_and_task_supervision_test",
+        "//crates/observability:panic_and_task_supervision_test_clippy",
+        "//crates/observability:per_tenant_limits_test",
+        "//crates/observability:per_tenant_limits_test_clippy",
+        "//crates/observability:querier_authorization_test",
+        "//crates/observability:querier_authorization_test_clippy",
+        "//crates/observability:querier_object_store_test",
+        "//crates/observability:querier_object_store_test_clippy",
+        "//crates/observability:querier_test",
+        "//crates/observability:querier_test_clippy",
+        "//crates/observability:query_instant_metric_test",
+        "//crates/observability:query_instant_metric_test_clippy",
+        "//crates/observability:query_instant_test",
+        "//crates/observability:query_instant_test_clippy",
+        "//crates/observability:query_instant_vector_test",
+        "//crates/observability:query_instant_vector_test_clippy",
+        "//crates/observability:query_range_line_format_test",
+        "//crates/observability:query_range_line_format_test_clippy",
+        "//crates/observability:query_range_test",
+        "//crates/observability:query_range_test_clippy",
+        "//crates/observability:ruler_test",
+        "//crates/observability:ruler_test_clippy",
+        "//crates/observability:server_security_test",
+        "//crates/observability:server_security_test_clippy",
+        "//crates/observability:service_router_test",
+        "//crates/observability:service_router_test_clippy",
+        "//crates/observability:service_security_test",
+        "//crates/observability:service_security_test_clippy",
+        "//crates/observability:sigterm_drain_test",
+        "//crates/observability:sigterm_drain_test_clippy",
+        "//crates/observability:status_endpoints_test",
+        "//crates/observability:status_endpoints_test_clippy",
+        "//crates/observability:tail_test",
+        "//crates/observability:tail_test_clippy",
+        "//crates/observability:tenant_header_test",
+        "//crates/observability:tenant_header_test_clippy",
+        "//crates/observability:topic_contract_test",
+        "//crates/observability:topic_contract_test_clippy",
+        "//crates/observability:wal_client_security_test",
+        "//crates/observability:wal_client_security_test_clippy",
+        "//crates/observability:wal_live_broker_test",
+        "//crates/observability:wal_live_broker_test_clippy",
+        "//crates/observability:wal_records_test",
+        "//crates/observability:wal_records_test_clippy",
+        "//crates/pprof:golden_merge_test",
+        "//crates/pprof:golden_merge_test_clippy",
+        "//crates/pprof:merge_associativity_test",
+        "//crates/pprof:merge_associativity_test_clippy",
+        "//crates/pprof:pprof_clippy",
+        "//crates/pprof:pprof_doc_test",
+        "//crates/pprof:pprof_no_harness_check",
+        "//crates/pprof:pprof_test",
+        "//crates/pprof:pprof_test_clippy",
+        "//crates/profiles:all_drain_order_test",
+        "//crates/profiles:all_drain_order_test_clippy",
+        "//crates/profiles:block_builder_drain_test",
+        "//crates/profiles:block_builder_drain_test_clippy",
+        "//crates/profiles:block_builder_object_store_retry_test",
+        "//crates/profiles:block_builder_object_store_retry_test_clippy",
+        "//crates/profiles:ingest_query_proptest_test",
+        "//crates/profiles:ingest_query_proptest_test_clippy",
+        "//crates/profiles:ingest_roundtrip_test",
+        "//crates/profiles:ingest_roundtrip_test_clippy",
+        "//crates/profiles:krabka-profiles_clippy",
+        "//crates/profiles:krabka-profiles_test",
+        "//crates/profiles:krabka-profiles_test_clippy",
+        "//crates/profiles:label_fingerprint_test",
+        "//crates/profiles:label_fingerprint_test_clippy",
+        "//crates/profiles:lifecycle_test",
+        "//crates/profiles:lifecycle_test_clippy",
+        "//crates/profiles:profiles_clippy",
+        "//crates/profiles:profiles_doc_test",
+        "//crates/profiles:profiles_no_harness_check",
+        "//crates/profiles:profiles_test",
+        "//crates/profiles:profiles_test_clippy",
+        "//crates/profiles:pyroscope_deployment_test",
+        "//crates/profiles:pyroscope_deployment_test_clippy",
+        "//crates/profiles:pyroscope_differential_test",
+        "//crates/profiles:pyroscope_differential_test_clippy",
+        "//crates/profiles:tenant_resolution_test",
+        "//crates/profiles:tenant_resolution_test_clippy",
+        "//crates/promql:conformance_experimental_test",
+        "//crates/promql:conformance_report_experimental_test",
+        "//crates/promql:conformance_report_experimental_test_clippy",
+        "//crates/promql:conformance_report_test",
+        "//crates/promql:conformance_report_test_clippy",
+        "//crates/promql:conformance_test",
+        "//crates/promql:engine_proptest_experimental_test",
+        "//crates/promql:engine_proptest_experimental_test_clippy",
+        "//crates/promql:engine_proptest_test",
+        "//crates/promql:engine_proptest_test_clippy",
+        "//crates/promql:http_api_experimental_test",
+        "//crates/promql:http_api_experimental_test_clippy",
+        "//crates/promql:http_api_test",
+        "//crates/promql:http_api_test_clippy",
+        "//crates/promql:parser_proptest_experimental_test",
+        "//crates/promql:parser_proptest_experimental_test_clippy",
+        "//crates/promql:parser_proptest_test",
+        "//crates/promql:parser_proptest_test_clippy",
+        "//crates/promql:promql_clippy",
+        "//crates/promql:promql_doc_test",
+        "//crates/promql:promql_experimental_clippy",
+        "//crates/promql:promql_experimental_test",
+        "//crates/promql:promql_experimental_test_clippy",
+        "//crates/promql:promql_no_harness_check",
+        "//crates/promql:promql_test",
+        "//crates/promql:promql_test_clippy",
+        "//crates/promql:tenant_isolation_experimental_test",
+        "//crates/promql:tenant_isolation_experimental_test_clippy",
+        "//crates/promql:tenant_isolation_test",
+        "//crates/promql:tenant_isolation_test_clippy",
+        "//crates/query-frontend:query-frontend_clippy",
+        "//crates/query-frontend:query-frontend_doc_test",
+        "//crates/query-frontend:query-frontend_no_harness_check",
+        "//crates/query-frontend:query-frontend_test",
+        "//crates/query-frontend:query-frontend_test_clippy",
+        "//crates/traceql:engine_proptest_test",
+        "//crates/traceql:engine_proptest_test_clippy",
+        "//crates/traceql:golden_corpus_test",
+        "//crates/traceql:golden_queries_test",
+        "//crates/traceql:golden_queries_test_clippy",
+        "//crates/traceql:parser_proptest_test",
+        "//crates/traceql:parser_proptest_test_clippy",
+        "//crates/traceql:traceql_clippy",
+        "//crates/traceql:traceql_doc_test",
+        "//crates/traceql:traceql_no_harness_check",
+        "//crates/traceql:traceql_test",
+        "//crates/traceql:traceql_test_clippy",
+        "//crates/traces:all_in_one_drain_order_test",
+        "//crates/traces:all_in_one_drain_order_test_clippy",
+        "//crates/traces:block_lifecycle_test",
+        "//crates/traces:block_lifecycle_test_clippy",
+        "//crates/traces:blockbuilder_test",
+        "//crates/traces:blockbuilder_test_clippy",
+        "//crates/traces:compaction_memory_test",
+        "//crates/traces:compaction_memory_test_clippy",
+        "//crates/traces:compactor_test",
+        "//crates/traces:compactor_test_clippy",
+        "//crates/traces:diff_corpus_selftest_test",
+        "//crates/traces:diff_corpus_selftest_test_clippy",
+        "//crates/traces:frontend_http_backend_test",
+        "//crates/traces:frontend_http_backend_test_clippy",
+        "//crates/traces:frontend_membership_fanout_test",
+        "//crates/traces:frontend_membership_fanout_test_clippy",
+        "//crates/traces:frontend_search_behavior_test",
+        "//crates/traces:frontend_search_behavior_test_clippy",
+        "//crates/traces:frontend_server_test",
+        "//crates/traces:frontend_server_test_clippy",
+        "//crates/traces:frontend_shard_equivalence_test",
+        "//crates/traces:frontend_shard_equivalence_test_clippy",
+        "//crates/traces:frontend_trace_by_id_assembly_test",
+        "//crates/traces:frontend_trace_by_id_assembly_test_clippy",
+        "//crates/traces:grafana_e2e_test",
+        "//crates/traces:grafana_e2e_test_clippy",
+        "//crates/traces:index_shard_publication_test",
+        "//crates/traces:index_shard_publication_test_clippy",
+        "//crates/traces:ingest_roundtrip_test",
+        "//crates/traces:ingest_roundtrip_test_clippy",
+        "//crates/traces:jaeger_thrift_decode_bounds_test",
+        "//crates/traces:jaeger_thrift_decode_bounds_test_clippy",
+        "//crates/traces:krabka-traces_clippy",
+        "//crates/traces:krabka-traces_test",
+        "//crates/traces:krabka-traces_test_clippy",
+        "//crates/traces:livestore_test",
+        "//crates/traces:livestore_test_clippy",
+        "//crates/traces:metrics_generator_e2e_test",
+        "//crates/traces:metrics_generator_e2e_test_clippy",
+        "//crates/traces:metricsgen_scaffold_test",
+        "//crates/traces:metricsgen_scaffold_test_clippy",
+        "//crates/traces:querier_readiness_test",
+        "//crates/traces:querier_readiness_test_clippy",
+        "//crates/traces:tempo_deployment_test",
+        "//crates/traces:tempo_deployment_test_clippy",
+        "//crates/traces:tempo_differential_test",
+        "//crates/traces:tempo_differential_test_clippy",
+        "//crates/traces:tenant_isolation_test",
+        "//crates/traces:tenant_isolation_test_clippy",
+        "//crates/traces:traceql_conformance_test",
+        "//crates/traces:traces_clippy",
+        "//crates/traces:traces_doc_test",
+        "//crates/traces:traces_no_harness_check",
+        "//crates/traces:traces_test",
+        "//crates/traces:traces_test_clippy",
+        "//crates/traces:wal_group_rebalance_test",
+        "//crates/traces:wal_group_rebalance_test_clippy",
+        "//crates/traces:wal_group_scale_out_test",
+        "//crates/traces:wal_group_scale_out_test_clippy",
+        "//crates/verified:verified_clippy",
+        "//crates/verified:verified_doc_test",
+        "//crates/verified:verified_no_harness_check",
+        "//crates/verified:verified_test",
+        "//crates/verified:verified_test_clippy",
+        "//deploy:role_config_test"
+      ],
       "targets_passed": 387,
-      "rust_cases_passed": 5542,
+      "rust_cases_passed": 5544,
       "ignored_cases": 78,
-      "proof_path": "qualification/evidence/correctness/retained-gains-pr-ordinary-coverage-scope-c7ed6004/provenance.json",
-      "proof_sha256": "3103ba4c163b474a03833639f6be676af2b16e438d3741bde4770bcd7ed3b46a"
+      "counts_by_target": {
+        "//crates/blockstore:block_metadata_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/blockstore:block_metadata_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:blockstore_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:blockstore_doc_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:blockstore_no_harness_check": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:blockstore_test": {
+          "passed": 336,
+          "ignored": 0
+        },
+        "//crates/blockstore:blockstore_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:datafusion_test": {
+          "passed": 5,
+          "ignored": 0
+        },
+        "//crates/blockstore:datafusion_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:deployment_recovery_test": {
+          "passed": 10,
+          "ignored": 0
+        },
+        "//crates/blockstore:deployment_recovery_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:index_test": {
+          "passed": 9,
+          "ignored": 0
+        },
+        "//crates/blockstore:index_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:krabka-storage-admin_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:krabka-storage-admin_test": {
+          "passed": 9,
+          "ignored": 0
+        },
+        "//crates/blockstore:krabka-storage-admin_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:label_fingerprint_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/blockstore:label_fingerprint_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:lifecycle_test": {
+          "passed": 11,
+          "ignored": 0
+        },
+        "//crates/blockstore:lifecycle_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:nested_set_proptest_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/blockstore:nested_set_proptest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:object_store_faults_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/blockstore:object_store_faults_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:object_store_semantics_test": {
+          "passed": 7,
+          "ignored": 0
+        },
+        "//crates/blockstore:object_store_semantics_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:parquet_test": {
+          "passed": 5,
+          "ignored": 0
+        },
+        "//crates/blockstore:parquet_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:persistence_test": {
+          "passed": 10,
+          "ignored": 0
+        },
+        "//crates/blockstore:persistence_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:roundtrip_proptest_test": {
+          "passed": 2,
+          "ignored": 0
+        },
+        "//crates/blockstore:roundtrip_proptest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:span_block_roundtrip_test": {
+          "passed": 2,
+          "ignored": 0
+        },
+        "//crates/blockstore:span_block_roundtrip_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:span_id_proptest_test": {
+          "passed": 5,
+          "ignored": 0
+        },
+        "//crates/blockstore:span_id_proptest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:storage_audit_test": {
+          "passed": 9,
+          "ignored": 0
+        },
+        "//crates/blockstore:storage_audit_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:storage_repair_test": {
+          "passed": 12,
+          "ignored": 0
+        },
+        "//crates/blockstore:storage_repair_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:tenant_path_proptest_test": {
+          "passed": 4,
+          "ignored": 0
+        },
+        "//crates/blockstore:tenant_path_proptest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/blockstore:trace_pipeline_e2e_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/blockstore:trace_pipeline_e2e_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/integration:alloy_client_test": {
+          "passed": 0,
+          "ignored": 1
+        },
+        "//crates/integration:alloy_client_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/integration:backup_restore_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/integration:backup_restore_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/integration:integration_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/integration:integration_doc_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/integration:integration_no_harness_check": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/integration:integration_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/integration:integration_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/integration:logs_to_traces_trace_id_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/integration:logs_to_traces_trace_id_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/integration:prometheus_client_test": {
+          "passed": 0,
+          "ignored": 1
+        },
+        "//crates/integration:prometheus_client_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/integration:traces_to_metrics_exemplars_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/integration:traces_to_metrics_exemplars_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/integration:traces_to_profiles_span_profiles_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/integration:traces_to_profiles_span_profiles_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/logql:logql_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/logql:logql_doc_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/logql:logql_no_harness_check": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/logql:logql_test": {
+          "passed": 60,
+          "ignored": 0
+        },
+        "//crates/logql:logql_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/logql:parser_proptest_test": {
+          "passed": 6,
+          "ignored": 2
+        },
+        "//crates/logql:parser_proptest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/logql:parser_test": {
+          "passed": 207,
+          "ignored": 0
+        },
+        "//crates/logql:parser_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/logql:planner_proptest_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/logql:planner_proptest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/logql:planner_test": {
+          "passed": 4,
+          "ignored": 0
+        },
+        "//crates/logql:planner_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:clock_rules_bundle_test": {
+          "passed": 17,
+          "ignored": 0
+        },
+        "//crates/metrics-service:clock_rules_bundle_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:diff_mimir_test": {
+          "passed": 0,
+          "ignored": 1
+        },
+        "//crates/metrics-service:diff_mimir_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:diff_prometheus_test": {
+          "passed": 2,
+          "ignored": 1
+        },
+        "//crates/metrics-service:diff_prometheus_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:grafana_integration_test": {
+          "passed": 0,
+          "ignored": 1
+        },
+        "//crates/metrics-service:grafana_integration_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:krabka-metrics-service_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:krabka-metrics-service_test": {
+          "passed": 31,
+          "ignored": 0
+        },
+        "//crates/metrics-service:krabka-metrics-service_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:metrics-service_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:metrics-service_doc_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:metrics-service_no_harness_check": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:metrics-service_test": {
+          "passed": 66,
+          "ignored": 0
+        },
+        "//crates/metrics-service:metrics-service_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:metrics_deployment_test": {
+          "passed": 0,
+          "ignored": 12
+        },
+        "//crates/metrics-service:metrics_deployment_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:ruler_bundled_rules_test": {
+          "passed": 7,
+          "ignored": 0
+        },
+        "//crates/metrics-service:ruler_bundled_rules_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:ruler_fencing_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/metrics-service:ruler_fencing_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:server_security_test": {
+          "passed": 6,
+          "ignored": 0
+        },
+        "//crates/metrics-service:server_security_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics-service:tsdb_import_test": {
+          "passed": 13,
+          "ignored": 1
+        },
+        "//crates/metrics-service:tsdb_import_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:block_deletion_protocol_model_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/metrics:block_deletion_protocol_model_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:clock_decode_proptest_test": {
+          "passed": 5,
+          "ignored": 0
+        },
+        "//crates/metrics:clock_decode_proptest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:clock_ingest_test": {
+          "passed": 25,
+          "ignored": 0
+        },
+        "//crates/metrics:clock_ingest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:diff_corpus_selftest_test": {
+          "passed": 4,
+          "ignored": 0
+        },
+        "//crates/metrics:diff_corpus_selftest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:histogram_roundtrip_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/metrics:histogram_roundtrip_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:index_snapshot_protocol_model_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/metrics:index_snapshot_protocol_model_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:ingest_roundtrip_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/metrics:ingest_roundtrip_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:krabka-metrics_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:krabka-metrics_test": {
+          "passed": 25,
+          "ignored": 0
+        },
+        "//crates/metrics:krabka-metrics_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:level_compaction_test": {
+          "passed": 18,
+          "ignored": 0
+        },
+        "//crates/metrics:level_compaction_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:metrics_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:metrics_doc_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:metrics_no_harness_check": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:metrics_test": {
+          "passed": 327,
+          "ignored": 0
+        },
+        "//crates/metrics:metrics_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:runtime_overrides_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/metrics:runtime_overrides_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:storage_protocol_model_test": {
+          "passed": 2,
+          "ignored": 0
+        },
+        "//crates/metrics:storage_protocol_model_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:tenant_quota_isolation_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/metrics:tenant_quota_isolation_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:tsdb_import_test": {
+          "passed": 9,
+          "ignored": 0
+        },
+        "//crates/metrics:tsdb_import_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/metrics:tsdb_publish_test": {
+          "passed": 16,
+          "ignored": 0
+        },
+        "//crates/metrics:tsdb_publish_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:all_in_one_drain_failure_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/observability:all_in_one_drain_failure_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:all_in_one_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/observability:all_in_one_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:analytics_test": {
+          "passed": 39,
+          "ignored": 0
+        },
+        "//crates/observability:analytics_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:audit_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/observability:audit_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:cli_test": {
+          "passed": 12,
+          "ignored": 0
+        },
+        "//crates/observability:cli_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:compactor_test": {
+          "passed": 50,
+          "ignored": 0
+        },
+        "//crates/observability:compactor_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:config_file_test": {
+          "passed": 9,
+          "ignored": 0
+        },
+        "//crates/observability:config_file_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:crypto_provider_absent_test": {
+          "passed": 2,
+          "ignored": 0
+        },
+        "//crates/observability:crypto_provider_absent_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:crypto_provider_install_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/observability:crypto_provider_install_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:deletes_test": {
+          "passed": 10,
+          "ignored": 0
+        },
+        "//crates/observability:deletes_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:distributor_loki_push_test": {
+          "passed": 55,
+          "ignored": 0
+        },
+        "//crates/observability:distributor_loki_push_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:distributor_otlp_test": {
+          "passed": 20,
+          "ignored": 0
+        },
+        "//crates/observability:distributor_otlp_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:environment_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/observability:environment_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:format_query_test": {
+          "passed": 70,
+          "ignored": 0
+        },
+        "//crates/observability:format_query_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:grafana_e2e_test": {
+          "passed": 0,
+          "ignored": 1
+        },
+        "//crates/observability:grafana_e2e_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:grafana_integration_test": {
+          "passed": 0,
+          "ignored": 1
+        },
+        "//crates/observability:grafana_integration_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:ingest_roundtrip_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/observability:ingest_roundtrip_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:krabka-o11y-bootstrap_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:krabka-o11y-bootstrap_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:krabka-o11y-bootstrap_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:krabka-o11y-recovery_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:krabka-o11y-recovery_test": {
+          "passed": 9,
+          "ignored": 0
+        },
+        "//crates/observability:krabka-o11y-recovery_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:krabka-observability_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:krabka-observability_test": {
+          "passed": 5,
+          "ignored": 0
+        },
+        "//crates/observability:krabka-observability_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:log_level_fixed_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/observability:log_level_fixed_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:log_level_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/observability:log_level_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:logql_engine_proptest_test": {
+          "passed": 4,
+          "ignored": 0
+        },
+        "//crates/observability:logql_engine_proptest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:loki_deployment_test": {
+          "passed": 0,
+          "ignored": 12
+        },
+        "//crates/observability:loki_deployment_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:loki_differential_test": {
+          "passed": 0,
+          "ignored": 1
+        },
+        "//crates/observability:loki_differential_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:metadata_test": {
+          "passed": 25,
+          "ignored": 0
+        },
+        "//crates/observability:metadata_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:observability_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:observability_doc_test": {
+          "passed": 2,
+          "ignored": 0
+        },
+        "//crates/observability:observability_no_harness_check": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:observability_test": {
+          "passed": 383,
+          "ignored": 0
+        },
+        "//crates/observability:observability_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:panic_and_task_supervision_test": {
+          "passed": 2,
+          "ignored": 0
+        },
+        "//crates/observability:panic_and_task_supervision_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:per_tenant_limits_test": {
+          "passed": 10,
+          "ignored": 0
+        },
+        "//crates/observability:per_tenant_limits_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:querier_authorization_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/observability:querier_authorization_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:querier_object_store_test": {
+          "passed": 20,
+          "ignored": 0
+        },
+        "//crates/observability:querier_object_store_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:querier_test": {
+          "passed": 69,
+          "ignored": 0
+        },
+        "//crates/observability:querier_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:query_instant_metric_test": {
+          "passed": 36,
+          "ignored": 0
+        },
+        "//crates/observability:query_instant_metric_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:query_instant_test": {
+          "passed": 23,
+          "ignored": 0
+        },
+        "//crates/observability:query_instant_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:query_instant_vector_test": {
+          "passed": 27,
+          "ignored": 0
+        },
+        "//crates/observability:query_instant_vector_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:query_range_line_format_test": {
+          "passed": 28,
+          "ignored": 0
+        },
+        "//crates/observability:query_range_line_format_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:query_range_test": {
+          "passed": 56,
+          "ignored": 0
+        },
+        "//crates/observability:query_range_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:ruler_test": {
+          "passed": 24,
+          "ignored": 0
+        },
+        "//crates/observability:ruler_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:server_security_test": {
+          "passed": 15,
+          "ignored": 0
+        },
+        "//crates/observability:server_security_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:service_router_test": {
+          "passed": 23,
+          "ignored": 0
+        },
+        "//crates/observability:service_router_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:service_security_test": {
+          "passed": 12,
+          "ignored": 0
+        },
+        "//crates/observability:service_security_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:sigterm_drain_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/observability:sigterm_drain_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:status_endpoints_test": {
+          "passed": 17,
+          "ignored": 0
+        },
+        "//crates/observability:status_endpoints_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:tail_test": {
+          "passed": 7,
+          "ignored": 0
+        },
+        "//crates/observability:tail_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:tenant_header_test": {
+          "passed": 9,
+          "ignored": 0
+        },
+        "//crates/observability:tenant_header_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:topic_contract_test": {
+          "passed": 8,
+          "ignored": 0
+        },
+        "//crates/observability:topic_contract_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:wal_client_security_test": {
+          "passed": 2,
+          "ignored": 0
+        },
+        "//crates/observability:wal_client_security_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:wal_live_broker_test": {
+          "passed": 9,
+          "ignored": 0
+        },
+        "//crates/observability:wal_live_broker_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/observability:wal_records_test": {
+          "passed": 11,
+          "ignored": 0
+        },
+        "//crates/observability:wal_records_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/pprof:golden_merge_test": {
+          "passed": 4,
+          "ignored": 0
+        },
+        "//crates/pprof:golden_merge_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/pprof:merge_associativity_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/pprof:merge_associativity_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/pprof:pprof_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/pprof:pprof_doc_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/pprof:pprof_no_harness_check": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/pprof:pprof_test": {
+          "passed": 124,
+          "ignored": 0
+        },
+        "//crates/pprof:pprof_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:all_drain_order_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/profiles:all_drain_order_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:block_builder_drain_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/profiles:block_builder_drain_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:block_builder_object_store_retry_test": {
+          "passed": 2,
+          "ignored": 0
+        },
+        "//crates/profiles:block_builder_object_store_retry_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:ingest_query_proptest_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/profiles:ingest_query_proptest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:ingest_roundtrip_test": {
+          "passed": 2,
+          "ignored": 0
+        },
+        "//crates/profiles:ingest_roundtrip_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:krabka-profiles_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:krabka-profiles_test": {
+          "passed": 43,
+          "ignored": 0
+        },
+        "//crates/profiles:krabka-profiles_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:label_fingerprint_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/profiles:label_fingerprint_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:lifecycle_test": {
+          "passed": 11,
+          "ignored": 0
+        },
+        "//crates/profiles:lifecycle_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:profiles_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:profiles_doc_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:profiles_no_harness_check": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:profiles_test": {
+          "passed": 285,
+          "ignored": 0
+        },
+        "//crates/profiles:profiles_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:pyroscope_deployment_test": {
+          "passed": 0,
+          "ignored": 15
+        },
+        "//crates/profiles:pyroscope_deployment_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:pyroscope_differential_test": {
+          "passed": 17,
+          "ignored": 8
+        },
+        "//crates/profiles:pyroscope_differential_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/profiles:tenant_resolution_test": {
+          "passed": 6,
+          "ignored": 0
+        },
+        "//crates/profiles:tenant_resolution_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:conformance_experimental_test": {
+          "passed": 20,
+          "ignored": 0
+        },
+        "//crates/promql:conformance_report_experimental_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/promql:conformance_report_experimental_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:conformance_report_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/promql:conformance_report_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:conformance_test": {
+          "passed": 19,
+          "ignored": 0
+        },
+        "//crates/promql:engine_proptest_experimental_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/promql:engine_proptest_experimental_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:engine_proptest_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/promql:engine_proptest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:http_api_experimental_test": {
+          "passed": 118,
+          "ignored": 0
+        },
+        "//crates/promql:http_api_experimental_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:http_api_test": {
+          "passed": 118,
+          "ignored": 0
+        },
+        "//crates/promql:http_api_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:parser_proptest_experimental_test": {
+          "passed": 5,
+          "ignored": 0
+        },
+        "//crates/promql:parser_proptest_experimental_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:parser_proptest_test": {
+          "passed": 5,
+          "ignored": 0
+        },
+        "//crates/promql:parser_proptest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:promql_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:promql_doc_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:promql_experimental_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:promql_experimental_test": {
+          "passed": 579,
+          "ignored": 0
+        },
+        "//crates/promql:promql_experimental_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:promql_no_harness_check": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:promql_test": {
+          "passed": 570,
+          "ignored": 0
+        },
+        "//crates/promql:promql_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:tenant_isolation_experimental_test": {
+          "passed": 9,
+          "ignored": 0
+        },
+        "//crates/promql:tenant_isolation_experimental_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/promql:tenant_isolation_test": {
+          "passed": 9,
+          "ignored": 0
+        },
+        "//crates/promql:tenant_isolation_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/query-frontend:query-frontend_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/query-frontend:query-frontend_doc_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/query-frontend:query-frontend_no_harness_check": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/query-frontend:query-frontend_test": {
+          "passed": 29,
+          "ignored": 0
+        },
+        "//crates/query-frontend:query-frontend_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traceql:engine_proptest_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/traceql:engine_proptest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traceql:golden_corpus_test": {
+          "passed": 8,
+          "ignored": 0
+        },
+        "//crates/traceql:golden_queries_test": {
+          "passed": 6,
+          "ignored": 0
+        },
+        "//crates/traceql:golden_queries_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traceql:parser_proptest_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/traceql:parser_proptest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traceql:traceql_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traceql:traceql_doc_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traceql:traceql_no_harness_check": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traceql:traceql_test": {
+          "passed": 405,
+          "ignored": 0
+        },
+        "//crates/traceql:traceql_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:all_in_one_drain_order_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/traces:all_in_one_drain_order_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:block_lifecycle_test": {
+          "passed": 9,
+          "ignored": 0
+        },
+        "//crates/traces:block_lifecycle_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:blockbuilder_test": {
+          "passed": 27,
+          "ignored": 0
+        },
+        "//crates/traces:blockbuilder_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:compaction_memory_test": {
+          "passed": 1,
+          "ignored": 1
+        },
+        "//crates/traces:compaction_memory_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:compactor_test": {
+          "passed": 6,
+          "ignored": 0
+        },
+        "//crates/traces:compactor_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:diff_corpus_selftest_test": {
+          "passed": 5,
+          "ignored": 0
+        },
+        "//crates/traces:diff_corpus_selftest_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:frontend_http_backend_test": {
+          "passed": 5,
+          "ignored": 0
+        },
+        "//crates/traces:frontend_http_backend_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:frontend_membership_fanout_test": {
+          "passed": 10,
+          "ignored": 0
+        },
+        "//crates/traces:frontend_membership_fanout_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:frontend_search_behavior_test": {
+          "passed": 20,
+          "ignored": 0
+        },
+        "//crates/traces:frontend_search_behavior_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:frontend_server_test": {
+          "passed": 5,
+          "ignored": 0
+        },
+        "//crates/traces:frontend_server_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:frontend_shard_equivalence_test": {
+          "passed": 2,
+          "ignored": 0
+        },
+        "//crates/traces:frontend_shard_equivalence_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:frontend_trace_by_id_assembly_test": {
+          "passed": 3,
+          "ignored": 0
+        },
+        "//crates/traces:frontend_trace_by_id_assembly_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:grafana_e2e_test": {
+          "passed": 2,
+          "ignored": 1
+        },
+        "//crates/traces:grafana_e2e_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:index_shard_publication_test": {
+          "passed": 4,
+          "ignored": 0
+        },
+        "//crates/traces:index_shard_publication_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:ingest_roundtrip_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/traces:ingest_roundtrip_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:jaeger_thrift_decode_bounds_test": {
+          "passed": 4,
+          "ignored": 0
+        },
+        "//crates/traces:jaeger_thrift_decode_bounds_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:krabka-traces_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:krabka-traces_test": {
+          "passed": 79,
+          "ignored": 0
+        },
+        "//crates/traces:krabka-traces_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:livestore_test": {
+          "passed": 9,
+          "ignored": 0
+        },
+        "//crates/traces:livestore_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:metrics_generator_e2e_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/traces:metrics_generator_e2e_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:metricsgen_scaffold_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/traces:metricsgen_scaffold_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:querier_readiness_test": {
+          "passed": 2,
+          "ignored": 0
+        },
+        "//crates/traces:querier_readiness_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:tempo_deployment_test": {
+          "passed": 0,
+          "ignored": 12
+        },
+        "//crates/traces:tempo_deployment_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:tempo_differential_test": {
+          "passed": 2,
+          "ignored": 6
+        },
+        "//crates/traces:tempo_differential_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:tenant_isolation_test": {
+          "passed": 13,
+          "ignored": 0
+        },
+        "//crates/traces:tenant_isolation_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:traceql_conformance_test": {
+          "passed": 8,
+          "ignored": 0
+        },
+        "//crates/traces:traces_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:traces_doc_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:traces_no_harness_check": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:traces_test": {
+          "passed": 465,
+          "ignored": 0
+        },
+        "//crates/traces:traces_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:wal_group_rebalance_test": {
+          "passed": 2,
+          "ignored": 0
+        },
+        "//crates/traces:wal_group_rebalance_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/traces:wal_group_scale_out_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/traces:wal_group_scale_out_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/verified:verified_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/verified:verified_doc_test": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/verified:verified_no_harness_check": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//crates/verified:verified_test": {
+          "passed": 9,
+          "ignored": 0
+        },
+        "//crates/verified:verified_test_clippy": {
+          "passed": 0,
+          "ignored": 0
+        },
+        "//deploy:role_config_test": {
+          "passed": 0,
+          "ignored": 0
+        }
+      },
+      "case_count_method": "Last Rust suite summary per target, excluding nested subprocess summaries"
     },
     "native": {
-      "status": "pending_pyroscope_default_repair",
-      "running_validation_log": "pr331-final-native-validation.log"
+      "status": "passed",
+      "proof_path": "qualification/evidence/correctness/common-repairs-baseline-recovery-e7bd6789f0ee/native/provenance.json",
+      "proof_sha256": "78415539da945dcfbbafeb29fb0924c0489e0d328466731f741faac6f53e95eb",
+      "targets": [
+        "//crates/metrics-service:diff_mimir_docker_test",
+        "//crates/metrics-service:diff_prometheus_docker_test",
+        "//crates/metrics-service:metrics_deployment_docker_test"
+      ],
+      "targets_passed": 3,
+      "rust_cases_passed": 14,
+      "ignored_cases": 0,
+      "counts_by_target": {
+        "//crates/metrics-service:diff_mimir_docker_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/metrics-service:diff_prometheus_docker_test": {
+          "passed": 1,
+          "ignored": 0
+        },
+        "//crates/metrics-service:metrics_deployment_docker_test": {
+          "passed": 12,
+          "ignored": 0
+        }
+      },
+      "case_count_method": "Last Rust suite summary per target, excluding nested subprocess summaries"
     },
-    "comparison_self_test": "passed",
-    "deployment_envelope_self_test": "passed",
+    "heap_profiling_clippy": {
+      "status": "passed",
+      "proof_path": "qualification/evidence/correctness/common-repairs-baseline-recovery-e7bd6789f0ee/heap-profiling-clippy/provenance.json",
+      "proof_sha256": "a77080e2e5d3f82b2c43fd18df20f38893ee2e509dd259d040ddf5ae8343cf1a",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--features",
+        "heap-profiling",
+        "--all-targets",
+        "--jobs=4",
+        "-p",
+        "krabka-metrics",
+        "-p",
+        "krabka-metrics-service",
+        "-p",
+        "krabka-observability",
+        "-p",
+        "krabka-profiles",
+        "-p",
+        "krabka-traces",
+        "--",
+        "-D",
+        "warnings"
+      ]
+    },
     "formatter": "passed",
-    "review": "Read-only review found no actionable findings in the ten code repairs. Explicit Pyroscope overrides and deferred truncation code remain unchanged. Final-head CI and both Pyroscope native wrappers are pending."
+    "review": "No actionable findings. Boxing retains task ownership, cancellation and durable shutdown ordering; fixture changes preserve workloads and assertions.",
+    "validation_record": {
+      "path": "qualification/evidence/correctness/common-repairs-baseline-recovery-e7bd6789f0ee/validation-record.json",
+      "sha256": "184d0a89d87fe6993414b36dbd851fcf90e4710403327fcd50cd6a4ec629d7c0"
+    }
   },
   "previous_native_attempts": [
     {
@@ -131,6 +2117,45 @@
         "review": "Read-only review found no actionable correctness/regression findings; the current Pyroscope default repair requires its native result."
       },
       "scope": "Ten code repairs before disabling native third-party C/C++ coverage. All 387 ordinary targets passed."
+    },
+    {
+      "source_commit": "c7ed6004226c8de0afc4767736a8d2dad5daf47d",
+      "source_file_overrides_sha256": {
+        "crates/observability/src/querier/aggregate/record_matching/append_matching_hot_log_record.rs": "1f2ceac542ce2a2eb3112ba019f5c08c56dfa82d9ee61fe8c9f461943fdd7e51",
+        "crates/observability/src/querier/scan/stream_scans/stream_scan_options.rs": "60b43e214693d6da579140b792902be073035c1e14d7da6f3dd2fa4d488724cf",
+        "crates/observability/src/querier/state/types/dynamic_index_cache.rs": "b6097ae1255864eb2538086c72156a7c3fd79cc713a7827b6c01c43a8cefd461",
+        "crates/observability/src/tests/hot_tail_frontier/shared_snapshots_survive_pruning_and_reach_http_queries.rs": "c62b93c1af518d2737bd09344f41cd32fb8e6398d5b06cd1321b96b90d9f6ca2",
+        "crates/observability/src/tests/shard_index_cache/querier_state_with_request_tenant_index_reuses_shard_indexes_for_moving_ranges.rs": "afce06dffd2f4584c18b269d6f77ecb82debd5cb91cb857be0d6c5d0e9aff4fa",
+        "crates/profiles/src/bin/krabka-profiles/main.rs": "cfce5ed200b4c169e6545a3f808b36d77e3d3a66f6ea9be70afb14c40bb51897",
+        "crates/profiles/src/limits.rs": "c8b6604c106e380a0f355248b68d6a42a5e3a64bc0a3dd5c63dcac0e72bfcd3a",
+        "crates/profiles/src/limits/limits_type.rs": "3e215e05931ea8d63392a8307875b8cd4f6a8856b7634516893ba14a329ef33f",
+        "crates/profiles/src/limits/overrides.rs": "d0b53715fa88e7417753679ff0c44f62808802cf9e7aeb561e87d9c86b60251a",
+        "crates/promql/src/store/metric_store.rs": "a7a78d93b25c488431414fc76d1499615417ac5d208b235164291580cb3424dd",
+        ".bazelrc": "4232669e4ba5294a0345db7d44b9de6720cfe90cdb04e6390629acdc10840b20"
+      },
+      "validation": {
+        "ordinary": {
+          "status": "passed",
+          "targets_passed": 387,
+          "rust_cases_passed": 5542,
+          "ignored_cases": 78,
+          "proof_path": "qualification/evidence/correctness/retained-gains-pr-ordinary-coverage-scope-c7ed6004/provenance.json",
+          "proof_sha256": "3103ba4c163b474a03833639f6be676af2b16e438d3741bde4770bcd7ed3b46a"
+        },
+        "native": {
+          "status": "passed",
+          "targets_passed": 2,
+          "rust_cases_passed": 23,
+          "ignored_cases": 0,
+          "proof_path": "qualification/evidence/correctness/retained-gains-pr-native-coverage-scope-c7ed6004/provenance.json",
+          "proof_sha256": "b3293f4b6dd3d848f7ce9389b69131aad1955358e7060d54da7880a5da325c4b"
+        },
+        "comparison_self_test": "passed",
+        "deployment_envelope_self_test": "passed",
+        "formatter": "passed",
+        "review": "Read-only review found no actionable findings. Current ordinary and Pyroscope native results are recorded below; full repaired-head CI remains separate."
+      },
+      "correctness_qualified": false
     }
   ],
   "pyroscope_default_repair": {
@@ -163,5 +2188,29 @@
       "ci_absolute_path_collision_origin": "Native instrumentation introduces absolute sandbox paths. The failed CI artifact is unavailable; its exact collision origin remains an inference."
     }
   },
-  "qualification_scope": "Current ordinary and Pyroscope native checks are recorded here; full repaired-head compatibility qualification remains with PR CI."
+  "qualification_scope": "Current ordinary and Pyroscope native checks are recorded here; full repaired-head compatibility qualification remains with PR CI.",
+  "remote_ci_checkpoint": {
+    "source_commit": "e7bd6789f0eeb72e4ffdbd31212ce8e2497cdb2b",
+    "run_id": 37406466975,
+    "url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37406466975",
+    "status": "completed",
+    "conclusion": "failure",
+    "jobs_passed": 44,
+    "failed_jobs": [
+      {
+        "name": "cargo",
+        "job_id": 112085035260,
+        "phase": "heap-profiling Clippy",
+        "findings": 8,
+        "source": "crates/metrics-service/src/tests/instant_float_scan.rs"
+      }
+    ],
+    "coverage": "passed",
+    "selected_native_suites": "all passed, including previous Pyroscope",
+    "whole_stack_ci_qualified": false
+  },
+  "local_correctness_qualified": true,
+  "correctness_scope": "five-package heap-profiling Cargo Clippy+formatter+387 ordinary targets+three fresh metrics native wrappers; final-head whole-stack CI separate",
+  "whole_stack_ci_qualified": false,
+  "delivery_status": "Common repairs passed local ordinary, feature Clippy and fresh metrics native checks. Final pushed-head CI and fresh performance qualification remain separate."
 }
