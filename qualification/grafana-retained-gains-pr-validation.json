@@ -1,35 +1,35 @@
 {
   "schema_version": 1,
-  "base_main": "0321cbf3a121ce489d0bb8b98070670c7415f023",
-  "source_commit": "0f559995a84d654be7b792ab19a27de6dff4a959",
+  "base_main": "353282f32bdb3d87908fad100c8e8a54b2317924",
+  "source_commit": "34947f44e5e19585ce7ea09de00ac881867a4b35",
   "correctness_qualified": false,
   "performance_qualified_current_branch": false,
   "resource_accounting_scope": "application_and_broker_excluding_object_store",
   "validation": {
     "ordinary": {
       "status": "passed",
-      "proof_path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/ordinary/provenance.json",
-      "proof_sha256": "cd4ba00c057b0a73347a32d20fa14f29bcf7b5c94009da668b4bb72253c4f47f",
       "targets_passed": 393,
       "targets_failed": 0,
-      "rust_cases_passed": 5689,
+      "rust_cases_passed": 5690,
       "rust_cases_failed": 0,
-      "ignored_cases": 82
+      "ignored_cases": 82,
+      "proof_path": "qualification/evidence/correctness/new-loki-safe-limit-34947f44e5e19585ce7ea09de00ac881867a4b35/ordinary/provenance.json",
+      "proof_sha256": "4e9e0078dd139639e9683cb6181d7fce48b3419af8a010e4dfef55fbe5ea647c"
     },
     "native": {
       "status": "passed",
-      "proof_path": "qualification/evidence/correctness/pr331-native-setup-recovery-tree67b8f2b2a0f2/composite-native/provenance.json",
-      "proof_sha256": "634bdf5f961e37a5b80d8d85a19f51b61acac691d461745c80876ffb3748ca7d",
-      "targets_passed": 6,
+      "targets_passed": 2,
       "targets_failed": 0,
-      "rust_cases_passed": 33,
+      "rust_cases_passed": 14,
       "rust_cases_failed": 0,
-      "ignored_cases": 0
+      "ignored_cases": 0,
+      "proof_path": "qualification/evidence/correctness/new-loki-safe-limit-34947f44e5e19585ce7ea09de00ac881867a4b35/native/provenance.json",
+      "proof_sha256": "25a5e048cab855d090355d7a42263434507d6c658422d5790b4e92d0bfea7fde"
     },
     "heap_profiling_clippy": {
-      "status": "passed",
-      "log_path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/ordinary/supporting-checks/heap_clippy.log",
-      "log_sha256": "052091d18b01292c14057e15144484761793e9dbd91c77c91081913a2742c60c",
+      "status": "passed_footer_verified",
+      "log_path": "qualification/evidence/correctness/new-loki-safe-limit-34947f44e5e19585ce7ea09de00ac881867a4b35/supporting-checks/heap_clippy.log",
+      "log_sha256": "a6be4f0031450816c111a57e67c12072ad6d0f2b918e57d4c7e96d8252efab85",
       "command": [
         "cargo",
         "clippy",
@@ -55,13 +55,13 @@
     },
     "formatter": {
       "status": "passed_footer_verified",
-      "log_path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/ordinary/supporting-checks/format.log",
-      "log_sha256": "90c8d2f83d24600074e5e29cd47437dd51f83c5e9033794a458f8ad03c93c536"
+      "log_path": "qualification/evidence/correctness/new-loki-safe-limit-34947f44e5e19585ce7ea09de00ac881867a4b35/supporting-checks/format.log",
+      "log_sha256": "7f7cbab4872c0bf0a1766603d3846572d2d48d659b2a9d503ba6cd75880a4f6b"
     },
-    "review": "No actionable findings. Both conflicts preserve main conformance. The shared Loki guard preserves global timestamp selection and single-stream trimming.",
+    "review": "No actionable findings. Strict timestamp bounds preserve equal-time reads and cold/hot tie order. Independent block and hot-row ledgers compare complete responses.",
     "validation_record": {
-      "path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/validation-record.json",
-      "sha256": "930d2b77dde6362ea2b41b9b8d379849659c28661f3a223f2237adde5a4a55f3"
+      "path": "qualification/evidence/correctness/new-loki-safe-limit-34947f44e5e19585ce7ea09de00ac881867a4b35/validation-record.json",
+      "sha256": "9ab1fb27220531f5640785e346c3a247dbcf90eb7c34a5b60c0fe65670f7ce3f"
     }
   },
   "previous_native_attempts": [
@@ -259,6 +259,78 @@
         }
       },
       "scope": "Pre-merge common-repairs baseline; preserved historical checks."
+    },
+    {
+      "source_commit": "0f559995a84d654be7b792ab19a27de6dff4a959",
+      "source_tree": "67b8f2b2a0f2c6364944655ada931b7755533021",
+      "validation_source_snapshot": {
+        "source_commit": "c83e1b89fcd5014c89ecb18ae1cdee40af55a378",
+        "merge_head": "0321cbf3a121ce489d0bb8b98070670c7415f023",
+        "staged_tree": "67b8f2b2a0f2c6364944655ada931b7755533021",
+        "tracked_worktree_matches_staged_tree": true
+      },
+      "correctness_scope": "five-package heap-profiling Cargo Clippy, formatter, 393 ordinary targets and six native wrappers on the exact merged code tree; final-head whole-stack CI separate",
+      "validation": {
+        "ordinary": {
+          "status": "passed",
+          "proof_path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/ordinary/provenance.json",
+          "proof_sha256": "cd4ba00c057b0a73347a32d20fa14f29bcf7b5c94009da668b4bb72253c4f47f",
+          "targets_passed": 393,
+          "targets_failed": 0,
+          "rust_cases_passed": 5689,
+          "rust_cases_failed": 0,
+          "ignored_cases": 82
+        },
+        "native": {
+          "status": "passed",
+          "proof_path": "qualification/evidence/correctness/pr331-native-setup-recovery-tree67b8f2b2a0f2/composite-native/provenance.json",
+          "proof_sha256": "634bdf5f961e37a5b80d8d85a19f51b61acac691d461745c80876ffb3748ca7d",
+          "targets_passed": 6,
+          "targets_failed": 0,
+          "rust_cases_passed": 33,
+          "rust_cases_failed": 0,
+          "ignored_cases": 0
+        },
+        "heap_profiling_clippy": {
+          "status": "passed",
+          "log_path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/ordinary/supporting-checks/heap_clippy.log",
+          "log_sha256": "052091d18b01292c14057e15144484761793e9dbd91c77c91081913a2742c60c",
+          "command": [
+            "cargo",
+            "clippy",
+            "--locked",
+            "--features",
+            "heap-profiling",
+            "--all-targets",
+            "--jobs=4",
+            "-p",
+            "krabka-metrics",
+            "-p",
+            "krabka-metrics-service",
+            "-p",
+            "krabka-observability",
+            "-p",
+            "krabka-profiles",
+            "-p",
+            "krabka-traces",
+            "--",
+            "-D",
+            "warnings"
+          ]
+        },
+        "formatter": {
+          "status": "passed_footer_verified",
+          "log_path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/ordinary/supporting-checks/format.log",
+          "log_sha256": "90c8d2f83d24600074e5e29cd47437dd51f83c5e9033794a458f8ad03c93c536"
+        },
+        "review": "No actionable findings. Both conflicts preserve main conformance. The shared Loki guard preserves global timestamp selection and single-stream trimming.",
+        "validation_record": {
+          "path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/validation-record.json",
+          "sha256": "930d2b77dde6362ea2b41b9b8d379849659c28661f3a223f2237adde5a4a55f3"
+        }
+      },
+      "base_main": "0321cbf3a121ce489d0bb8b98070670c7415f023",
+      "previous_base_main": "2ac3b9c6cfce1624bc94b32370a43cc2ed300deb"
     }
   ],
   "pyroscope_default_repair": {
@@ -312,7 +384,7 @@
       }
     }
   },
-  "qualification_scope": "Local checks qualify the recorded merged code tree. Subsequent validation-record edits change only qualification JSON; final-head CI and fresh performance qualification remain pending.",
+  "qualification_scope": "Local checks qualify the recorded Loki code tree. Metadata edits change only qualification JSON. Final-head CI and fresh performance qualification remain separate.",
   "remote_ci_checkpoint": {
     "source_commit": "e7bd6789f0eeb72e4ffdbd31212ce8e2497cdb2b",
     "run_id": 37406466975,
@@ -334,16 +406,18 @@
     "whole_stack_ci_qualified": false
   },
   "local_correctness_qualified": true,
-  "correctness_scope": "five-package heap-profiling Cargo Clippy, formatter, 393 ordinary targets and six native wrappers on the exact merged code tree; final-head whole-stack CI separate",
+  "correctness_scope": "ordinary + five-package heap-profiling Cargo Clippy + two Loki native wrappers; previous six-engine native evidence retained separately; final-head CI and performance separate",
   "whole_stack_ci_qualified": false,
-  "delivery_status": "Local merged-source checks passed. Exact pushed-head CI remains pending.",
-  "previous_base_main": "2ac3b9c6cfce1624bc94b32370a43cc2ed300deb",
-  "source_tree": "67b8f2b2a0f2c6364944655ada931b7755533021",
+  "delivery_status": "Local Loki checks passed on the main-based follow-up. New pushed-head CI and GCP performance evidence are pending.",
+  "previous_base_main": "0321cbf3a121ce489d0bb8b98070670c7415f023",
+  "source_tree": "7ee61d980dd8256e7034c6e3692ccf39d725d00d",
   "validation_source_snapshot": {
-    "source_commit": "c83e1b89fcd5014c89ecb18ae1cdee40af55a378",
-    "merge_head": "0321cbf3a121ce489d0bb8b98070670c7415f023",
-    "staged_tree": "67b8f2b2a0f2c6364944655ada931b7755533021",
-    "tracked_worktree_matches_staged_tree": true
+    "source_commit": "34947f44e5e19585ce7ea09de00ac881867a4b35",
+    "source_tree": "7ee61d980dd8256e7034c6e3692ccf39d725d00d",
+    "parents": [
+      "353282f32bdb3d87908fad100c8e8a54b2317924"
+    ],
+    "tracked_worktree_matches_commit": true
   },
   "merge_resolution": {
     "base_main": "0321cbf3a121ce489d0bb8b98070670c7415f023",
@@ -375,5 +449,48 @@
       "ignored_cases": 0
     },
     "native_setup_recovery": "Use main tools/build-query-runners.py to supply the pinned upstream Prometheus and Loki runners. No source changes for the setup failures."
+  },
+  "squash_retained_tree_equivalence": {
+    "merged_pr": 331,
+    "squash_commit": "353282f32bdb3d87908fad100c8e8a54b2317924",
+    "squash_parent": "0321cbf3a121ce489d0bb8b98070670c7415f023",
+    "retained_source_commit": "f3bec5d3283887a5d1a92b2b3b5596027579b4ea",
+    "source_tree": "a643bf2303723ec21da2aaad7c635660a57f61c5",
+    "full_tracked_tree_equal": true
+  },
+  "merged_pr_ci_checkpoint": {
+    "source_commit": "f3bec5d3283887a5d1a92b2b3b5596027579b4ea",
+    "run_id": 37418634873,
+    "url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37418634873",
+    "status": "completed",
+    "conclusion": "success",
+    "cargo": "passed including heap-profiling",
+    "scope": "Historical merged PR source. This run does not qualify the new Loki follow-up."
+  },
+  "loki_timestamp_limit_repair": {
+    "source_commit": "34947f44e5e19585ce7ea09de00ac881867a4b35",
+    "guard": "Skip remaining ordered blocks only after enough matching entries strictly outrank the next block range. Read equal timestamps.",
+    "baseline_failure_and_narrow_fixed": {
+      "baseline-failure": {
+        "proof_path": "qualification/evidence/correctness/new-loki-safe-limit-34947f44e5e19585ce7ea09de00ac881867a4b35/regression/baseline-failure/provenance.json",
+        "proof_sha256": "e587aa804c6110cf310f9ba960db9c0c2d32ca4a5efabd85eb352dae58bb30b4"
+      },
+      "fixed-proof": {
+        "proof_path": "qualification/evidence/correctness/new-loki-safe-limit-34947f44e5e19585ce7ea09de00ac881867a4b35/regression/fixed-proof/provenance.json",
+        "proof_sha256": "dd9ea4d06c95c3606c52be63d3a3c6d090b0615ae5b0d2ea888d9a8ba6cd5f73"
+      }
+    },
+    "previous_six_native_reference": {
+      "status": "passed",
+      "proof_path": "qualification/evidence/correctness/pr331-native-setup-recovery-tree67b8f2b2a0f2/composite-native/provenance.json",
+      "proof_sha256": "634bdf5f961e37a5b80d8d85a19f51b61acac691d461745c80876ffb3748ca7d",
+      "targets_passed": 6,
+      "targets_failed": 0,
+      "rust_cases_passed": 33,
+      "rust_cases_failed": 0,
+      "ignored_cases": 0
+    },
+    "previous_six_native_scope": "Historical earlier source; retained separately, not requalified by the two Loki wrappers",
+    "performance_qualified": false
   }
 }

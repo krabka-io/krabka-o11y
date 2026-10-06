@@ -51,68 +51,67 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
         .iter()
         .any(|stage| matches!(stage, krabka_logql::PipelineStage::Distinct(_)));
 
-    if matches!(options.direction, LokiDirection::Backward) {
-        for record in hot_tail.records {
-            let record: &WalLogRecord = record.borrow();
-            append_matching_hot_log_record(
+    // A WAL arrival can be older or newer than cold rows. Evaluate it before
+    // deciding which timestamp ranges can no longer affect the global limit.
+    // Keep it separate to preserve the existing cold/hot order for equal times.
+    let mut hot_streams = BTreeMap::new();
+    for record in hot_tail.records {
+        let record: &WalLogRecord = record.borrow();
+        append_matching_hot_log_record(
+            &mut hot_streams,
+            plan,
+            record,
+            hot_tail.frontier,
+            hot_tail.delete_filters,
+            false,
+        );
+    }
+
+    let ordered_blocks = object_store_stream_blocks_in_scan_order(&plan.blocks, options.direction);
+    for block_batch in ordered_blocks.chunks(options.block_fetch_concurrency()) {
+        if can_short_circuit
+            && options.can_skip_remaining_blocks(&streams, &hot_streams, block_batch[0])
+        {
+            break;
+        }
+        let results = futures_util::future::join_all(block_batch.iter().map(|block| {
+            let store = Arc::clone(&store);
+            let block = *block;
+            async move {
+                let result =
+                    collect_object_store_stream_log_batches(store, prefix, block, plan).await;
+                (block, result)
+            }
+        }))
+        .await;
+
+        for (block, result) in results {
+            scanned_blocks.push(block.clone());
+            let Ok(batches) = result else {
+                warnings.push(format!("failed to read block {}", block.key.object_key()));
+                continue;
+            };
+            append_matching_log_batches(
                 &mut streams,
                 plan,
-                record,
-                hot_tail.frontier,
+                label_index,
+                &batches,
                 hot_tail.delete_filters,
-                false,
-            );
+            )?;
         }
     }
 
-    if !can_short_circuit || !options.reached_limit(&streams) {
-        let ordered_blocks =
-            object_store_stream_blocks_in_scan_order(&plan.blocks, options.direction);
-        for block_batch in ordered_blocks.chunks(options.block_fetch_concurrency()) {
-            if can_short_circuit && options.reached_limit(&streams) {
-                break;
-            }
-            let results = futures_util::future::join_all(block_batch.iter().map(|block| {
-                let store = Arc::clone(&store);
-                let block = *block;
-                async move {
-                    let result =
-                        collect_object_store_stream_log_batches(store, prefix, block, plan).await;
-                    (block, result)
-                }
-            }))
-            .await;
-
-            for (block, result) in results {
-                scanned_blocks.push(block.clone());
-                let Ok(batches) = result else {
-                    warnings.push(format!("failed to read block {}", block.key.object_key()));
-                    continue;
-                };
-                append_matching_log_batches(
-                    &mut streams,
-                    plan,
-                    label_index,
-                    &batches,
-                    hot_tail.delete_filters,
-                )?;
+    match options.direction {
+        LokiDirection::Forward => {
+            for (labels, mut entries) in hot_streams {
+                streams.entry(labels).or_default().append(&mut entries);
             }
         }
-    }
-
-    if matches!(options.direction, LokiDirection::Forward)
-        && (!can_short_circuit || !options.reached_limit(&streams))
-    {
-        for record in hot_tail.records {
-            let record: &WalLogRecord = record.borrow();
-            append_matching_hot_log_record(
-                &mut streams,
-                plan,
-                record,
-                hot_tail.frontier,
-                hot_tail.delete_filters,
-                false,
-            );
+        LokiDirection::Backward => {
+            for (labels, mut entries) in streams {
+                hot_streams.entry(labels).or_default().append(&mut entries);
+            }
+            streams = hot_streams;
         }
     }
     sort_loki_stream_values(&mut streams);

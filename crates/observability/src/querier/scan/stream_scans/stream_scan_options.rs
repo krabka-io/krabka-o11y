@@ -1,6 +1,6 @@
 use super::{
-    BTreeMap, Labels, LokiDirection, LokiStreamEncoding, LokiStreamEntry, NonZeroUsize,
-    count_stream_map_lines, default_block_fetch_concurrency,
+    BTreeMap, BlockDescriptor, Labels, LokiDirection, LokiStreamEncoding, LokiStreamEntry,
+    NonZeroUsize, default_block_fetch_concurrency,
 };
 
 #[derive(Clone, Copy)]
@@ -51,11 +51,35 @@ impl StreamScanOptions {
         self
     }
 
-    pub(crate) fn reached_limit(self, streams: &BTreeMap<Labels, Vec<LokiStreamEntry>>) -> bool {
-        self.allow_limit_short_circuit
-            && self
-                .limit
-                .is_some_and(|limit| count_stream_map_lines(streams, self.end_exclusive) >= limit)
+    /// Ordered blocks after `next_block` cannot outrank `limit` strict winners.
+    /// Equal timestamps must still be read for stream and entry tie ordering.
+    pub(crate) fn can_skip_remaining_blocks(
+        self,
+        streams: &BTreeMap<Labels, Vec<LokiStreamEntry>>,
+        hot_streams: &BTreeMap<Labels, Vec<LokiStreamEntry>>,
+        next_block: &BlockDescriptor,
+    ) -> bool {
+        if !self.allow_limit_short_circuit {
+            return false;
+        }
+        let Some(limit) = self.limit else {
+            return false;
+        };
+        streams
+            .values()
+            .chain(hot_streams.values())
+            .flatten()
+            .filter_map(LokiStreamEntry::parsed_timestamp_ns)
+            .filter(|timestamp| {
+                self.end_exclusive.is_none_or(|end| *timestamp < end)
+                    && match self.direction {
+                        LokiDirection::Forward => *timestamp < next_block.key.time_range.start_ns,
+                        LokiDirection::Backward => *timestamp > next_block.key.time_range.end_ns,
+                    }
+            })
+            .take(limit)
+            .count()
+            == limit
     }
 
     /// Spend a single folded stream's limit before allocating its JSON tree.

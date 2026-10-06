@@ -9,7 +9,6 @@ use crate::{
 };
 
 mod collect_object_store_stream_log_batches;
-mod count_stream_map_lines;
 mod default_block_fetch_concurrency;
 mod execute_stream_query;
 mod execute_stream_query_from_object_store;
@@ -36,7 +35,6 @@ mod stream_plan_scan_sql_for_time_range;
 mod stream_scan_options;
 
 pub(crate) use collect_object_store_stream_log_batches::collect_object_store_stream_log_batches;
-pub(crate) use count_stream_map_lines::count_stream_map_lines;
 pub(crate) use default_block_fetch_concurrency::default_block_fetch_concurrency;
 pub use execute_stream_query::execute_stream_query;
 pub use execute_stream_query_from_object_store::execute_stream_query_from_object_store;

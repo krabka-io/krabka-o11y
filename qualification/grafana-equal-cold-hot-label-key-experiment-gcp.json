@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Reuse a canonical cold key only for equal hot labels",
-  "status": "main_conformance_merge_local_validation_passed_guard_deferred",
+  "status": "loki_timestamp_repair_local_validation_passed_guard_deferred",
   "candidate_applied": false,
   "correctness_qualified": false,
   "performance_qualified": false,
@@ -38,7 +38,7 @@
   "canonical_hash_implementation_unchanged": true,
   "prepared_independent_check": "A different hot label set whose row ID equals a canonical cold key still appears under its own canonical key in the complete returned label map. Existing hot-only, sharing, matcher and sample-limit ledgers remain.",
   "negative_control_to_run": "Remove full label equality while keeping key-presence lookup. The different-hot-label complete-map ledger must fail.",
-  "next_action": "Check final-head CI. Build a fresh matched baseline on the private GCP runner before the equality-guard comparison; regenerate the exact source-scope transition checks for this main merge.",
+  "next_action": "Check new final-head CI. Build one exact-source image and CPU profile on the private GCP runner. Reuse that image for the four upstream baselines before the equality-guard comparison.",
   "draft_review": "Use a nonempty metric-name matcher so the cold index accepts the test query and both differing job labels qualify.",
   "rebase_correctness": "387 ordinary checks and five native wrappers with 37 cases passed before cache removal.",
   "baseline_source_commit": "e7bd6789f0eeb72e4ffdbd31212ce8e2497cdb2b",
@@ -162,17 +162,17 @@
     }
   },
   "repaired_baseline": {
-    "source_commit": "0f559995a84d654be7b792ab19a27de6dff4a959",
-    "source_tree": "67b8f2b2a0f2c6364944655ada931b7755533021",
+    "source_commit": "34947f44e5e19585ce7ea09de00ac881867a4b35",
+    "source_tree": "7ee61d980dd8256e7034c6e3692ccf39d725d00d",
     "ready_for_image": false,
     "validation_record": {
-      "path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/validation-record.json",
-      "sha256": "930d2b77dde6362ea2b41b9b8d379849659c28661f3a223f2237adde5a4a55f3"
+      "path": "qualification/evidence/correctness/new-loki-safe-limit-34947f44e5e19585ce7ea09de00ac881867a4b35/validation-record.json",
+      "sha256": "9ab1fb27220531f5640785e346c3a247dbcf90eb7c34a5b60c0fe65670f7ce3f"
     },
     "local_correctness_qualified": true,
-    "correctness_scope": "Final merged code; ordinary and six selected native wrappers. Final pushed-head CI and fresh performance qualification are separate.",
+    "correctness_scope": "ordinary + five-package heap-profiling Cargo Clippy + two Loki native wrappers; previous six-engine native evidence retained separately; final-head CI and performance separate",
     "whole_stack_ci_qualified": false,
-    "scope_note": "The equality runtime guard remains excluded. Final-head CI and a fresh GCP baseline are needed before the next candidate comparison."
+    "scope_note": "The equality runtime guard remains excluded. New final-head CI and a fresh GCP baseline are needed before the candidate comparison."
   },
   "previous_common_repair_attempt": {
     "path": "qualification/evidence/correctness/common-repairs-baseline-e7bd6789f0ee/validation-record.json",
@@ -197,5 +197,18 @@
     "correctness_scope": "five-package heap-profiling Cargo Clippy+formatter+387 ordinary targets+three fresh metrics native wrappers; final-head whole-stack CI separate",
     "whole_stack_ci_qualified": false,
     "scope_note": "These four-source checks precede merging main 0321cbf3; they do not qualify the merged baseline."
+  },
+  "previous_merged_baseline": {
+    "source_commit": "0f559995a84d654be7b792ab19a27de6dff4a959",
+    "source_tree": "67b8f2b2a0f2c6364944655ada931b7755533021",
+    "ready_for_image": false,
+    "validation_record": {
+      "path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/validation-record.json",
+      "sha256": "930d2b77dde6362ea2b41b9b8d379849659c28661f3a223f2237adde5a4a55f3"
+    },
+    "local_correctness_qualified": true,
+    "correctness_scope": "Final merged code; ordinary and six selected native wrappers. Final pushed-head CI and fresh performance qualification are separate.",
+    "whole_stack_ci_qualified": false,
+    "scope_note": "The equality runtime guard remains excluded. Final-head CI and a fresh GCP baseline are needed before the next candidate comparison."
   }
 }

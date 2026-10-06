@@ -5,10 +5,8 @@ use super::*;
 /// range. All three conditions are and-ed, so each is broken alone against
 /// a row the other two accept.
 ///
-/// Both bounds are INCLUSIVE here, unlike `count_stream_map_lines` whose
-/// end is exclusive. The two count different things -- one the rows on
-/// disk, the other the lines already returned -- so the difference is
-/// deliberate, and each is pinned at its own boundary.
+/// Both bounds are INCLUSIVE here: a row landing exactly on either edge
+/// belongs to the plan, and the ledger pins both boundary entries.
 #[tokio::test]
 pub(crate) async fn counting_index_stats_reads_only_the_rows_a_plan_would() {
     use krabka_blockstore::{BlockKey, LogRow, TimeRange, write_log_block};
