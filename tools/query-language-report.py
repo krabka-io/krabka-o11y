@@ -31,6 +31,32 @@ REQUIRED = {
     *{f"{language}-generated-differential.json" for language in ("promql", "logql", "traceql", "pyroscope", "promql-rejections", "logql-rejections", "traceql-rejections", "pyroscope-rejections", "traceql-field-comparisons")},
 }
 
+PROMQL_TARGETS = {
+    False: "//crates/promql:upstream_qualification_test",
+    True: "//crates/promql:upstream_qualification_experimental_test",
+}
+REQUIRED_TARGETS = {
+    *PROMQL_TARGETS.values(),
+    "//crates/metrics-service:diff_prometheus_docker_test",
+    "//crates/metrics-service:diff_mimir_docker_test",
+    "//crates/observability:loki_differential_docker_test",
+    "//crates/traces:tempo_differential_docker_test",
+    "//crates/profiles:pyroscope_differential_docker_test",
+    "//crates/metrics-service:metrics_deployment_docker_test",
+    "//crates/traces:tempo_deployment_docker_test",
+    "//crates/profiles:pyroscope_deployment_docker_test",
+    "//crates/integration:backup_restore_test",
+}
+
+
+def missing_suites(artifacts, targets):
+    missing = REQUIRED - {artifact["name"] for artifact in artifacts}
+    missing |= REQUIRED_TARGETS - targets
+    configurations = {artifact.get("configuration") for artifact in artifacts
+                      if artifact["name"] == "promql-3.14.0-qualification.json"}
+    missing |= {f"promql-full-{mode}" for mode in ("default", "experimental") if mode not in configurations}
+    return sorted(missing)
+
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -531,6 +557,13 @@ def usable_evidence(reference, kind, executed, rejected_cases):
 
 
 def self_check():
+    complete_artifacts = [{"name": name} for name in REQUIRED]
+    complete_artifacts += [{"name": "promql-3.14.0-qualification.json", "configuration": mode}
+                           for mode in ("default", "experimental")]
+    assert not missing_suites(complete_artifacts, REQUIRED_TARGETS)
+    assert "promql-full-experimental" in missing_suites(complete_artifacts[:-1], REQUIRED_TARGETS)
+    profile_target = "//crates/profiles:pyroscope_deployment_docker_test"
+    assert profile_target in missing_suites(complete_artifacts, REQUIRED_TARGETS - {profile_target})
     bound = {"integrity_errors_checked": ["suite"], "dirty_checkout": False, "missing_suites": [],
              "unbound_artifacts": [], "unsuccessful_runs": [], "invalid_reports": [],
              "integrity_errors": {}, "runner_binding_errors": {},
@@ -871,6 +904,7 @@ def main():
     integrity_errors = {}
     invalid_reports = []
     runner_errors = {}
+    targets = set()
 
     def record_executed(reference, status, case, report_name, report, path):
         errors = evidence_helpers["runtime_errors"](registry, reference, report_name, case, report)
@@ -892,6 +926,8 @@ def main():
         for binding in sorted(bindings):
             if binding.is_file():
                 integrity_errors[str(binding.parent)] = verify_manifest(binding.parent)
+                if not integrity_errors[str(binding.parent)]:
+                    targets.add((binding.parent / "target").read_text().strip())
         for path in sorted(directory.rglob("*.json")):
             metric_result = path.name.startswith("tempo-metric-result-")
             if path.name not in REQUIRED and not metric_result:
@@ -917,6 +953,17 @@ def main():
             except (OSError, ValueError) as error:
                 report = {}
                 counts, errors = collections.Counter(uncovered=1), [f"unreadable or invalid report: {error}"]
+            configuration = None
+            if path.name == "promql-3.14.0-qualification.json":
+                experimental = report.get("experimental_functions")
+                configuration = "experimental" if experimental is True else "default"
+                try:
+                    target = (binding_directory / "target").read_text().strip() if binding_directory else None
+                except OSError:
+                    target = None
+                if (type(experimental) is not bool or target != PROMQL_TARGETS.get(experimental)
+                        or report.get("enable_type_and_unit_labels") is not False):
+                    errors.append("full PromQL configuration differs from selected suite")
             if errors:
                 invalid_reports.append({"path": str(path), "errors": errors})
             if errors:
@@ -956,11 +1003,11 @@ def main():
                     if case.get("expected_rejection") or case.get("classification") == "paired-expected-error":
                         rejected_cases.add(reference)
             artifacts.append({"path": str(path), "name": path.name, "sha256": digest(path),
+                              "configuration": configuration,
                               "counts": counts, "discovered": sum(counts.values()),
                               "validation_errors": errors,
                               "complete_corpus": not errors and is_complete(counts)})
-    present = {artifact["name"] for artifact in artifacts}
-    missing = sorted(REQUIRED - present)
+    missing = missing_suites(artifacts, targets)
     features = {language: collections.Counter(feature["status"] for feature in surface["features"])
                 for language, surface in inventory["surfaces"].items()}
     unresolved_evidence = sorted({reference for surface in inventory["surfaces"].values()
