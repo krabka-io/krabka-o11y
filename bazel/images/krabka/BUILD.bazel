@@ -14,6 +14,7 @@ load("@rules_img//img:load.bzl", "image_load")
 load("@rules_img//img:media_types.bzl", "GZIP_LAYER")
 load("@rules_img//img:push.bzl", "image_push")
 load("//bazel/images:images.bzl", "IMAGES")
+load(":lto.bzl", "image_binary")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -71,9 +72,20 @@ BINARIES = {
     "/usr/local/bin/krabka-traces": "//crates/traces:krabka-traces",
 }
 
+[
+    image_binary(
+        name = binary.rsplit(":", 1)[1] + "_image",
+        binary = binary,
+    )
+    for binary in BINARIES.values()
+]
+
 image_layer(
     name = "binaries_layer",
-    srcs = BINARIES,
+    srcs = {
+        destination: ":" + binary.rsplit(":", 1)[1] + "_image"
+        for destination, binary in BINARIES.items()
+    },
     default_metadata = NONROOT,
     include_runfiles = False,
 )
