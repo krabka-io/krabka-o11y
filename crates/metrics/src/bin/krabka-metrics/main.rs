@@ -883,9 +883,10 @@ mod tests {
             let expected = (0..100)
                 .map(|index| {
                     let mut labels = vec![("__name__".into(), "up".into())];
-                    labels
-                        .extend((0..20).map(|pad| (format!("padding_{pad:02}"), "x".repeat(1024))));
-                    labels.push(("series".into(), index.to_string()));
+                    labels.extend(
+                        (0..20).map(|pad| (format!("padding_{pad:02}"), "x".repeat(1024).into())),
+                    );
+                    labels.push(("series".into(), index.to_string().into()));
                     WalRecord {
                         tenant: "tenant".into(),
                         labels,
@@ -907,7 +908,7 @@ mod tests {
                             .iter()
                             .map(|(name, value)| pb::v1::Label {
                                 name: name.clone(),
-                                value: value.clone(),
+                                value: value.utf8().expect("test labels are UTF-8").to_owned(),
                             })
                             .collect(),
                         samples: vec![pb::v1::Sample {
