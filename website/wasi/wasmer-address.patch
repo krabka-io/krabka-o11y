@@ -1,0 +1,79 @@
+--- a/lib/wasix/src/net/mod.rs
++++ b/lib/wasix/src/net/mod.rs
+@@ -177,8 +177,9 @@
+         }
+         Addressfamily::Inet6 => {
+             let octets: [u8; 16] = o[2..18].try_into().unwrap();
++            let [a, b, c, d, e, f, g, h] = unsafe { transmute::<[u8; 16], [u16; 8]>(octets) };
+             (
+-                IpAddr::V6(Ipv6Addr::from(octets)),
++                IpAddr::V6(Ipv6Addr::new(a, b, c, d, e, f, g, h)),
+                 u16::from_ne_bytes([o[0], o[1]]),
+             )
+         }
+@@ -196,7 +197,8 @@
+     ip: IpAddr,
+     port: u16,
+ ) -> Result<(), Errno> {
+-    let p = port.to_be_bytes();
++    // AddrPort stores ABI-native u16 fields, not network-order bytes.
++    let p = port.to_ne_bytes();
+     let ipport = match ip {
+         IpAddr::V4(ip) => {
+             let o = ip.octets();
+@@ -211,7 +213,7 @@
+             }
+         }
+         IpAddr::V6(ip) => {
+-            let o = ip.octets();
++            let o = unsafe { transmute::<[u16; 8], [u8; 16]>(ip.segments()) };
+             __wasi_addr_port_t {
+                 tag: Addressfamily::Inet6,
+                 _padding: 0,
+@@ -406,3 +408,46 @@
+         _ => Errno::Io,
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use wasmer::{Memory, MemoryType, Store};
++    use wasmer_types::Memory32;
++
++    #[test]
++    fn socket_addresses_match_the_guest_native_u16_fields() {
++        let mut store = Store::default();
++        let memory = Memory::new(&mut store, MemoryType::new(1, None, false)).unwrap();
++        let view = memory.view(&store);
++        let pointer = WasmPtr::<__wasi_addr_port_t, Memory32>::new(128);
++        let ips = [
++            Ipv4Addr::LOCALHOST.into(),
++            Ipv6Addr::LOCALHOST.into(),
++            Ipv6Addr::new(0x2001, 0xdb8, 0x1234, 0xabcd, 0x10, 0x2030, 0x4050, 0x6070).into(),
++        ];
++        for ip in ips {
++            for port in [0x1234, 49152, 65535] {
++                write_ip_port(&view, pointer, ip, port).unwrap();
++                // The C/Rust guest ABI reads a u16 port at offset 2, then IPv6
++                // segments as eight u16 fields at offset 4. Check these fields
++                // independently of the runtime's address decoder.
++                let guest_port = WasmPtr::<u16, Memory32>::new(130)
++                    .deref(&view)
++                    .read()
++                    .unwrap();
++                assert_eq!(guest_port, port, "guest port for {ip}");
++                if let IpAddr::V6(ip) = ip {
++                    for (index, expected) in ip.segments().into_iter().enumerate() {
++                        let guest_segment = WasmPtr::<u16, Memory32>::new(132 + 2 * index as u32)
++                            .deref(&view)
++                            .read()
++                            .unwrap();
++                        assert_eq!(guest_segment, expected, "guest IPv6 segment {index}");
++                    }
++                }
++                assert_eq!(read_ip_port(&view, pointer).unwrap(), (ip, port));
++            }
++        }
++    }
++}

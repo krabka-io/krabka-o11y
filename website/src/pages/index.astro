@@ -1,0 +1,97 @@
+---
+import Site from '../layouts/Site.astro';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const doc = (name) => `${base}/docs/${name}/`;
+const signals = [
+  { id: 'metrics', name: 'Metrics', contract: 'Mimir · Prometheus', language: 'PromQL', color: '#fd9866', query: 'sum by (service) (rate(http_requests_total[5m]))', api: '/api/v1/query_range', description: 'Remote write, native histograms, recording rules, and the Prometheus query API.', guide: 'crates/metrics-service/readme' },
+  { id: 'logs', name: 'Logs', contract: 'Loki', language: 'LogQL', color: '#ffc66b', query: '{service="checkout"} | json | level="error"', api: '/loki/api/v1/query_range', description: 'Loki ingestion, structured metadata, and LogQL pipelines over hot and cold data.', guide: 'crates/observability/readme' },
+  { id: 'traces', name: 'Traces', contract: 'Tempo', language: 'TraceQL', color: '#8ab8ff', query: '{ resource.service.name = "checkout" && duration > 100ms }', api: '/api/search', description: 'OTLP ingestion, trace search, structural queries, and service graphs.', guide: 'crates/traces/readme' },
+  { id: 'profiles', name: 'Profiles', contract: 'Pyroscope', language: 'pprof', color: '#d5a2ff', query: 'process_cpu:cpu:nanoseconds:cpu:nanoseconds{service_name="checkout"}', api: '/pyroscope/render', description: 'Continuous profiles, flame graphs, profile merges, and the Pyroscope Connect API.', guide: 'crates/profiles/readme' },
+];
+const quickstart = 'git clone https://github.com/krabka-io/krabka-o11y.git\ncd krabka-o11y\nbazel run //bazel/images/krabka:load\nKRABKA_O11Y_IMAGE=krabka-o11y:dev \\\n  docker compose -f deploy/compose/docker-compose.yaml up -d';
+---
+<Site title="Four signals. One observability stack." description="Evaluate krabka-o11y: Grafana-compatible metrics, logs, traces, and profiles in Rust. Explore the WASI lab, compatibility evidence, and complete documentation.">
+  <section class="hero shell">
+    <div class="hero-copy">
+      <a class="release-note" href={doc('api_compatibility')}><span class="status-dot"></span> THE PATH TO 1.0 <span aria-hidden="true">↗</span></a>
+      <h1>Four signals.<br /><span>One observability<br class="wide-break" /> stack.</span></h1>
+      <p class="hero-description">Metrics, logs, traces, and profiles in Rust.<br />The Grafana APIs you know, with a shared storage layer and verified storage kernels.</p>
+      <div class="actions"><a class="button primary" href={`${base}/lab/`}>Explore the WASI lab <span aria-hidden="true">↗</span></a><a class="button secondary" href={doc('getting_started')}>Get started locally <span aria-hidden="true">→</span></a></div>
+      <p class="hero-footnote">Open source <span>·</span> Apache 2.0 <span>·</span> Built on krabka</p>
+    </div>
+    <div class="system-diagram" aria-label="All four signals flow through distributors, the broker write-ahead log, and a shared columnar storage layer to query services and Grafana.">
+      <div class="diagram-heading"><span>THE OBSERVABILITY PATH</span><span class="diagram-id">01 / ARCHITECTURE</span></div>
+      <div class="diagram-signals">{signals.map(signal => <span style={`--signal:${signal.color}`}><i></i>{signal.name}</span>)}</div>
+      <div class="flow-line"><span></span><span></span><span></span><span></span></div>
+      <div class="diagram-role"><span class="node-glyph" aria-hidden="true">↳</span><div><strong>Distributors</strong><small>Validate · route · append</small></div><span class="node-code">INGEST</span></div>
+      <div class="flow-arrow" aria-hidden="true">↓</div>
+      <div class="diagram-role broker"><span class="node-glyph" aria-hidden="true">≋</span><div><strong>krabka broker</strong><small>Write-ahead log per signal</small></div><span class="node-code">WAL</span></div>
+      <div class="flow-arrow" aria-hidden="true">↓</div>
+      <div class="diagram-role"><span class="node-glyph" aria-hidden="true">▤</span><div><strong>Columnar block store</strong><small>Block builders · object storage · compaction</small></div><span class="node-code">STORE</span></div>
+      <div class="flow-arrow" aria-hidden="true">↓</div>
+      <div class="diagram-query">{signals.map(signal => <code>{signal.language}</code>)}</div>
+      <div class="diagram-bottom"><span class="status-dot"></span> Grafana datasource APIs <span class="diagram-id">QUERY</span></div>
+    </div>
+  </section>
+
+  <div class="contract-band"><div class="shell"><span class="eyebrow">COMPATIBILITY TARGETS</span><div><span>Grafana Mimir</span><span>Grafana Loki</span><span>Grafana Tempo</span><span>Grafana Pyroscope</span></div><a href={doc('api_compatibility')}>See the exact supported surface <span aria-hidden="true">↗</span></a></div></div>
+
+  <section class="shell section" id="signals">
+    <div class="section-intro"><div><span class="eyebrow">01 / FOUR SIGNALS</span><h2>Keep the tools you already use.</h2></div><p>Use familiar query languages and Grafana datasource types. Review compatibility against each upstream before you deploy.</p></div>
+    <div class="signal-grid">{signals.map((signal, index) => <article class="signal-card" style={`--signal:${signal.color}`}>
+      <div class="signal-top"><span class="signal-number">0{index + 1}</span><span class="signal-contract">{signal.contract}</span></div>
+      <h3><span class="signal-symbol" aria-hidden="true">{['∿', '≡', '⌁', '▥'][index]}</span>{signal.name}</h3>
+      <p>{signal.description}</p>
+      <div class="query-example"><span>{signal.language}</span><code>{signal.query}</code></div>
+      <div class="signal-bottom"><code>{signal.api}</code><a href={doc(signal.guide)} aria-label={`Read ${signal.name.toLowerCase()} documentation`}>↗</a></div>
+    </article>)}</div>
+    <div class="inline-note"><span class="status-dot"></span><p>Provision one Grafana datasource per signal. Send the same tenant header on every request.</p><a href={doc('grafana')}>Configure Grafana <span aria-hidden="true">→</span></a></div>
+  </section>
+
+  <section class="lab-section"><div class="shell lab-teaser">
+    <div><span class="eyebrow">02 / TRY IT IN YOUR BROWSER</span><h2>Your first query,<br />before your first deployment.</h2><p>Start the real observability services in a WASI sandbox. Send telemetry, query each signal, and inspect the responses.</p><a class="button primary" href={`${base}/lab/`}>Open the observability lab <span aria-hidden="true">↗</span></a><p class="small">Sample telemetry. Real service code. Your browser is the sandbox.</p></div>
+    <div class="terminal-preview"><div class="terminal-bar"><span aria-hidden="true">● ● ●</span><span>observability lab</span><span>WASI</span></div><div class="terminal-body"><span class="terminal-comment"># Four APIs. One tenant.</span><p><span class="terminal-prompt">GET</span> /api/v1/query?query=up</p><p><span class="terminal-prompt">GET</span> /loki/api/v1/query_range</p><p><span class="terminal-prompt">GET</span> /api/search?q={}</p><p><span class="terminal-prompt">GET</span> /pyroscope/render</p><hr /><span class="terminal-comment">X-Scope-OrgID: lab</span><p class="terminal-note">Inspect ingest, queries, and service logs.</p></div><a class="terminal-link" href={`${base}/lab/`}>Start the services <span aria-hidden="true">→</span></a></div>
+  </div></section>
+
+  <section class="shell section evidence-section">
+    <div class="section-intro"><div><span class="eyebrow">03 / UNDERSTAND THE SYSTEM</span><h2>Read the architecture.<br />Inspect the evidence.</h2></div><p>The path to 1.0 runs through full upstream compatibility. The documentation makes implemented surfaces, remaining gaps, and tested limits explicit.</p></div>
+    <div class="evidence-list">
+      <a href={doc('architecture_design')}><span class="evidence-index">01</span><div><h3>One storage layer, four query paths</h3><p>Follow telemetry from ingest to the WAL, columnar blocks, and query frontends.</p></div><span class="evidence-label">ARCHITECTURE</span><span aria-hidden="true">↗</span></a>
+      <a href={doc('api_compatibility')}><span class="evidence-index">02</span><div><h3>Compatibility checked against upstream</h3><p>Read the surface matrix and the differential suites that run real Grafana-stack components.</p></div><span class="evidence-label">COMPATIBILITY</span><span aria-hidden="true">↗</span></a>
+      <a href={doc('verification')}><span class="evidence-index">03</span><div><h3>Proofs at the storage boundary</h3><p>Creusot proves five storage kernels. Stateright checks bounded publication and deletion protocols.</p></div><span class="evidence-label">VERIFICATION</span><span aria-hidden="true">↗</span></a>
+      <a href={doc('deployment')}><span class="evidence-index">04</span><div><h3>From local evaluation to production roles</h3><p>Use the checked-in Compose stack and Kubernetes manifests, with explicit bootstrap and lifecycle settings.</p></div><span class="evidence-label">DEPLOYMENT</span><span aria-hidden="true">↗</span></a>
+    </div>
+  </section>
+
+  <section class="shell section performance-section">
+    <div class="section-intro"><div><span class="eyebrow">04 / MEASURED PERFORMANCE</span><h2>Numbers with a workload attached.</h2></div><a class="text-link" href={doc('operating_envelope')}>Read the operating envelope <span aria-hidden="true">↗</span></a></div>
+    <p class="performance-context">Three runs qualified a fixed single-node Compose deployment on October 4, 2026, with 16 vCPUs and 64 GiB of memory. Each signal was measured separately.</p>
+    <div class="performance-table"><table><caption class="sr-only">Qualified burst ingestion rates and steady query latency. Values are medians across three runs.</caption><thead><tr><th>Signal</th><th>Durable burst ingestion</th><th>Steady query p95</th><th>Row unit</th></tr></thead><tbody>
+      <tr><th><i style="--signal:#fd9866"></i>Metrics</th><td>15,084.4 <small>rows/s</small></td><td>539.9 <small>ms</small></td><td>samples</td></tr>
+      <tr><th><i style="--signal:#ffc66b"></i>Logs</th><td>31,088.2 <small>rows/s</small></td><td>94.0 <small>ms</small></td><td>log lines</td></tr>
+      <tr><th><i style="--signal:#8ab8ff"></i>Traces</th><td>744.4 <small>rows/s</small></td><td>167.2 <small>ms</small></td><td>spans</td></tr>
+      <tr><th><i style="--signal:#d5a2ff"></i>Profiles</th><td>1,194.6 <small>rows/s</small></td><td>18.6 <small>ms</small></td><td>stack samples</td></tr>
+    </tbody></table></div>
+    <p class="small">Burst rates and steady query latencies come from separate phases. Limits do not add across signals. See the report for CPU, memory, datasets, cold reads, and provenance.</p>
+  </section>
+
+  <section class="quickstart-section"><div class="shell quickstart-grid">
+    <div><span class="eyebrow">05 / RUN IT LOCALLY</span><h2>Bring your telemetry.<br />We’ll bring the docs.</h2><p>Build the image from this checkout. Compose starts the broker, object store, bootstrap tasks, and signal services.</p><a class="text-link" href={doc('getting_started')}>Follow the complete quickstart <span aria-hidden="true">→</span></a><p class="small">Requires Docker Compose and Bazelisk.<br />The local stack is for evaluation.</p></div>
+    <div class="quickstart-code"><div class="terminal-bar"><span>TERMINAL</span><button class="copy-command" type="button" data-command={quickstart}>Copy commands</button></div><pre><code>{quickstart}</code></pre><span class="copy-status sr-only" role="status"></span></div>
+  </div></section>
+</Site>
+<script>
+  const button = document.querySelector<HTMLButtonElement>('.copy-command');
+  button?.addEventListener('click', async () => {
+    const status = document.querySelector('.copy-status');
+    try {
+      await navigator.clipboard.writeText(button.dataset.command ?? '');
+      if (status) status.textContent = 'Commands copied.';
+      button.textContent = 'Copied';
+    } catch {
+      if (status) status.textContent = 'Copy unavailable. Select the commands to copy them.';
+      button.textContent = 'Select to copy';
+    }
+    setTimeout(() => { button.textContent = 'Copy commands'; }, 2000);
+  });
+</script>

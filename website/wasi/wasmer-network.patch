@@ -1,0 +1,984 @@
+--- a/js/bindgen/src/browser_http.rs
++++ b/js/bindgen/src/browser_http.rs
+@@ -1,4 +1,4 @@
+-//! An in-memory TCP network and HTTP ingress for browser sandboxes.
++//! In-memory TCP and UDP networking and HTTP ingress for browser sandboxes.
+ //!
+ //! A service worker cannot open a TCP connection to a WASIX process. This
+ //! adapter presents HTTP requests as accepted TCP sockets instead: the guest
+@@ -6,6 +6,7 @@
+
+ use std::{
+     collections::{HashMap, HashSet, VecDeque},
++    mem::MaybeUninit,
+     net::{IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr},
+     sync::{Arc, Mutex, TryLockError, Weak},
+     task::{Context, Poll, Waker},
+@@ -16,13 +17,18 @@
+ use tokio::sync::oneshot;
+ use virtual_mio::{InterestHandler, InterestType};
+ use virtual_net::{
+-    IpCidr, NetworkError, SocketStatus, VirtualConnectedSocket, VirtualIoSource, VirtualNetworking,
+-    VirtualSocket, VirtualTcpBoundSocket, VirtualTcpListener, VirtualTcpSocket,
++    IpCidr, MAX_SOCKET_PAYLOAD, NetworkError, SocketStatus, VirtualConnectedSocket,
++    VirtualConnectionlessSocket, VirtualIoSource, VirtualNetworking, VirtualSocket,
++    VirtualTcpBoundSocket, VirtualTcpListener, VirtualTcpSocket, VirtualUdpSocket,
+ };
+
+ use crate::node_network::NodeNetworking;
+
+ type NetworkResult<T> = virtual_net::Result<T>;
++
++const EPHEMERAL_PORT_START: u16 = 49_152;
++const UDP_QUEUE_BYTES: usize = 256 * 1024;
++const UDP_QUEUE_PACKETS: usize = 256;
+
+ #[derive(Debug)]
+ struct ActiveRequest {
+@@ -35,6 +41,7 @@
+ struct NetworkState {
+     listeners: HashMap<SocketAddr, Weak<Mutex<ListenerState>>>,
+     bound: HashSet<SocketAddr>,
++    datagrams: HashMap<SocketAddr, Weak<Mutex<DatagramState>>>,
+     ip_addresses: Vec<IpCidr>,
+     peers: Option<Vec<Weak<Mutex<NetworkState>>>>,
+     closed: bool,
+@@ -48,7 +55,7 @@
+ impl BrowserNetworkGroup {
+     pub(crate) fn create(&self, egress: Option<NodeNetworking>) -> BrowserHttpNetworking {
+         let state = Arc::new(Mutex::new(NetworkState {
+-            next_port: 49_152,
++            next_port: EPHEMERAL_PORT_START,
+             ..NetworkState::default()
+         }));
+         let mut networks = self.0.lock().expect("browser network group poisoned");
+@@ -109,20 +116,17 @@
+             if state.closed {
+                 return Err(NetworkError::ConnectionRefused);
+             }
+-            if local.port() == 0 {
+-                local.set_port(state.next_port);
+-                state.next_port = if state.next_port == u16::MAX {
+-                    49_152
+-                } else {
+-                    state.next_port + 1
+-                };
+-            }
+             if local.ip().is_unspecified() {
+                 local.set_ip(if peer.is_ipv4() {
+                     Ipv4Addr::LOCALHOST.into()
+                 } else {
+                     Ipv6Addr::LOCALHOST.into()
+                 });
++            }
++            if local.port() == 0 {
++                local = allocate_address(&mut state, local, |state, candidate| {
++                    tcp_address_available(state, candidate, true)
++                })?;
+             }
+             (
+                 state.listeners.get(&peer).and_then(Weak::upgrade),
+@@ -168,6 +172,51 @@
+         .push(Box::new(server), local)?;
+         Ok(client)
+     }
++
++    fn datagram_peer(
++        &self,
++        address: SocketAddr,
++    ) -> NetworkResult<Option<Arc<Mutex<DatagramState>>>> {
++        let address = normalize_listener_address(address);
++        let (own_socket, peers) = {
++            let state = self.state.lock().expect("browser UDP network poisoned");
++            if state.closed {
++                return Err(NetworkError::NotConnected);
++            }
++            (
++                state.datagrams.get(&address).and_then(Weak::upgrade),
++                state.peers.clone(),
++            )
++        };
++        if own_socket.is_some() {
++            return Ok(own_socket);
++        }
++        let explicit = peers.is_some();
++        let peers = peers.unwrap_or_else(|| {
++            self.group
++                .0
++                .lock()
++                .expect("browser network group poisoned")
++                .clone()
++        });
++        let mut found = None;
++        for state in peers.into_iter().filter_map(|state| state.upgrade()) {
++            if Arc::ptr_eq(&state, &self.state) {
++                continue;
++            }
++            let state = state.lock().expect("browser UDP network poisoned");
++            if state.closed || (!explicit && state.peers.is_some()) {
++                continue;
++            }
++            if let Some(socket) = state.datagrams.get(&address).and_then(Weak::upgrade) {
++                if found.is_some() {
++                    return Err(NetworkError::AddressInUse);
++                }
++                found = Some(socket);
++            }
++        }
++        Ok(found)
++    }
+ }
+
+ impl BrowserHttpRequestHandler {
+@@ -206,9 +255,17 @@
+             .drain()
+             .filter_map(|(_, listener)| listener.upgrade())
+             .collect();
++        let datagrams: Vec<_> = state
++            .datagrams
++            .drain()
++            .filter_map(|(_, socket)| socket.upgrade())
++            .collect();
+         state.bound.clear();
+         state.peers = Some(Vec::new());
+         drop(state);
++        for socket in datagrams {
++            socket.lock().expect("browser UDP socket poisoned").close();
++        }
+         // Closing a sandbox must also release guests waiting in accept().
+         for listener in listeners {
+             let mut listener = listener.lock().expect("browser HTTP listener poisoned");
+@@ -380,30 +437,12 @@
+         &self,
+         address: SocketAddr,
+         only_v6: bool,
+-        _reuse_port: bool,
+-        _reuse_addr: bool,
++        reuse_port: bool,
++        reuse_addr: bool,
+     ) -> NetworkResult<Box<dyn VirtualTcpListener + Sync>> {
+-        let addresses = listener_addresses(address, only_v6);
+-        let listener = BrowserHttpListener::new(addresses[0]);
+-        let mut state = self.state.lock().expect("browser HTTP network poisoned");
+-        if state.closed {
+-            return Err(NetworkError::NotConnected);
+-        }
+-        if addresses.iter().any(|address| {
+-            state.bound.contains(address)
+-                || state
+-                    .listeners
+-                    .get(address)
+-                    .is_some_and(|listener| listener.strong_count() > 0)
+-        }) {
+-            return Err(NetworkError::AddressInUse);
+-        }
+-        for address in addresses {
+-            state
+-                .listeners
+-                .insert(address, Arc::downgrade(&listener.state));
+-        }
+-        Ok(Box::new(listener))
++        self.bind_tcp(address, only_v6, reuse_port, reuse_addr)
++            .await?
++            .listen()
+     }
+
+     async fn bind_tcp(
+@@ -413,25 +452,53 @@
+         _reuse_port: bool,
+         _reuse_addr: bool,
+     ) -> NetworkResult<Box<dyn VirtualTcpBoundSocket + Sync>> {
+-        let addresses = listener_addresses(address, only_v6);
+         let mut state = self.state.lock().expect("browser HTTP network poisoned");
+         if state.closed {
+             return Err(NetworkError::NotConnected);
+         }
+-        if addresses.iter().any(|address| {
+-            state.bound.contains(address)
+-                || state
+-                    .listeners
+-                    .get(address)
+-                    .is_some_and(|listener| listener.strong_count() > 0)
+-        }) {
+-            return Err(NetworkError::AddressInUse);
+-        }
++        let address = allocate_address(&mut state, address, |state, candidate| {
++            tcp_address_available(state, candidate, only_v6)
++        })?;
++        let addresses = listener_addresses(address, only_v6);
+         state.bound.extend(addresses.iter().copied());
+         Ok(Box::new(BrowserHttpBoundSocket {
+             networking: self.clone(),
+             addresses,
+             reserved: true,
++            ttl: 64,
++        }))
++    }
++
++    async fn bind_udp(
++        &self,
++        address: SocketAddr,
++        _reuse_port: bool,
++        _reuse_addr: bool,
++    ) -> NetworkResult<Box<dyn VirtualUdpSocket + Sync>> {
++        if !address.ip().is_loopback() && !address.ip().is_unspecified() {
++            return Err(NetworkError::AddressNotAvailable);
++        }
++        let mut state = self.state.lock().expect("browser UDP network poisoned");
++        if state.closed {
++            return Err(NetworkError::NotConnected);
++        }
++        let address = allocate_address(&mut state, address, |state, candidate| {
++            listener_addresses(candidate, false).iter().all(|address| {
++                !state
++                    .datagrams
++                    .get(address)
++                    .is_some_and(|socket| socket.strong_count() > 0)
++            })
++        })?;
++        let addresses = listener_addresses(address, false);
++        let socket = Arc::new(Mutex::new(DatagramState::default()));
++        for address in &addresses {
++            state.datagrams.insert(*address, Arc::downgrade(&socket));
++        }
++        Ok(Box::new(BrowserUdpSocket {
++            networking: self.clone(),
++            state: socket,
++            addresses,
+             ttl: 64,
+         }))
+     }
+@@ -465,6 +532,307 @@
+         }
+         let egress = self.egress.as_ref().ok_or(NetworkError::Unsupported)?;
+         egress.resolve(host, port, dns_server).await
++    }
++}
++
++fn tcp_address_available(state: &NetworkState, address: SocketAddr, only_v6: bool) -> bool {
++    listener_addresses(address, only_v6).iter().all(|address| {
++        !state.bound.contains(address)
++            && !state
++                .listeners
++                .get(address)
++                .is_some_and(|listener| listener.strong_count() > 0)
++    })
++}
++
++fn allocate_address(
++    state: &mut NetworkState,
++    mut address: SocketAddr,
++    available: impl Fn(&NetworkState, SocketAddr) -> bool,
++) -> NetworkResult<SocketAddr> {
++    if address.port() != 0 {
++        return if available(state, address) {
++            Ok(address)
++        } else {
++            Err(NetworkError::AddressInUse)
++        };
++    }
++    for _ in EPHEMERAL_PORT_START..=u16::MAX {
++        let port = state.next_port.max(EPHEMERAL_PORT_START);
++        state.next_port = if port == u16::MAX {
++            EPHEMERAL_PORT_START
++        } else {
++            port + 1
++        };
++        address.set_port(port);
++        if available(state, address) {
++            return Ok(address);
++        }
++    }
++    Err(NetworkError::AddressInUse)
++}
++
++#[derive(Debug, Default)]
++struct DatagramState {
++    queue: VecDeque<(Bytes, SocketAddr)>,
++    queued_bytes: usize,
++    closed: bool,
++    handler: Option<Box<dyn InterestHandler + Send + Sync>>,
++    wakers: Vec<Waker>,
++}
++
++impl DatagramState {
++    fn close(&mut self) {
++        self.closed = true;
++        self.queue.clear();
++        self.queued_bytes = 0;
++        if let Some(handler) = self.handler.as_mut() {
++            handler.push_interest(InterestType::Readable);
++            handler.push_interest(InterestType::Closed);
++        }
++        for waker in self.wakers.drain(..) {
++            waker.wake();
++        }
++    }
++}
++
++#[derive(Debug)]
++struct BrowserUdpSocket {
++    networking: BrowserHttpNetworking,
++    state: Arc<Mutex<DatagramState>>,
++    addresses: Vec<SocketAddr>,
++    ttl: u32,
++}
++
++impl BrowserUdpSocket {
++    fn ensure_open(&self) -> NetworkResult<()> {
++        if self
++            .state
++            .lock()
++            .expect("browser UDP socket poisoned")
++            .closed
++        {
++            Err(NetworkError::ConnectionAborted)
++        } else {
++            Ok(())
++        }
++    }
++}
++
++impl Drop for BrowserUdpSocket {
++    fn drop(&mut self) {
++        self.state
++            .lock()
++            .expect("browser UDP socket poisoned")
++            .close();
++        let mut network = self
++            .networking
++            .state
++            .lock()
++            .expect("browser UDP network poisoned");
++        for address in &self.addresses {
++            if network
++                .datagrams
++                .get(address)
++                .and_then(Weak::upgrade)
++                .is_some_and(|socket| Arc::ptr_eq(&socket, &self.state))
++            {
++                network.datagrams.remove(address);
++            }
++        }
++    }
++}
++
++impl VirtualIoSource for BrowserUdpSocket {
++    fn remove_handler(&mut self) {
++        self.state
++            .lock()
++            .expect("browser UDP socket poisoned")
++            .handler
++            .take();
++    }
++
++    fn poll_read_ready(&mut self, context: &mut Context<'_>) -> Poll<NetworkResult<usize>> {
++        let mut state = self.state.lock().expect("browser UDP socket poisoned");
++        if state.closed {
++            return Poll::Ready(Err(NetworkError::ConnectionAborted));
++        }
++        if let Some((data, _)) = state.queue.front() {
++            return Poll::Ready(Ok(data.len()));
++        }
++        if !state
++            .wakers
++            .iter()
++            .any(|waker| waker.will_wake(context.waker()))
++        {
++            state.wakers.push(context.waker().clone());
++        }
++        Poll::Pending
++    }
++
++    fn poll_write_ready(&mut self, _context: &mut Context<'_>) -> Poll<NetworkResult<usize>> {
++        Poll::Ready(self.ensure_open().map(|()| MAX_SOCKET_PAYLOAD))
++    }
++}
++
++impl VirtualSocket for BrowserUdpSocket {
++    fn set_ttl(&mut self, ttl: u32) -> NetworkResult<()> {
++        self.ensure_open()?;
++        if ttl == 0 || ttl > 255 {
++            return Err(NetworkError::InvalidInput);
++        }
++        self.ttl = ttl;
++        Ok(())
++    }
++    fn ttl(&self) -> NetworkResult<u32> {
++        self.ensure_open().map(|()| self.ttl)
++    }
++    fn addr_local(&self) -> NetworkResult<SocketAddr> {
++        self.ensure_open().map(|()| self.addresses[0])
++    }
++    fn status(&self) -> NetworkResult<SocketStatus> {
++        Ok(
++            if self
++                .state
++                .lock()
++                .expect("browser UDP socket poisoned")
++                .closed
++            {
++                SocketStatus::Closed
++            } else {
++                SocketStatus::Opened
++            },
++        )
++    }
++    fn set_handler(
++        &mut self,
++        mut handler: Box<dyn InterestHandler + Send + Sync>,
++    ) -> NetworkResult<()> {
++        let mut state = self.state.lock().expect("browser UDP socket poisoned");
++        if state.closed || !state.queue.is_empty() {
++            handler.push_interest(InterestType::Readable);
++        }
++        if state.closed {
++            handler.push_interest(InterestType::Closed);
++        } else {
++            handler.push_interest(InterestType::Writable);
++        }
++        state.handler = Some(handler);
++        Ok(())
++    }
++}
++
++impl VirtualConnectionlessSocket for BrowserUdpSocket {
++    fn try_send_to(&mut self, data: &[u8], peer: SocketAddr) -> NetworkResult<usize> {
++        self.ensure_open()?;
++        if data.len() > MAX_SOCKET_PAYLOAD {
++            return Err(NetworkError::MessageSize);
++        }
++        if peer.port() == 0 {
++            return Err(NetworkError::InvalidInput);
++        }
++        if !peer.ip().is_loopback() && !peer.ip().is_unspecified() {
++            return Err(NetworkError::Unsupported);
++        }
++        let source = self
++            .addresses
++            .iter()
++            .copied()
++            .find(|address| address.is_ipv4() == peer.is_ipv4())
++            .ok_or(NetworkError::InvalidInput)?;
++        let Some(receiver) = self.networking.datagram_peer(peer)? else {
++            // UDP does not acknowledge delivery to an unbound destination.
++            return Ok(data.len());
++        };
++        let mut state = receiver.lock().expect("browser UDP socket poisoned");
++        if state.closed {
++            return Err(NetworkError::ConnectionAborted);
++        }
++        // ponytail: bounded receive queue drops excess UDP packets, as a full OS receive buffer does.
++        if state.queue.len() >= UDP_QUEUE_PACKETS
++            || state.queued_bytes + data.len() > UDP_QUEUE_BYTES
++        {
++            return Ok(data.len());
++        }
++        state.queued_bytes += data.len();
++        state
++            .queue
++            .push_back((Bytes::copy_from_slice(data), source));
++        if let Some(handler) = state.handler.as_mut() {
++            handler.push_interest(InterestType::Readable);
++        }
++        for waker in state.wakers.drain(..) {
++            waker.wake();
++        }
++        Ok(data.len())
++    }
++
++    fn try_recv_from(
++        &mut self,
++        buf: &mut [MaybeUninit<u8>],
++        peek: bool,
++    ) -> NetworkResult<(usize, SocketAddr)> {
++        let mut state = self.state.lock().expect("browser UDP socket poisoned");
++        if state.closed {
++            return Err(NetworkError::ConnectionAborted);
++        }
++        let (data, peer) = state.queue.front().ok_or(NetworkError::WouldBlock)?;
++        let received = (buf.len().min(data.len()), *peer);
++        for (destination, byte) in buf.iter_mut().zip(data.iter()) {
++            destination.write(*byte);
++        }
++        if !peek {
++            let packet = state.queue.pop_front().expect("datagram exists");
++            state.queued_bytes -= packet.0.len();
++        }
++        Ok(received)
++    }
++}
++
++impl VirtualUdpSocket for BrowserUdpSocket {
++    fn set_broadcast(&mut self, broadcast: bool) -> NetworkResult<()> {
++        self.ensure_open()?;
++        if broadcast {
++            Err(NetworkError::Unsupported)
++        } else {
++            Ok(())
++        }
++    }
++    fn broadcast(&self) -> NetworkResult<bool> {
++        self.ensure_open().map(|()| false)
++    }
++    fn set_multicast_loop_v4(&mut self, _value: bool) -> NetworkResult<()> {
++        Err(NetworkError::Unsupported)
++    }
++    fn multicast_loop_v4(&self) -> NetworkResult<bool> {
++        Err(NetworkError::Unsupported)
++    }
++    fn set_multicast_loop_v6(&mut self, _value: bool) -> NetworkResult<()> {
++        Err(NetworkError::Unsupported)
++    }
++    fn multicast_loop_v6(&self) -> NetworkResult<bool> {
++        Err(NetworkError::Unsupported)
++    }
++    fn set_multicast_ttl_v4(&mut self, _ttl: u32) -> NetworkResult<()> {
++        Err(NetworkError::Unsupported)
++    }
++    fn multicast_ttl_v4(&self) -> NetworkResult<u32> {
++        Err(NetworkError::Unsupported)
++    }
++    fn join_multicast_v4(&mut self, _group: Ipv4Addr, _interface: Ipv4Addr) -> NetworkResult<()> {
++        Err(NetworkError::Unsupported)
++    }
++    fn leave_multicast_v4(&mut self, _group: Ipv4Addr, _interface: Ipv4Addr) -> NetworkResult<()> {
++        Err(NetworkError::Unsupported)
++    }
++    fn join_multicast_v6(&mut self, _group: Ipv6Addr, _interface: u32) -> NetworkResult<()> {
++        Err(NetworkError::Unsupported)
++    }
++    fn leave_multicast_v6(&mut self, _group: Ipv6Addr, _interface: u32) -> NetworkResult<()> {
++        Err(NetworkError::Unsupported)
++    }
++    fn addr_peer(&self) -> NetworkResult<Option<SocketAddr>> {
++        self.ensure_open().map(|()| None)
+     }
+ }
+
+@@ -1100,6 +1468,334 @@
+     use std::{mem::MaybeUninit, task::Waker};
+
+     use super::*;
++
++    fn receive_packet(
++        socket: &mut dyn VirtualUdpSocket,
++        capacity: usize,
++        peek: bool,
++    ) -> (Vec<u8>, SocketAddr) {
++        let mut bytes = vec![MaybeUninit::uninit(); capacity];
++        let (length, peer) = socket.try_recv_from(&mut bytes, peek).unwrap();
++        // The socket initialized the returned prefix, including truncated packets.
++        let bytes = bytes[..length]
++            .iter()
++            .map(|byte| unsafe { byte.assume_init() })
++            .collect();
++        (bytes, peer)
++    }
++
++    #[wasm_bindgen_test::wasm_bindgen_test]
++    async fn udp_packets_preserve_sources_peek_truncation_and_zero_length() {
++        for ip in [Ipv4Addr::LOCALHOST.into(), Ipv6Addr::LOCALHOST.into()] {
++            let network = BrowserHttpNetworking::new();
++            let mut sender = network
++                .bind_udp(SocketAddr::new(ip, 0), false, false)
++                .await
++                .unwrap();
++            let mut receiver = network
++                .bind_udp(SocketAddr::new(ip, 0), false, false)
++                .await
++                .unwrap();
++            let source = sender.addr_local().unwrap();
++            let target = receiver.addr_local().unwrap();
++            assert_ne!(source.port(), 0);
++            assert_ne!(target.port(), source.port());
++            sender.try_send_to(b"first", target).unwrap();
++            sender.try_send_to(b"second", target).unwrap();
++            sender.try_send_to(b"", target).unwrap();
++            assert_eq!(
++                receive_packet(&mut *receiver, 3, true),
++                (b"fir".to_vec(), source)
++            );
++            assert_eq!(
++                receive_packet(&mut *receiver, 16, true),
++                (b"first".to_vec(), source)
++            );
++            assert_eq!(
++                receive_packet(&mut *receiver, 2, false),
++                (b"fi".to_vec(), source)
++            );
++            assert_eq!(
++                receive_packet(&mut *receiver, 16, false),
++                (b"second".to_vec(), source)
++            );
++            assert_eq!(receive_packet(&mut *receiver, 16, false), (vec![], source));
++            assert!(matches!(
++                receiver.try_recv_from(&mut [], false),
++                Err(NetworkError::WouldBlock)
++            ));
++            drop(receiver);
++            assert!(network.bind_udp(target, false, false).await.is_ok());
++        }
++        let network = BrowserHttpNetworking::new();
++        let mut dual = network
++            .bind_udp("[::]:0".parse().unwrap(), false, false)
++            .await
++            .unwrap();
++        let mut ipv4 = network
++            .bind_udp("127.0.0.1:0".parse().unwrap(), false, false)
++            .await
++            .unwrap();
++        let v4_target = SocketAddr::new(
++            Ipv4Addr::LOCALHOST.into(),
++            dual.addr_local().unwrap().port(),
++        );
++        assert!(matches!(
++            network.bind_udp(v4_target, false, false).await,
++            Err(NetworkError::AddressInUse)
++        ));
++        ipv4.try_send_to(b"dual", v4_target).unwrap();
++        assert_eq!(
++            receive_packet(&mut *dual, 16, false),
++            (b"dual".to_vec(), ipv4.addr_local().unwrap())
++        );
++        dual.try_send_to(b"reply", ipv4.addr_local().unwrap())
++            .unwrap();
++        assert_eq!(
++            receive_packet(&mut *ipv4, 16, false),
++            (b"reply".to_vec(), v4_target)
++        );
++    }
++
++    #[wasm_bindgen_test::wasm_bindgen_test]
++    async fn udp_routes_respect_sandbox_isolation_and_reject_ambiguous_peers() {
++        let group = BrowserNetworkGroup::default();
++        let sender_net = group.create(None);
++        let first_net = group.create(None);
++        let second_net = group.create(None);
++        let address = "127.0.0.1:6831".parse().unwrap();
++        let mut first = first_net.bind_udp(address, false, false).await.unwrap();
++        let mut second = second_net.bind_udp(address, false, false).await.unwrap();
++        let mut sender = sender_net
++            .bind_udp("127.0.0.1:0".parse().unwrap(), false, false)
++            .await
++            .unwrap();
++        sender_net.request_handler().restrict_peers().unwrap();
++        sender.try_send_to(b"isolated", address).unwrap();
++        assert!(matches!(
++            first.try_recv_from(&mut [], false),
++            Err(NetworkError::WouldBlock)
++        ));
++        assert!(matches!(
++            second.try_recv_from(&mut [], false),
++            Err(NetworkError::WouldBlock)
++        ));
++        sender_net
++            .request_handler()
++            .add_peer(&first_net.request_handler())
++            .unwrap();
++        sender.try_send_to(b"explicit", address).unwrap();
++        assert_eq!(
++            receive_packet(&mut *first, 16, false),
++            (b"explicit".to_vec(), sender.addr_local().unwrap())
++        );
++        assert!(matches!(
++            second.try_recv_from(&mut [], false),
++            Err(NetworkError::WouldBlock)
++        ));
++        sender_net
++            .request_handler()
++            .add_peer(&second_net.request_handler())
++            .unwrap();
++        assert!(matches!(
++            sender.try_send_to(b"ambiguous", address),
++            Err(NetworkError::AddressInUse)
++        ));
++        assert!(matches!(
++            first.try_recv_from(&mut [], false),
++            Err(NetworkError::WouldBlock)
++        ));
++        first_net.request_handler().restrict_peers().unwrap();
++        second_net.request_handler().restrict_peers().unwrap();
++        let public_net = group.create(None);
++        let mut public = public_net
++            .bind_udp("127.0.0.1:0".parse().unwrap(), false, false)
++            .await
++            .unwrap();
++        public.try_send_to(b"implicit", address).unwrap();
++        assert!(matches!(
++            first.try_recv_from(&mut [], false),
++            Err(NetworkError::WouldBlock)
++        ));
++        assert!(matches!(
++            second.try_recv_from(&mut [], false),
++            Err(NetworkError::WouldBlock)
++        ));
++        assert!(matches!(
++            sender.try_send_to(b"egress", "8.8.8.8:53".parse().unwrap()),
++            Err(NetworkError::Unsupported)
++        ));
++        assert!(matches!(
++            sender.join_multicast_v4("224.0.0.1".parse().unwrap(), Ipv4Addr::UNSPECIFIED),
++            Err(NetworkError::Unsupported)
++        ));
++    }
++
++    #[wasm_bindgen_test::wasm_bindgen_test]
++    async fn udp_receive_limits_readiness_and_network_close_are_real() {
++        use std::sync::atomic::{AtomicUsize, Ordering};
++        struct WakeCount(AtomicUsize);
++        impl std::task::Wake for WakeCount {
++            fn wake(self: Arc<Self>) {
++                self.0.fetch_add(1, Ordering::SeqCst);
++            }
++        }
++        let network = BrowserHttpNetworking::new();
++        let mut sender = network
++            .bind_udp("127.0.0.1:0".parse().unwrap(), false, false)
++            .await
++            .unwrap();
++        let mut receiver = network
++            .bind_udp("127.0.0.1:0".parse().unwrap(), false, false)
++            .await
++            .unwrap();
++        let target = receiver.addr_local().unwrap();
++        let wakes = Arc::new(WakeCount(AtomicUsize::new(0)));
++        let waker = Waker::from(wakes.clone());
++        let mut context = Context::from_waker(&waker);
++        assert!(receiver.poll_read_ready(&mut context).is_pending());
++        receiver
++            .set_handler(virtual_mio::WakerInterestHandler::new(&waker))
++            .unwrap();
++        wakes.0.store(0, Ordering::SeqCst);
++        sender.try_send_to(b"wake", target).unwrap();
++        assert!(wakes.0.load(Ordering::SeqCst) >= 2);
++        assert!(matches!(
++            receiver.poll_read_ready(&mut context),
++            Poll::Ready(Ok(4))
++        ));
++        assert_eq!(receive_packet(&mut *receiver, 4, false).0, b"wake");
++        let packet = vec![0x5a; 4096];
++        for _ in 0..UDP_QUEUE_BYTES / packet.len() + 1 {
++            sender.try_send_to(&packet, target).unwrap();
++        }
++        for _ in 0..UDP_QUEUE_BYTES / packet.len() {
++            assert_eq!(
++                receive_packet(&mut *receiver, packet.len(), false).0,
++                packet
++            );
++        }
++        assert!(matches!(
++            receiver.try_recv_from(&mut [], false),
++            Err(NetworkError::WouldBlock)
++        ));
++        for _ in 0..=UDP_QUEUE_PACKETS {
++            sender.try_send_to(b"", target).unwrap();
++        }
++        for _ in 0..UDP_QUEUE_PACKETS {
++            assert_eq!(receive_packet(&mut *receiver, 0, false).0.len(), 0);
++        }
++        assert!(matches!(
++            receiver.try_recv_from(&mut [], false),
++            Err(NetworkError::WouldBlock)
++        ));
++        assert!(matches!(
++            sender.try_send_to(&vec![0; MAX_SOCKET_PAYLOAD + 1], target),
++            Err(NetworkError::MessageSize)
++        ));
++        assert!(receiver.poll_read_ready(&mut context).is_pending());
++        wakes.0.store(0, Ordering::SeqCst);
++        network.request_handler().close();
++        assert!(wakes.0.load(Ordering::SeqCst) >= 2);
++        assert!(matches!(
++            receiver.poll_read_ready(&mut context),
++            Poll::Ready(Err(NetworkError::ConnectionAborted))
++        ));
++        assert!(matches!(
++            receiver.try_recv_from(&mut [], false),
++            Err(NetworkError::ConnectionAborted)
++        ));
++        assert!(matches!(
++            sender.try_send_to(b"closed", target),
++            Err(NetworkError::ConnectionAborted)
++        ));
++        assert!(matches!(
++            network.bind_udp(target, false, false).await,
++            Err(NetworkError::NotConnected)
++        ));
++    }
++
++    #[wasm_bindgen_test::wasm_bindgen_test]
++    async fn tcp_port_zero_skips_bound_and_listener_ports_and_wraps() {
++        let network = BrowserHttpNetworking::new();
++        let mut first = network
++            .bind_tcp("0.0.0.0:0".parse().unwrap(), false, false, false)
++            .await
++            .unwrap();
++        let first_address = first.addr_local().unwrap();
++        let mut listener = first.listen().unwrap();
++        let second = network
++            .bind_tcp("[::]:0".parse().unwrap(), false, false, false)
++            .await
++            .unwrap();
++        assert_ne!(first_address.port(), 0);
++        assert_ne!(second.addr_local().unwrap().port(), first_address.port());
++        network.state.lock().unwrap().next_port = first_address.port();
++        let third = network
++            .bind_tcp("127.0.0.1:0".parse().unwrap(), false, false, false)
++            .await
++            .unwrap();
++        assert_ne!(third.addr_local().unwrap().port(), first_address.port());
++        assert_ne!(
++            third.addr_local().unwrap().port(),
++            second.addr_local().unwrap().port()
++        );
++        let socket = network
++            .connect_tcp("127.0.0.1:0".parse().unwrap(), first_address)
++            .await
++            .unwrap();
++        assert_eq!(
++            listener.try_accept().unwrap().1,
++            socket.addr_local().unwrap()
++        );
++        assert_ne!(
++            socket.addr_local().unwrap().port(),
++            third.addr_local().unwrap().port()
++        );
++        let network = BrowserHttpNetworking::new();
++        let last = network
++            .bind_tcp("127.0.0.1:65535".parse().unwrap(), false, false, false)
++            .await
++            .unwrap();
++        let _first = network
++            .bind_tcp("127.0.0.1:49152".parse().unwrap(), false, false, false)
++            .await
++            .unwrap();
++        network.state.lock().unwrap().next_port = u16::MAX;
++        assert_eq!(
++            network
++                .bind_tcp("127.0.0.1:0".parse().unwrap(), false, false, false)
++                .await
++                .unwrap()
++                .addr_local()
++                .unwrap()
++                .port(),
++            49153
++        );
++        drop(last);
++        network.state.lock().unwrap().next_port = u16::MAX;
++        assert_eq!(
++            network
++                .bind_tcp("127.0.0.1:0".parse().unwrap(), false, false, false)
++                .await
++                .unwrap()
++                .addr_local()
++                .unwrap()
++                .port(),
++            u16::MAX
++        );
++        // Exhaust the address ledger independently; bind(0) must terminate with EADDRINUSE.
++        network.state.lock().unwrap().bound.extend(
++            (EPHEMERAL_PORT_START..=u16::MAX)
++                .map(|port| SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port)),
++        );
++        assert!(matches!(
++            network
++                .bind_tcp("127.0.0.1:0".parse().unwrap(), false, false, false)
++                .await,
++            Err(NetworkError::AddressInUse)
++        ));
++    }
+
+     #[wasm_bindgen_test::wasm_bindgen_test]
+     async fn shared_loopback_preserves_addresses_and_half_close() {
+--- a/js/bindgen/src/tasks/scheduler.rs
++++ b/js/bindgen/src/tasks/scheduler.rs
+@@ -155,7 +155,7 @@
+             .channel
+             .send(SchedulerMessage::Close {
+                 completion: Some(completion),
+-                drain: true,
++                drain: false,
+             })
+             .is_ok()
+         {
+@@ -192,6 +192,8 @@
+     busy: VecDeque<WorkerHandle>,
+     /// Never receives guest tasks or their shared-object snapshots.
+     timer_worker: Option<WorkerHandle>,
++    /// Shared futures must remain runnable while guest workers block.
++    async_worker: Option<WorkerHandle>,
+     retire_wasm_workers: bool,
+     retiring: BTreeSet<u32>,
+     /// A channel that can be used to send messages to this scheduler.
+@@ -228,6 +230,7 @@
+             idle: VecDeque::new(),
+             busy: VecDeque::new(),
+             timer_worker: None,
++            async_worker: None,
+             retire_wasm_workers: js_sys::Reflect::get(
+                 &js_sys::global(),
+                 &JsValue::from_str("__wasmerWorkerPerThread"),
+@@ -271,10 +274,18 @@
+                 // every worker via WorkerHandle::drop.
+                 Ok(())
+             }
+-            SchedulerMessage::SpawnAsync(task) => self.post_message_from(
+-                source_worker_id,
+-                PostMessagePayload::Async(AsyncJob::Thunk(task)),
+-            ),
++            SchedulerMessage::SpawnAsync(task) => {
++                if self.async_worker.is_none() {
++                    self.async_worker = Some(self.start_worker(false)?);
++                }
++                self.async_worker
++                    .as_ref()
++                    .unwrap()
++                    .send_with_capi_transfers(
++                        PostMessagePayload::Async(AsyncJob::Thunk(task)),
++                        Vec::new(),
++                    )
++            }
+             SchedulerMessage::SpawnBlocking(task) => self.post_message_from(
+                 source_worker_id,
+                 PostMessagePayload::Blocking(BlockingJob::Thunk(task)),
+@@ -325,7 +336,7 @@
+                 // collection to the entire pool on every network poll.
+                 if self.wasm_workers.len() != active_wasm_threads {
+                     wasmer::js::collect_shared_objects();
+-                    for worker in &self.idle {
++                    for worker in self.idle.iter().chain(self.async_worker.iter()) {
+                         worker.collect_shared_objects()?;
+                     }
+                 }
+@@ -355,7 +366,7 @@
+                 self.wasm_workers
+                     .retain(|_, worker| worker.worker_id != worker_id);
+                 wasmer::js::collect_shared_objects();
+-                for worker in &self.idle {
++                for worker in self.idle.iter().chain(self.async_worker.iter()) {
+                     worker.collect_shared_objects()?;
+                 }
+                 Ok(())
+@@ -616,6 +627,8 @@
+         self.idle
+             .iter()
+             .chain(self.busy.iter())
++            .chain(self.async_worker.iter())
++            .chain(self.timer_worker.iter())
+             .find(|worker| worker.id() == worker_id)
+     }
+ 
+@@ -695,9 +708,9 @@
+         // the job
+         scheduler.execute(message).unwrap();
+ 
+-        // One worker should have been created and added to the "ready" queue
+-        // because it's just handling async workloads.
+-        assert_eq!(scheduler.idle.len(), 1);
++        // The shared worker must stay outside the blocking worker pool.
++        assert!(scheduler.async_worker.is_some());
++        assert_eq!(scheduler.idle.len(), 0);
+         assert_eq!(scheduler.busy.len(), 0);
+ 
+         // Make sure the background thread actually ran something and sent us

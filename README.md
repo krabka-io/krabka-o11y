@@ -33,6 +33,8 @@ per signal above them.
 
 ## Documentation
 
+- [Website and complete documentation](https://krabka.io/krabka-o11y/)
+- [WASI observability lab](https://krabka.io/krabka-o11y/lab/)
 - [Getting started](docs/getting_started.md)
 - [Observing Krabka clusters](docs/observing_krabka_clusters.md)
 - [Operations](docs/operations.md)
@@ -40,7 +42,8 @@ per signal above them.
 - [Architecture](docs/architecture_design.md)
 - [Grafana datasource setup](docs/grafana.md)
 - [Test coverage](docs/test_coverage_report.md)
-- [Published rustdoc](https://krabka-io.github.io/krabka-o11y/)
+- [Rust API reference](https://krabka.io/krabka-o11y/api/)
+- [Build the website and browser lab](website/README.md)
 
 ## Feature compatibility
 

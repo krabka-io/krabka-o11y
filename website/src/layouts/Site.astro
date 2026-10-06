@@ -1,0 +1,43 @@
+---
+import logo from '../assets/krabka.svg?raw';
+import '../styles/site.css';
+const { title, description } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} · krabka-o11y</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#080d1a" />
+    <meta property="og:title" content={`${title} · krabka-o11y`} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonical.href} />
+    <link rel="canonical" href={canonical.href} />
+    <link rel="icon" type="image/svg+xml" href={`${base}/favicon.svg`} />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="site-header">
+      <a class="brand" href={`${base}/`} aria-label="krabka-o11y home">
+        <span class="brand-mark" aria-hidden="true" set:html={logo} />
+        <span>krabka<span class="brand-suffix">-o11y</span></span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href={`${base}/docs/overview/`}>Documentation</a>
+        <a href={`${base}/lab/`}>Lab <span class="nav-tag">WASI</span></a>
+        <a href="https://github.com/krabka-io/krabka-o11y">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+      <a class="header-cta" href={`${base}/docs/getting_started/`}>Get started <span aria-hidden="true">↗</span></a>
+    </header>
+    <main id="main" tabindex="-1"><slot /></main>
+    <footer class="site-footer">
+      <div><a class="brand" href="https://krabka.io/"><span class="brand-mark" aria-hidden="true" set:html={logo} /><span>part of krabka</span></a><p>Open source. Apache License 2.0.</p></div>
+      <nav aria-label="Footer navigation"><a href={`${base}/docs/directory/`}>All documentation</a><a href={`${base}/docs/api_compatibility/`}>Compatibility</a><a href="https://github.com/krabka-io/krabka-o11y">Source code ↗</a><a href="https://krabka.io/">krabka.io ↗</a></nav>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+:root {
+  --sl-color-accent-low: #2a0b06;
+  --sl-color-accent: #ff4d2e;
+  --sl-color-accent-high: #ffb39e;
+  --sl-color-bg: #080d1a;
+  --sl-color-bg-nav: #080d1a;
+  --sl-color-bg-sidebar: #0c1322;
+  --sl-font-system: 'Inter', system-ui, -apple-system, sans-serif;
+  --sl-font-system-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --sl-content-width: 56rem;
+}
+:root[data-theme='light'] {
+  --sl-color-accent-low: #ffe8df;
+  --sl-color-accent: #ba321c;
+  --sl-color-accent-high: #571409;
+  --sl-color-bg: #fcfcfd;
+  --sl-color-bg-nav: #fcfcfd;
+  --sl-color-bg-sidebar: #f5f6f8;
+}
+.sl-markdown-content table { display: block; overflow-x: auto; max-width: 100%; }
+.sl-markdown-content :is(h1, h2, h3) { text-wrap: balance; overflow-wrap: anywhere; }
+.sl-markdown-content :is(p, li) { text-wrap: pretty; }
+.sl-markdown-content td { min-width: 6rem; }

@@ -1,0 +1,26 @@
+diff --git a/src/client/mod.rs b/src/client/mod.rs
+--- a/src/client/mod.rs
++++ b/src/client/mod.rs
+@@ -883,7 +883,7 @@
+                 let certificate = reqwest::tls::Certificate::from_pem(certificate.as_bytes())
+                     .map_err(map_client_error)?;
+ 
+-                builder = builder.tls_certs_merge(std::iter::once(certificate));
++                builder = builder.add_root_certificate(certificate);
+             }
+ 
+             if let Some(proxy_excludes) = &self.proxy_excludes {
+@@ -901,9 +901,10 @@
+             .map(|certificate| certificate.0.clone());
+ 
+         if self.no_system_certificates.get()? {
+-            builder = builder.tls_certs_only(certs);
+-        } else {
+-            builder = builder.tls_certs_merge(certs);
++            builder = builder.tls_built_in_root_certs(false);
++        }
++        for certificate in certs {
++            builder = builder.add_root_certificate(certificate);
+         }
+ 
+         if let Some(timeout) = &self.timeout {

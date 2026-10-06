@@ -1,0 +1,18 @@
+[package]
+name = "krabka-lab-http"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[workspace]
+
+[dependencies]
+parking_lot = "=0.12.5"
+reqwest = { version = "=0.12.22", default-features = false, features = ["blocking"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync"] }
+
+[dev-dependencies]
+assert2 = "0.4"
