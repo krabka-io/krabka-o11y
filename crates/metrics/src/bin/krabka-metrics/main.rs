@@ -57,7 +57,11 @@ mod tests {
     use clap::{CommandFactory, Parser};
     use krabka_broker::{Broker, BrokerConfig};
     use krabka_client_admin::{AdminClient, CreateTopicSpec};
-    use krabka_observability::topic_contract::{METRICS_HA_TOPIC, METRICS_WAL_TOPIC};
+    use krabka_metrics::{SamplePayload, WAL_TOPIC, WalRecord, wire::pb};
+    use krabka_observability::topic_contract::{
+        METRICS_HA_TOPIC, METRICS_WAL_TOPIC, TopicSettings, provision_topics,
+    };
+    use prost::Message as _;
 
     use super::*;
 
@@ -823,10 +827,6 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn distributor_writes_all_records_with_default_and_small_frames() {
-        use krabka_metrics::{SamplePayload, WAL_TOPIC, WalRecord, wire::pb};
-        use krabka_observability::topic_contract::{TopicSettings, provision_topics};
-        use prost::Message as _;
-
         for frame_max in [kibibytes(32), krabka_client_core::DEFAULT_CLIENT_FRAME_MAX] {
             let directory = tempfile::tempdir().unwrap();
             let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
