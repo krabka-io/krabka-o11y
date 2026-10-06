@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, hash_map::Entry},
+    collections::{BTreeMap, BTreeSet, HashMap, hash_map::Entry},
     sync::Arc,
 };
 
@@ -233,54 +233,15 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
         {
             return Ok(None);
         }
-        if !uncovered.is_empty() {
-            // A WAL-head reader can briefly trail a newly published block.
-            // Read only blocks that can change a latest value, using the same
-            // read caps, footer cache and streaming scan as the ordinary path.
-            let scan = self
-                .cold
-                .floats
-                .scan_block_keys_skipping_unreadable(&uncovered, float_sample_schema())
-                .await
-                .map_err(|error| PromqlError::Store(error.to_string()))?;
-            if !scan.report.skipped.is_empty() {
-                // The full scan retains the established missing-block warnings
-                // and corrupt-block errors. Do not lose them in a row-only result.
-                return Ok(None);
-            }
-            let mut stream = scan.ctx.table(&scan.table).await?.execute_stream().await?;
-            let mut cold_latest = HashMap::<u64, FloatSampleRow>::new();
-            while let Some(batch) = stream.try_next().await? {
-                let Ok(rows) = decode_float_samples(&batch) else {
-                    return Ok(None);
-                };
-                for row in rows {
-                    if !fps.contains(&row.0) || row.1 < start_ms || row.1 > end_ms {
-                        continue;
-                    }
-                    if let Some(previous) = cold_latest.get_mut(&row.0) {
-                        if previous.1 == row.1
-                            && (previous.2.to_bits() != row.2.to_bits() || previous.3 != row.3)
-                        {
-                            // Equal-time conflicting cold values retain the
-                            // full merge's tie behavior instead of choosing anew.
-                            return Ok(None);
-                        }
-                        if row.1 > previous.1 {
-                            *previous = row;
-                        }
-                    } else {
-                        cold_latest.insert(row.0, row);
-                    }
-                }
-            }
-            for (fp, row) in cold_latest {
-                let series = latest.entry(fp).or_default();
-                // Hot wins at equal timestamps, just as in a full scan.
-                if series.sample.is_none_or(|previous| row.1 > previous.1) {
-                    series.sample = Some(row);
-                }
-            }
+        // A WAL-head reader can briefly trail a newly published block.
+        // Read only blocks that can change a latest value, using the same
+        // read caps, footer cache and streaming scan as the ordinary path.
+        if !uncovered.is_empty()
+            && !self
+                .try_merge_latest_cold_samples(&uncovered, &fps, start_ms, end_ms, &mut latest)
+                .await?
+        {
+            return Ok(None);
         }
         let mut series = latest.into_iter().collect::<Vec<_>>();
         series.sort_unstable_by_key(|(fp, _)| *fp);
@@ -300,5 +261,60 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
             }
         }
         Ok(Some(LatestFloatScan { samples, labels }))
+    }
+
+    async fn try_merge_latest_cold_samples(
+        &self,
+        keys: &[String],
+        fps: &BTreeSet<u64>,
+        start_ms: i64,
+        end_ms: i64,
+        latest: &mut HashMap<u64, LatestSeries, ahash::RandomState>,
+    ) -> Result<bool, PromqlError> {
+        let scan = self
+            .cold
+            .floats
+            .scan_block_keys_skipping_unreadable(keys, float_sample_schema())
+            .await
+            .map_err(|error| PromqlError::Store(error.to_string()))?;
+        if !scan.report.skipped.is_empty() {
+            // The full scan retains the established missing-block warnings
+            // and corrupt-block errors. Do not lose them in a row-only result.
+            return Ok(false);
+        }
+        let mut stream = scan.ctx.table(&scan.table).await?.execute_stream().await?;
+        let mut cold_latest = HashMap::<u64, FloatSampleRow>::new();
+        while let Some(batch) = stream.try_next().await? {
+            let Ok(rows) = decode_float_samples(&batch) else {
+                return Ok(false);
+            };
+            for row in rows {
+                if !fps.contains(&row.0) || row.1 < start_ms || row.1 > end_ms {
+                    continue;
+                }
+                if let Some(previous) = cold_latest.get_mut(&row.0) {
+                    if previous.1 == row.1
+                        && (previous.2.to_bits() != row.2.to_bits() || previous.3 != row.3)
+                    {
+                        // Equal-time conflicting cold values retain the
+                        // full merge's tie behavior instead of choosing anew.
+                        return Ok(false);
+                    }
+                    if row.1 > previous.1 {
+                        *previous = row;
+                    }
+                } else {
+                    cold_latest.insert(row.0, row);
+                }
+            }
+        }
+        for (fp, row) in cold_latest {
+            let series = latest.entry(fp).or_default();
+            // Hot wins at equal timestamps, just as in a full scan.
+            if series.sample.is_none_or(|previous| row.1 > previous.1) {
+                series.sample = Some(row);
+            }
+        }
+        Ok(true)
     }
 }
