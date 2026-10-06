@@ -1,12 +1,10 @@
 //! In-memory native-histogram representation and Arrow codec.
 
-use std::sync::Arc;
-
 use arrow::{
     array::{
-        Array, ArrayRef, BooleanArray, BooleanBuilder, Float64Array, Float64Builder, Int8Array,
-        Int8Builder, Int32Array, Int32Builder, Int64Array, Int64Builder, ListArray, ListBuilder,
-        StructArray, StructBuilder, UInt32Array, UInt32Builder, UInt64Array, UInt64Builder,
+        Array, BooleanArray, BooleanBuilder, Float64Array, Float64Builder, Int8Array, Int8Builder,
+        Int32Array, Int32Builder, Int64Array, Int64Builder, ListArray, ListBuilder, StructArray,
+        StructBuilder, UInt32Array, UInt32Builder, UInt64Array, UInt64Builder,
     },
     datatypes::{DataType, Field, Fields},
     record_batch::RecordBatch,
@@ -25,7 +23,12 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
-    use arrow::datatypes::{DataType, Field, Schema};
+    use std::sync::Arc;
+
+    use arrow::{
+        array::ArrayRef,
+        datatypes::{DataType, Field, Schema},
+    };
     use assert2::{assert, check};
 
     use super::*;
@@ -74,6 +77,24 @@ mod tests {
         ];
         let batch = encode_native_histograms(&rows).unwrap();
         assert!(batch.num_rows() == 3);
+        assert!(
+            batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<UInt64Array>()
+                .unwrap()
+                .value(0)
+                == 10
+        );
+        assert!(
+            batch
+                .column(2)
+                .as_any()
+                .downcast_ref::<Int8Array>()
+                .unwrap()
+                .value(0)
+                == h1.schema
+        );
 
         let back = decode_native_histograms(&batch).unwrap();
         assert!(back == rows);

@@ -1,10 +1,19 @@
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+use krabka_domain_macros::EnumName;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, EnumName)]
+#[enum_name(accessor = "as_loki_str")]
 pub(crate) enum DetectedFieldType {
+    #[name(value = "boolean")]
     Boolean,
+    #[name(value = "int")]
     Int,
+    #[name(value = "float")]
     Float,
+    #[name(value = "duration")]
     Duration,
+    #[name(value = "bytes")]
     Bytes,
+    #[name(value = "string")]
     String,
 }
 
@@ -18,17 +27,6 @@ impl DetectedFieldType {
             (Self::Int, Self::Int) => Self::Int,
             (Self::Boolean, Self::Boolean) => Self::Boolean,
             _ => Self::String,
-        }
-    }
-
-    pub(crate) fn as_loki_str(self) -> &'static str {
-        match self {
-            Self::Boolean => "boolean",
-            Self::Int => "int",
-            Self::Float => "float",
-            Self::Duration => "duration",
-            Self::Bytes => "bytes",
-            Self::String => "string",
         }
     }
 }

@@ -38,8 +38,13 @@ mod tests {
             now_unix_nanos(UNIX_EPOCH - std::time::Duration::from_secs(1)) == UnixNano(0),
             "a clock before the epoch"
         );
+        // One second past the last `i64` nanosecond. `1 << 40` seconds is also
+        // past that range and fits a Unix `timespec`, but Windows stores
+        // `SystemTime` as a signed count of 100 ns ticks, and that addition
+        // overflows the counter before this function can reject it.
         check!(
-            now_unix_nanos(UNIX_EPOCH + std::time::Duration::from_secs(1 << 40)) == UnixNano(0),
+            now_unix_nanos(UNIX_EPOCH + std::time::Duration::from_secs(9_223_372_037))
+                == UnixNano(0),
             "a clock past what an i64 of nanoseconds reaches"
         );
     }

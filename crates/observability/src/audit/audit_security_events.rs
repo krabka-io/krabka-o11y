@@ -34,7 +34,7 @@ impl SecurityEvents for AuditHandle {
             attempted.map_or(MECHANISM_NONE, mechanism_of),
             unauthenticated_principal(),
             source.map_or_else(unknown_source_endpoint, source_endpoint),
-            Some(failure_reason(reason).to_owned()),
+            Some(reason.failure_reason().to_owned()),
         );
     }
 
@@ -64,18 +64,5 @@ impl SecurityEvents for AuditHandle {
             "",
             OPERATION_ADMIN_ACCESS,
         );
-    }
-}
-
-/// A stable name for why a request failed authentication.
-///
-/// The name says which rule the request broke and never what it sent.
-const fn failure_reason(reason: AuthFailureReason) -> &'static str {
-    match reason {
-        AuthFailureReason::MissingCredential => "missing_credential",
-        AuthFailureReason::UnsupportedScheme => "unsupported_scheme",
-        AuthFailureReason::MalformedCredential => "malformed_credential",
-        AuthFailureReason::UnknownCredential => "unknown_credential",
-        AuthFailureReason::AmbiguousClientCertificate => "ambiguous_client_certificate",
     }
 }

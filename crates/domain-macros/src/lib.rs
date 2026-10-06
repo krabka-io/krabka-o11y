@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 
 use moxy::{
-    ast::{Attributed, Declaration, ParseError},
+    ast::{Attributed, Declaration, ItemFn, ParseError},
     diagnostic::SpanExt,
     token::{Spanner, TokenStream},
 };
@@ -18,12 +18,28 @@ struct Name {
     value: String,
 }
 
-#[derive(Default, moxy::FromMeta)]
+#[derive(moxy::FromMeta)]
 struct EnumNameOptions {
     #[meta(default)]
     clap: bool,
     #[meta(default)]
     parse: bool,
+    /// Constant method that returns the spelling. Absent means `as_str`.
+    #[meta(default = "as_str".to_owned())]
+    accessor: String,
+}
+
+impl Default for EnumNameOptions {
+    fn default() -> Self {
+        // `#[derive(Default)]` would leave `accessor` empty. Enums with no
+        // `#[enum_name]` attribute take this path, and the generated method
+        // is still `as_str`.
+        Self {
+            clap: false,
+            parse: false,
+            accessor: "as_str".to_owned(),
+        }
+    }
 }
 
 #[derive(moxy::FromMeta)]
@@ -39,6 +55,8 @@ struct ClapName {
 /// at least one unit variant and no generic parameters. The generated `as_str` is a
 /// `const fn` and has the same visibility as the enum. Neither method changes
 /// case or punctuation. Other derives control serialization.
+/// `#[enum_name(accessor = "as_label")]` names that constant method. The name
+/// must be one identifier. The default name is `as_str`.
 /// `#[enum_name(parse)]` also generates `from_name(&str)`, which returns `None`
 /// for unknown names. It compares the full name with exact case.
 /// Names must be unique when parsing is enabled.
@@ -172,11 +190,12 @@ fn expand(declaration: Declaration) -> Result<TokenStream, ParseError> {
             }
         }
     }
+    let accessor = accessor_name(&item, options.accessor)?;
     Ok(moxy::template! {
         impl {{ &item.ident }} {
             /// The explicit name of this variant.
             #[must_use]
-            {{ &item.vis }} const fn as_str(self) -> &'static str {
+            {{ &item.vis }} const fn {{ accessor.as_str() }}(self) -> &'static str {
                 match self {
                     @for (variant, name) in &variants {
                         Self::{{ variant }} => {{ name }},
@@ -209,6 +228,30 @@ fn expand(declaration: Declaration) -> Result<TokenStream, ParseError> {
     })
 }
 
+/// The generated constant method name.
+///
+/// A missing option keeps `as_str`. Any other value has to parse as the name
+/// of a function, so a hyphen, a keyword, or an empty string is rejected on
+/// the enum's span.
+fn accessor_name(item: &moxy::ast::ItemEnum, name: String) -> Result<String, ParseError> {
+    let source = format!("fn {name}() {{}}");
+    let Ok(function) = moxy::parse!(source as ItemFn) else {
+        return Err(item
+            .ident
+            .span()
+            .error("EnumName accessor must be an identifier")
+            .into());
+    };
+    if function.sig.ident.text() != name {
+        return Err(item
+            .ident
+            .span()
+            .error("EnumName accessor must be an identifier")
+            .into());
+    }
+    Ok(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,6 +259,11 @@ mod tests {
     #[test]
     fn rejects_unsupported_declarations_and_invalid_names() {
         for source in [
+            "#[enum_name(accessor = \"\")] enum EmptyAccessor { #[name(value = \"a\")] A }",
+            "#[enum_name(accessor = \"as-label\")] enum Hyphenated { #[name(value = \"a\")] A }",
+            "#[enum_name(accessor = \"fn\")] enum Keyword { #[name(value = \"a\")] A }",
+            "#[enum_name(accessor = 1)] enum Numbered { #[name(value = \"a\")] A }",
+            "#[enum_name(accessor)] enum BareAccessor { #[name(value = \"a\")] A }",
             "#[enum_name(clap)] enum MissingClap { #[value] A }",
             "#[enum_name(clap)] enum MissingClapName { #[value(hide = true)] A }",
             "#[enum_name(clap)] enum Skipped { #[value(name = \"a\", skip)] A }",

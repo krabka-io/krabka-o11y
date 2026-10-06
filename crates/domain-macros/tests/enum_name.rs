@@ -67,6 +67,25 @@ enum Protocol {
 
 const PROTOCOL_NAME: &str = Protocol::SaslSsl.as_str();
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumName)]
+#[enum_name(accessor = "as_label")]
+enum SourceKind {
+    #[name(value = "ptp")]
+    Ptp,
+    #[name(value = "kernel_timex")]
+    KernelTimex,
+}
+
+const SOURCE_LABEL: &str = SourceKind::Ptp.as_label();
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumName)]
+enum BareName {
+    #[name(value = "missing")]
+    Missing,
+}
+
+const BARE_NAME: &str = BareName::Missing.as_str();
+
 #[test]
 fn clap_names_match_parsing_const_access_and_display() {
     assert2::assert!(PROTOCOL_NAME == "SASL_SSL");
@@ -82,6 +101,20 @@ fn clap_names_match_parsing_const_access_and_display() {
     }
     assert2::assert!(Protocol::Gssapi.to_possible_value().unwrap().is_hide_set());
     assert2::assert!(Protocol::from_str("sasl_ssl", false).is_err());
+}
+
+#[test]
+fn accessor_option_keeps_the_spelling_in_a_const_method_and_display() {
+    assert2::assert!(SOURCE_LABEL == "ptp");
+    assert2::assert!(SourceKind::KernelTimex.as_label() == "kernel_timex");
+    assert2::assert!(SourceKind::KernelTimex.to_string() == "kernel_timex");
+}
+
+#[test]
+fn absent_accessor_option_keeps_as_str_and_display() {
+    assert2::assert!(BARE_NAME == "missing");
+    assert2::assert!(BareName::Missing.as_str() == "missing");
+    assert2::assert!(BareName::Missing.to_string() == "missing");
 }
 
 #[test]

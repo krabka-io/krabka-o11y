@@ -10,9 +10,10 @@
 /// A handler that cannot be installed also resolves the future. A process that
 /// cannot hear a stop request should stop rather than run on unstoppable.
 ///
-/// The stack is Unix-only -- the Bazel toolchains list Linux and macOS, CI
-/// runs on Linux, and `krabka-pprof` needs Linux -- so this needs no fallback
-/// for a platform without `SignalKind`.
+/// The deployed stack is Unix -- the Bazel toolchains list Linux and macOS,
+/// CI runs on Linux, and `krabka-pprof` needs Linux. `SIGTERM` is installed
+/// there. Another platform waits on Ctrl+C only, so this library still
+/// typechecks.
 pub async fn shutdown_signal() {
     let interrupt = async {
         if let Err(error) = tokio::signal::ctrl_c().await {
@@ -21,14 +22,19 @@ pub async fn shutdown_signal() {
     };
 
     let terminate = async {
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(mut signal) => {
-                signal.recv().await;
-            }
-            Err(error) => {
-                tracing::error!(%error, "failed to install SIGTERM handler; triggering shutdown");
+        #[cfg(unix)]
+        {
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(mut signal) => {
+                    signal.recv().await;
+                }
+                Err(error) => {
+                    tracing::error!(%error, "failed to install SIGTERM handler; triggering shutdown");
+                }
             }
         }
+        #[cfg(not(unix))]
+        std::future::pending::<()>().await;
     };
 
     tokio::select! {

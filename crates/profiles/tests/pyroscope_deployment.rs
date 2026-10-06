@@ -1,5 +1,6 @@
 //! Pyroscope scenarios against deployed profile roles, the broker WAL, and `MinIO`.
 //! Fixed profiles supply exact expected stack values. See `pyroscope_deployment.md`.
+#![cfg(unix)]
 
 use std::{collections::BTreeMap, io::Write as _, os::unix::fs::MetadataExt as _, time::Duration};
 

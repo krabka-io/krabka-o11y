@@ -1,76 +1,72 @@
+use krabka_domain_macros::EnumName;
+
 use super::{clamp_float, round_to_nearest};
 
 /// Which per-row scalar function a [`ScalarMathUdf`] evaluates.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, EnumName)]
+#[enum_name(accessor = "udf_name")]
 pub enum ScalarMathOp {
+    #[name(value = "prom_abs")]
     Abs,
+    #[name(value = "prom_ceil")]
     Ceil,
+    #[name(value = "prom_floor")]
     Floor,
+    #[name(value = "prom_sqrt")]
     Sqrt,
+    #[name(value = "prom_exp")]
     Exp,
+    #[name(value = "prom_ln")]
     Ln,
+    #[name(value = "prom_log2")]
     Log2,
+    #[name(value = "prom_log10")]
     Log10,
+    #[name(value = "prom_sgn")]
     Sgn,
+    #[name(value = "prom_sin")]
     Sin,
+    #[name(value = "prom_cos")]
     Cos,
+    #[name(value = "prom_tan")]
     Tan,
+    #[name(value = "prom_asin")]
     Asin,
+    #[name(value = "prom_acos")]
     Acos,
+    #[name(value = "prom_atan")]
     Atan,
+    #[name(value = "prom_sinh")]
     Sinh,
+    #[name(value = "prom_cosh")]
     Cosh,
+    #[name(value = "prom_tanh")]
     Tanh,
+    #[name(value = "prom_asinh")]
     Asinh,
+    #[name(value = "prom_acosh")]
     Acosh,
+    #[name(value = "prom_atanh")]
     Atanh,
+    #[name(value = "prom_deg")]
     Deg,
+    #[name(value = "prom_rad")]
     Rad,
     /// `round(v, to_nearest?)`: `to_nearest` is the leading scalar column.
+    #[name(value = "prom_round")]
     Round,
     /// `clamp_min(v, min)`: `min` is the leading scalar column.
+    #[name(value = "prom_clamp_min")]
     ClampMin,
     /// `clamp_max(v, max)`: `max` is the leading scalar column.
+    #[name(value = "prom_clamp_max")]
     ClampMax,
     /// `clamp(v, min, max)`: `min` and `max` are the two leading scalar columns.
+    #[name(value = "prom_clamp")]
     Clamp,
 }
 
 impl ScalarMathOp {
-    /// Returns the registered UDF name for this op.
-    #[must_use]
-    pub fn udf_name(self) -> &'static str {
-        match self {
-            Self::Abs => "prom_abs",
-            Self::Ceil => "prom_ceil",
-            Self::Floor => "prom_floor",
-            Self::Sqrt => "prom_sqrt",
-            Self::Exp => "prom_exp",
-            Self::Ln => "prom_ln",
-            Self::Log2 => "prom_log2",
-            Self::Log10 => "prom_log10",
-            Self::Sgn => "prom_sgn",
-            Self::Sin => "prom_sin",
-            Self::Cos => "prom_cos",
-            Self::Tan => "prom_tan",
-            Self::Asin => "prom_asin",
-            Self::Acos => "prom_acos",
-            Self::Atan => "prom_atan",
-            Self::Sinh => "prom_sinh",
-            Self::Cosh => "prom_cosh",
-            Self::Tanh => "prom_tanh",
-            Self::Asinh => "prom_asinh",
-            Self::Acosh => "prom_acosh",
-            Self::Atanh => "prom_atanh",
-            Self::Deg => "prom_deg",
-            Self::Rad => "prom_rad",
-            Self::Round => "prom_round",
-            Self::ClampMin => "prom_clamp_min",
-            Self::ClampMax => "prom_clamp_max",
-            Self::Clamp => "prom_clamp",
-        }
-    }
-
     /// Returns the count of leading `Float64` scalar columns this op threads
     /// ahead of the `value` column.
     ///
