@@ -1,3 +1,5 @@
+use std::{cmp::Reverse, collections::BinaryHeap};
+
 use super::{
     BTreeMap, BlockDescriptor, Labels, LokiDirection, LokiStreamEncoding, LokiStreamEntry,
     NonZeroUsize, default_block_fetch_concurrency,
@@ -82,20 +84,20 @@ impl StreamScanOptions {
             == limit
     }
 
-    /// Spend a single folded stream's limit before allocating its JSON tree.
+    /// Spend the folded response's limit before allocating its JSON tree.
     /// Values must already be sorted and distinct stages already applied.
     pub(crate) fn trim_before_encoding(self, streams: &mut BTreeMap<Labels, Vec<LokiStreamEntry>>) {
         // Intervals select rows later, and categorized labels regroup streams.
-        // Multiple streams need the response's global timestamp ordering.
-        if !self.allow_limit_short_circuit
-            || self.encoding != LokiStreamEncoding::Folded
-            || streams.len() > 1
-        {
+        if !self.allow_limit_short_circuit || self.encoding != LokiStreamEncoding::Folded {
             return;
         }
         let Some(mut remaining) = self.limit else {
             return;
         };
+        if streams.len() > 1 {
+            self.trim_multiple_streams_before_encoding(streams, remaining);
+            return;
+        }
         streams.retain(|_, entries| {
             if let Some(end) = self.end_exclusive {
                 entries.retain(|entry| entry.parsed_timestamp_ns().is_none_or(|ts| ts < end));
@@ -107,6 +109,90 @@ impl StreamScanOptions {
                 }
             }
             remaining -= entries.len();
+            !entries.is_empty()
+        });
+    }
+
+    fn trim_multiple_streams_before_encoding(
+        self,
+        streams: &mut BTreeMap<Labels, Vec<LokiStreamEntry>>,
+        limit: usize,
+    ) {
+        if limit == 0 {
+            streams.clear();
+            return;
+        }
+        let entry_count = streams.values().fold(0_usize, |count, entries| {
+            count.saturating_add(entries.len())
+        });
+        if entry_count <= limit {
+            return;
+        }
+        // Production entries have integer timestamps. Keep the JSON fallback
+        // for malformed entries, whose global limiter uses a different key.
+        if streams
+            .values()
+            .flatten()
+            .any(|entry| entry.parsed_timestamp_ns().is_none())
+        {
+            return;
+        }
+        if let Some(end) = self.end_exclusive {
+            for entries in streams.values_mut() {
+                entries.retain(|entry| entry.parsed_timestamp_ns().is_some_and(|ts| ts < end));
+            }
+        }
+        let priority = |entry: &LokiStreamEntry| {
+            let timestamp = i128::from(entry.parsed_timestamp_ns().expect("checked above"));
+            match self.direction {
+                LokiDirection::Forward => timestamp,
+                LokiDirection::Backward => -timestamp,
+            }
+        };
+        // These indices match the folded response, which iterates the same
+        // map. Sorting serialized labels would change escaped-label ties.
+        let by_stream = streams.values().collect::<Vec<_>>();
+        let mut selected = vec![0; by_stream.len()];
+        let mut heads = BinaryHeap::with_capacity(by_stream.len());
+        for (stream_index, entries) in by_stream.iter().enumerate() {
+            if entries.is_empty() {
+                continue;
+            }
+            let entry_index = match self.direction {
+                LokiDirection::Forward => 0,
+                LokiDirection::Backward => entries.len() - 1,
+            };
+            heads.push(Reverse((
+                priority(&entries[entry_index]),
+                stream_index,
+                entry_index,
+            )));
+        }
+        for _ in 0..limit {
+            let Some(Reverse((_, stream_index, entry_index))) = heads.pop() else {
+                break;
+            };
+            selected[stream_index] += 1;
+            let entries = by_stream[stream_index];
+            let next = match self.direction {
+                LokiDirection::Forward => {
+                    (entry_index + 1 < entries.len()).then_some(entry_index + 1)
+                }
+                LokiDirection::Backward => entry_index.checked_sub(1),
+            };
+            if let Some(next) = next {
+                heads.push(Reverse((priority(&entries[next]), stream_index, next)));
+            }
+        }
+        let mut counts = selected.into_iter();
+        streams.retain(|_, entries| {
+            let count = counts.next().expect("one count per stream");
+            match self.direction {
+                LokiDirection::Forward => entries.truncate(count),
+                LokiDirection::Backward => {
+                    entries.drain(..entries.len() - count);
+                }
+            }
             !entries.is_empty()
         });
     }
@@ -149,11 +235,79 @@ mod tests {
             .collect()
     }
 
+    fn escaped_and_unicode_streams() -> BTreeMap<Labels, Vec<LokiStreamEntry>> {
+        let mut streams = ["\n", "\"", "/", "\\", "é", "λ", "🎉"]
+            .into_iter()
+            .map(|app| {
+                let labels = Labels::from([("app".into(), app.into())]);
+                let entries: Vec<_> = [1, 5, 5, 7, 9]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, timestamp)| {
+                        LokiStreamEntry::new(
+                            timestamp,
+                            format!("{app}-{index}"),
+                            Labels::from([("source".into(), "metadata".into())]),
+                            Labels::from([("parser".into(), "value".into())]),
+                        )
+                    })
+                    .collect();
+                (labels, entries)
+            })
+            .collect::<BTreeMap<_, _>>();
+        // A map and its strict extension sort differently as label maps and
+        // serialized JSON objects. Equal times expose that distinction.
+        let entries = streams
+            .get(&Labels::from([("app".into(), "/".into())]))
+            .unwrap()
+            .clone();
+        streams.insert(
+            Labels::from([("app".into(), "/".into()), ("zone".into(), "é".into())]),
+            entries,
+        );
+        streams
+    }
+
+    fn extreme_streams() -> BTreeMap<Labels, Vec<LokiStreamEntry>> {
+        [
+            ("a", vec![i64::MIN, -1, 0, i64::MAX]),
+            ("b", vec![i64::MIN, 0, i64::MAX]),
+        ]
+        .into_iter()
+        .map(|(app, times)| {
+            let entries = times
+                .into_iter()
+                .map(|time| {
+                    LokiStreamEntry::new(
+                        time,
+                        format!("{app}-{time}"),
+                        Labels::new(),
+                        Labels::new(),
+                    )
+                })
+                .collect();
+            (Labels::from([("app".into(), app.into())]), entries)
+        })
+        .collect()
+    }
+
+    fn malformed_streams() -> BTreeMap<Labels, Vec<LokiStreamEntry>> {
+        let mut streams = extreme_streams();
+        let mut malformed =
+            LokiStreamEntry::new(0, "malformed".into(), Labels::new(), Labels::new());
+        malformed.timestamp_ns = "not-a-timestamp".into();
+        streams.insert(Labels::from([("app".into(), "c".into())]), vec![malformed]);
+        streams
+    }
+
     #[test]
     fn typed_limit_matches_the_full_json_response() {
         for direction in [LokiDirection::Forward, LokiDirection::Backward] {
             for (limit, end) in [
+                (Some(1), None),
+                (Some(2), None),
                 (Some(3), None),
+                (Some(9), None),
                 (Some(3), Some(7)),
                 (Some(0), None),
                 (Some(10), Some(7)),
@@ -163,6 +317,9 @@ mod tests {
                 for full in [
                     streams(),
                     streams().into_iter().take(1).collect::<BTreeMap<_, _>>(),
+                    escaped_and_unicode_streams(),
+                    extreme_streams(),
+                    malformed_streams(),
                 ] {
                     let expected = apply_loki_stream_options(
                         loki_streams_response(full.clone(), options.encoding),
