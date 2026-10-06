@@ -1,54 +1,42 @@
-use super::*;
+use super::{
+    MetricBucket, MetricLabels, Result, Time, TraceMetricExemplar, TraceMetricSeries,
+    f64_from_usize, histogram_points, quantile_label,
+};
 
 pub(crate) fn histogram_series_for_group(
-    labels: Vec<(String, String)>,
+    labels: MetricLabels,
     buckets: &[MetricBucket],
     start_ns: i64,
     step_ns: i64,
     exemplars: &[TraceMetricExemplar],
-    histogram_buckets: &[Time],
+    _histogram_buckets: &[Time],
 ) -> Result<Vec<TraceMetricSeries>> {
-    let mut out = Vec::with_capacity(histogram_buckets.len() + 3);
-    for le in histogram_buckets {
-        let le = f64_from_i64(le.nanos_i64());
-        let mut labels = labels.clone();
-        labels.insert(0, ("le".into(), quantile_label(le)));
-        out.push(TraceMetricSeries {
-            labels,
-            points: histogram_points(buckets, start_ns, step_ns, |bucket| {
-                f64_from_usize(bucket.values.iter().filter(|value| **value <= le).count())
-            })?,
-            exemplars: exemplars.to_owned(),
-        });
-    }
-
-    let mut inf_labels = labels.clone();
-    inf_labels.insert(0, ("le".into(), "+Inf".into()));
-    out.push(TraceMetricSeries {
-        labels: inf_labels,
-        points: histogram_points(buckets, start_ns, step_ns, |bucket| {
-            f64_from_u64(bucket.count)
-        })?,
-        exemplars: exemplars.to_owned(),
-    });
-
-    let mut sum_labels = labels.clone();
-    sum_labels.insert(0, ("__metric__".into(), "sum".into()));
-    out.push(TraceMetricSeries {
-        labels: sum_labels,
-        points: histogram_points(buckets, start_ns, step_ns, |bucket| Ok(bucket.sum))?,
-        exemplars: Vec::new(),
-    });
-
-    let mut count_labels = labels;
-    count_labels.insert(0, ("__metric__".into(), "count".into()));
-    out.push(TraceMetricSeries {
-        labels: count_labels,
-        points: histogram_points(buckets, start_ns, step_ns, |bucket| {
-            f64_from_u64(bucket.count)
-        })?,
-        exemplars: Vec::new(),
-    });
-
-    Ok(out)
+    let (labels, label_types) = labels;
+    let mut boundaries = buckets
+        .iter()
+        .flat_map(|bucket| bucket.values.iter().copied())
+        .collect::<Vec<_>>();
+    boundaries.sort_by(f64::total_cmp);
+    boundaries.dedup_by(|lhs, rhs| lhs.to_bits() == rhs.to_bits());
+    boundaries
+        .into_iter()
+        .map(|boundary| {
+            let mut labels = labels.clone();
+            labels.insert(0, ("__bucket".into(), quantile_label(boundary)));
+            Ok(TraceMetricSeries {
+                labels,
+                label_types: label_types.clone(),
+                points: histogram_points(buckets, start_ns, step_ns, |bucket| {
+                    f64_from_usize(
+                        bucket
+                            .values
+                            .iter()
+                            .filter(|value| value.to_bits() == boundary.to_bits())
+                            .count(),
+                    )
+                })?,
+                exemplars: exemplars.to_owned(),
+            })
+        })
+        .collect()
 }

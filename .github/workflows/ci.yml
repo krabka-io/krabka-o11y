@@ -317,6 +317,11 @@ jobs:
       - run: tools/route-inventory.py --check
       - run: tools/upstream-surface.py --self-test
       - run: tools/upstream-surface.py --check
+      - run: python3 tools/query-language-inventory.py --check
+      - run: python3 tools/query-language-inventory.py --self-check
+      - run: python3 tools/query-language-evidence.py --self-check
+      - run: python3 tools/query-language-report.py --self-check
+      - run: python3 tools/build-query-runners.py --self-test
       - run: tools/upstream-drift.py --self-test
       - run: tools/upstream-drift.py --check
       - run: tools/otlp-contracts.py --self-test
@@ -655,6 +660,9 @@ jobs:
       fail-fast: false
       matrix:
         suite: ${{ fromJSON(needs.docker-select.outputs.suites) }}
+    env:
+      KRABKA_GENERATED_CASES: '16'
+      KRABKA_GENERATED_NIGHTLY: '0'
     steps:
       - uses: actions/checkout@v7
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
@@ -674,7 +682,71 @@ jobs:
       # `--add-host=host.docker.internal:host-gateway`; the host has to resolve
       # it too, because the same address is what the test asserts against.
       - run: echo "127.0.0.1 host.docker.internal" | sudo tee -a /etc/hosts
-      - run: bazel test --config=docker ${{ matrix.suite.target }}
+      - id: run
+        run: |
+          python3 tools/build-query-runners.py --bazel test --config=docker \
+            --nocache_test_results --flaky_test_attempts=1 --nozip_undeclared_test_outputs \
+            --test_env=KRABKA_GENERATED_CASES --test_env=KRABKA_GENERATED_NIGHTLY \
+            ${{ matrix.suite.target }}
+      - name: collect immutable query evidence
+        if: always()
+        env:
+          TARGET: ${{ matrix.suite.target }}
+          SUITE: ${{ matrix.suite.name }}
+        run: |
+          set -euo pipefail
+          evidence="${RUNNER_TEMP}/query-evidence/${SUITE}"
+          mkdir -p "${evidence}/raw"
+          git rev-parse HEAD > "${evidence}/commit"
+          printf '%s\n' '${{ steps.run.outcome }}' > "${evidence}/run-result"
+          printf '%s\n' "${TARGET}" > "${evidence}/target"
+          upstream_runner=false
+          if [[ "${TARGET}" == *diff_prometheus* || "${TARGET}" == *loki_differential* ]]; then
+            upstream_runner=true
+          fi
+          printf '%s\n' "generated_cases=${KRABKA_GENERATED_CASES}" \
+            "generated_nightly=${KRABKA_GENERATED_NIGHTLY}" "docker=true" \
+            "upstream_runner=${upstream_runner}" "cache_test_results=false" \
+            "flaky_test_attempts=1" "run_id=${GITHUB_RUN_ID}" \
+            "run_attempt=${GITHUB_RUN_ATTEMPT}" "runner=${RUNNER_NAME}" \
+            "runner_os=${RUNNER_OS}" > "${evidence}/run-profile.txt"
+          uname -a > "${evidence}/kernel.txt"
+          lscpu > "${evidence}/cpu.txt"
+          docker info > "${evidence}/docker.txt" 2>&1 || true
+          sha256sum MODULE.bazel bazel/images/images.bzl rust-toolchain.toml \
+            tools/build-query-runners.py > "${evidence}/source-sha256.txt"
+          cp bazel/images/images.bzl "${evidence}/oracle-images.bzl"
+          logs="bazel-testlogs/${TARGET#//}"
+          logs="${logs/:/\/}"
+          if [[ -f "${logs}/test.log" ]]; then
+            cp "${logs}/test.log" "${evidence}/test.log"
+            cp "${logs}/test.log" "${evidence}/raw/test.log"
+          fi
+          if [[ -d "${logs}/test.outputs" ]]; then
+            cp -rL "${logs}/test.outputs/." "${evidence}/raw/"
+          fi
+          for provenance in "${RUNNER_TEMP}"/query-runners/*runner*.json; do
+            if [[ -f "${provenance}" ]]; then
+              cp "${provenance}" "${evidence}/"
+            fi
+          done
+          (cd "${evidence}" && find . -type f ! -name SHA256SUMS -print0 \
+            | sort -z | xargs -0 -r sha256sum > SHA256SUMS)
+      - name: verify selected query evidence
+        if: always()
+        run: |
+          python3 tools/query-language-report.py \
+            --evidence "${RUNNER_TEMP}/query-evidence" \
+            --output "${RUNNER_TEMP}/query-selected-report.json" \
+            --fail-invalid-evidence --allow-partial
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: query-conformance-${{ matrix.suite.name }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/query-evidence/
+            ${{ runner.temp }}/query-selected-report.json
+          if-no-files-found: error
   # The fuzz targets, run. Scheduled rather than a gate on a pull request,
   # because the work is unbounded, and what a pull request can afford is the
   # compile check the `fuzz-build` job does.

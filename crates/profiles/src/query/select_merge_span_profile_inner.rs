@@ -18,13 +18,20 @@ where
     authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
     let req = req.0;
     let span_ids = parse_span_selectors(&req.span_selector).map_err(connect_error)?;
+    let max_nodes = req.max_nodes.map_or(0, |count| {
+        if count > 0 {
+            count.saturating_add(1)
+        } else {
+            count
+        }
+    });
     let response = if req.format == pb::querier::v1::ProfileFormat::Tree as i32 {
         let tree = state
             .select_merge_span_profile_tree(
                 (&tenant, &req.profile_type_id, &req.label_selector),
                 &span_ids,
                 (req.start, req.end),
-                req.max_nodes.unwrap_or_default(),
+                max_nodes,
             )
             .await
             .map_err(connect_error)?;
@@ -38,7 +45,7 @@ where
                 (&tenant, &req.profile_type_id, &req.label_selector),
                 &span_ids,
                 (req.start, req.end),
-                req.max_nodes.unwrap_or_default(),
+                max_nodes,
             )
             .await
             .map_err(connect_error)?;

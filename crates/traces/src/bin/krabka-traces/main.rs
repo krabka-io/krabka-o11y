@@ -2068,7 +2068,15 @@ overrides:
     #[test]
     fn traceql_policy_parses_defaults_overrides_and_boundaries() {
         let defaults = Cli::try_parse_from(["krabka-traces", "--target", "querier"]).unwrap();
-        check!(engine_opts_from_cli(&defaults).unwrap() == EngineOpts::default());
+        check!(
+            engine_opts_from_cli(&defaults).unwrap()
+                == EngineOpts {
+                    // The public Tempo HTTP default enables 100 exemplars;
+                    // standalone engine callers opt in through EngineOpts.
+                    max_exemplars: 100,
+                    ..EngineOpts::default()
+                }
+        );
 
         let configured = Cli::try_parse_from([
             "krabka-traces",

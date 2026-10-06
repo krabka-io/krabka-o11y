@@ -4,7 +4,7 @@ use promql_parser::parser::token::{
     T_AVG, T_COUNT, T_GROUP, T_MAX, T_MIN, T_STDDEV, T_STDVAR, T_SUM,
 };
 
-use super::{AggregateState, SampleValue, scaled_native_histogram};
+use super::{AggregateState, SampleValue};
 #[cfg(test)]
 use super::{PromqlError, Result, TokenType};
 
@@ -47,14 +47,11 @@ impl AggregateOp {
         }
         Some(match self {
             Self::Sum => match &state.histogram {
-                Some(histogram) => SampleValue::Histogram(histogram.clone()),
+                Some(histogram) => SampleValue::Histogram(histogram.finish(false)),
                 None => SampleValue::Float(state.sum + state.sum_comp),
             },
             Self::Avg => match &state.histogram {
-                Some(histogram) => SampleValue::Histogram(scaled_native_histogram(
-                    histogram,
-                    1.0 / state.count_f64,
-                )),
+                Some(histogram) => SampleValue::Histogram(histogram.finish(true)),
                 None => SampleValue::Float(state.mean()),
             },
             Self::Count => SampleValue::Float(state.count_f64),

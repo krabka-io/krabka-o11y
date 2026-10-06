@@ -98,3 +98,6 @@ pub use trace_metrics_response::TraceMetricsResponse;
 pub use trace_result::TraceResult;
 pub use trace_spans::TraceSpans;
 pub use typed_value::TypedValue;
+
+mod trace_metric_label_type;
+pub use trace_metric_label_type::TraceMetricLabelType;

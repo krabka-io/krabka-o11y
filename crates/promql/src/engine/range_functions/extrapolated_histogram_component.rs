@@ -16,7 +16,7 @@ pub(crate) fn extrapolated_histogram_component(
     }
 
     let n = extrapolation.timestamps.len();
-    if n < 2 || values.len() != n {
+    if n == 0 || values.len() != n {
         return None;
     }
     let mut result = values[n - 1] - values[0];
@@ -24,13 +24,8 @@ pub(crate) fn extrapolated_histogram_component(
         result += values.get(reset_index.checked_sub(1)?)?;
     }
 
-    extrapolate_histogram_delta(
-        extrapolation.timestamps,
-        result,
-        extrapolation.duration_to_zero,
-        extrapolation.range_start_ms,
-        extrapolation.range_end_ms,
-        extrapolation.range,
-        extrapolation.kind,
-    )
+    if extrapolation.start_timestamp_ms.is_some() {
+        result += values[0];
+    }
+    extrapolate_histogram_delta(extrapolation, result)
 }

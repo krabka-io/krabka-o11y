@@ -1,7 +1,7 @@
 use super::{
-    CompareSpec, Field, MetricFilter, MetricFunction, Query, RankLimit, Result,
-    is_inert_metric_stage, metric_pipeline_parts, metric_plan_for, metric_plan_with_compare,
-    unsupported_metric_pipeline,
+    CompareSpec, Field, FieldExpr, MetricFilter, MetricFunction, Query, RankLimit, Result,
+    SpansetExpr, is_inert_metric_stage, metric_pipeline_parts, metric_plan_for,
+    metric_plan_with_compare, unsupported_metric_pipeline,
 };
 
 pub(crate) struct MetricPlan {
@@ -9,6 +9,7 @@ pub(crate) struct MetricPlan {
     pub(crate) value: Option<Field>,
     pub(crate) quantiles: Vec<f64>,
     pub(crate) by: Vec<Field>,
+    pub(crate) exemplar_fields: Vec<Field>,
     pub(crate) filter: Option<MetricFilter>,
     pub(crate) rank: Option<RankLimit>,
     pub(crate) compare: Option<CompareSpec>,
@@ -41,5 +42,54 @@ pub(crate) fn metric_plan(q: &Query) -> Result<MetricPlan> {
     let Some(aggregate) = parts.aggregate else {
         return Err(unsupported_metric_pipeline());
     };
-    metric_plan_for(aggregate, parts.by, parts.filter, parts.rank)
+    let mut plan = metric_plan_for(aggregate, parts.by, parts.filter, parts.rank)?;
+    collect_exemplar_fields(&q.root, &mut plan.exemplar_fields);
+    for field in plan.by.iter().chain(plan.value.iter()) {
+        if !plan.exemplar_fields.contains(field) {
+            plan.exemplar_fields.push(field.clone());
+        }
+    }
+    Ok(plan)
+}
+
+fn collect_exemplar_fields(expr: &SpansetExpr, fields: &mut Vec<Field>) {
+    match expr {
+        SpansetExpr::Selector(expr) => collect_selector_fields(expr, fields),
+        SpansetExpr::And(lhs, rhs)
+        | SpansetExpr::Or(lhs, rhs)
+        | SpansetExpr::Structural { lhs, rhs, .. } => {
+            collect_exemplar_fields(lhs, fields);
+            collect_exemplar_fields(rhs, fields);
+        }
+    }
+}
+
+fn collect_selector_fields(expr: &FieldExpr, fields: &mut Vec<Field>) {
+    match expr {
+        FieldExpr::ExpressionComparison { lhs, rhs, .. } => {
+            let mut dependencies = Vec::new();
+            lhs.collect_fields(&mut dependencies);
+            rhs.collect_fields(&mut dependencies);
+            for field in dependencies {
+                add_field(field, fields);
+            }
+        }
+        FieldExpr::Comparison { lhs, .. } | FieldExpr::Field(lhs) => add_field(lhs, fields),
+        FieldExpr::FieldComparison { lhs, rhs, .. } => {
+            add_field(lhs, fields);
+            add_field(rhs, fields);
+        }
+        FieldExpr::And(lhs, rhs) | FieldExpr::Or(lhs, rhs) => {
+            collect_selector_fields(lhs, fields);
+            collect_selector_fields(rhs, fields);
+        }
+        FieldExpr::Not(inner) => collect_selector_fields(inner, fields),
+        FieldExpr::Const(_) => {}
+    }
+}
+
+fn add_field(field: &Field, fields: &mut Vec<Field>) {
+    if !fields.contains(field) {
+        fields.push(field.clone());
+    }
 }

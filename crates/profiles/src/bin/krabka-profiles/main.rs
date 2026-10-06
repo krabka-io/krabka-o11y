@@ -78,6 +78,33 @@ mod tests {
     }
 
     #[test]
+    fn query_architecture_is_explicit_and_rejects_unknown_modes() {
+        let defaults = Cli::try_parse_from(["krabka-profiles", "--target", "querier"]).unwrap();
+        assert!(
+            defaults.query_architecture == krabka_profiles::query::PyroscopeQueryArchitecture::V1
+        );
+        let v2 = Cli::try_parse_from([
+            "krabka-profiles",
+            "--target",
+            "query-frontend",
+            "--query-architecture",
+            "v2",
+        ])
+        .unwrap();
+        assert!(v2.query_architecture == krabka_profiles::query::PyroscopeQueryArchitecture::V2);
+        assert!(
+            Cli::try_parse_from([
+                "krabka-profiles",
+                "--target",
+                "querier",
+                "--query-architecture",
+                "v3"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
     fn client_resource_policy_parses_defaults_and_overrides() {
         let defaults = Cli::try_parse_from(["krabka-profiles", "--target", "querier"]).unwrap();
         assert!(defaults.client_dispatch_queue_capacity == 64);
@@ -855,6 +882,7 @@ overrides:
         assert!(
             *overrides.for_tenant(&"tenant-a".parse().unwrap())
                 == krabka_profiles::limits::Limits {
+                    max_async_query_concurrency: 5,
                     query_admission: krabka_query_frontend::AdmissionLimits::default(),
                     ingestion_rate: per_sec(10_000),
                     ingestion_burst_profiles: 10_000,
@@ -874,6 +902,7 @@ overrides:
         assert!(
             *overrides.for_tenant(&"tenant-b".parse().unwrap())
                 == krabka_profiles::limits::Limits {
+                    max_async_query_concurrency: 5,
                     query_admission: krabka_query_frontend::AdmissionLimits::default(),
                     ingestion_rate: per_sec(10_000),
                     ingestion_burst_profiles: 10_000,

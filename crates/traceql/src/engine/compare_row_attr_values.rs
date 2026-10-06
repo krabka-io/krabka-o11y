@@ -16,7 +16,9 @@ pub(crate) fn compare_row_attr_values<'a>(
                 .map(|(_, value)| value),
         );
     }
-    if want_resource {
+    // Tempo vParquet AttributeFor checks span attributes before falling back
+    // to resource attributes for an unscoped key.
+    if want_resource && (!matches!(scope, Scope::Both) || out.is_empty()) {
         out.extend(
             row.raw_resource_attrs
                 .iter()
@@ -25,4 +27,37 @@ pub(crate) fn compare_row_attr_values<'a>(
         );
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use assert2::assert;
+
+    use super::*;
+
+    #[test]
+    fn unscoped_values_prefer_span_and_fall_back_only_when_absent() {
+        let row = CompareRow {
+            ts: super::super::UnixNano(0),
+            attrs: Vec::new(),
+            raw_span_attrs: vec![("shared".into(), AttrValue::Int(1))],
+            raw_resource_attrs: vec![
+                ("shared".into(), AttrValue::Str("1".into())),
+                ("fallback".into(), AttrValue::Bool(true)),
+            ],
+            name: None,
+            status_code: None,
+            status_message: None,
+            kind: None,
+            duration: None,
+        };
+        assert!(compare_row_attr_values(&row, &Scope::Both, "shared") == vec![&AttrValue::Int(1)]);
+        assert!(
+            compare_row_attr_values(&row, &Scope::Resource, "shared")
+                == vec![&AttrValue::Str("1".into())]
+        );
+        assert!(
+            compare_row_attr_values(&row, &Scope::Both, "fallback") == vec![&AttrValue::Bool(true)]
+        );
+    }
 }

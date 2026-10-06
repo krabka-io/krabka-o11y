@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 use super::{
     NativeHistogram, RangeFn, RangeSeries, SampleValue, histogram_reset_between,
-    native_histograms_equal,
+    native_histograms_equal, start_timestamp_reset,
 };
 
 /// Counts the `changes` or `resets` steps across one series' window.
@@ -24,14 +24,36 @@ pub(crate) fn count_step_transitions(
         .samples
         .iter()
         .filter(|(timestamp, _)| *timestamp > range_start_ms && *timestamp <= range_end_ms)
-        .map(|(_, value)| value);
-    let mut previous = window.next()?;
+        .map(|(timestamp, value)| (timestamp, value));
+    let (mut previous_time, mut previous) = window.next()?;
     let mut count = 0.0_f64;
-    for current in window {
-        if step_counts(previous, current, kind) {
+    for (current_time, current) in window {
+        let previous_start = series
+            .start_timestamps_ms
+            .get(previous_time)
+            .copied()
+            .or(match previous {
+                SampleValue::Histogram(h) => h.start_timestamp_ms,
+                SampleValue::Float(_) => None,
+            })
+            .unwrap_or(0);
+        let start = series
+            .start_timestamps_ms
+            .get(current_time)
+            .copied()
+            .or(match current {
+                SampleValue::Histogram(h) => h.start_timestamp_ms,
+                SampleValue::Float(_) => None,
+            })
+            .unwrap_or(0);
+        if step_counts(previous, current, kind)
+            || matches!(kind, RangeFn::Resets)
+                && start_timestamp_reset(previous_start, *previous_time, start, *current_time)
+        {
             count += 1.0;
         }
         previous = current;
+        previous_time = current_time;
     }
     Some(count)
 }

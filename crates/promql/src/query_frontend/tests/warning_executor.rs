@@ -28,6 +28,8 @@ impl RangeQueryExecutor for WarningExecutor {
         annotations.info("PromQL info: metric might not be a counter");
         Ok(AnnotatedQueryResult {
             result: QueryResult::RangeMatrix(vec![RangeSeries {
+                drop_name: false,
+                start_timestamps_ms: std::collections::BTreeMap::new(),
                 labels: labels(&[("__name__", "up"), ("job", "api")]),
                 samples: vec![(query.start_ms, SampleValue::Float(1.0))],
             }]),

@@ -14,7 +14,7 @@ const SMALL_DELTA_TOLERANCE: f64 = 1e-12;
 /// corrected silently.
 pub(crate) fn normalized_classic_histogram_buckets(
     buckets: &mut [ClassicBucket],
-) -> (Vec<ClassicBucket>, bool) {
+) -> (Vec<ClassicBucket>, bool, [f64; 3]) {
     buckets.sort_by(|left, right| left.upper_bound.total_cmp(&right.upper_bound));
 
     let mut out: Vec<ClassicBucket> = Vec::with_capacity(buckets.len());
@@ -29,8 +29,9 @@ pub(crate) fn normalized_classic_histogram_buckets(
     }
 
     let mut forced = false;
+    let mut repairs = [f64::INFINITY, f64::NEG_INFINITY, 0.0_f64];
     let Some(mut previous) = out.first().map(|bucket| bucket.count) else {
-        return (out, forced);
+        return (out, forced, repairs);
     };
     for bucket in out.iter_mut().skip(1) {
         let count = bucket.count;
@@ -39,11 +40,14 @@ pub(crate) fn normalized_classic_histogram_buckets(
             continue;
         }
         if count < previous {
+            repairs[0] = repairs[0].min(bucket.upper_bound);
+            repairs[1] = repairs[1].max(bucket.upper_bound);
+            repairs[2] = repairs[2].max(previous - count);
             bucket.count = previous;
             forced = true;
             continue;
         }
         previous = count;
     }
-    (out, forced)
+    (out, forced, repairs)
 }

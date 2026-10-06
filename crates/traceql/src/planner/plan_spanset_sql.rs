@@ -20,6 +20,9 @@ pub(crate) async fn plan_spanset_sql<S: SpanStore>(
             &scan_options,
         )
         .await?;
+    let mut selectors = Vec::new();
+    super::collect_field_selectors(root, &mut selectors);
+    super::register_field_comparison_columns(&scan.ctx, &scan.span_table, &selectors).await?;
     let inspected = scan.inspected;
     let nested_tables = register_nested_selector_tables(store, ctx, &scan.ctx, root).await?;
     let spanset_sql = spanset_to_sql(root, &selector::ident(&scan.span_table), &nested_tables)?;

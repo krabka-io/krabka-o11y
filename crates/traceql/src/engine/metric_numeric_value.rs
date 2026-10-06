@@ -14,6 +14,15 @@ pub(crate) fn metric_numeric_value(
     row: usize,
     field: &Field,
 ) -> Result<Option<f64>> {
+    let values = super::compare_row(batch, row, super::UnixNano(0))?;
+    if let Some(value) = super::compare_row_attr_values(&values, &field.scope, &field.key).first() {
+        let value = match value {
+            super::AttrValue::Int(value) => f64_from_i64(*value),
+            super::AttrValue::Float(value) => *value,
+            super::AttrValue::Bool(_) | super::AttrValue::Str(_) => return Ok(None),
+        };
+        return Ok((!value.is_nan()).then_some(value));
+    }
     let column = metric_field_column(field)?;
     let array = batch
         .column_by_name(&column)
@@ -35,11 +44,19 @@ pub(crate) fn metric_numeric_value(
         DataType::Float64 => array
             .as_primitive::<arrow::datatypes::Float64Type>()
             .value(row),
-        other => {
-            return Err(TraceqlError::Unsupported(format!(
-                "metrics fold field {field:?} has non-numeric type {other:?}"
-            )));
-        }
+        _ => return Ok(None),
     };
-    Ok(Some(value))
+    if value.is_nan() {
+        return Ok(None);
+    }
+    Ok(Some(
+        if matches!(
+            field.scope,
+            super::Scope::Intrinsic(super::Intrinsic::Duration)
+        ) {
+            value / 1_000_000_000.0
+        } else {
+            value
+        },
+    ))
 }

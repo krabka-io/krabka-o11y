@@ -25,6 +25,7 @@ pub(crate) fn parse_cases(file: &str, contents: &str) -> Vec<Case> {
                     "trace_id" => case.trace_id = Some(parse_field(&case.name, "trace_id", value)),
                     "expect_trace_ids" => case.expect_trace_ids = Some(value.to_string()),
                     "expect_span_ids" => case.expect_span_ids = Some(value.to_string()),
+                    "expect_metrics" => case.expect_metrics = Some(value.to_string()),
                     "expect_series_count" => {
                         case.expect_series_count =
                             Some(parse_field(&case.name, "expect_series_count", value));

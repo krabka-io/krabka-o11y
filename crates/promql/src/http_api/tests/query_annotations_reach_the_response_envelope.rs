@@ -9,7 +9,7 @@ pub(crate) async fn query_annotations_reach_the_response_envelope() {
     // predictable and the test compares it as one value.
     let no_annotations: Vec<&str> = Vec::new();
     let bad_bucket_label = vec![
-        "PromQL warning: bucket label \"le\" is missing or has a malformed value of \"\" (1:25)",
+        "PromQL warning: bucket label \"le\" is missing or has a malformed value of \"\" for metric name \"up\" (1:25)",
     ];
     let incompatible_types = vec![
         "PromQL info: incompatible sample types encountered for binary operator \">\": histogram > float (1:1)",

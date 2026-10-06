@@ -1,7 +1,6 @@
 use super::{
     Array, BTreeMap, Float64Array, InstantSample, Labels, PromqlError, QueryResult, RecordBatch,
-    Result, SampleValue, SeriesFingerprint, labels_from_rate_batch, labels_without_metric_name,
-    over_time_range,
+    Result, SampleValue, SeriesFingerprint, labels_from_rate_batch, over_time_range,
 };
 
 /// Assembles `*_over_time` projection output batches into a result.
@@ -48,11 +47,7 @@ pub(crate) fn assemble_over_time_batches(
         .into_iter()
         .filter_map(|(fp, value)| {
             labels_by_fp.get(&fp).map(|labels| {
-                let labels = if preserve_metric_name {
-                    labels.clone()
-                } else {
-                    labels_without_metric_name(labels)
-                };
+                let labels = labels.clone();
                 InstantSample {
                     labels,
                     ts_ms: time_ms,

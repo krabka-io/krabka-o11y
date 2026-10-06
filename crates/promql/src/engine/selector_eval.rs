@@ -18,9 +18,7 @@ use crate::{
     PromqlError,
     error::Result,
     extension::is_stale_nan,
-    planner::{
-        ExtendedSelectorExpr, ExtendedSelectorModifier, TimedValue, inject_created_timestamp_zeros,
-    },
+    planner::{ExtendedSelectorExpr, ExtendedSelectorModifier, TimedValue},
     result::{InstantSample, QueryResult, RangeSeries, SampleValue},
     store::MetricStore,
 };
@@ -118,28 +116,99 @@ impl<S: MetricStore> PromqlEngine<S> {
             .scan_float_row_sets(tenant, &matcher_sets, scan_start_ms, scan_end_ms)
             .await?;
 
-        let mut rows_by_fp: BTreeMap<SeriesFingerprint, Vec<(i64, f64)>> = BTreeMap::new();
+        let mut hist_rows = self
+            .scan_histogram_row_sets(tenant, &matcher_sets, scan_start_ms, scan_end_ms)
+            .await?;
+        recompute_histogram_stats(&mut hist_rows);
+        let mut rows_by_fp: BTreeMap<SeriesFingerprint, Vec<(i64, SampleValue)>> = BTreeMap::new();
         for row in rows {
-            if row.ts_ms <= scan_start_ms || row.ts_ms > scan_end_ms || is_stale_nan(row.value) {
-                continue;
+            if row.ts_ms > scan_start_ms && row.ts_ms <= scan_end_ms && !is_stale_nan(row.value) {
+                rows_by_fp
+                    .entry(row.fp)
+                    .or_default()
+                    .push((row.ts_ms, SampleValue::Float(row.value)));
             }
-            rows_by_fp
-                .entry(row.fp)
-                .or_default()
-                .push((row.ts_ms, row.value));
         }
-
+        for row in hist_rows {
+            if row.ts_ms > scan_start_ms && row.ts_ms <= scan_end_ms {
+                rows_by_fp
+                    .entry(row.fp)
+                    .or_default()
+                    .push((row.ts_ms, SampleValue::Histogram(row.hist)));
+            }
+        }
         let samples = rows_by_fp
             .into_iter()
             .filter_map(|(fp, mut rows)| {
-                rows.sort_by_key(|(ts_ms, _)| *ts_ms);
-                let timestamps = rows.iter().map(|(ts_ms, _)| *ts_ms).collect::<Vec<_>>();
-                let values = rows.iter().map(|(_, value)| *value).collect::<Vec<_>>();
-                let value = instant_smoothed_boundary_value(&timestamps, &values, eval_time_ms)?;
-                labels_by_fp.get(&fp).map(|labels| InstantSample {
+                let labels = labels_by_fp.get(&fp)?;
+                let metric = labels.get("__name__").unwrap_or("");
+                rows.sort_by_key(|(timestamp, _)| *timestamp);
+                let floats = rows
+                    .iter()
+                    .any(|(_, value)| matches!(value, SampleValue::Float(_)));
+                let histograms = rows
+                    .iter()
+                    .any(|(_, value)| matches!(value, SampleValue::Histogram(_)));
+                if floats && histograms {
+                    super::annotations::emit_warning(
+                        super::annotations::mixed_floats_histograms_warning(metric),
+                    );
+                    return None;
+                }
+                let value = if floats {
+                    let timestamps = rows
+                        .iter()
+                        .map(|(timestamp, _)| *timestamp)
+                        .collect::<Vec<_>>();
+                    let values = rows
+                        .iter()
+                        .map(|(_, value)| match value {
+                            SampleValue::Float(value) => *value,
+                            SampleValue::Histogram(_) => unreachable!("float-only"),
+                        })
+                        .collect::<Vec<_>>();
+                    SampleValue::Float(instant_smoothed_boundary_value(
+                        &timestamps,
+                        &values,
+                        eval_time_ms,
+                    )?)
+                } else {
+                    let points = rows
+                        .into_iter()
+                        .map(|(timestamp, value)| match value {
+                            SampleValue::Histogram(histogram) => (timestamp, histogram),
+                            SampleValue::Float(_) => unreachable!("histogram-only"),
+                        })
+                        .collect::<Vec<_>>();
+                    let index = points.partition_point(|(timestamp, _)| *timestamp < eval_time_ms);
+                    let histogram = if points
+                        .get(index)
+                        .is_some_and(|(timestamp, _)| *timestamp == eval_time_ms)
+                    {
+                        points[index].1.clone()
+                    } else if index > 0 && index < points.len() {
+                        let counter = points[index - 1].1.reset_hint != ResetHint::Gauge
+                            || points[index].1.reset_hint != ResetHint::Gauge;
+                        super::range_functions::interpolate_histogram(
+                            &points[index - 1],
+                            &points[index],
+                            eval_time_ms,
+                            counter,
+                            metric,
+                        )?
+                    } else if index > 0 {
+                        let mut previous = points[index - 1].1.clone();
+                        previous.reset_hint = ResetHint::Unknown;
+                        previous
+                    } else {
+                        return None;
+                    };
+                    SampleValue::Histogram(histogram)
+                };
+                Some(InstantSample {
                     labels: (**labels).clone(),
                     ts_ms: time_ms,
-                    value: SampleValue::Float(value),
+                    value,
                     drop_name: false,
                 })
             })
@@ -166,7 +235,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         start_ms: i64,
         end_ms: i64,
         modifier: Option<ExtendedSelectorModifier>,
-        inject_zeros: bool,
+        _inject_zeros: bool,
     ) -> Result<Vec<RangeSeries>> {
         let range = selector_duration(selector.range)?;
         let bounds = AtModifierBounds { start_ms, end_ms };
@@ -222,13 +291,20 @@ impl<S: MetricStore> PromqlEngine<S> {
                 });
         }
 
+        let mut starts_by_fp = BTreeMap::new();
         let mut samples_by_fp: BTreeMap<SeriesFingerprint, BTreeMap<i64, SampleValue>> =
             BTreeMap::new();
         for (fp, mut samples) in float_samples_by_fp {
             samples.sort_unstable_by_key(|sample| sample.ts_ms);
-            if inject_zeros {
-                inject_created_timestamp_zeros(&mut samples, range_start_ms);
-            }
+            starts_by_fp.insert(
+                fp,
+                samples
+                    .iter()
+                    .filter_map(|sample| {
+                        sample.start_timestamp_ms.map(|start| (sample.ts_ms, start))
+                    })
+                    .collect(),
+            );
             samples_by_fp.entry(fp).or_default().extend(
                 samples
                     .into_iter()
@@ -238,6 +314,12 @@ impl<S: MetricStore> PromqlEngine<S> {
         for row in hist_rows {
             if row.ts_ms <= scan_start_ms || row.ts_ms > scan_end_ms {
                 continue;
+            }
+            if let Some(start) = row.hist.start_timestamp_ms {
+                starts_by_fp
+                    .entry(row.fp)
+                    .or_insert_with(BTreeMap::new)
+                    .insert(row.ts_ms, start);
             }
             samples_by_fp
                 .entry(row.fp)
@@ -251,6 +333,8 @@ impl<S: MetricStore> PromqlEngine<S> {
                 continue;
             };
             out.push(RangeSeries {
+                drop_name: false,
+                start_timestamps_ms: starts_by_fp.remove(&fp).unwrap_or_default(),
                 labels: (**labels).clone(),
                 samples: samples.into_iter().collect(),
             });
@@ -348,6 +432,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                     )
                     .await?;
                 Ok(RangeEval {
+                    enable_type_and_unit_labels: self.opts.enable_type_and_unit_labels,
                     series,
                     end_ms,
                     range,
@@ -364,6 +449,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 )?;
                 let series = self.eval_subquery(tenant, subquery, time_ms).await?;
                 Ok(RangeEval {
+                    enable_type_and_unit_labels: self.opts.enable_type_and_unit_labels,
                     series,
                     end_ms,
                     range,

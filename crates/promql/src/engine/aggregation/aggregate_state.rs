@@ -1,6 +1,5 @@
 use super::{
-    CounterResetHints, Labels, NativeHistogram, Result, add_compatible_native_histogram,
-    kahan_sum_inc,
+    CounterResetHints, HistogramAccumulator, Labels, NativeHistogram, Result, kahan_sum_inc,
 };
 
 #[allow(clippy::struct_excessive_bools)]
@@ -44,7 +43,7 @@ pub(crate) struct AggregateState {
     pub(crate) seen_float: bool,
     pub(crate) min: f64,
     pub(crate) max: f64,
-    pub(crate) histogram: Option<NativeHistogram>,
+    pub(crate) histogram: Option<HistogramAccumulator>,
     pub(crate) mismatched_custom_buckets: bool,
     pub(crate) invalid_mixed_histogram_schema: bool,
     pub(crate) invalid_mixed_sample_type: bool,
@@ -150,7 +149,11 @@ impl AggregateState {
         self.count_f64 += 1.0;
     }
 
-    pub(crate) fn push_histogram(&mut self, histogram: NativeHistogram) -> Result<()> {
+    pub(crate) fn push_histogram(
+        &mut self,
+        histogram: NativeHistogram,
+        average: bool,
+    ) -> Result<()> {
         if self.invalid_mixed_sample_type || self.invalid_mixed_histogram_schema {
             return Ok(());
         }
@@ -162,17 +165,17 @@ impl AggregateState {
         self.push_observation();
         match &mut self.histogram {
             Some(existing) => {
-                if existing.is_nhcb() != histogram.is_nhcb() {
+                if existing.value.is_nhcb() != histogram.is_nhcb() {
                     self.invalid_mixed_histogram_schema = true;
                     self.histogram = None;
                     return Ok(());
                 }
-                self.mismatched_custom_buckets |= existing.is_nhcb()
+                self.mismatched_custom_buckets |= existing.value.is_nhcb()
                     && histogram.is_nhcb()
-                    && existing.custom_values != histogram.custom_values;
-                add_compatible_native_histogram(existing, &histogram)?;
+                    && existing.value.custom_values != histogram.custom_values;
+                existing.push(&histogram, average)?;
             }
-            None => self.histogram = Some(histogram),
+            None => self.histogram = Some(HistogramAccumulator::new(histogram)),
         }
         Ok(())
     }

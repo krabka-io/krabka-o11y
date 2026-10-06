@@ -21,5 +21,6 @@ pub(crate) async fn histogram_float_comparison_emits_incompatible_types_info() {
                     .to_string()
             ],
             warnings: vec![],
+            ..crate::Annotations::default()
         });
 }

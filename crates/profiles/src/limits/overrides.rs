@@ -35,6 +35,7 @@ overrides:
         assert!(
             *tenant_a
                 == Limits {
+                    max_async_query_concurrency: 5,
                     query_admission: krabka_query_frontend::AdmissionLimits::default(),
                     ingestion_rate: per_sec(500),
                     ingestion_burst_profiles: 10_000,
@@ -110,6 +111,7 @@ overrides:
         assert!(
             *provider.for_tenant(&"unlisted".parse().unwrap())
                 == Limits {
+                    max_async_query_concurrency: 5,
                     max_label_value: bytes(64),
                     max_label_names_per_series: 5,
                     max_session_id_cardinality: 8,
@@ -119,6 +121,7 @@ overrides:
         assert!(
             *provider.for_tenant(&"tenant-a".parse().unwrap())
                 == Limits {
+                    max_async_query_concurrency: 5,
                     max_label_value: bytes(64),
                     max_label_names_per_series: 7,
                     max_session_id_cardinality: 8,
@@ -284,6 +287,29 @@ overrides:
     }
 
     #[test]
+    fn async_concurrency_overrides_inherit_defaults_and_allow_tenant_disable() {
+        let provider=OverridesProvider::from_yaml("defaults:\n  max_async_query_concurrency: 7\noverrides:\n  tenant-a:\n    max_async_query_concurrency: 0\n  tenant-b:\n    max_async_query_concurrency: 3\n").unwrap();
+        assert!(
+            provider
+                .for_tenant(&"tenant-a".parse().unwrap())
+                .max_async_query_concurrency
+                == 0
+        );
+        assert!(
+            provider
+                .for_tenant(&"tenant-b".parse().unwrap())
+                .max_async_query_concurrency
+                == 3
+        );
+        assert!(
+            provider
+                .for_tenant(&"tenant-c".parse().unwrap())
+                .max_async_query_concurrency
+                == 7
+        );
+    }
+
+    #[test]
     fn zero_and_positive_numeric_values_are_accepted() {
         let provider = OverridesProvider::from_yaml(
             r"
@@ -300,6 +326,7 @@ overrides:
         assert!(
             *tenant_a
                 == Limits {
+                    max_async_query_concurrency: 5,
                     query_admission: krabka_query_frontend::AdmissionLimits::default(),
                     ingestion_rate: <Frequency as FrequencyExt>::ZERO,
                     ingestion_burst_profiles: 10_000,

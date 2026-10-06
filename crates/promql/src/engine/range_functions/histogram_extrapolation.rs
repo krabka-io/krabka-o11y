@@ -1,6 +1,7 @@
 use super::{RangeFn, Time};
 
 pub(crate) struct HistogramExtrapolation<'a> {
+    pub(crate) start_timestamp_ms: Option<i64>,
     pub(crate) timestamps: &'a [i64],
     pub(crate) reset_indices: &'a [usize],
     pub(crate) range_start_ms: i64,

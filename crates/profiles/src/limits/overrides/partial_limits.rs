@@ -9,6 +9,8 @@ use super::*;
 #[serde(deny_unknown_fields)]
 pub(crate) struct PartialLimits {
     #[serde(default)]
+    pub(crate) max_async_query_concurrency: Option<usize>,
+    #[serde(default)]
     pub(crate) query_admission: AdmissionLimitsOverride,
     #[serde(default)]
     pub(crate) ingestion_rate_profiles_per_sec: Option<f64>,
@@ -68,6 +70,9 @@ impl PartialLimits {
 
     pub(crate) fn merge_over(self, defaults: &Limits) -> Limits {
         Limits {
+            max_async_query_concurrency: self
+                .max_async_query_concurrency
+                .unwrap_or(defaults.max_async_query_concurrency),
             query_admission: defaults.query_admission.merge(self.query_admission),
             ingestion_rate: self
                 .ingestion_rate_profiles_per_sec

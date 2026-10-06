@@ -19,7 +19,12 @@ pub(crate) fn field_expr_to_matchers(fe: &FieldExpr) -> Vec<SpanMatcher> {
         }
         // A constant filter carries no per-span matcher; the SQL predicate
         // (`TRUE`/`FALSE`) is authoritative, so it contributes no pre-filter.
-        FieldExpr::Or(_, _) | FieldExpr::Not(_) | FieldExpr::Field(_) | FieldExpr::Const(_) => {
+        FieldExpr::ExpressionComparison { .. }
+        | FieldExpr::FieldComparison { .. }
+        | FieldExpr::Or(_, _)
+        | FieldExpr::Not(_)
+        | FieldExpr::Field(_)
+        | FieldExpr::Const(_) => {
             vec![]
         }
     }

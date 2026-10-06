@@ -8,7 +8,10 @@ pub(crate) fn instant_smoothed_boundary_value(
     if timestamps.len() != values.len() || timestamps.is_empty() {
         return None;
     }
-    if target_ms <= *timestamps.first()? {
+    if target_ms < *timestamps.first()? {
+        return None;
+    }
+    if target_ms == *timestamps.first()? {
         return values.first().copied();
     }
     if target_ms >= *timestamps.last()? {

@@ -232,7 +232,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 // least one string-literal label name. Wrong arity / a non-string
                 // label argument falls back so the interpreter raises the
                 // canonical error.
-                if call.args.args.len() < 2 {
+                if call.args.args.is_empty() {
                     return Ok(None);
                 }
                 let mut label_names = Vec::with_capacity(call.args.args.len() - 1);

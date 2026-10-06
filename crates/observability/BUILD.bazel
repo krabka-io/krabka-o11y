@@ -73,6 +73,7 @@ crate_tests(
     },
     # The shared lifecycle store, reached with `#[path]` from //crates/blockstore.
     extra_srcs = {
+        "loki_differential": ["//crates/metrics-service:tests/support/generated_differential.rs"],
         "loki_deployment": ["//crates/metrics-service:tests/support/container_deployment.rs"],
         "compactor": ["//crates/blockstore:tests/support/lifecycle_store.rs"],
     },

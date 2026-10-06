@@ -1,0 +1,1 @@
+rate(sum_over_time(metric1_total[30s:10s])[50s:10s])

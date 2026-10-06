@@ -2,7 +2,7 @@ use super::{
     AppState, HeaderMap, IntoResponse, Json, Principal, QueryEnforcer, Response, SpanStore,
     StatusCode, UnixNano, Uri, exemplar_selection, filter_metrics_exemplars, limit_error_response,
     metrics_query_param, request_tenant, required_seconds_param, scan_options_param, step_param,
-    trace_metrics_json,
+    tempo_metric_bounds, trace_metrics_json,
 };
 
 pub(crate) async fn query_range_inner<S>(
@@ -40,29 +40,45 @@ where
         Ok(value) => value,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
+    let bounds = match tempo_metric_bounds(start_ns, end_ns, step_ns) {
+        Ok(bounds) => bounds,
+        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
+    };
     let exemplar_selection = exemplar_selection(&uri);
     let scan_options = match scan_options_param(&uri) {
         Ok(value) => value,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
+    let (scan_start_ns, scan_end_ns) = bounds.as_ref().map_or((start_ns, end_ns), |bounds| {
+        (bounds.scan_start_ns, bounds.scan_end_ns)
+    });
 
     match state
         .engine
         .query_range_with_options(
             tenant.as_str(),
             &query,
-            start_ns,
-            end_ns,
+            scan_start_ns,
+            scan_end_ns,
             step_ns,
             scan_options,
         )
         .await
     {
-        Ok(resp) => Json(trace_metrics_json(&filter_metrics_exemplars(
-            resp,
-            exemplar_selection,
-        )))
-        .into_response(),
+        Ok(mut resp) => {
+            if let Some(bounds) = bounds {
+                if let Err(err) = bounds.shift_points(&mut resp) {
+                    return (StatusCode::BAD_REQUEST, err).into_response();
+                }
+            } else {
+                resp.series.clear();
+            }
+            Json(trace_metrics_json(
+                &filter_metrics_exemplars(resp, exemplar_selection),
+                &query,
+            ))
+            .into_response()
+        }
         Err(err) => (StatusCode::BAD_REQUEST, err.to_string()).into_response(),
     }
 }

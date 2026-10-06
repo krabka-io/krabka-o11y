@@ -16,6 +16,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use generated_differential::{CompareOp, TypedConstructor, TypedExpr};
 use http_body_util::BodyExt as _;
 use krabka_traceql::{
     AttrValue as TraceqlAttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceqlEngine,
@@ -48,6 +49,9 @@ use testcontainers::{
 };
 use tower::ServiceExt as _;
 
+#[path = "../../metrics-service/tests/support/generated_differential.rs"]
+mod generated_differential;
+
 const TENANT: &str = "tenant-a";
 const TRACE_ID_HEX: &str = "01010101010101010101010101010101";
 const CHILD_SPAN_ID_HEX: &str = "0303030303030303";
@@ -74,6 +78,10 @@ distributor:
       protocols:
         http:
           endpoint: 0.0.0.0:4318
+live_store:
+  wal:
+    path: /tmp/tempo/live-store
+    ingestion_time_range_slack: 10m
 storage:
   trace:
     backend: local
@@ -175,7 +183,11 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
     wait_for_http_ok(&client, &tempo_query, &["/ready", "/status"]).await?;
 
     let query_range = "start=0&end=1";
-    let otlp_body = sample_otlp_body();
+    let mut fixture = TracesData::decode(sample_otlp_body().as_slice())?;
+    fixture
+        .resource_spans
+        .extend(forest_otlp_fixture().resource_spans);
+    let otlp_body = fixture.encode_to_vec();
     let krabka = start_krabka_pair(&otlp_body).await?;
 
     post_otlp(
@@ -195,7 +207,7 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
         let tempo_search = get_json_until_non_empty_traces(
             &client,
             &format!(
-                "{tempo_query}/api/search?q={}&{query_range}",
+                "{tempo_query}/api/search?q={}&{query_range}&limit=10&spss=10",
                 case.encoded_query
             ),
             None,
@@ -204,18 +216,114 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
         let krabka_search = get_json(
             &client,
             &format!(
-                "{}/api/search?q={}&{query_range}",
+                "{}/api/search?q={}&{query_range}&limit=10&spss=10",
                 krabka.base_url, case.encoded_query
             ),
             Some(TENANT),
         )
         .await?;
         assert_search_shape_matches(&tempo_search, &krabka_search);
+        let mut expected_spans = match case.kind {
+            QueryCaseKind::Structural => vec![CHILD_SPAN_ID_HEX.to_string()],
+            QueryCaseKind::Selector | QueryCaseKind::Pipeline => vec![
+                "0202020202020202".to_string(),
+                CHILD_SPAN_ID_HEX.to_string(),
+                ERROR_SPAN_ID_HEX.to_string(),
+            ],
+        };
+        expected_spans.sort();
+        assert2::assert!(
+            search_identities(&tempo_search)?
+                == BTreeMap::from([(TRACE_ID_HEX.to_string(), expected_spans)]),
+            "unexpected upstream selection: {tempo_search}"
+        );
         if let Some(span_id) = case.expected_span_id {
             assert_search_contains_span_id(&tempo_search, span_id);
             assert_search_contains_span_id(&krabka_search, span_id);
         }
     }
+
+    // Independently assigned trees mirror the behavioral relationships in the
+    // pinned Tempo vParquet5 tests, including unrelated and partial branches.
+    let mut forest_evidence = Vec::new();
+    for (query, expected_ids) in [
+        (
+            "{ name = \"ancestor1\" } >> { .kind = \"descendant\" }",
+            vec![11_u8, 12],
+        ),
+        (
+            "{ name = \"ancestor2\" } > { .kind = \"descendant\" }",
+            vec![21, 22],
+        ),
+        (
+            "{ name = \"ancestor2\" } >> { .kind = \"descendant\" }",
+            vec![21, 22, 23],
+        ),
+        (
+            "{ name = \"ancestor1\" } !>> { .kind = \"descendant\" }",
+            vec![21, 22, 23],
+        ),
+        (
+            "{ name = \"ancestor1\" } &>> { .kind = \"descendant\" }",
+            vec![10, 11, 12],
+        ),
+        (
+            "{ name = \"descendant2a\" } ~ { .kind = \"descendant\" }",
+            vec![22],
+        ),
+        ("{ .foo = .bar }", vec![11]),
+        (
+            "{ resource.service.name = \"forest\" && .kind = \"missing\" }",
+            vec![],
+        ),
+    ] {
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let upstream_url =
+            format!("{tempo_query}/api/search?q={encoded}&{query_range}&limit=100&spss=100");
+        let upstream = if expected_ids.is_empty() {
+            get_json(&client, &upstream_url, None).await?
+        } else {
+            get_json_until_non_empty_traces(&client, &upstream_url, None).await?
+        };
+        let candidate_url = format!(
+            "{}/api/search?q={encoded}&{query_range}&limit=100&spss=100",
+            krabka.base_url
+        );
+        let actual = get_json(&client, &candidate_url, Some(TENANT)).await?;
+        let expected = if expected_ids.is_empty() {
+            BTreeMap::new()
+        } else {
+            BTreeMap::from([(
+                "09090909090909090909090909090909".to_owned(),
+                expected_ids
+                    .iter()
+                    .map(|id| hex::encode([*id; 8]))
+                    .collect::<Vec<_>>(),
+            )])
+        };
+        forest_evidence.push(
+            json!({"query":query, "expected":expected, "upstream":upstream, "krabka":actual, "status": if search_identities(&upstream)? == expected && search_identities(&actual)? == expected { "matched" } else { "mismatch" }}),
+        );
+        let evidence_dir = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
+            || std::path::PathBuf::from("../../target"),
+            std::path::PathBuf::from,
+        );
+        std::fs::create_dir_all(&evidence_dir)?;
+        std::fs::write(
+            evidence_dir.join("tempo-forest-conformance.json"),
+            serde_json::to_vec_pretty(&forest_evidence)?,
+        )?;
+        assert2::assert!(
+            search_identities(&upstream)? == expected,
+            "pinned Tempo selection differs for {query}: {upstream}"
+        );
+        assert2::assert!(
+            search_identities(&actual)? == expected,
+            "Krabka selection differs for {query}: {actual}"
+        );
+    }
+
+    compare_generated_trace_queries(&client, &tempo_query, &krabka.base_url, query_range).await?;
 
     let tempo_tags = get_json(
         &client,
@@ -252,6 +360,122 @@ async fn real_tempo_and_krabka_match_basic_by_id_and_search() -> TestResult {
     Ok(())
 }
 
+async fn compare_generated_trace_queries(
+    client: &reqwest::Client,
+    tempo_query: &str,
+    krabka_query: &str,
+    query_range: &str,
+) -> TestResult {
+    let generated_output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
+        || std::env::temp_dir().join(format!("krabka-trace-generated-{}", std::process::id())),
+        std::path::PathBuf::from,
+    );
+    let expected_checkout = BTreeMap::from([(
+        TRACE_ID_HEX.to_owned(),
+        vec![
+            "0202020202020202".to_owned(),
+            CHILD_SPAN_ID_HEX.to_owned(),
+            ERROR_SPAN_ID_HEX.to_owned(),
+        ],
+    )]);
+    let checkout =
+        TypedExpr::trace_string_compare("resource", "service.name", CompareOp::Eq, "checkout");
+    generated_differential::run_typed(
+        "traceql",
+        std::slice::from_ref(&checkout),
+        &[
+            TypedConstructor::TraceAnd(TypedExpr::trace_duration_compare(
+                "duration",
+                CompareOp::Gt,
+                0,
+            )),
+            TypedConstructor::TraceAnd(checkout.clone()),
+            TypedConstructor::TraceOr(TypedExpr::trace_string_compare(
+                "",
+                "name",
+                CompareOp::Eq,
+                "missing",
+            )),
+        ],
+        &generated_output,
+        |expression| {
+            compare_generated_trace_selector(
+                client,
+                tempo_query,
+                krabka_query,
+                query_range,
+                expression,
+                &expected_checkout,
+            )
+        },
+    )
+    .await?;
+
+    let expected_field_match = BTreeMap::from([("09".repeat(16), vec!["0b".repeat(8)])]);
+    generated_differential::run_typed(
+        "traceql-field-comparisons",
+        &[TypedExpr::trace_field_compare(
+            "",
+            "foo",
+            CompareOp::Eq,
+            "",
+            "bar",
+        )],
+        &[
+            TypedConstructor::TraceAnd(TypedExpr::trace_duration_compare(
+                "duration",
+                CompareOp::Gt,
+                0,
+            )),
+            TypedConstructor::TraceOr(TypedExpr::trace_string_compare(
+                "",
+                "name",
+                CompareOp::Eq,
+                "missing",
+            )),
+            TypedConstructor::Paren,
+        ],
+        &generated_output,
+        |expression| {
+            compare_generated_trace_selector(
+                client,
+                tempo_query,
+                krabka_query,
+                query_range,
+                expression,
+                &expected_field_match,
+            )
+        },
+    )
+    .await?;
+
+    let rejection_responses = Mutex::new(Vec::new());
+    generated_differential::run(
+        "traceql-rejections",
+        &[r"resource.service.name =", "duration >", ".foo =~ 1"],
+        &[
+            "({expr})",
+            "({expr}) && duration > 0ns",
+            r#"({expr}) || name = "missing""#,
+        ],
+        &generated_output,
+        |expression| {
+            compare_generated_trace_rejection(
+                client,
+                tempo_query,
+                krabka_query,
+                query_range,
+                expression,
+                &generated_output,
+                &rejection_responses,
+            )
+        },
+    )
+    .await?;
+
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/tempo image"]
 async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult {
@@ -264,7 +488,9 @@ async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult
     let trace_start_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)?
         .as_secs()
-        .saturating_sub(60);
+        .saturating_sub(180)
+        / 30
+        * 30;
     let query_start = trace_start_secs.saturating_sub(60);
     let query_end = trace_start_secs + 120;
     let query_range = format!("start={query_start}&end={query_end}");
@@ -279,8 +505,7 @@ async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult
     )
     .await?;
 
-    let metrics_query =
-        "%7B%20resource.service.name%20%3D%20%22checkout%22%20%7D%20%7C%20count_over_time()";
+    let metrics_query = "%7B%20resource.service.name%20%3D%20%22checkout%22%20%7D%20%7C%20count_over_time()%20with(exemplars=false)";
     let tempo_metrics = get_json_until_positive_metric_total(
         &client,
         &format!("{tempo_query}/api/metrics/query_range?q={metrics_query}&{query_range}&step=30s"),
@@ -297,9 +522,212 @@ async fn real_tempo_and_krabka_match_traceql_metrics_query_range() -> TestResult
     )
     .await?;
     assert_metric_totals_match(&tempo_metrics, &krabka_metrics);
+    let numeric_result =
+        compare_live_numeric_metrics(&client, &tempo_query, &krabka.base_url, &query_range).await;
+    let exemplar_result = compare_live_singleton_exemplar(
+        &client,
+        &tempo_query,
+        &krabka.base_url,
+        &query_range,
+        trace_start_secs,
+    )
+    .await;
+    let arithmetic_result =
+        compare_live_field_arithmetic(&client, &tempo_query, &krabka.base_url, &query_range).await;
+    numeric_result?;
+    exemplar_result?;
+    arithmetic_result?;
 
     krabka.shutdown();
     Ok(())
+}
+
+async fn compare_live_numeric_metrics(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    query_range: &str,
+) -> TestResult {
+    let mut cases = Vec::new();
+    let mut failures = Vec::new();
+    for (stableid, operation) in [
+        ("avg-duration", "avg_over_time(duration)"),
+        ("min-duration", "min_over_time(duration)"),
+        ("max-duration", "max_over_time(duration)"),
+        ("sum-duration", "sum_over_time(duration)"),
+        ("quantile-duration", "quantile_over_time(duration, .5, .9)"),
+        ("histogram-duration", "histogram_over_time(duration)"),
+    ] {
+        let query = format!(
+            r#"{{ resource.service.name = "checkout" }} | {operation} with(exemplars=false)"#
+        );
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let suffix = format!("/api/metrics/query_range?q={encoded}&{query_range}&step=30s");
+        let upstream =
+            get_json_until_positive_metric_total(client, &format!("{oracle}{suffix}"), None)
+                .await?;
+        let candidate_result =
+            get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
+        let actual = candidate_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let result = metric_series_match(&upstream, &actual);
+        if let Err(error) = &result {
+            failures.push(format!("{stableid}: {error}"));
+        }
+        cases.push(json!({"stableid":format!("tempo-live-metric-{stableid}"),"query":query,
+            "request":{"range":query_range,"step":"30s","exemplars":false},
+            "expected_fixture_duration_seconds":[0.5,0.15,0.14],
+            "upstream":upstream,"krabka":actual,"status":if result.is_ok() {"matched"} else {"mismatch"},
+            "error":result.err().map(|error|error.to_string())}));
+    }
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(output).join("tempo-numeric-metric-conformance.json"),
+            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
+        )?;
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
+}
+
+async fn compare_live_field_arithmetic(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    query_range: &str,
+) -> TestResult {
+    let mut cases = Vec::new();
+    let mut failures = Vec::new();
+    // The existing checkout fixture has three positive durations, attached to
+    // independently assigned IDs 2 (GET), 3 (SELECT), and 4 (charge). Name
+    // predicates provide excluded witnesses for each arithmetic expression.
+    for (stableid, predicate, expected_span_ids) in [
+        (
+            "multiply-duration",
+            "duration * 2 > duration && name != \"GET /checkout\"",
+            vec![CHILD_SPAN_ID_HEX, ERROR_SPAN_ID_HEX],
+        ),
+        (
+            "divide-duration",
+            "duration / 2 < duration && name = \"SELECT cart\"",
+            vec![CHILD_SPAN_ID_HEX],
+        ),
+        (
+            "add-duration",
+            "duration + duration >= duration && name != \"charge card\"",
+            vec!["0202020202020202", CHILD_SPAN_ID_HEX],
+        ),
+        (
+            "negate-duration",
+            "-duration < 0s && name = \"charge card\"",
+            vec![ERROR_SPAN_ID_HEX],
+        ),
+    ] {
+        let query = format!("{{ resource.service.name = \"checkout\" && {predicate} }}");
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let suffix = format!("/api/search?q={encoded}&{query_range}&limit=10&spss=10");
+        let upstream_result =
+            get_json_until_non_empty_traces(client, &format!("{oracle}{suffix}"), None).await;
+        let candidate_result =
+            get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await;
+        let upstream = upstream_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let actual = candidate_result
+            .as_ref()
+            .map_or_else(|error| json!({"error":error.to_string()}), Clone::clone);
+        let expected_count = expected_span_ids.len();
+        let expected = BTreeMap::from([(
+            TRACE_ID_HEX.to_owned(),
+            expected_span_ids.into_iter().map(str::to_owned).collect(),
+        )]);
+        let result = upstream_result.and_then(|upstream| {
+            candidate_result.and_then(|actual| {
+                let upstream_ids = search_identities(&upstream)?;
+                let actual_ids = search_identities(&actual)?;
+                if upstream_ids != expected || actual_ids != expected {
+                    return Err(format!(
+                        "{query}: expected {expected:?}, upstream {upstream_ids:?}, Krabka {actual_ids:?}"
+                    ).into());
+                }
+                Ok(())
+            })
+        });
+        if let Err(error) = &result {
+            failures.push(format!("{stableid}: {error}"));
+        }
+        cases.push(
+            json!({"stableid":format!("tempo-live-arithmetic-{stableid}"),"query":query,
+            "request":{"range":query_range,"limit":10,"spss":10},
+            "independent_expected":{"span_ids_by_trace":expected,"span_count":expected_count},
+            "upstream":upstream,"krabka":actual,
+            "status":if result.is_ok(){"matched"}else{"mismatch"},
+            "error":result.err().map(|error|error.to_string())}),
+        );
+    }
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(output).join("tempo-field-arithmetic-conformance.json"),
+            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
+        )?;
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
+}
+
+async fn compare_live_singleton_exemplar(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    query_range: &str,
+    trace_start_secs: u64,
+) -> TestResult {
+    // Tempo uses reservoir sampling within a trace. This selector contains one
+    // matching span, so its exact identity and timestamp are independent of RNG.
+    let query = r#"{ name = "SELECT cart" } | count_over_time()"#;
+    let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    let suffix =
+        format!("/api/metrics/query_range?q={encoded}&{query_range}&step=30s&exemplars=100");
+    let upstream =
+        get_json_until_positive_metric_total(client, &format!("{oracle}{suffix}"), None).await?;
+    let actual = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await?;
+    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
+        || std::env::temp_dir().join("krabka-tempo-exemplar"),
+        std::path::PathBuf::from,
+    );
+    let expected_exemplar = json!({"labels": [
+        {"key": "trace:id", "value": {"stringValue": TRACE_ID_HEX.trim_start_matches('0')}},
+        {"key": "name", "value": {"stringValue": "SELECT cart"}},
+    ], "value": 1.0, "timestampMs": (trace_start_secs * 1000 + 100).to_string()});
+    let result = metric_series_match(&upstream, &actual).and_then(|()| {
+        for response in [&upstream, &actual] {
+            let exemplars = response["series"][0]["exemplars"].as_array().ok_or("singleton exemplar missing")?;
+            if exemplars.len() != 1 || sorted_metric_labels(&exemplars[0])? != sorted_metric_labels(&expected_exemplar)?
+                || metric_timestamp(&exemplars[0])? != i64::try_from(trace_start_secs * 1000 + 100)?
+                || metric_value(&exemplars[0])?.to_bits() != 1.0_f64.to_bits()
+            {
+                return Err(format!("singleton exemplar differs from fixture ledger: expected={expected_exemplar}, response={response}").into());
+            }
+        }
+        Ok(())
+    });
+    std::fs::create_dir_all(&output)?;
+    std::fs::write(
+        output.join("tempo-live-exemplar-conformance.json"),
+        serde_json::to_vec_pretty(
+            &json!({"cases":[{"stableid":"tempo-live-exemplar-singleton-count", "query": query, "request": {"range":query_range,"step":"30s","exemplars":100}, "upstream": upstream, "krabka": actual,
+            "independent_expected": expected_exemplar, "expected_trace_id": TRACE_ID_HEX, "expected_timestamp_ms": trace_start_secs * 1000 + 100,
+            "status": if result.is_ok() {"matched"} else {"mismatch"}, "error":result.as_ref().err().map(ToString::to_string)}]}),
+        )?,
+    )?;
+    result
 }
 
 #[tokio::test]
@@ -320,7 +748,9 @@ async fn real_tempo_and_krabka_accept_query_param_alias() -> TestResult {
     let trace_start_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)?
         .as_secs()
-        .saturating_sub(60);
+        .saturating_sub(180)
+        / 30
+        * 30;
     let query_start = trace_start_secs.saturating_sub(60);
     let query_end = trace_start_secs + 120;
     let query_range = format!("start={query_start}&end={query_end}");
@@ -336,8 +766,7 @@ async fn real_tempo_and_krabka_accept_query_param_alias() -> TestResult {
     .await?;
 
     // Identical query to the `q=` test, sent under the `query=` alias.
-    let metrics_query =
-        "%7B%20resource.service.name%20%3D%20%22checkout%22%20%7D%20%7C%20count_over_time()";
+    let metrics_query = "%7B%20resource.service.name%20%3D%20%22checkout%22%20%7D%20%7C%20count_over_time()%20with(exemplars=false)";
     let tempo_metrics = get_json_until_positive_metric_total(
         &client,
         &format!(
@@ -378,11 +807,13 @@ async fn real_tempo_and_krabka_match_traceql_metrics_by_labels() -> TestResult {
     let trace_start_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)?
         .as_secs()
-        .saturating_sub(60);
+        .saturating_sub(180)
+        / 30
+        * 30;
     let query_start = trace_start_secs.saturating_sub(60);
     let query_end = trace_start_secs + 120;
     let query_range = format!("start={query_start}&end={query_end}");
-    let otlp_body = sample_otlp_body_at(trace_start_secs * 1_000_000_000);
+    let otlp_body = typed_grouping_otlp_body_at(trace_start_secs * 1_000_000_000);
     let krabka = start_krabka_pair(&otlp_body).await?;
 
     post_otlp(
@@ -397,7 +828,7 @@ async fn real_tempo_and_krabka_match_traceql_metrics_by_labels() -> TestResult {
     // trace; group by a resource- and a span-scoped attribute.
     let base = "%7B%20resource.service.name%20%3D%20%22checkout%22%20%7D";
     for by in ["resource.service.name", "span.http.method"] {
-        let metrics_query = format!("{base}%20%7C%20rate()%20by%20({by})");
+        let metrics_query = format!("{base}%20%7C%20rate()%20by%20({by})%20with(exemplars=false)");
         let tempo_metrics = get_json_until_positive_metric_total(
             &client,
             &format!(
@@ -423,7 +854,9 @@ async fn real_tempo_and_krabka_match_traceql_metrics_by_labels() -> TestResult {
             metric_prom_labels_list(&krabka_metrics),
         );
         assert2::assert!(krabka_keys == tempo_keys);
+        assert_metric_totals_match(&tempo_metrics, &krabka_metrics);
     }
+    compare_live_typed_groups(&client, &tempo_query, &krabka.base_url, &query_range).await?;
     krabka.shutdown();
     Ok(())
 }
@@ -528,18 +961,7 @@ async fn grafana_accepts_tempo_datasource_pointing_at_krabka() -> TestResult {
         fetched.get("url").and_then(JsonValue::as_str) == Some(krabka.container_base_url.as_str())
     );
 
-    let echo = client
-        .get(format!(
-            "{grafana_base}/api/datasources/proxy/uid/{GRAFANA_TEMPO_DATASOURCE_UID}/api/echo"
-        ))
-        .basic_auth("admin", Some("admin"))
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
-    assert2::assert!(echo == "echo");
-
+    // Probe the datasource proxy with a seeded trace query from Tempo's API.
     let trace: JsonValue = client
         .get(format!(
             "{grafana_base}/api/datasources/proxy/uid/{GRAFANA_TEMPO_DATASOURCE_UID}/api/v2/traces/{TRACE_ID_HEX}?start=0&end=1"
@@ -812,7 +1234,10 @@ async fn start_krabka_pair_on(
         .clone();
     let store = Arc::new(TraceqlEngine::new(
         Arc::new(span_store_from_records(&records)),
-        EngineOpts::default(),
+        EngineOpts {
+            max_exemplars: 100,
+            ..EngineOpts::default()
+        },
     ));
     let app = authenticated(krabka_traces::querier::http::router(store));
     let listener = tokio::net::TcpListener::bind(format!("{bind_host}:0")).await?;
@@ -1011,6 +1436,138 @@ async fn get_trace_by_id(
     .await
 }
 
+async fn compare_generated_trace_selector(
+    client: &reqwest::Client,
+    oracle_base: &str,
+    krabka_base: &str,
+    query_range: &str,
+    expression: String,
+    expected: &BTreeMap<String, Vec<String>>,
+) -> TestResult<Option<String>> {
+    let query = format!("{{ {expression} }}");
+    let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    let suffix = format!("/api/search?q={encoded}&{query_range}&limit=10&spss=10");
+    // Return transport/protocol failures so the generator can archive them.
+    let upstream: JsonValue = client
+        .get(format!("{oracle_base}{suffix}"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let actual: JsonValue = client
+        .get(format!("{krabka_base}{suffix}"))
+        .header("x-scope-orgid", TENANT)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let upstream_ids = search_identities(&upstream)?;
+    let actual_ids = search_identities(&actual)?;
+    if upstream_ids != actual_ids || &upstream_ids != expected || &actual_ids != expected {
+        return Ok(Some(format!(
+            "{query}: expected {expected:?}, upstream {upstream_ids:?}, Krabka {actual_ids:?}"
+        )));
+    }
+    Ok(None)
+}
+
+async fn compare_generated_trace_rejection(
+    client: &reqwest::Client,
+    oracle_base: &str,
+    krabka_base: &str,
+    query_range: &str,
+    expression: String,
+    output: &std::path::Path,
+    observations: &Mutex<Vec<JsonValue>>,
+) -> TestResult<Option<String>> {
+    let query = format!("{{ {expression} }}");
+    let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    let mut responses = Vec::with_capacity(2);
+    let mut rejected = true;
+    for (implementation, base, tenant) in [
+        ("upstream", oracle_base, None),
+        ("krabka", krabka_base, Some(TENANT)),
+    ] {
+        let mut request = client.get(format!("{base}/api/search?q={encoded}&{query_range}"));
+        if let Some(tenant) = tenant {
+            request = request.header("x-scope-orgid", tenant);
+        }
+        let response = request.send().await?;
+        let status = response.status().as_u16();
+        let body = response.text().await?;
+        let classification = traceql_query_rejection_kind(status, &body);
+        rejected &= classification.is_some();
+        responses.push(
+            json!({"implementation": implementation, "http_status": status,
+            "classification": classification, "body": body}),
+        );
+    }
+    let mut observations = observations
+        .lock()
+        .map_err(|_| "rejection ledger poisoned")?;
+    observations.push(json!({"expression": expression, "query": query,
+        "expected_outcome": "query-rejection", "matched": rejected, "responses": responses}));
+    std::fs::create_dir_all(output)?;
+    std::fs::write(
+        output.join("traceql-rejection-responses.json"),
+        serde_json::to_vec_pretty(&*observations)?,
+    )?;
+    Ok((!rejected).then(|| format!("expected parser/type rejection for {query}: {responses:?}")))
+}
+
+fn traceql_query_rejection_kind(status: u16, body: &str) -> Option<&'static str> {
+    if status != 400 {
+        return None;
+    }
+    if let Ok(json) = serde_json::from_str::<JsonValue>(body)
+        && (json.get("traces").is_some()
+            || json.get("data").is_some()
+            || json["status"] == "success")
+    {
+        return None;
+    }
+    let message = body.to_ascii_lowercase();
+    if message.contains("parse error") || message.contains("syntax error") {
+        Some("parser-error")
+    } else if [
+        "requires string",
+        "invalid type",
+        "same type",
+        "not valid for types",
+        "illegal operation for the given types",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker))
+    {
+        Some("type-error")
+    } else {
+        None
+    }
+}
+
+#[test]
+fn traceql_rejection_comparator_rejects_success_and_unrelated_failures() {
+    check!(
+        traceql_query_rejection_kind(
+            400,
+            "invalid TraceQL query: illegal operation for the given types: .foo =~ 1"
+        ) == Some("type-error")
+    );
+    check!(
+        traceql_query_rejection_kind(400, "parse error: expected value") == Some("parser-error")
+    );
+    check!(
+        traceql_query_rejection_kind(400, "plan error: regex comparison requires string value")
+            == Some("type-error")
+    );
+    check!(traceql_query_rejection_kind(200, "parse error: expected value").is_none());
+    check!(traceql_query_rejection_kind(500, "parse error: expected value").is_none());
+    check!(traceql_query_rejection_kind(400, "missing query parameter q").is_none());
+    check!(traceql_query_rejection_kind(400, r#"{"traces":[],"message":"parse error"}"#).is_none());
+}
+
 async fn get_json(
     client: &reqwest::Client,
     url: &str,
@@ -1023,7 +1580,11 @@ async fn get_json(
     let resp = req.send().await?;
     let status = resp.status();
     let body = resp.bytes().await?;
-    assert2::assert!(status == ReqwestStatusCode::OK);
+    assert2::assert!(
+        status == ReqwestStatusCode::OK,
+        "{url}: {status}: {}",
+        String::from_utf8_lossy(&body)
+    );
     Ok(serde_json::from_slice(&body)?)
 }
 
@@ -1152,6 +1713,47 @@ fn assert_search_shape_matches(tempo: &JsonValue, krabka: &JsonValue) {
         krabka["traces"][0]["traceID"].as_str() == Some(TRACE_ID_HEX),
         "search shape mismatch; Tempo search response: {tempo}; Krabka search response: {krabka}"
     );
+    assert2::assert!(
+        search_identities(tempo).expect("upstream search identities")
+            == search_identities(krabka).expect("Krabka search identities"),
+        "selected trace/span identities differ: Tempo={tempo}; Krabka={krabka}"
+    );
+}
+
+fn canonical_hex_id(value: &str, width: usize) -> TestResult<String> {
+    if value.is_empty()
+        || value.len() > width
+        || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("invalid hexadecimal identity".into());
+    }
+    Ok(format!("{:0>width$}", value.to_ascii_lowercase()))
+}
+
+fn search_identities(response: &JsonValue) -> TestResult<BTreeMap<String, Vec<String>>> {
+    let Some(traces) = response.get("traces") else {
+        return Ok(BTreeMap::new());
+    };
+    let traces = traces.as_array().ok_or("invalid traces")?;
+    let mut identities = BTreeMap::new();
+    for trace in traces {
+        let trace_id = canonical_hex_id(trace["traceID"].as_str().ok_or("missing trace ID")?, 32)?;
+        let sets = trace["spanSets"].as_array().ok_or("missing span sets")?;
+        let mut spans = Vec::new();
+        for set in sets {
+            for span in set["spans"].as_array().ok_or("missing spans")? {
+                spans.push(canonical_hex_id(
+                    span["spanID"].as_str().ok_or("missing span ID")?,
+                    16,
+                )?);
+            }
+        }
+        spans.sort();
+        if identities.insert(trace_id.clone(), spans).is_some() {
+            return Err(format!("duplicate trace ID {trace_id}").into());
+        }
+    }
+    Ok(identities)
 }
 
 fn assert_search_contains_span_id(search: &JsonValue, span_id: &str) {
@@ -1166,14 +1768,265 @@ fn assert_search_contains_span_id(search: &JsonValue, span_id: &str) {
 }
 
 fn assert_search_empty(search: &JsonValue) {
-    assert2::assert!(search["traces"].as_array().is_some_and(Vec::is_empty));
+    assert2::assert!(search_identities(search).unwrap().is_empty());
 }
 
 fn assert_metric_totals_match(tempo: &JsonValue, krabka: &JsonValue) {
-    let tempo_total = metric_points_total(tempo);
-    let krabka_total = metric_points_total(krabka);
-    assert2::assert!(tempo_total > 0.0);
-    assert2::assert!((tempo_total - krabka_total).abs() < f64::EPSILON);
+    static CASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let result = metric_series_match(tempo, krabka);
+    if let Some(directory) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        let ordinal = CASE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::fs::write(std::path::PathBuf::from(directory).join(format!("tempo-metric-result-{ordinal}.json")),
+            serde_json::to_vec_pretty(&json!({"cases":[{"status":if result.is_ok() {"matched"} else {"mismatch"},
+                "upstream":tempo, "krabka":krabka, "error":result.as_ref().err().map(ToString::to_string),
+                "exemplars_enabled":false, "finite_tolerance":f64::EPSILON}]})).unwrap()).unwrap();
+    }
+    assert2::assert!(metric_points_total(tempo) > 0.0);
+    result
+        .unwrap_or_else(|error| panic!("metrics differ: {error}; Tempo={tempo}; Krabka={krabka}"));
+}
+
+fn sorted_metric_labels(item: &JsonValue) -> TestResult<Vec<JsonValue>> {
+    let mut labels = match item.get("labels") {
+        None => Vec::new(),
+        Some(labels) => labels.as_array().ok_or("invalid metric labels")?.clone(),
+    };
+    for label in &mut labels {
+        let value = label.get_mut("value").ok_or("metric label omitted value")?;
+        *value = canonical_metric_any_value(value)?;
+    }
+    labels.sort_by_cached_key(JsonValue::to_string);
+    Ok(labels)
+}
+
+fn canonical_metric_any_value(value: &JsonValue) -> TestResult<JsonValue> {
+    let mut canonical = value.clone();
+    if let Some(double) = value.get("doubleValue") {
+        // ProtoJSON permits both 1 and 1.0 for a double. Normalize only that
+        // field's numeric representation; retain its AnyValue discriminator.
+        canonical["doubleValue"] = match double {
+            JsonValue::Number(number) => {
+                json!(number.as_f64().ok_or("invalid double metric label")?)
+            }
+            JsonValue::String(number)
+                if matches!(number.as_str(), "NaN" | "Infinity" | "-Infinity") =>
+            {
+                double.clone()
+            }
+            _ => return Err("invalid double metric label".into()),
+        };
+    }
+    Ok(canonical)
+}
+
+fn metric_series_by_labels(response: &JsonValue) -> TestResult<BTreeMap<String, &JsonValue>> {
+    let series = response["series"]
+        .as_array()
+        .ok_or("missing metric series")?;
+    let mut indexed = BTreeMap::new();
+    for item in series {
+        if !item.is_object() {
+            return Err("invalid metric series".into());
+        }
+        let key = serde_json::to_string(&sorted_metric_labels(item)?)?;
+        if indexed.insert(key.clone(), item).is_some() {
+            return Err(format!("duplicate metric series {key}").into());
+        }
+    }
+    Ok(indexed)
+}
+
+fn metric_timestamp(item: &JsonValue) -> TestResult<i64> {
+    if !item.is_object() {
+        return Err("invalid metric sample or exemplar".into());
+    }
+    match item.get("timestampMs") {
+        None => Ok(0),
+        Some(JsonValue::String(timestamp)) => Ok(timestamp.parse()?),
+        Some(timestamp) => timestamp
+            .as_i64()
+            .ok_or_else(|| "invalid metric timestamp".into()),
+    }
+}
+
+fn metric_value(item: &JsonValue) -> TestResult<f64> {
+    match item.get("value") {
+        None => Ok(0.0),
+        Some(JsonValue::String(value)) => match value.as_str() {
+            "NaN" => Ok(f64::NAN),
+            "Infinity" => Ok(f64::INFINITY),
+            "-Infinity" => Ok(f64::NEG_INFINITY),
+            _ => Err(format!("invalid metric value {value}").into()),
+        },
+        Some(value) => value.as_f64().ok_or_else(|| "invalid metric value".into()),
+    }
+}
+
+fn metric_series_match(expected: &JsonValue, actual: &JsonValue) -> TestResult {
+    let expected = metric_series_by_labels(expected)?;
+    let actual = metric_series_by_labels(actual)?;
+    if !expected.keys().eq(actual.keys()) {
+        return Err("metric labels differ".into());
+    }
+    for (labels, expected_series) in expected {
+        let actual_series = actual[&labels];
+        for field in ["samples", "exemplars"] {
+            let expected_items = metric_items(expected_series, field)?;
+            let actual_items = metric_items(actual_series, field)?;
+            if expected_items.len() != actual_items.len() {
+                return Err(format!("{labels}/{field}: different lengths").into());
+            }
+            // Tempo guarantees oldest-first samples and exemplars; retain that order.
+            for (expected_item, actual_item) in expected_items.iter().zip(actual_items) {
+                if metric_timestamp(expected_item)? != metric_timestamp(actual_item)? {
+                    return Err(format!("{labels}/{field}: timestamp differs").into());
+                }
+                let expected_value = metric_value(expected_item)?;
+                let actual_value = metric_value(actual_item)?;
+                let equal = expected_value.to_bits() == actual_value.to_bits()
+                    || (expected_value.is_nan() && actual_value.is_nan())
+                    || (field == "samples"
+                        && expected_value.is_finite()
+                        && actual_value.is_finite()
+                        && (expected_value - actual_value).abs() < f64::EPSILON);
+                if !equal {
+                    return Err(format!("{labels}/{field}: value differs").into());
+                }
+                if field == "exemplars"
+                    && sorted_metric_labels(expected_item)? != sorted_metric_labels(actual_item)?
+                {
+                    return Err(format!("{labels}/{field}: exemplar identities differ").into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn metric_items<'a>(series: &'a JsonValue, field: &str) -> TestResult<&'a [JsonValue]> {
+    match series.get(field) {
+        None => Ok(&[]),
+        Some(items) => items
+            .as_array()
+            .map(Vec::as_slice)
+            .ok_or_else(|| format!("invalid {field}").into()),
+    }
+}
+
+#[test]
+fn metrics_comparator_canonicalizes_double_spelling_without_erasing_label_types() {
+    let expected = json!({"series":[{
+        "labels":[{"key":"span.mixed","value":{"doubleValue":1}}],
+        "samples":[{"timestampMs":"1","value":1}],
+        "exemplars":[{"timestampMs":"1","value":1,
+            "labels":[{"key":"span.mixed","value":{"doubleValue":1}}]}]
+    }]});
+    let mut equivalent = expected.clone();
+    equivalent["series"][0]["labels"][0]["value"] = json!({"doubleValue":1.0});
+    equivalent["series"][0]["exemplars"][0]["labels"][0]["value"] = json!({"doubleValue":1.0});
+    assert2::assert!(metric_series_match(&expected, &equivalent).is_ok());
+    for value in [
+        json!({"intValue":"1"}),
+        json!({"stringValue":"1"}),
+        json!({"boolValue":true}),
+        json!({"doubleValue":1.5}),
+        json!({"doubleValue":null}),
+    ] {
+        for path in [
+            "/series/0/labels/0/value",
+            "/series/0/exemplars/0/labels/0/value",
+        ] {
+            let mut wrong = equivalent.clone();
+            *wrong.pointer_mut(path).unwrap() = value.clone();
+            assert2::assert!(
+                metric_series_match(&expected, &wrong).is_err(),
+                "{path}: {value}"
+            );
+        }
+    }
+}
+
+#[test]
+fn metrics_comparator_rejects_labels_timestamps_cancelling_values_and_exemplars() {
+    let expected = json!({"series": [{
+        "labels": [{"key": "span.method", "value": {"stringValue": "GET"}}],
+        "samples": [{"timestampMs": "1000", "value": 1.0},
+                    {"timestampMs": "2000", "value": 4.0}],
+        "exemplars": [{"timestampMs": "1000", "value": 1.0,
+            "labels": [
+                {"key": "traceID", "value": {"stringValue": TRACE_ID_HEX}},
+                {"key": "spanID", "value": {"stringValue": CHILD_SPAN_ID_HEX}}
+            ]}]
+    }]});
+    metric_series_match(&expected, &expected).unwrap();
+    let mut reordered_labels = expected.clone();
+    reordered_labels["series"][0]["exemplars"][0]["labels"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
+    metric_series_match(&expected, &reordered_labels).unwrap();
+    for (path, replacement) in [
+        ("/series/0/labels/0/value/stringValue", json!("POST")),
+        ("/series/0/samples/0/timestampMs", json!("1001")),
+        (
+            "/series/0/exemplars/0/labels/0/value/stringValue",
+            json!("wrong-trace"),
+        ),
+        (
+            "/series/0/exemplars/0/labels/1/value/stringValue",
+            json!(ERROR_SPAN_ID_HEX),
+        ),
+        ("/series/0/exemplars/0/timestampMs", json!("1001")),
+        ("/series/0/exemplars/0/value", json!(2.0)),
+    ] {
+        let mut actual = expected.clone();
+        *actual.pointer_mut(path).expect("fixture path") = replacement;
+        assert2::assert!(metric_series_match(&expected, &actual).is_err(), "{path}");
+    }
+    let mut cancelling = expected.clone();
+    cancelling["series"][0]["samples"][0]["value"] = json!(2.0);
+    cancelling["series"][0]["samples"][1]["value"] = json!(3.0);
+    assert2::assert!(
+        metric_points_total(&expected).to_bits() == metric_points_total(&cancelling).to_bits()
+    );
+    assert2::assert!(metric_series_match(&expected, &cancelling).is_err());
+}
+
+#[test]
+fn metrics_comparator_preserves_nonfinite_values_and_time_order() {
+    let expected = json!({"series": [{"samples": [
+        {"timestampMs": "1000", "value": "NaN"},
+        {"timestampMs": "2000", "value": "Infinity"},
+        {"timestampMs": "3000", "value": "-Infinity"}
+    ]}]});
+    metric_series_match(&expected, &expected).unwrap();
+    let mut actual = expected.clone();
+    actual["series"][0]["samples"][0]["value"] = JsonValue::Null;
+    assert2::assert!(metric_series_match(&expected, &actual).is_err());
+    actual = expected.clone();
+    actual["series"][0]["samples"][1]["value"] = json!("-Infinity");
+    assert2::assert!(metric_series_match(&expected, &actual).is_err());
+    actual = expected.clone();
+    actual["series"][0]["samples"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
+    assert2::assert!(metric_series_match(&expected, &actual).is_err());
+}
+
+#[test]
+fn search_comparator_rejects_wrong_trace_and_span_selection() {
+    let expected = json!({"traces": [{"traceID": TRACE_ID_HEX,
+        "spanSets": [{"spans": [{"spanID": CHILD_SPAN_ID_HEX}]}]}]});
+    let identities = search_identities(&expected).unwrap();
+    for (path, replacement) in [
+        ("/traces/0/traceID", "ffffffffffffffffffffffffffffffff"),
+        ("/traces/0/spanSets/0/spans/0/spanID", ERROR_SPAN_ID_HEX),
+    ] {
+        let mut actual = expected.clone();
+        *actual.pointer_mut(path).expect("fixture path") = json!(replacement);
+        assert2::assert!(search_identities(&actual).unwrap() != identities, "{path}");
+    }
 }
 
 /// The set of `series[].labels[].key` strings across a TraceQL-metrics
@@ -1212,22 +2065,13 @@ fn metric_prom_labels_list(resp: &JsonValue) -> Vec<String> {
 }
 
 fn metric_points_total(value: &JsonValue) -> f64 {
-    let points_total: f64 = value["series"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|series| series["points"].as_array().into_iter().flatten())
-        .filter_map(|point| point.as_array().and_then(|items| items.get(1)))
-        .filter_map(JsonValue::as_f64)
-        .sum();
-    let samples_total: f64 = value["series"]
+    value["series"]
         .as_array()
         .into_iter()
         .flatten()
         .flat_map(|series| series["samples"].as_array().into_iter().flatten())
         .filter_map(|sample| sample["value"].as_f64())
-        .sum();
-    points_total + samples_total
+        .sum()
 }
 
 fn assert_required_tag_names_match(tempo: &JsonValue, krabka: &JsonValue) {
@@ -1345,6 +2189,60 @@ fn sample_otlp_body_at(start_ns: u64) -> Vec<u8> {
     .encode_to_vec()
 }
 
+fn forest_otlp_fixture() -> TracesData {
+    let spans = [
+        (10_u8, 0_u8, "ancestor1", "ancestor"),
+        (11, 10, "descendant1a", "descendant"),
+        (12, 10, "descendant1b", "descendant"),
+        (20, 0, "ancestor2", "ancestor"),
+        (21, 20, "descendant2a", "descendant"),
+        (22, 20, "descendant2b", "descendant"),
+        (23, 22, "descendant2bb", "descendant"),
+        (30, 99, "partial", "disconnected"),
+    ]
+    .into_iter()
+    .map(|(id, parent, name, kind)| {
+        let mut attributes = vec![string_kv("kind", kind)];
+        if id == 11 {
+            attributes.extend([string_kv("foo", "same"), string_kv("bar", "same")]);
+        }
+        if id == 12 {
+            attributes.push(string_kv("foo", "same"));
+            attributes.push(OtlpKeyValue {
+                key: "bar".into(),
+                value: Some(AnyValue {
+                    value: Some(Value::IntValue(5)),
+                }),
+                ..OtlpKeyValue::default()
+            });
+        }
+        OtlpSpan {
+            trace_id: vec![9; 16],
+            span_id: vec![id; 8],
+            parent_span_id: if parent == 0 { vec![] } else { vec![parent; 8] },
+            name: name.into(),
+            start_time_unix_nano: 1_000,
+            end_time_unix_nano: 500_000_000,
+            attributes,
+            ..OtlpSpan::default()
+        }
+    })
+    .collect();
+    TracesData {
+        resource_spans: vec![ResourceSpans {
+            resource: Some(Resource {
+                attributes: vec![string_kv("service.name", "forest")],
+                ..Resource::default()
+            }),
+            scope_spans: vec![ScopeSpans {
+                spans,
+                ..ScopeSpans::default()
+            }],
+            ..ResourceSpans::default()
+        }],
+    }
+}
+
 fn string_kv(key: &str, value: &str) -> OtlpKeyValue {
     OtlpKeyValue {
         key: key.into(),
@@ -1363,4 +2261,205 @@ fn authenticated(router: axum::Router) -> axum::Router {
         router,
         &krabka_observability::server_security::ServerSecurity::default(),
     )
+}
+
+fn typed_grouping_otlp_body_at(start_ns: u64) -> Vec<u8> {
+    let mut data = TracesData::decode(sample_otlp_body_at(start_ns).as_slice()).unwrap();
+    let spans = [
+        Some(Value::IntValue(1)),
+        Some(Value::IntValue(1)),
+        Some(Value::StringValue("1".into())),
+        Some(Value::DoubleValue(1.0)),
+        Some(Value::BoolValue(true)),
+        Some(Value::BoolValue(false)),
+        None,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, mixed)| {
+        let mut attributes = vec![OtlpKeyValue {
+            key: "present".into(),
+            value: Some(AnyValue {
+                value: Some(Value::IntValue(42)),
+            }),
+            ..OtlpKeyValue::default()
+        }];
+        if let Some(value) = mixed {
+            attributes.push(OtlpKeyValue {
+                key: "mixed".into(),
+                value: Some(AnyValue { value: Some(value) }),
+                ..OtlpKeyValue::default()
+            });
+        }
+        OtlpSpan {
+            trace_id: vec![0x44; 16],
+            span_id: vec![u8::try_from(index + 1).unwrap(); 8],
+            name: format!("typed-{index}"),
+            start_time_unix_nano: start_ns + 100_000_000,
+            end_time_unix_nano: start_ns + 101_000_000,
+            attributes,
+            ..OtlpSpan::default()
+        }
+    })
+    .collect();
+    data.resource_spans.push(ResourceSpans {
+        resource: Some(Resource {
+            attributes: vec![string_kv("service.name", "typed")],
+            ..Resource::default()
+        }),
+        scope_spans: vec![ScopeSpans {
+            spans,
+            ..ScopeSpans::default()
+        }],
+        ..ResourceSpans::default()
+    });
+    data.encode_to_vec()
+}
+
+async fn compare_live_typed_groups(
+    client: &reqwest::Client,
+    oracle: &str,
+    candidate: &str,
+    range: &str,
+) -> TestResult {
+    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
+        || std::env::temp_dir().join("krabka-tempo-typed-groups"),
+        std::path::PathBuf::from,
+    );
+    std::fs::create_dir_all(&output)?;
+    let mut cases = Vec::new();
+    let mut failures = Vec::new();
+    for (stableid, grouping) in [
+        ("tempo-live-group-heterogeneous-scalars", "span.mixed"),
+        (
+            "tempo-live-group-heterogeneous-and-missing",
+            "span.mixed,span.present",
+        ),
+    ] {
+        let query = format!(
+            "{{ resource.service.name = \"typed\" }} | count_over_time() by ({grouping}) with(exemplars=false)"
+        );
+        let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+        let suffix = format!("/api/metrics/query_range?q={encoded}&{range}&step=30s");
+        let upstream =
+            get_json_until_positive_metric_total(client, &format!("{oracle}{suffix}"), None)
+                .await?;
+        let actual = get_json(client, &format!("{candidate}{suffix}"), Some(TENANT)).await?;
+        let independent = typed_group_expectation(grouping);
+        let result = metric_series_match(&upstream, &actual).and_then(|()| {
+            check_typed_group_ledger(&upstream, grouping, &independent)?;
+            check_typed_group_ledger(&actual, grouping, &independent)
+        });
+        if let Err(error) = &result {
+            failures.push(format!("{stableid}: {error}"));
+        }
+        cases.push(json!({"stableid":stableid,"query":query,"request":{"range":range,"step":"30s","exemplars":false},"independent_expected":independent,"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
+        std::fs::write(
+            output.join("tempo-typed-group-conformance.json"),
+            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
+        )?;
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; ").into())
+    }
+}
+
+fn typed_group_expectation(grouping: &str) -> JsonValue {
+    let mut mixed = vec![
+        json!({"intValue":"1"}),
+        json!({"stringValue":"1"}),
+        json!({"doubleValue":1.0}),
+        json!({"boolValue":true}),
+        json!({"boolValue":false}),
+    ];
+    if grouping == "span.mixed" {
+        mixed.push(json!({"stringValue":"nil"}));
+    }
+    let mut expected = json!({"group_count":6,"total":7,"mixed_values":mixed,"int_one_count":2});
+    if grouping != "span.mixed" {
+        expected["present"] = json!({"intValue":"42"});
+    }
+    expected
+}
+
+fn check_typed_group_ledger(
+    response: &JsonValue,
+    grouping: &str,
+    expected: &JsonValue,
+) -> TestResult {
+    let groups = response["series"]
+        .as_array()
+        .ok_or("response omitted typed groups")?;
+    let observed = groups
+        .iter()
+        .flat_map(|series| series["labels"].as_array().into_iter().flatten())
+        .filter(|label| label["key"] == "span.mixed")
+        .map(|label| canonical_metric_any_value(&label["value"]).map(|value| value.to_string()))
+        .collect::<TestResult<BTreeSet<_>>>()?;
+    let values = expected["mixed_values"]
+        .as_array()
+        .ok_or("expected label ledger")?
+        .iter()
+        .map(|value| canonical_metric_any_value(value).map(|value| value.to_string()))
+        .collect::<TestResult<BTreeSet<_>>>()?;
+    if groups.len() != 6
+        || observed != values
+        || metric_points_total(response).to_bits() != 7.0_f64.to_bits()
+    {
+        return Err(format!(
+            "typed group independent ledger differs: expected={expected}, response={response}"
+        )
+        .into());
+    }
+    for series in groups {
+        let labels = series["labels"].as_array().ok_or("missing group labels")?;
+        if grouping != "span.mixed"
+            && !labels.iter().any(|label| {
+                label["key"] == "span.present" && label["value"] == expected["present"]
+            })
+        {
+            return Err("composition group lost typed int42 label".into());
+        }
+        let count = if labels
+            .iter()
+            .any(|label| label["key"] == "span.mixed" && label["value"] == json!({"intValue":"1"}))
+        {
+            2.0_f64
+        } else {
+            1.0_f64
+        };
+        let total = metric_points_total(&json!({"series":[series]}));
+        if total.to_bits() != count.to_bits() {
+            return Err(format!("typed per-group count differs: {series}").into());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn typed_group_ledger_rejects_type_coercion_with_unchanged_counts() {
+    let expected = typed_group_expectation("span.mixed");
+    let groups = expected["mixed_values"].as_array().unwrap().iter().map(|value| {
+        let count = if value == &json!({"intValue":"1"}) { 2.0 } else { 1.0 };
+        json!({"labels":[{"key":"span.mixed","value":value}],"samples":[{"timestampMs":"1","value":count}]})
+    }).collect::<Vec<_>>();
+    let correct = json!({"series":groups});
+    assert2::assert!(check_typed_group_ledger(&correct, "span.mixed", &expected).is_ok());
+    let mut equivalent = correct.clone();
+    equivalent["series"][2]["labels"][0]["value"] = json!({"doubleValue":1});
+    assert2::assert!(check_typed_group_ledger(&equivalent, "span.mixed", &expected).is_ok());
+    for (group, replacement) in [
+        (0, json!({"stringValue":"1"})),
+        (1, json!({"doubleValue":1})),
+        (2, json!({"intValue":"1"})),
+        (3, json!({"intValue":"1"})),
+        (4, json!({"boolValue":true})),
+    ] {
+        let mut conflated = equivalent.clone();
+        conflated["series"][group]["labels"][0]["value"] = replacement;
+        assert2::assert!(metric_points_total(&conflated).to_bits() == 7.0_f64.to_bits());
+        assert2::assert!(check_typed_group_ledger(&conflated, "span.mixed", &expected).is_err());
+    }
 }

@@ -1,0 +1,1 @@
+count(limit_ratio(0.5, http_requests) and http_requests) >= bool (4-1)

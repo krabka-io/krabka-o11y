@@ -49,5 +49,5 @@ pub(crate) async fn created_timestamp_survives_cold_and_hot_merge() {
     let SampleValue::Float(value) = &samples[0].value else {
         panic!("expected float");
     };
-    assert2::assert!((*value - 10.0).abs() < 1e-9);
+    assert2::assert!((*value - 40.0 / 3.0).abs() < 1e-9);
 }

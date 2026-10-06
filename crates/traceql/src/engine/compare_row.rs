@@ -45,15 +45,21 @@ pub(crate) fn compare_row(batch: &RecordBatch, row: usize, ts: UnixNano) -> Resu
     // attrs are stored as `attr.__event.<k>` / `attr.__link.<k>` columns; they
     // belong to a child scope the per-span span distribution must not surface
     // as `span.__event.<k>` / `span.__link.<k>`, so drop them here.
+    let packed_attrs = block_row_scoped_attrs(batch, row)?;
     for (key, value) in row_attrs(batch, row)? {
-        if key.starts_with(EVENT_ATTR_PREFIX) || key.starts_with(LINK_ATTR_PREFIX) {
+        if key.starts_with(EVENT_ATTR_PREFIX)
+            || key.starts_with(LINK_ATTR_PREFIX)
+            || packed_attrs
+                .iter()
+                .any(|(packed_key, _)| packed_key == &key)
+        {
             continue;
         }
         push_scoped_attr(&mut attrs, "span", &key, &value);
         raw_span_attrs.push((key, value));
     }
     // Block attribute-list columns carry the remaining span + resource attrs.
-    for (key, value) in block_row_scoped_attrs(batch, row)? {
+    for (key, value) in packed_attrs {
         if let Some(stripped) = key.strip_prefix(RESOURCE_ATTR_PREFIX) {
             // The per-span `__resource.service.name` block attr would
             // double-count `resource.service.name`, which the rest of the

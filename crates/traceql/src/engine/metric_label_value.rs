@@ -7,7 +7,7 @@ pub(crate) fn metric_label_value(batch: &RecordBatch, column: &str, row: usize) 
         .column_by_name(column)
         .ok_or_else(|| TraceqlError::Exec(format!("missing column {column}")))?;
     if array.is_null(row) {
-        return Ok(String::new());
+        return Ok("nil".to_owned());
     }
     match array.data_type() {
         DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View => {

@@ -1,6 +1,7 @@
 use super::{
     ComparisonOp, MetricBinarySetOp, MetricQuery, MetricScalarArithmeticOp, MetricVectorMatching,
-    Quoted, StreamQuery, arithmetic_text, comparison_text, fmt, format_matching, set_text,
+    Quoted, StreamQuery, VectorAggregation, arithmetic_text, comparison_text, fmt, format_matching,
+    set_text,
 };
 
 /// A recursively composable `LogQL` expression.
@@ -12,6 +13,11 @@ pub enum LogqlExpr {
     },
     Metric {
         query: MetricQuery,
+        source: String,
+    },
+    Aggregation {
+        expr: Box<LogqlExpr>,
+        aggregation: VectorAggregation,
         source: String,
     },
     Scalar(String),
@@ -127,7 +133,10 @@ impl LogqlExpr {
             write!(f, "(")?;
         }
         match self {
-            Self::Stream { source, .. } | Self::Metric { source, .. } | Self::Scalar(source) => {
+            Self::Stream { source, .. }
+            | Self::Metric { source, .. }
+            | Self::Aggregation { source, .. }
+            | Self::Scalar(source) => {
                 write!(f, "{}", source.trim())?;
             }
             Self::Vector(expr) => {

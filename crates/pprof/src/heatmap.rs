@@ -65,5 +65,5 @@ mod value_bounds;
 pub use bin_heatmap::bin_heatmap;
 use bucket_index::bucket_index;
 pub use heatmap_type::Heatmap;
-pub use labeled_heatmap::LabeledHeatmap;
+pub use labeled_heatmap::{LabeledHeatmap, LabeledHeatmapPoints};
 use value_bounds::value_bounds;

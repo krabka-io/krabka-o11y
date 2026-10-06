@@ -16,5 +16,7 @@ pub(crate) async fn conformance_corpus_runs_green_through_planner() {
     let report = run_corpus_dir(corpus_dir()).await;
     // Sanity: the corpus actually ran (no path/setup error swallowed the run).
     assert2::assert!(!report.files.is_empty());
-    assert2::assert!(report.files.iter().all(|file| file.passed));
+    for file in &report.files {
+        assert2::assert!(file.passed, "{}: {:?}", file.name, file.error);
+    }
 }

@@ -11,7 +11,7 @@
 mod lifecycle_store;
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fmt::Write as _,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -20,7 +20,7 @@ use std::{
 use assert2::check;
 use futures::StreamExt as _;
 use krabka_blockstore::{
-    BlockDeletionReport, BlockLevel, BlockTimestampUnit, BlockWriter, CompactionPolicy,
+    BlockDeletionReport, BlockLevel, BlockStore, BlockTimestampUnit, BlockWriter, CompactionPolicy,
     DEFAULT_BLOCK_SWEEP_GRACE, ExpiredBlock, OrphanSweepStats, TraceIndex, read_block,
 };
 use krabka_traces::{
@@ -31,6 +31,7 @@ use krabka_traces::{
     },
     ids::UnixNano,
     limits::OverridesProvider,
+    querier::store::KrabkaSpanStore,
 };
 use krabka_units::{Time, convert::TimeExt, days, hours};
 use object_store::{
@@ -604,4 +605,159 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
             LifecycleStep::OrphanReconciliation,
         ])
         .await;
+}
+
+/// Query the real cold reader, including disjoint scan jobs, throughout the
+/// publication/deletion lifecycle. Expectations come from the original spans.
+#[tokio::test]
+async fn typed_queries_survive_compaction_deletion_and_snapshot_reload() {
+    const SNAPSHOT: &str = "index/query-lifecycle.json";
+    let objects: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let writer = BlockWriter::new(objects.clone());
+    let mut index = TraceIndex::new();
+    for (tenant, trace, foo, bar, offset) in [
+        ("tenant-a", 1, 10, 10, 10),
+        ("tenant-a", 2, 20, 20, 20),
+        ("tenant-a", 3, 30, 31, 30),
+        // Same trace and span identities, but a different tenant.
+        ("tenant-b", 1, 10, 10, 40),
+    ] {
+        let mut record = span_record(tenant, trace, NOW_NS);
+        record.span.span_attrs = vec![
+            KeyValue {
+                key: "foo".into(),
+                value: AttrValue::Int(foo),
+            },
+            KeyValue {
+                key: "bar".into(),
+                value: AttrValue::Int(bar),
+            },
+        ];
+        build_blocks(&writer, &mut index, tenant, 7, &[record], (offset, offset))
+            .await
+            .expect("independent input block");
+    }
+    index
+        .save_latest_snapshot(&objects, SNAPSHOT)
+        .await
+        .unwrap();
+    check_lifecycle_queries(objects.clone(), &index).await;
+
+    let pass = compact_once(objects.clone(), &writer, &mut index, "", wide_policy())
+        .await
+        .expect("compact the three tenant-a blocks");
+    check!(pass.retired_inputs.len() == 3);
+    index
+        .save_latest_snapshot(&objects, SNAPSHOT)
+        .await
+        .unwrap();
+    // Retired inputs still exist here: overlap must not double-count them.
+    check_lifecycle_queries(objects.clone(), &index).await;
+    let deletion = delete_trace_blocks(&objects, &pass.retired_inputs).await;
+    check!(deletion.blocks_deleted == 3);
+    check_lifecycle_queries(objects.clone(), &index).await;
+    let reloaded = TraceIndex::load_latest_snapshot(&objects, SNAPSHOT)
+        .await
+        .unwrap();
+    check_lifecycle_queries(objects, &reloaded).await;
+}
+
+async fn check_lifecycle_queries(objects: Arc<dyn ObjectStore>, index: &TraceIndex) {
+    use krabka_traceql::{EngineOpts, ScanJob, ScanOptions, TraceMetricSeries, TraceqlEngine};
+    let snapshot = TraceIndex::load_latest_snapshot(&objects, "index/query-lifecycle.json")
+        .await
+        .expect("published query index");
+    let reader = Arc::new(KrabkaSpanStore::new(
+        Arc::new(BlockStore::new(
+            objects,
+            url::Url::parse("memory:///").unwrap(),
+        )),
+        Arc::new(arc_swap::ArcSwap::from_pointee(snapshot)),
+        None,
+    ));
+    let engine = TraceqlEngine::new(reader, EngineOpts::default());
+    let response = engine
+        .search_with_spss("tenant-a", "{ .foo = .bar }", NOW_NS, NOW_NS + 10, 10, 10)
+        .await
+        .expect("typed cold query");
+    let identities = response
+        .traces
+        .iter()
+        .flat_map(|trace| {
+            trace.span_sets.iter().flat_map(move |set| {
+                set.spans
+                    .iter()
+                    .map(move |span| (trace.trace_id, span.span_id))
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    check!(identities == BTreeSet::from([([1; 16], [1; 8]), ([2; 16], [2; 8])]));
+    for (query, count) in [
+        ("{} | count_over_time()", 3.0),
+        ("{ .foo = .bar } | count_over_time()", 2.0),
+    ] {
+        let response = engine
+            .query_range("tenant-a", query, NOW_NS, NOW_NS + 10, 10)
+            .await
+            .expect("cold metric query");
+        check!(
+            response.series
+                == vec![TraceMetricSeries {
+                    label_types: BTreeMap::default(),
+                    labels: Vec::new(),
+                    points: vec![(NOW_NS, count), (NOW_NS + 10, 0.0)],
+                    exemplars: Vec::new(),
+                }]
+        );
+        // Each fixture block is one row group. Execute the actual predicate on
+        // each job and merge additive bucket values, including the other tenant's
+        // block as a negative control for job-level tenant authorization.
+        let mut sharded = [0.0_f64; 2];
+        for key in indexed_block_keys(index) {
+            let response = engine
+                .query_range_with_options(
+                    "tenant-a",
+                    query,
+                    NOW_NS,
+                    NOW_NS + 10,
+                    10,
+                    ScanOptions {
+                        job: Some(ScanJob {
+                            object_key: key,
+                            row_group_start: 0,
+                            row_group_end: 1,
+                        }),
+                        ..ScanOptions::default()
+                    },
+                )
+                .await
+                .expect("independent cold scan job");
+            check!(response.series.len() == 1);
+            check!(response.series[0].points.len() == 2);
+            for (slot, (timestamp, value)) in response.series[0].points.iter().enumerate() {
+                check!(*timestamp == NOW_NS + i64::try_from(slot).unwrap() * 10);
+                sharded[slot] += value;
+            }
+        }
+        check!(sharded.map(f64::to_bits) == [count, 0.0].map(f64::to_bits));
+    }
+    let response = engine
+        .query_range(
+            "tenant-a",
+            "{ .foo = .bar } | sum_over_time(duration)",
+            NOW_NS,
+            NOW_NS + 10,
+            10,
+        )
+        .await
+        .expect("typed numeric cold metric");
+    check!(
+        response.series
+            == vec![TraceMetricSeries {
+                label_types: BTreeMap::default(),
+                labels: Vec::new(),
+                points: vec![(NOW_NS, 10e-9)],
+                exemplars: Vec::new(),
+            }]
+    );
 }

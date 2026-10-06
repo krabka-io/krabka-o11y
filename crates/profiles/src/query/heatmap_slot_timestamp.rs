@@ -1,15 +1,18 @@
 pub(crate) fn heatmap_slot_timestamp(
     start_ms: i64,
     end_ms: i64,
-    time_buckets: usize,
+    step_ms: i64,
     timestamp: i64,
 ) -> Option<i64> {
-    if timestamp < start_ms || timestamp >= end_ms || time_buckets == 0 {
+    if start_ms >= end_ms
+        || step_ms <= 0
+        || timestamp < start_ms.saturating_sub(step_ms)
+        || timestamp > end_ms
+    {
         return None;
     }
-    let time_span = i128::from(end_ms - start_ms);
-    let raw = i128::from(timestamp - start_ms) * i128::try_from(time_buckets).ok()? / time_span;
-    let bucket = i64::try_from(raw).ok()?;
-    let step_ms = (end_ms - start_ms) / i64::try_from(time_buckets).ok()?;
-    Some(start_ms + (bucket + 1) * step_ms)
+    let delta = (i128::from(timestamp) - i128::from(start_ms)).max(0);
+    let rounded = i128::from(start_ms)
+        + (delta + i128::from(step_ms) - 1) / i128::from(step_ms) * i128::from(step_ms);
+    i64::try_from(rounded).ok()
 }

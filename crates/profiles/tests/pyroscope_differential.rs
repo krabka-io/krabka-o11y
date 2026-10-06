@@ -14,6 +14,7 @@ use std::{
 
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use flate2::{Compression, write::GzEncoder};
+use generated_differential::{LabelMatcher, MatchOp, TypedConstructor, TypedExpr};
 use krabka_blockstore::TenantPolicy;
 use krabka_observability::server_security::ServerSecurity;
 use krabka_pprof::{PprofProfile, proto};
@@ -27,12 +28,16 @@ use krabka_profiles::{
 };
 use reqwest::StatusCode;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use testcontainers::{
     GenericImage, ImageExt,
     core::{Host, IntoContainerPort, WaitFor},
     runners::AsyncRunner,
 };
 use tokio::sync::oneshot;
+
+#[path = "../../metrics-service/tests/support/generated_differential.rs"]
+mod generated_differential;
 
 const TENANT: &str = "tenant-a";
 /// Pyroscope HTTP port inside the container.
@@ -137,10 +142,22 @@ async fn official_profilecli_uploads_elf_through_public_debuginfo_api() -> TestR
 #[ignore = "requires Docker and the mirror.gcr.io/grafana/pyroscope image"]
 async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestResult {
     let client = reqwest::Client::new();
-    let pyroscope = start_pyroscope().await?;
+    // Pin the storage architecture for the query-start bucket contract. The
+    // auto migration router rewrites Start at its metastore split.
+    // https://github.com/grafana/pyroscope/blob/7aeaa0ff91e83538b3ff0d09bfefb168bddc022d/pkg/frontend/readpath/router.go#L115-L124
+    let pyroscope =
+        start_pyroscope_with_options(&["-architecture.storage=v1", "-write-path=ingester"]).await?;
     let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
     wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
-    let gzipped_pprof = fetch_goroutine_pprof(&client, &pyroscope_base).await?;
+    let fixture_nanos = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())?
+        / 10_000_000_000
+        * 10_000_000_000
+        - 60_000_000_000;
+    let fixture_timestamp = fixture_nanos / 1_000_000;
+    let gzipped_pprof = timestamp_goroutine_profile(
+        &fetch_goroutine_pprof(&client, &pyroscope_base).await?,
+        fixture_nanos,
+    )?;
 
     let sink = CapturingSink::default();
     let store = WalTailProfileStore::new();
@@ -199,11 +216,41 @@ async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestRe
     assert_profile_types_match(&client, &pyroscope_base, &krabka.querier_base).await?;
     assert_label_names_match(&client, &pyroscope_base, &krabka.querier_base).await?;
     assert_label_values_match(&client, &pyroscope_base, &krabka.querier_base, "env").await?;
-    assert_select_merge_stacktraces_match(&client, &pyroscope_base, &krabka.querier_base).await?;
-    assert_select_merge_pprof_match(&client, &pyroscope_base, &krabka.querier_base).await?;
-    assert_async_request_contract(&client, &pyroscope_base, &krabka.querier_base).await?;
-    assert_select_series_match(&client, &pyroscope_base, &krabka.querier_base).await?;
-    assert_diff_match(&client, &pyroscope_base, &krabka.querier_base).await?;
+    assert_select_merge_stacktraces_match(
+        &client,
+        &pyroscope_base,
+        &krabka.querier_base,
+        fixture_timestamp,
+    )
+    .await?;
+    assert_select_merge_pprof_match(
+        &client,
+        &pyroscope_base,
+        &krabka.querier_base,
+        fixture_timestamp,
+    )
+    .await?;
+    assert_async_request_contract(
+        &client,
+        &pyroscope_base,
+        &krabka.querier_base,
+        fixture_timestamp,
+    )
+    .await?;
+    assert_select_series_match(
+        &client,
+        &pyroscope_base,
+        &krabka.querier_base,
+        fixture_timestamp,
+    )
+    .await?;
+    assert_diff_match(
+        &client,
+        &pyroscope_base,
+        &krabka.querier_base,
+        fixture_timestamp,
+    )
+    .await?;
 
     assert_profile_types_contain(&client, &krabka.querier_base, Some(TENANT)).await?;
     assert_label_names_contain(&client, &krabka.querier_base, Some(TENANT)).await?;
@@ -833,6 +880,12 @@ async fn grafana_accepts_pyroscope_datasource_pointing_at_krabka() -> TestResult
 }
 
 async fn start_pyroscope() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
+    start_pyroscope_with_options(&[]).await
+}
+
+async fn start_pyroscope_with_options(
+    options: &[&str],
+) -> TestResult<testcontainers::ContainerAsync<GenericImage>> {
     // No default. //bazel/defs.bzl sets this from //bazel/images/images.bzl,
     // the same map that decides what `docker load` tags. A default here would
     // be a second copy of that decision, and when the two disagreed
@@ -848,6 +901,10 @@ async fn start_pyroscope() -> TestResult<testcontainers::ContainerAsync<GenericI
         GenericImage::new("mirror.gcr.io/grafana/pyroscope".to_string(), tag)
             .with_exposed_port(PYROSCOPE_HTTP_PORT.tcp())
             .with_wait_for(WaitFor::seconds(3))
+            .with_cmd(
+                std::iter::once("-config.file=/etc/pyroscope/config.yaml")
+                    .chain(options.iter().copied()),
+            )
             .start(),
     )
     .await??)
@@ -904,6 +961,29 @@ async fn start_krabka_pair(
     sink: CapturingSink,
     store: WalTailProfileStore,
 ) -> TestResult<KrabkaPair> {
+    start_krabka_pair_with_architecture(sink, store, query::PyroscopeQueryArchitecture::V1).await
+}
+
+async fn start_krabka_pair_with_architecture(
+    sink: CapturingSink,
+    store: WalTailProfileStore,
+    architecture: query::PyroscopeQueryArchitecture,
+) -> TestResult<KrabkaPair> {
+    start_krabka_pair_with_query_options(
+        sink,
+        store,
+        architecture,
+        architecture == query::PyroscopeQueryArchitecture::V2,
+    )
+    .await
+}
+
+async fn start_krabka_pair_with_query_options(
+    sink: CapturingSink,
+    store: WalTailProfileStore,
+    architecture: query::PyroscopeQueryArchitecture,
+    async_enabled: bool,
+) -> TestResult<KrabkaPair> {
     let (distributor_shutdown, distributor_rx) = oneshot::channel();
     let distributor_state = Arc::new(DistributorState {
         sink: Arc::new(sink),
@@ -931,13 +1011,17 @@ async fn start_krabka_pair(
     let (querier_shutdown, querier_rx) = oneshot::channel();
     // The differential / e2e corpus intentionally queries the full `[0, i64::MAX]`
     // range to compare against real Pyroscope, so disable the per-query range cap.
-    let querier_state = Arc::new(QuerierState::new_with_limits(
-        Arc::new(store),
-        krabka_profiles::limits::Limits {
-            max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
-            ..Default::default()
-        },
-    ));
+    let querier_state = Arc::new(
+        QuerierState::new_with_limits(
+            Arc::new(store),
+            krabka_profiles::limits::Limits {
+                max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
+                ..Default::default()
+            },
+        )
+        .with_query_architecture(architecture)
+        .with_async_queries_enabled(async_enabled),
+    );
     let querier_addr = query::serve(
         "127.0.0.1:0".parse()?,
         querier_state,
@@ -965,6 +1049,16 @@ async fn fetch_goroutine_pprof(client: &reqwest::Client, base: &str) -> TestResu
         .bytes()
         .await?
         .to_vec())
+}
+
+fn timestamp_goroutine_profile(compressed: &[u8], timestamp_nanos: i64) -> TestResult<Vec<u8>> {
+    use std::io::Read;
+
+    let mut bytes = Vec::new();
+    flate2::read::GzDecoder::new(compressed).read_to_end(&mut bytes)?;
+    let mut profile: proto::Profile = PprofProfile::decode(&bytes)?.into();
+    profile.time_nanos = timestamp_nanos;
+    gzip_bytes(&PprofProfile::from(profile).encode())
 }
 
 async fn post_push_profile(
@@ -1293,8 +1387,9 @@ async fn assert_select_series_match(
     client: &reqwest::Client,
     pyroscope_base: &str,
     krabka_base: &str,
+    fixture_timestamp: i64,
 ) -> TestResult {
-    let body = select_series_body();
+    let body = select_series_body(fixture_timestamp);
     let pyroscope = connect_json_until(
         client,
         pyroscope_base,
@@ -1396,8 +1491,9 @@ async fn assert_select_merge_stacktraces_match(
     client: &reqwest::Client,
     pyroscope_base: &str,
     krabka_base: &str,
+    fixture_timestamp: i64,
 ) -> TestResult {
-    let body = select_merge_stacktraces_body();
+    let body = select_merge_stacktraces_body(fixture_timestamp);
     let pyroscope = connect_json_until(
         client,
         pyroscope_base,
@@ -1432,8 +1528,9 @@ async fn assert_select_merge_pprof_match(
     client: &reqwest::Client,
     pyroscope_base: &str,
     krabka_base: &str,
+    fixture_timestamp: i64,
 ) -> TestResult {
-    let mut body = select_merge_stacktraces_body();
+    let mut body = select_merge_stacktraces_body(fixture_timestamp);
     body["format"] = json!("PROFILE_FORMAT_PPROF");
     let pyroscope = connect_json_until(
         client,
@@ -1496,8 +1593,9 @@ async fn assert_async_request_contract(
     client: &reqwest::Client,
     pyroscope_base: &str,
     krabka_base: &str,
+    fixture_timestamp: i64,
 ) -> TestResult {
-    let mut body = select_merge_stacktraces_body();
+    let mut body = select_merge_stacktraces_body(fixture_timestamp);
     body["async"] = json!({ "type": "ASYNC_QUERY_TYPE_FORCE" });
     let pyroscope = connect_json_until(
         client,
@@ -1517,27 +1615,24 @@ async fn assert_async_request_contract(
             .get("flamegraph")
             .is_some_and(|flamegraph| flamegraph_ticks(flamegraph) > 0)
     );
-    let response = client
-        .post(format!(
-            "{krabka_base}/querier.v1.QuerierService/SelectMergeStacktraces"
-        ))
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .header("x-scope-orgid", TENANT)
-        .json(&body)
-        .send()
-        .await?;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    let error: Value = response.json().await?;
+    let actual = connect_json(
+        client,
+        krabka_base,
+        Some(TENANT),
+        "SelectMergeStacktraces",
+        body,
+    )
+    .await?;
+    assert!(actual.get("async").is_none());
+    let expected: pb::querier::v1::FlameGraph =
+        serde_json::from_value(pyroscope["flamegraph"].clone())?;
+    let actual: pb::querier::v1::FlameGraph = serde_json::from_value(actual["flamegraph"].clone())?;
     assert_eq!(
-        error.get("code").and_then(Value::as_str),
-        Some("invalid_argument")
+        normalized_flamegraph_stacks(&actual)?,
+        normalized_flamegraph_stacks(&expected)?
     );
-    assert!(
-        error
-            .get("message")
-            .and_then(Value::as_str)
-            .is_some_and(|message| message.contains("async profile queries are not supported"))
-    );
+    assert_eq!(actual.total, expected.total);
+
     Ok(())
 }
 
@@ -1588,8 +1683,9 @@ async fn assert_diff_match(
     client: &reqwest::Client,
     pyroscope_base: &str,
     krabka_base: &str,
+    fixture_timestamp: i64,
 ) -> TestResult {
-    let body = diff_body();
+    let body = diff_body(fixture_timestamp);
     let pyroscope = connect_json_until(
         client,
         pyroscope_base,
@@ -1612,31 +1708,33 @@ async fn assert_diff_match(
     assert_diff_equal(&pyroscope, &krabka)
 }
 
-fn select_merge_stacktraces_body() -> Value {
+fn select_merge_stacktraces_body(fixture_timestamp: i64) -> Value {
     json!({
         "profileTypeID": PROFILE_TYPE,
         "labelSelector": SELECTOR,
-        "start": query_start_ms(),
-        "end": query_end_ms(),
+        "start": fixture_timestamp - 20_000,
+        "end": fixture_timestamp + 20_000,
         "maxNodes": 1024,
         "format": "PROFILE_FORMAT_FLAMEGRAPH",
     })
 }
 
-fn diff_body() -> Value {
-    let query = select_merge_stacktraces_body();
+fn diff_body(fixture_timestamp: i64) -> Value {
+    let query = select_merge_stacktraces_body(fixture_timestamp);
     json!({
         "left": query,
         "right": query,
     })
 }
 
-fn select_series_body() -> Value {
+fn select_series_body(fixture_timestamp: i64) -> Value {
+    // An explicit range prevents independent upstream request sanitization.
+    // The fractional-second start preserves evidence of bucket alignment.
     json!({
         "profileTypeID": PROFILE_TYPE,
         "labelSelector": SELECTOR,
-        "start": query_start_ms(),
-        "end": query_end_ms(),
+        "start": fixture_timestamp - 20_000 + 123,
+        "end": fixture_timestamp + 20_000,
         "groupBy": ["env"],
         "step": 10.0,
         "aggregation": "TIME_SERIES_AGGREGATION_TYPE_SUM",
@@ -1905,11 +2003,14 @@ fn assert_label_names_equal(expected: &Value, actual: &Value) -> TestResult {
 }
 
 fn assert_connect_flamegraph_equal(method: &str, expected: &Value, actual: &Value) -> TestResult {
-    assert_canonical_json_equal(
-        method,
-        canonical_connect_flamegraph(expected)?,
-        canonical_connect_flamegraph(actual)?,
-    )
+    let expected = canonical_connect_flamegraph(expected)?;
+    let actual = canonical_connect_flamegraph(actual)?;
+    // Names and bar values are indexed arrays: independently sorting them
+    // loses the association between a stack and its sample value.
+    if expected != actual {
+        return Err(format!("{method} mismatch: expected {expected}, got {actual}").into());
+    }
+    Ok(())
 }
 
 fn assert_select_series_equal(expected: &Value, actual: &Value) -> TestResult {
@@ -1921,21 +2022,55 @@ fn assert_select_series_equal(expected: &Value, actual: &Value) -> TestResult {
 }
 
 fn assert_diff_equal(expected: &Value, actual: &Value) -> TestResult {
-    assert_canonical_json_equal("Diff", canonical_diff(expected)?, canonical_diff(actual)?)
+    let expected = canonical_diff(expected)?;
+    let actual = canonical_diff(actual)?;
+    // Resolve indices and layout coordinates before sorting complete stack
+    // records. Independently sorting names or values loses their association.
+    if expected != actual {
+        return Err(format!("Diff mismatch: expected {expected}, got {actual}").into());
+    }
+    Ok(())
 }
 
 fn canonical_diff(value: &Value) -> TestResult<Value> {
     let flamegraph = value
         .get("flamegraph")
         .ok_or_else(|| format!("Diff response missing flamegraph object: {value}"))?;
-    flamegraph
+    let names = flamegraph
         .get("names")
         .and_then(Value::as_array)
-        .ok_or_else(|| format!("Diff flamegraph missing names array: {value}"))?;
-    flamegraph
+        .ok_or_else(|| format!("Diff flamegraph missing names array: {value}"))?
+        .iter()
+        .map(|name| name.as_str().ok_or("Diff name is not a string".into()))
+        .collect::<TestResult<Vec<_>>>()?;
+    let levels = flamegraph
         .get("levels")
         .and_then(Value::as_array)
-        .ok_or_else(|| format!("Diff flamegraph missing levels array: {value}"))?;
+        .ok_or_else(|| format!("Diff flamegraph missing levels array: {value}"))?
+        .iter()
+        .map(|level| {
+            let values = level
+                .get("values")
+                .and_then(Value::as_array)
+                .ok_or("Diff level missing values")?
+                .iter()
+                .map(|value| json_i64(value).ok_or("Diff bar value is not an integer".into()))
+                .collect::<TestResult<Vec<_>>>()?;
+            let (bars, remainder) = values.as_chunks::<7>();
+            if !remainder.is_empty()
+                || bars.iter().any(|bar| {
+                    usize::try_from(bar[6])
+                        .ok()
+                        .and_then(|index| names.get(index))
+                        .is_none()
+                })
+            {
+                return Err("Diff bar is malformed or references an invalid name".into());
+            }
+            Ok(values)
+        })
+        .collect::<TestResult<Vec<_>>>()?;
+    let bars = normalized_diff_bars(&names, &levels)?;
     let total = flamegraph
         .get("total")
         .and_then(json_i64)
@@ -1957,11 +2092,87 @@ fn canonical_diff(value: &Value) -> TestResult<Value> {
         .ok_or_else(|| format!("Diff flamegraph missing rightTicks: {value}"))?;
 
     Ok(json!({
+        "bars": bars,
         "total": total,
         "maxSelf": max_self,
         "leftTicks": left_ticks,
         "rightTicks": right_ticks,
     }))
+}
+
+/// Layout and name-table order are serialization choices. Resolve both side's
+/// delta coordinates to parent rectangles, then preserve every stack's paired
+/// totals/self values and duplicate entries in a sorted semantic record list.
+fn normalized_diff_bars(
+    names: &[&str],
+    levels: &[Vec<i64>],
+) -> TestResult<Vec<(Vec<String>, [i64; 4])>> {
+    let mut parents: Vec<(i64, i64, i64, i64, Vec<String>)> = Vec::new();
+    let mut records = Vec::new();
+    for (depth, values) in levels.iter().enumerate() {
+        let (bars, remainder) = values.as_chunks::<7>();
+        if !remainder.is_empty() || (depth == 0 && bars.len() != 1) {
+            return Err("Diff has malformed bars or no unique root".into());
+        }
+        let mut current = Vec::new();
+        let mut previous_left_end = 0_i64;
+        let mut previous_right_end = 0_i64;
+        for bar in bars {
+            let name = usize::try_from(bar[6])
+                .ok()
+                .and_then(|index| names.get(index))
+                .ok_or("Diff name index out of bounds")?;
+            if bar[1] < 0
+                || bar[2] < 0
+                || bar[2] > bar[1]
+                || bar[4] < 0
+                || bar[5] < 0
+                || bar[5] > bar[4]
+            {
+                return Err("Diff has a negative width/self value or self exceeds total".into());
+            }
+            let left = previous_left_end
+                .checked_add(bar[0])
+                .ok_or("Diff left offset overflow")?;
+            let left_end = left
+                .checked_add(bar[1])
+                .ok_or("Diff left extent overflow")?;
+            let right = previous_right_end
+                .checked_add(bar[3])
+                .ok_or("Diff right offset overflow")?;
+            let right_end = right
+                .checked_add(bar[4])
+                .ok_or("Diff right extent overflow")?;
+            if left < 0 || right < 0 {
+                return Err("Diff has a negative absolute offset".into());
+            }
+            let mut path = if depth == 0 {
+                if left != 0 || right != 0 {
+                    return Err("Diff root does not start at zero".into());
+                }
+                Vec::new()
+            } else {
+                let mut candidates = parents.iter().filter(|(l, le, r, re, _)| {
+                    *l <= left && left_end <= *le && *r <= right && right_end <= *re
+                });
+                let parent = candidates
+                    .next()
+                    .ok_or("Diff bar has no containing parent")?;
+                if candidates.next().is_some() {
+                    return Err("Diff bar has ambiguous containing parents".into());
+                }
+                parent.4.clone()
+            };
+            path.push((*name).to_string());
+            records.push((path.clone(), [bar[1], bar[2], bar[4], bar[5]]));
+            current.push((left, left_end, right, right_end, path));
+            previous_left_end = left_end;
+            previous_right_end = right_end;
+        }
+        parents = current;
+    }
+    records.sort();
+    Ok(records)
 }
 
 fn canonical_select_series(value: &Value) -> TestResult<Value> {
@@ -1990,11 +2201,12 @@ fn canonical_select_series(value: &Value) -> TestResult<Value> {
                 .ok_or_else(|| format!("SelectSeries series missing points array: {value}"))?
                 .iter()
                 .map(|point| {
-                    point
+                    let timestamp = point
                         .get("timestamp")
                         .and_then(json_i64)
                         .ok_or_else(|| format!("SelectSeries point missing timestamp: {value}"))?;
                     Ok(json!({
+                        "timestamp": timestamp,
                         "value": point_value(point),
                     }))
                 })
@@ -2392,6 +2604,91 @@ fn connect_diff_differential_rejects_tick_drift() {
 
     let err = assert_diff_equal(&expected, &actual).unwrap_err();
     assert!(err.to_string().contains("Diff mismatch"));
+    assert_diff_equal(&expected, &expected).unwrap();
+    let mut swapped_names = expected.clone();
+    swapped_names["flamegraph"]["names"] = json!(["main", "total"]);
+    assert!(assert_diff_equal(&expected, &swapped_names).is_err());
+    let mut swapped_index = expected.clone();
+    swapped_index["flamegraph"]["levels"][0]["values"][6] = json!(1);
+    assert!(assert_diff_equal(&expected, &swapped_index).is_err());
+    let mut swapped_values = expected.clone();
+    swapped_values["flamegraph"]["levels"][0]["values"] = json!([0, 0, 7, 0, 7, 0, 0]);
+    assert!(assert_diff_equal(&expected, &swapped_values).is_err());
+
+    let unequal = json!({"flamegraph": {"names": ["total", FUNC_WORK, FUNC_HOT],
+        "levels": [{"values": [0, 140, 0, 0, 28, 0, 0]},
+            {"values": [0, 140, 40, 0, 28, 8, 1]},
+            {"values": [40, 100, 100, 8, 20, 20, 2]}],
+        "total": 168, "maxSelf": 100, "leftTicks": 140, "rightTicks": 28}});
+    assert_eq!(
+        canonical_diff(&unequal).unwrap(),
+        populated_diff_expected(false)
+    );
+    let mut swapped_sides = unequal.clone();
+    swapped_sides["flamegraph"]["levels"] = json!([
+        {"values": [0, 28, 0, 0, 140, 0, 0]},
+        {"values": [0, 28, 8, 0, 140, 40, 1]},
+        {"values": [8, 20, 20, 40, 100, 100, 2]}]);
+    swapped_sides["flamegraph"]["leftTicks"] = json!(28);
+    swapped_sides["flamegraph"]["rightTicks"] = json!(140);
+    assert_eq!(
+        canonical_diff(&swapped_sides).unwrap(),
+        populated_diff_expected(true)
+    );
+    assert!(assert_diff_equal(&unequal, &swapped_sides).is_err());
+    let mut stale_sides = unequal.clone();
+    stale_sides["flamegraph"]["levels"] = swapped_sides["flamegraph"]["levels"].clone();
+    assert!(assert_diff_equal(&unequal, &stale_sides).is_err());
+}
+
+#[test]
+fn diff_comparison_resolves_layout_but_preserves_stack_value_associations() -> TestResult {
+    let expected = json!({"flamegraph": {
+        "names": ["total", "a", "b", "shared"],
+        "levels": [
+            {"values": [0, 10, 0, 0, 10, 0, 0]},
+            {"values": [0, 6, 2, 0, 6, 2, 1, 0, 4, 1, 0, 4, 1, 2]},
+            {"values": [2, 4, 4, 2, 4, 4, 3, 1, 3, 3, 1, 3, 3, 3]}],
+        "total": 20, "maxSelf": 4, "leftTicks": 10, "rightTicks": 10}});
+    let mut permuted = expected.clone();
+    permuted["flamegraph"]["names"] = json!(["total", "b", "shared", "a"]);
+    // Move b before a on both sides, update all name indices, and move each
+    // descendant with its parent. The shared leaf's parent remains observable.
+    permuted["flamegraph"]["levels"][1]["values"] =
+        json!([0, 4, 1, 0, 4, 1, 1, 0, 6, 2, 0, 6, 2, 3]);
+    permuted["flamegraph"]["levels"][2]["values"] =
+        json!([1, 3, 3, 1, 3, 3, 2, 2, 4, 4, 2, 4, 4, 2]);
+    assert_diff_equal(&expected, &permuted)?;
+
+    let mut swapped_names = expected.clone();
+    swapped_names["flamegraph"]["names"] = json!(["total", "b", "a", "shared"]);
+    assert2::assert!(assert_diff_equal(&expected, &swapped_names).is_err());
+    let mut corrupted_value = expected.clone();
+    corrupted_value["flamegraph"]["levels"][2]["values"][2] = json!(3);
+    assert2::assert!(assert_diff_equal(&expected, &corrupted_value).is_err());
+    let mut malformed = expected.clone();
+    malformed["flamegraph"]["levels"][1]["values"] = json!([0, 6, 2, 0, 6, 2]);
+    assert2::assert!(canonical_diff(&malformed).is_err());
+    let mut invalid_index = expected.clone();
+    invalid_index["flamegraph"]["levels"][1]["values"][6] = json!(999);
+    assert2::assert!(canonical_diff(&invalid_index).is_err());
+    let mut outside_parent = expected.clone();
+    outside_parent["flamegraph"]["levels"][2]["values"][0] = json!(11);
+    assert2::assert!(canonical_diff(&outside_parent).is_err());
+    let mut invalid_width = expected.clone();
+    invalid_width["flamegraph"]["levels"][1]["values"][1] = json!(-1);
+    assert2::assert!(canonical_diff(&invalid_width).is_err());
+
+    // Preserve multiplicity even when two identical zero-width bars share a
+    // path. Sorting whole records must not turn the result into a set.
+    let duplicate = json!({"flamegraph": {"names": ["total", "zero"],
+        "levels": [{"values": [0, 1, 1, 0, 1, 1, 0]},
+            {"values": [1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1]}],
+        "total": 2, "maxSelf": 1, "leftTicks": 1, "rightTicks": 1}});
+    let mut single = duplicate.clone();
+    single["flamegraph"]["levels"][1]["values"] = json!([1, 0, 0, 1, 0, 0, 1]);
+    assert2::assert!(assert_diff_equal(&duplicate, &single).is_err());
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -2670,18 +2967,22 @@ async fn grafana_renders_krabka_profiles_end_to_end() -> TestResult {
 /// holds the two known functions `main.work` and `main.hotloop`, so the
 /// flamegraph names are assertable.
 fn synthetic_cpu_pprof(time_nanos: i64) -> TestResult<Vec<u8>> {
+    synthetic_cpu_pprof_with_values(time_nanos, [100, 40])
+}
+
+fn synthetic_cpu_pprof_with_values(time_nanos: i64, values: [i64; 2]) -> TestResult<Vec<u8>> {
     // string_table: 0="" 1="cpu" 2="nanoseconds" 3=main.work 4=main.hotloop 5="app.go"
     let profile = proto::Profile {
         sample_type: vec![proto::ValueType { r#type: 1, unit: 2 }],
         sample: vec![
             proto::Sample {
                 location_id: vec![2, 1], // leaf-first: main.hotloop -> main.work
-                value: vec![100],
+                value: vec![values[0]],
                 label: Vec::new(),
             },
             proto::Sample {
                 location_id: vec![1], // main.work
-                value: vec![40],
+                value: vec![values[1]],
                 label: Vec::new(),
             },
         ],
@@ -2759,6 +3060,16 @@ async fn post_cpu_profile(
     tenant: Option<&str>,
     gzipped_pprof: &[u8],
 ) -> TestResult {
+    post_cpu_profile_with_id(client, base, tenant, gzipped_pprof, "krabka-grafana-e2e").await
+}
+
+async fn post_cpu_profile_with_id(
+    client: &reqwest::Client,
+    base: &str,
+    tenant: Option<&str>,
+    gzipped_pprof: &[u8],
+    profile_id: &str,
+) -> TestResult {
     let body = json!({
         "series": [{
             "labels": [
@@ -2768,7 +3079,7 @@ async fn post_cpu_profile(
             ],
             "samples": [{
                 "rawProfile": BASE64.encode(gzipped_pprof),
-                "ID": "krabka-grafana-e2e"
+                "ID": profile_id
             }]
         }]
     });
@@ -3766,6 +4077,1370 @@ async fn assert_otlp_series_labels_match(
 }
 
 const OTLP_PROTOBUF_SERVICE: &str = "krabkadiffotlp-protobuf";
+
+/// Exercise the two remaining v1 RPCs with linked, populated profiles, rather
+/// than accepting an empty-store response as semantic coverage. The pinned
+/// v1 querier explicitly does not implement `SelectHeatmap`; that capability
+/// boundary is checked below and requires a separate v2 oracle deployment.
+#[tokio::test]
+#[ignore = "requires Docker and the mirror.gcr.io/grafana/pyroscope image"]
+async fn real_pyroscope_span_profiles_and_query_analysis_match_krabka() -> TestResult {
+    let mut evidence = json!({
+        "suite": "pyroscope-populated-rpcs",
+        "status": "running",
+        "planned": 89,
+        "upstream": {
+            "source_revision": "7aeaa0ff91e83538b3ff0d09bfefb168bddc022d",
+            "image_tag": std::env::var("KRABKA_PYROSCOPE_IMAGE_TAG").ok(),
+            "image_id": std::env::var("KRABKA_PYROSCOPE_IMAGE_ID").ok(),
+            "query_analysis_series_enabled": true,
+            "storage": "v1",
+        },
+        "fixture": { "profiles": 4, "samples": 8, "linked_samples": 2,
+            "profile_type": OTLP_PROFILE_TYPE },
+        "oracle_capabilities": {"SelectHeatmap": {"status": "not-exercised", "expected": "unimplemented",
+            "semantic_comparison": false,
+            "source": "https://github.com/grafana/pyroscope/blob/7aeaa0ff91e83538b3ff0d09bfefb168bddc022d/pkg/querier/querier.go"}},
+        "cases": [],
+        "coverage_gaps": ["v2 SelectHeatmap values, groups and exemplars",
+            "all-RPC selector and time field matrix", "stack selectors",
+            "profile UUID selectors", "trace selectors", "format and maxNodes matrix",
+            "groupBy, aggregation, limit and exemplar matrix"],
+        "active_case": "oracle startup",
+    });
+    write_profile_rpc_evidence(&evidence)?;
+    let mut result = populated_profile_rpc_comparisons(&mut evidence).await;
+    let recorded = evidence["cases"]
+        .as_array()
+        .ok_or("profile evidence cases missing")?
+        .len();
+    if result.is_ok() && recorded != 89 {
+        result = Err(format!(
+            "populated RPC evidence incomplete: expected 89 cases, recorded {recorded}"
+        )
+        .into());
+    }
+    evidence["status"] = json!(if result.is_ok() { "passed" } else { "failed" });
+    if let Err(error) = &result {
+        evidence["error"] = json!(error.to_string());
+    }
+    write_profile_rpc_evidence(&evidence)?;
+    result
+}
+
+fn write_profile_rpc_evidence(evidence: &Value) -> TestResult {
+    if let Some(directory) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::create_dir_all(&directory)?;
+        std::fs::write(
+            directory.join("pyroscope-populated-rpcs.json"),
+            serde_json::to_vec_pretty(evidence)?,
+        )?;
+    }
+    Ok(())
+}
+
+fn record_profile_rpc_case(evidence: &mut Value, mut case: Value) -> TestResult {
+    if case.get("request").is_none()
+        && let Some(request) = evidence["active_case"].get("request")
+    {
+        case["request"] = request.clone();
+    }
+    let backend = case["backend"].as_str().unwrap_or("upstream");
+    let role = evidence["backend_roles"]
+        .get(backend)
+        .and_then(Value::as_str)
+        .unwrap_or(backend);
+    let name = case["name"].as_str().unwrap_or_else(|| {
+        if case["classification"] == "unsupported-oracle" {
+            "v1 unavailable"
+        } else if case["classification"] == "expected-divergence" {
+            "excluded time"
+        } else {
+            "unnamed"
+        }
+    });
+    case["id"] = json!(format!(
+        "{}/{}/{}/{}",
+        case["method"].as_str().unwrap_or("unknown"),
+        name,
+        case["transport"].as_str().unwrap_or("json"),
+        role
+    ));
+    evidence["cases"]
+        .as_array_mut()
+        .ok_or("profile evidence cases missing")?
+        .push(case);
+    write_profile_rpc_evidence(evidence)
+}
+
+async fn populated_profile_rpc_comparisons(evidence: &mut Value) -> TestResult {
+    use pb::otlp_profiles::{ExportProfilesServiceRequest, Link};
+    use prost::Message;
+
+    let client = reqwest::Client::new();
+    // The image defaults to v1-v2-dual. Pin the storage architecture as well
+    // as the image when exercising v1-only capability and analysis behavior.
+    let pyroscope = start_pyroscope_with_options(&[
+        "-architecture.storage=v1",
+        "-write-path=ingester",
+        "-querier.query-analysis-series-enabled=true",
+    ])
+    .await?;
+    let pyroscope_base = mapped_base_url(&pyroscope, PYROSCOPE_HTTP_PORT).await?;
+    wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
+    let sink = CapturingSink::default();
+    let store = WalTailProfileStore::new();
+    let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
+    evidence["backend_roles"] = json!({(pyroscope_base.as_str()): "upstream", (krabka.querier_base.as_str()): "krabka-direct"});
+    let ingestion_nanos = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())?;
+    // Keep both timestamps inside the same minute (and hence the same v1
+    // head), with an intervening empty window inside the head's time bounds.
+    let profile_nanos = ingestion_nanos / 60_000_000_000 * 60_000_000_000 - 20_000_000_000;
+    let fixture_timestamp = i64::try_from(profile_nanos / 1_000_000)?;
+    let selector = r#"{service_name="krabkadiff-linked"}"#;
+    let mut export = ExportProfilesServiceRequest::decode(
+        otlp_export_body(profile_nanos, "krabkadiff-linked", false)?.as_slice(),
+    )?;
+    export
+        .dictionary
+        .as_mut()
+        .ok_or("missing fixture dictionary")?
+        .link_table = vec![
+        Link::default(), // OTLP reserves index zero for the absence of a link.
+        Link {
+            trace_id: vec![1; 16],
+            span_id: 42_u64.to_be_bytes().to_vec(),
+        },
+        Link {
+            trace_id: vec![2; 16],
+            span_id: 43_u64.to_be_bytes().to_vec(),
+        },
+    ];
+    let samples = &mut export.resource_profiles[0].scope_profiles[0].profiles[0].samples;
+    samples[0].link_index = 1;
+    samples[1].link_index = 2;
+    let bytes = export.encode_to_vec();
+    let time_control = otlp_export_body(
+        profile_nanos - 5_000_000_000,
+        "krabkadiff-time-control",
+        false,
+    )?;
+    let cpu_profile = synthetic_cpu_pprof(i64::try_from(profile_nanos)?)?;
+    // Separate Diff sides by two seconds; existing populated RPC windows end
+    // at fixture_timestamp + 1s and retain their original expected values.
+    let cpu_right_profile =
+        synthetic_cpu_pprof_with_values(i64::try_from(profile_nanos + 2_000_000_000)?, [20, 8])?;
+    for (base, tenant) in [
+        (&pyroscope_base, None),
+        (&krabka.distributor_base, Some(TENANT)),
+    ] {
+        post_otlp_export(
+            &client,
+            base,
+            tenant,
+            &bytes,
+            "application/x-protobuf",
+            None,
+        )
+        .await?;
+        post_cpu_profile(&client, base, tenant, &cpu_profile).await?;
+        post_cpu_profile_with_id(
+            &client,
+            base,
+            tenant,
+            &cpu_right_profile,
+            "krabka-diff-right",
+        )
+        .await?;
+        post_otlp_export(
+            &client,
+            base,
+            tenant,
+            &time_control,
+            "application/x-protobuf",
+            None,
+        )
+        .await?;
+    }
+    drain_sink_into_store(&sink, &store)?;
+
+    assert_v1_heatmap_capability(
+        evidence,
+        &client,
+        &pyroscope_base,
+        selector,
+        fixture_timestamp,
+    )
+    .await?;
+
+    compare_populated_span_profiles(
+        evidence,
+        &client,
+        &pyroscope_base,
+        &krabka.querier_base,
+        selector,
+        fixture_timestamp,
+    )
+    .await?;
+    let analysis = compare_populated_query_analysis(
+        evidence,
+        &client,
+        &pyroscope_base,
+        &krabka.querier_base,
+        selector,
+        fixture_timestamp,
+    )
+    .await;
+    if analysis.is_err() {
+        krabka.shutdown();
+        return analysis;
+    }
+
+    compare_populated_merge_profiles(
+        evidence,
+        &client,
+        &pyroscope_base,
+        &krabka.querier_base,
+        fixture_timestamp,
+    )
+    .await?;
+
+    compare_populated_diffs(
+        evidence,
+        &client,
+        &pyroscope_base,
+        &krabka.querier_base,
+        &store,
+        fixture_timestamp,
+    )
+    .await?;
+
+    let generated = compare_generated_populated_profiles(
+        evidence,
+        &client,
+        &pyroscope_base,
+        &krabka.querier_base,
+        &store,
+        fixture_timestamp,
+    )
+    .await;
+    krabka.shutdown();
+    generated
+}
+
+// These numbers are independent fixture expectations, rather than values
+// inferred from either backend. Pinned NewFlamegraphDiff preserves raw side
+// totals and self values; Total adds both sides, MaxSelf takes their maximum.
+// https://github.com/grafana/pyroscope/blob/7aeaa0ff91e83538b3ff0d09bfefb168bddc022d/pkg/model/flamegraph_diff.go
+fn populated_diff_expected(reverse: bool) -> Value {
+    let bars = if reverse {
+        json!([
+            [["total"], [28, 0, 140, 0]],
+            [["total", FUNC_WORK], [28, 8, 140, 40]],
+            [["total", FUNC_WORK, FUNC_HOT], [20, 20, 100, 100]],
+        ])
+    } else {
+        json!([
+            [["total"], [140, 0, 28, 0]],
+            [["total", FUNC_WORK], [140, 40, 28, 8]],
+            [["total", FUNC_WORK, FUNC_HOT], [100, 100, 20, 20]],
+        ])
+    };
+    json!({"bars": bars, "total": 168, "maxSelf": 100,
+        "leftTicks": if reverse {28} else {140},
+        "rightTicks": if reverse {140} else {28}})
+}
+
+async fn compare_populated_diffs(
+    evidence: &mut Value,
+    client: &reqwest::Client,
+    oracle_base: &str,
+    krabka_base: &str,
+    store: &WalTailProfileStore,
+    fixture_timestamp: i64,
+) -> TestResult {
+    use pb::querier::v1::{DiffRequest, DiffResponse, SelectMergeStacktracesRequest};
+
+    let (shutdown, shutdown_rx) = oneshot::channel();
+    let frontend = query::serve(
+        "127.0.0.1:0".parse()?,
+        Arc::new(QuerierState::new_frontend(
+            Arc::new(store.clone()),
+            krabka_profiles::query_frontend::FrontendConfig {
+                shard_width: krabka_units::millis(500),
+            },
+        )),
+        &ServerSecurity::default(),
+        async move {
+            let _ = shutdown_rx.await;
+        },
+    )
+    .await?;
+    let frontend_base = format!("http://{frontend}");
+    let side = |timestamp| SelectMergeStacktracesRequest {
+        profile_type_id: CPU_PROFILE_TYPE.to_string(),
+        label_selector: E2E_SELECTOR.to_string(),
+        start: timestamp - 500,
+        end: timestamp + 500,
+        max_nodes: Some(1_024),
+        ..Default::default()
+    };
+    let mut failures = Vec::new();
+    for reverse in [false, true] {
+        let name = if reverse {
+            "unequal CPU reversed"
+        } else {
+            "unequal CPU"
+        };
+        let (left, right) = if reverse {
+            (side(fixture_timestamp + 2_000), side(fixture_timestamp))
+        } else {
+            (side(fixture_timestamp), side(fixture_timestamp + 2_000))
+        };
+        let request = DiffRequest {
+            left: Some(left),
+            right: Some(right),
+        };
+        let expected = populated_diff_expected(reverse);
+        evidence["active_case"] = json!({"method": "Diff", "name": name,
+            "backend": "upstream", "phase": "fixture readiness", "request": request});
+        write_profile_rpc_evidence(evidence)?;
+        connect_json_until(
+            client,
+            oracle_base,
+            None,
+            "Diff",
+            serde_json::to_value(&request)?,
+            |value| canonical_diff(value).is_ok_and(|actual| actual == expected),
+        )
+        .await?;
+        for (backend, base, tenant) in [
+            ("upstream", oracle_base, None),
+            ("krabka-direct", krabka_base, Some(TENANT)),
+            ("krabka-frontend", frontend_base.as_str(), Some(TENANT)),
+        ] {
+            for transport in ["json", "protobuf"] {
+                evidence["active_case"] = json!({"method": "Diff", "name": name,
+                    "backend": backend, "transport": transport, "request": request});
+                write_profile_rpc_evidence(evidence)?;
+                let result: TestResult<Value> = async {
+                    let value = if transport == "json" {
+                        connect_json(
+                            client,
+                            base,
+                            tenant,
+                            "Diff",
+                            serde_json::to_value(&request)?,
+                        )
+                        .await?
+                    } else {
+                        let response: DiffResponse =
+                            connect_protobuf(client, base, tenant, "Diff", &request).await?;
+                        serde_json::to_value(response)?
+                    };
+                    let actual = canonical_diff(&value)?;
+                    if actual != expected {
+                        return Err(format!(
+                            "Diff {name}/{backend}/{transport}: expected {expected}, got {actual}"
+                        )
+                        .into());
+                    }
+                    Ok(actual)
+                }
+                .await;
+                let error = result.as_ref().err().map(ToString::to_string);
+                record_profile_rpc_case(
+                    evidence,
+                    json!({"method": "Diff", "name": name,
+                    "backend": backend, "transport": transport, "request": request,
+                    "classification": "matched", "expected": expected,
+                    "actual": result.as_ref().ok(), "status": if result.is_ok() {"passed"} else {"failed"},
+                    "error": error}),
+                )?;
+                if let Some(error) = error {
+                    failures.push(error);
+                }
+            }
+        }
+    }
+    let _ = shutdown.send(());
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n").into())
+    }
+}
+
+async fn compare_populated_span_profiles(
+    evidence: &mut Value,
+    client: &reqwest::Client,
+    oracle_base: &str,
+    krabka_base: &str,
+    selector: &str,
+    fixture_timestamp: i64,
+) -> TestResult {
+    use pb::querier::v1::{SelectMergeSpanProfileRequest, SelectMergeSpanProfileResponse};
+
+    let span_request = SelectMergeSpanProfileRequest {
+        profile_type_id: OTLP_PROFILE_TYPE.to_string(),
+        label_selector: selector.to_string(),
+        span_selector: vec!["000000000000002a".to_string()],
+        start: fixture_timestamp - 1_000,
+        end: fixture_timestamp + 1_000,
+        max_nodes: Some(1_024),
+        ..Default::default()
+    };
+    connect_json_until(
+        client,
+        oracle_base,
+        None,
+        "SelectMergeSpanProfile",
+        serde_json::to_value(&span_request)?,
+        |value| value.pointer("/flamegraph/total").and_then(json_i64) == Some(100),
+    )
+    .await?;
+
+    let hot = vec![(vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()], 100)];
+    let work = vec![(vec![FUNC_WORK.to_string()], 40)];
+    let mut both = work.clone();
+    both.extend(hot.clone());
+    let mut cases = vec![
+        ("hot span", span_request.clone(), hot.clone()),
+        (
+            "other span",
+            SelectMergeSpanProfileRequest {
+                span_selector: vec!["000000000000002b".to_string()],
+                ..span_request.clone()
+            },
+            work,
+        ),
+        (
+            "both spans",
+            SelectMergeSpanProfileRequest {
+                span_selector: vec![
+                    "000000000000002a".to_string(),
+                    "000000000000002b".to_string(),
+                ],
+                ..span_request.clone()
+            },
+            both,
+        ),
+        (
+            "duplicate span selector",
+            SelectMergeSpanProfileRequest {
+                span_selector: vec!["000000000000002a".to_string(); 2],
+                ..span_request.clone()
+            },
+            hot,
+        ),
+        (
+            "missing span",
+            SelectMergeSpanProfileRequest {
+                span_selector: vec!["000000000000002c".to_string()],
+                ..span_request.clone()
+            },
+            Vec::new(),
+        ),
+    ];
+    cases.push((
+        "excluded selector",
+        SelectMergeSpanProfileRequest {
+            label_selector: r#"{service_name="missing"}"#.to_string(),
+            ..span_request.clone()
+        },
+        Vec::new(),
+    ));
+    cases.push((
+        "excluded time",
+        SelectMergeSpanProfileRequest {
+            start: fixture_timestamp - 3_000,
+            end: fixture_timestamp - 2_000,
+            ..span_request.clone()
+        },
+        Vec::new(),
+    ));
+    cases.push((
+        "excluded profile type",
+        SelectMergeSpanProfileRequest {
+            profile_type_id: WALL_PROFILE_TYPE.to_string(),
+            ..span_request
+        },
+        Vec::new(),
+    ));
+    for (name, request, mut expected) in cases {
+        expected.sort();
+        for (base, tenant) in [(oracle_base, None), (krabka_base, Some(TENANT))] {
+            evidence["active_case"] = json!({"method": "SelectMergeSpanProfile", "name": name,
+                "backend": base, "request": request});
+            let json: SelectMergeSpanProfileResponse = serde_json::from_value(
+                connect_json(
+                    client,
+                    base,
+                    tenant,
+                    "SelectMergeSpanProfile",
+                    serde_json::to_value(&request)?,
+                )
+                .await?,
+            )?;
+            let binary: SelectMergeSpanProfileResponse =
+                connect_protobuf(client, base, tenant, "SelectMergeSpanProfile", &request).await?;
+            for (transport, response) in [("json", json), ("protobuf", binary)] {
+                let flamegraph = response
+                    .flamegraph
+                    .ok_or("span response missing flamegraph")?;
+                let actual = normalized_flamegraph_stacks(&flamegraph)?;
+                let total: i64 = expected.iter().map(|(_, value)| value).sum();
+                record_profile_rpc_case(
+                    evidence,
+                    json!({
+                        "method": "SelectMergeSpanProfile", "name": name, "backend": base,
+                        "transport": transport, "classification": "matched",
+                        "status": if actual == expected && flamegraph.total == total { "passed" } else { "failed" },
+                        "expected_stacks": expected, "actual_stacks": actual,
+                        "expected_total": total, "actual_total": flamegraph.total,
+                    }),
+                )?;
+                assert2::assert!(actual == expected, "{name} from {base}");
+                assert2::assert!(flamegraph.total == total, "{name} from {base}");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn compare_populated_query_analysis(
+    evidence: &mut Value,
+    client: &reqwest::Client,
+    oracle_base: &str,
+    krabka_base: &str,
+    selector: &str,
+    fixture_timestamp: i64,
+) -> TestResult {
+    use pb::querier::v1::{AnalyzeQueryRequest, AnalyzeQueryResponse};
+
+    let mut analysis_failures = Vec::new();
+    for (name, profile_type, selector, expected) in [
+        ("matching", OTLP_PROFILE_TYPE, selector, 1),
+        (
+            "missing selector",
+            OTLP_PROFILE_TYPE,
+            r#"{service_name="missing"}"#,
+            0,
+        ),
+        ("missing profile type", WALL_PROFILE_TYPE, selector, 0),
+    ] {
+        let request = AnalyzeQueryRequest {
+            query: format!("{profile_type}{selector}"),
+            start: fixture_timestamp - 1_000,
+            end: fixture_timestamp + 1_000,
+        };
+        for (base, tenant) in [(oracle_base, None), (krabka_base, Some(TENANT))] {
+            evidence["active_case"] = json!({"method": "AnalyzeQuery", "backend": base,
+                "request": request, "classification": "matched"});
+            let json: AnalyzeQueryResponse = serde_json::from_value(
+                connect_json(
+                    client,
+                    base,
+                    tenant,
+                    "AnalyzeQuery",
+                    serde_json::to_value(&request)?,
+                )
+                .await?,
+            )?;
+            let binary: AnalyzeQueryResponse =
+                connect_protobuf(client, base, tenant, "AnalyzeQuery", &request).await?;
+            for (transport, response) in [("json", json), ("protobuf", binary)] {
+                if assert_queried_series_count(&response, expected).is_err()
+                    && evidence.get("failure_diagnostics").is_none()
+                {
+                    let mut diagnostics = Vec::new();
+                    for (method, body) in [
+                        (
+                            "Series",
+                            json!({"matchers": [selector], "start": request.start, "end": request.end}),
+                        ),
+                        ("Series", json!({"matchers": [selector]})),
+                        ("ProfileTypes", json!({})),
+                        ("GetProfileStats", json!({})),
+                        (
+                            "AnalyzeQuery",
+                            json!({"query": request.query, "start": 0, "end": i64::MAX}),
+                        ),
+                    ] {
+                        let result = connect_json(client, base, tenant, method, body.clone()).await;
+                        diagnostics.push(json!({"method": method, "request": body,
+                            "response": result.as_ref().ok(), "error": result.err().map(|error| error.to_string())}));
+                    }
+                    evidence["failure_diagnostics"] = json!(diagnostics);
+                }
+                record_profile_rpc_case(
+                    evidence,
+                    json!({
+                        "method": "AnalyzeQuery", "name": name, "backend": base, "transport": transport,
+                        "request": request, "classification": "matched",
+                        "status": if assert_queried_series_count(&response, expected).is_ok() { "passed" } else { "failed" },
+                        "expected_count": expected, "actual_count": response.query_impact.as_ref().map(|impact| impact.total_queried_series),
+                        "response":response,"comparison_fields":["query_impact.total_queried_series"],
+                    }),
+                )?;
+                if let Err(error) = assert_queried_series_count(&response, expected) {
+                    analysis_failures.push(format!("{error}: backend={base}, transport={transport}, request={request:?}, response={response:?}"));
+                }
+            }
+        }
+    }
+
+    // AnalyzeQuery -> Series -> Head.Series ignores time bounds in pinned v1.
+    // https://github.com/grafana/pyroscope/blob/7aeaa0ff91e83538b3ff0d09bfefb168bddc022d/pkg/phlaredb/head.go#L498-L532
+    // Both backends must preserve this observable head-series behavior.
+    let excluded_time = AnalyzeQueryRequest {
+        query: format!("{OTLP_PROFILE_TYPE}{selector}"),
+        start: fixture_timestamp - 3_000,
+        end: fixture_timestamp - 2_000,
+    };
+    for (base, tenant, expected) in [(oracle_base, None, 1), (krabka_base, Some(TENANT), 1)] {
+        evidence["active_case"] = json!({"method": "AnalyzeQuery", "backend": base,
+            "request": excluded_time, "classification": "matched"});
+        let json: AnalyzeQueryResponse = serde_json::from_value(
+            connect_json(
+                client,
+                base,
+                tenant,
+                "AnalyzeQuery",
+                serde_json::to_value(&excluded_time)?,
+            )
+            .await?,
+        )?;
+        let binary: AnalyzeQueryResponse =
+            connect_protobuf(client, base, tenant, "AnalyzeQuery", &excluded_time).await?;
+        for (transport, response) in [("json", json), ("protobuf", binary)] {
+            record_profile_rpc_case(
+                evidence,
+                json!({
+                    "method": "AnalyzeQuery", "name":"excluded time", "backend": base, "transport": transport,
+                    "request": excluded_time, "classification": "matched",
+                    "reason": "pinned v1 Head.Series returns all selector-matching series within an overlapping head without per-profile time filtering",
+                    "source": "https://github.com/grafana/pyroscope/blob/7aeaa0ff91e83538b3ff0d09bfefb168bddc022d/pkg/phlaredb/head.go#L498-L532",
+                    "status": if assert_queried_series_count(&response, expected).is_ok() { "passed" } else { "failed" },
+                    "expected_count": expected, "actual_count": response.query_impact.as_ref().map(|impact| impact.total_queried_series),
+                        "response":response,"comparison_fields":["query_impact.total_queried_series"],
+                }),
+            )?;
+            if let Err(error) = assert_queried_series_count(&response, expected) {
+                analysis_failures.push(format!("{error}: backend={base}, transport={transport}, v1 head-series compatibility, request={excluded_time:?}, response={response:?}"));
+            }
+        }
+    }
+
+    if !analysis_failures.is_empty() {
+        return Err(analysis_failures.join("\n").into());
+    }
+
+    Ok(())
+}
+
+async fn compare_generated_populated_profiles(
+    evidence: &mut Value,
+    client: &reqwest::Client,
+    oracle_base: &str,
+    krabka_base: &str,
+    store: &WalTailProfileStore,
+    fixture_timestamp: i64,
+) -> TestResult {
+    let cpu_request = pb::querier::v1::SelectMergeStacktracesRequest {
+        profile_type_id: CPU_PROFILE_TYPE.to_string(),
+        label_selector: E2E_SELECTOR.to_string(),
+        start: fixture_timestamp - 1_000,
+        end: fixture_timestamp + 1_000,
+        max_nodes: Some(1_024),
+        format: pb::querier::v1::ProfileFormat::Flamegraph as i32,
+        ..Default::default()
+    };
+    let expected_cpu_stacks = vec![
+        (vec![FUNC_WORK.to_string()], 40),
+        (vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()], 100),
+    ];
+    evidence["active_case"] =
+        json!({"method": "SelectMergeStacktraces", "phase": "generated-positive-control"});
+    // Independently establish the populated CPU fixture before composing
+    // selectors. Equality between two empty responses is not sufficient.
+    if let Some(mismatch) = compare_generated_profile_selector(
+        client,
+        oracle_base,
+        krabka_base,
+        &cpu_request,
+        &expected_cpu_stacks,
+    )
+    .await?
+    {
+        return Err(format!("generated profile positive control: {mismatch}").into());
+    }
+    let output = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
+        || std::env::temp_dir().join(format!("krabka-profile-generated-{}", std::process::id())),
+        std::path::PathBuf::from,
+    );
+    evidence["active_case"] =
+        json!({"method": "SelectMergeStacktraces", "phase": "generated-compound-selectors"});
+    evidence["generated_evidence"] = json!("pyroscope-generated-differential.json");
+    let expected = &expected_cpu_stacks;
+    generated_differential::run_typed(
+        "pyroscope",
+        &[TypedExpr::profile_selector(&[LabelMatcher::new(
+            "service_name",
+            MatchOp::Eq,
+            "checkout",
+        )])],
+        &[
+            TypedConstructor::ProfileAnd(LabelMatcher::new("env", MatchOp::Eq, "e2e")),
+            TypedConstructor::ProfileAnd(LabelMatcher::new("env", MatchOp::Neq, "missing")),
+            TypedConstructor::ProfileAnd(LabelMatcher::new("env", MatchOp::Regex, "e.*")),
+            TypedConstructor::ProfileAnd(LabelMatcher::new("missing", MatchOp::NotRegex, ".+")),
+        ],
+        &output,
+        |expression| {
+            let mut request = cpu_request.clone();
+            request.label_selector = format!("{{{expression}}}");
+            async move {
+                compare_generated_profile_selector(
+                    client,
+                    oracle_base,
+                    krabka_base,
+                    &request,
+                    expected,
+                )
+                .await
+            }
+        },
+    )
+    .await?;
+    evidence["active_case"] =
+        json!({"method": "SelectMergeSpanProfile", "phase": "generated-rejections"});
+    evidence["generated_rejection_evidence"] =
+        json!("pyroscope-rejections-generated-differential.json");
+    write_profile_rpc_evidence(evidence)?;
+    let rejection_result = run_generated_profile_rejections(
+        client,
+        oracle_base,
+        krabka_base,
+        store,
+        fixture_timestamp,
+        &output,
+    )
+    .await;
+    rejection_result?;
+    Ok(())
+}
+
+async fn run_generated_profile_rejections(
+    client: &reqwest::Client,
+    oracle_base: &str,
+    krabka_base: &str,
+    store: &WalTailProfileStore,
+    time_ms: i64,
+    output: &std::path::Path,
+) -> TestResult {
+    let (shutdown, shutdown_rx) = oneshot::channel();
+    let frontend = query::serve(
+        "127.0.0.1:0".parse()?,
+        Arc::new(QuerierState::new_frontend(
+            Arc::new(store.clone()),
+            krabka_profiles::query_frontend::FrontendConfig {
+                shard_width: krabka_units::millis(500),
+            },
+        )),
+        &ServerSecurity::default(),
+        async move {
+            let _ = shutdown_rx.await;
+        },
+    )
+    .await?;
+    let frontend_base = format!("http://{frontend}");
+    let frontend_base = &frontend_base;
+    let result = generated_differential::run(
+        "pyroscope-rejections",
+        &[
+            r#"service_name="krabkadiff-linked",env="#,
+            r#"service_name=~"[""#,
+            r#"service_name="krabkadiff-linked",env=~"(""#,
+        ],
+        &[
+            r#"{expr},env="e2e""#,
+            r#"{expr},zone!="missing""#,
+            r#"{expr},zone=~"test.*""#,
+        ],
+        output,
+        |expression| async move {
+            let request = pb::querier::v1::SelectMergeSpanProfileRequest {
+                profile_type_id: OTLP_PROFILE_TYPE.to_string(),
+                label_selector: format!("{{{expression}}}"),
+                span_selector: vec!["000000000000002a".to_string()],
+                start: time_ms - 1_000,
+                end: time_ms + 1_000,
+                max_nodes: Some(1_024),
+                ..Default::default()
+            };
+            let mut mismatches = Vec::new();
+            // Establish invalidity with upstream first, then check both
+            // Krabka execution paths. Preserve error replies as evidence;
+            // successful bodies or paired unrelated errors cannot pass.
+            for (backend, base, tenant) in [
+                ("upstream", oracle_base, None),
+                ("krabka-direct", krabka_base, Some(TENANT)),
+                ("krabka-frontend", frontend_base, Some(TENANT)),
+            ] {
+                let mut call = client
+                    .post(format!("{base}/querier.v1.QuerierService/SelectMergeSpanProfile"))
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .json(&request);
+                if let Some(tenant) = tenant {
+                    call = call.header("x-scope-orgid", tenant);
+                }
+                let response = call.send().await?;
+                let status = response.status();
+                let body = response.text().await?;
+                let error = serde_json::from_str::<Value>(&body).ok();
+                let code = error.as_ref().and_then(|error| error.get("code")).and_then(Value::as_str);
+                if status != StatusCode::BAD_REQUEST || code != Some("invalid_argument") {
+                    mismatches.push(format!(
+                        "{backend} selector `{}`: expected HTTP400/invalid_argument, got {status}/{code:?}, body={body}",
+                        request.label_selector
+                    ));
+                    if backend == "upstream" {
+                        return Ok(Some(mismatches.join("\n")));
+                    }
+                }
+            }
+            Ok((!mismatches.is_empty()).then(|| mismatches.join("\n")))
+        },
+    )
+    .await;
+    let _ = shutdown.send(());
+    result
+}
+
+async fn compare_populated_merge_profiles(
+    evidence: &mut Value,
+    client: &reqwest::Client,
+    oracle_base: &str,
+    krabka_base: &str,
+    time_ms: i64,
+) -> TestResult {
+    use pb::{
+        google::v1::Profile,
+        querier::v1::SelectMergeProfileRequest,
+        types::v1::{Location, StackTraceSelector},
+    };
+
+    let request = SelectMergeProfileRequest {
+        profile_type_id: CPU_PROFILE_TYPE.to_string(),
+        label_selector: E2E_SELECTOR.to_string(),
+        start: time_ms - 1_000,
+        end: time_ms + 1_000,
+        max_nodes: Some(1_024),
+        ..Default::default()
+    };
+    let expected = vec![
+        (vec![FUNC_WORK.to_string()], 40),
+        (vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()], 100),
+    ];
+    evidence["active_case"] = json!({"method": "SelectMergeProfile", "name": "fixture readiness"});
+    connect_json_until(
+        client,
+        oracle_base,
+        None,
+        "SelectMergeProfile",
+        serde_json::to_value(&request)?,
+        |value| {
+            serde_json::from_value::<Profile>(value.clone())
+                .ok()
+                .and_then(|profile| normalized_pprof_stacks(&profile).ok())
+                .is_some_and(|stacks| stacks == expected)
+        },
+    )
+    .await?;
+
+    // Pinned types.proto defines call_site as a root-first stack prefix.
+    // https://github.com/grafana/pyroscope/blob/7aeaa0ff91e83538b3ff0d09bfefb168bddc022d/api/types/v1/types.proto
+    let stack_selector = |names: &[&str]| {
+        Some(StackTraceSelector {
+            call_site: names
+                .iter()
+                .map(|name| Location {
+                    name: (*name).to_string(),
+                })
+                .collect(),
+            ..Default::default()
+        })
+    };
+    let cases = [
+        ("populated CPU", request.clone(), expected.clone()),
+        (
+            "excluded selector",
+            SelectMergeProfileRequest {
+                label_selector: r#"{service_name="missing"}"#.to_string(),
+                ..request.clone()
+            },
+            Vec::new(),
+        ),
+        (
+            "excluded time",
+            SelectMergeProfileRequest {
+                start: time_ms - 3_000,
+                end: time_ms - 2_000,
+                ..request.clone()
+            },
+            Vec::new(),
+        ),
+        (
+            "excluded profile type",
+            SelectMergeProfileRequest {
+                profile_type_id: WALL_PROFILE_TYPE.to_string(),
+                ..request.clone()
+            },
+            Vec::new(),
+        ),
+        (
+            "root stack prefix",
+            SelectMergeProfileRequest {
+                stack_trace_selector: stack_selector(&[FUNC_WORK]),
+                ..request.clone()
+            },
+            expected,
+        ),
+        (
+            "hot stack prefix",
+            SelectMergeProfileRequest {
+                stack_trace_selector: stack_selector(&[FUNC_WORK, FUNC_HOT]),
+                ..request.clone()
+            },
+            vec![(vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()], 100)],
+        ),
+        (
+            "missing stack prefix",
+            SelectMergeProfileRequest {
+                stack_trace_selector: stack_selector(&[FUNC_WORK, "missing"]),
+                ..request
+            },
+            Vec::new(),
+        ),
+    ];
+    for (name, request, expected) in cases {
+        for (base, tenant) in [(oracle_base, None), (krabka_base, Some(TENANT))] {
+            evidence["active_case"] = json!({"method": "SelectMergeProfile", "name": name,
+                "backend": base, "request": request});
+            let json: Profile = serde_json::from_value(
+                connect_json(
+                    client,
+                    base,
+                    tenant,
+                    "SelectMergeProfile",
+                    serde_json::to_value(&request)?,
+                )
+                .await?,
+            )?;
+            let binary: Profile =
+                connect_protobuf(client, base, tenant, "SelectMergeProfile", &request).await?;
+            for (transport, profile) in [("json", json), ("protobuf", binary)] {
+                let normalized = normalized_pprof_stacks(&profile);
+                let expected_total: i64 = expected.iter().map(|(_, value)| value).sum();
+                let actual_total: i64 =
+                    profile.sample.iter().flat_map(|sample| &sample.value).sum();
+                let matched = normalized.as_ref().is_ok_and(|stacks| stacks == &expected)
+                    && actual_total == expected_total;
+                record_profile_rpc_case(
+                    evidence,
+                    json!({"method": "SelectMergeProfile", "name": name, "backend": base,
+                        "transport": transport, "request": request, "classification": "matched",
+                        "status": if matched { "passed" } else { "failed" },
+                        "expected_stacks": expected, "actual_stacks": normalized.as_ref().ok(),
+                        "normalization_error": normalized.as_ref().err().map(ToString::to_string),
+                        "expected_total": expected_total, "actual_total": actual_total}),
+                )?;
+                if !matched {
+                    return Err(format!(
+                        "SelectMergeProfile {name}, {base}, {transport}: expected {expected:?}, total {expected_total}; actual {normalized:?}, total {actual_total}"
+                    ).into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolve each pprof sample's leaf-first location/function/string references
+/// into a root-first stack and its value. Preserve repeated stacks and check
+/// the single CPU sample type so totals cannot mask wrong symbol associations.
+fn normalized_pprof_stacks(
+    profile: &pb::google::v1::Profile,
+) -> TestResult<Vec<(Vec<String>, i64)>> {
+    let string = |index: i64| -> TestResult<&str> {
+        usize::try_from(index)
+            .ok()
+            .and_then(|index| profile.string_table.get(index))
+            .map(String::as_str)
+            .ok_or_else(|| format!("pprof string index out of bounds: {index}").into())
+    };
+    if !profile.sample.is_empty()
+        && (profile.sample_type.len() != 1
+            || string(profile.sample_type[0].r#type)? != "cpu"
+            || string(profile.sample_type[0].unit)? != "nanoseconds")
+    {
+        return Err("pprof sample type is not CPU nanoseconds".into());
+    }
+    let location_ids: BTreeSet<_> = profile
+        .location
+        .iter()
+        .map(|location| location.id)
+        .collect();
+    let function_ids: BTreeSet<_> = profile
+        .function
+        .iter()
+        .map(|function| function.id)
+        .collect();
+    if location_ids.len() != profile.location.len()
+        || function_ids.len() != profile.function.len()
+        || location_ids.contains(&0)
+        || function_ids.contains(&0)
+    {
+        return Err("pprof has duplicate or zero location/function IDs".into());
+    }
+    let mut stacks = Vec::new();
+    for sample in &profile.sample {
+        let [value] = sample.value.as_slice() else {
+            return Err("pprof sample must contain exactly one CPU value".into());
+        };
+        if sample.location_id.is_empty() {
+            return Err("pprof sample has no stack".into());
+        }
+        let mut stack = Vec::new();
+        for id in sample.location_id.iter().rev() {
+            let location = profile
+                .location
+                .iter()
+                .find(|location| location.id == *id)
+                .ok_or_else(|| format!("pprof missing sample location {id}"))?;
+            if location.line.is_empty() {
+                return Err("pprof CPU fixture location has no symbolized lines".into());
+            }
+            for line in location.line.iter().rev() {
+                let function = profile
+                    .function
+                    .iter()
+                    .find(|function| function.id == line.function_id)
+                    .ok_or_else(|| format!("pprof missing line function {}", line.function_id))?;
+                let name = string(function.name)?;
+                if name.is_empty() {
+                    return Err("pprof CPU fixture has an empty function name".into());
+                }
+                stack.push(name.to_string());
+            }
+        }
+        stacks.push((stack, *value));
+    }
+    stacks.sort();
+    Ok(stacks)
+}
+
+async fn compare_generated_profile_selector(
+    client: &reqwest::Client,
+    oracle_base: &str,
+    krabka_base: &str,
+    request: &pb::querier::v1::SelectMergeStacktracesRequest,
+    expected: &[(Vec<String>, i64)],
+) -> TestResult<Option<String>> {
+    for (base, tenant) in [(oracle_base, None), (krabka_base, Some(TENANT))] {
+        let json: pb::querier::v1::SelectMergeStacktracesResponse = serde_json::from_value(
+            connect_json(
+                client,
+                base,
+                tenant,
+                "SelectMergeStacktraces",
+                serde_json::to_value(request)?,
+            )
+            .await?,
+        )?;
+        let binary: pb::querier::v1::SelectMergeStacktracesResponse =
+            connect_protobuf(client, base, tenant, "SelectMergeStacktraces", request).await?;
+        for (transport, response) in [("json", json), ("protobuf", binary)] {
+            let graph = response
+                .flamegraph
+                .ok_or("generated profile response missing flamegraph")?;
+            let actual = normalized_flamegraph_stacks(&graph)?;
+            let expected_total: i64 = expected.iter().map(|(_, value)| value).sum();
+            if actual != expected || graph.total != expected_total || graph.max_self != 100 {
+                return Ok(Some(format!(
+                    "selector={} backend={base} transport={transport}: expected stacks={expected:?}, total={expected_total}, maxSelf=100; actual stacks={actual:?}, total={}, maxSelf={}",
+                    request.label_selector, graph.total, graph.max_self
+                )));
+            }
+        }
+    }
+    Ok(None)
+}
+
+async fn assert_v1_heatmap_capability(
+    evidence: &mut Value,
+    client: &reqwest::Client,
+    pyroscope_base: &str,
+    selector: &str,
+    time_ms: i64,
+) -> TestResult {
+    evidence["active_case"] =
+        json!({"method": "SelectHeatmap", "classification": "unsupported-oracle"});
+    let response = client
+        .post(format!(
+            "{pyroscope_base}/querier.v1.QuerierService/SelectHeatmap"
+        ))
+        .json(
+            &json!({"profileTypeID": OTLP_PROFILE_TYPE, "labelSelector": selector,
+            "start": time_ms - 1_000, "end": time_ms + 1_000, "step": 1.0}),
+        )
+        .send()
+        .await?;
+    let status = response.status();
+    let error: Value = response.json().await?;
+    evidence["oracle_capabilities"]["SelectHeatmap"]["status"] = json!(if status
+        == StatusCode::NOT_IMPLEMENTED
+        && error.get("code").and_then(Value::as_str) == Some("unimplemented")
+    {
+        "confirmed-unimplemented"
+    } else {
+        "failed"
+    });
+    record_profile_rpc_case(
+        evidence,
+        json!({
+            "method": "SelectHeatmap", "transport": "json", "classification": "unsupported-oracle",
+            "semantic_comparison": false, "expected_http_status": 501, "actual_http_status": status.as_u16(),
+            "actual_code": error.get("code"),
+            "status": if status == StatusCode::NOT_IMPLEMENTED && error.get("code").and_then(Value::as_str) == Some("unimplemented") { "confirmed-unimplemented" } else { "failed" },
+        }),
+    )?;
+    assert2::assert!(status == StatusCode::NOT_IMPLEMENTED);
+    assert2::assert!(error.get("code").and_then(Value::as_str) == Some("unimplemented"));
+    Ok(())
+}
+
+async fn connect_protobuf<Req: prost::Message, Resp: prost::Message + Default>(
+    client: &reqwest::Client,
+    base: &str,
+    tenant: Option<&str>,
+    method: &str,
+    request: &Req,
+) -> TestResult<Resp> {
+    let mut request = client
+        .post(format!("{base}/querier.v1.QuerierService/{method}"))
+        .header(reqwest::header::CONTENT_TYPE, "application/proto")
+        .body(request.encode_to_vec());
+    if let Some(tenant) = tenant {
+        request = request.header("x-scope-orgid", tenant);
+    }
+    let response = request.send().await?;
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let bytes = response.bytes().await?;
+    if !status.is_success() {
+        return Err(format!(
+            "{method} returned {status}: {}",
+            String::from_utf8_lossy(&bytes)
+        )
+        .into());
+    }
+    assert2::assert!(content_type.starts_with("application/proto"));
+    Ok(Resp::decode(bytes)?)
+}
+
+/// Decode delta-encoded bars into stacks, preserving duplicate stack entries
+/// and their values. Only sibling layout and name-table order are irrelevant.
+fn normalized_flamegraph_stacks(
+    graph: &pb::querier::v1::FlameGraph,
+) -> TestResult<Vec<(Vec<String>, i64)>> {
+    let mut parents: Vec<(i64, i64, Vec<String>)> = Vec::new();
+    let mut stacks = Vec::new();
+    for (depth, level) in graph.levels.iter().enumerate() {
+        let (bars, remainder) = level.values.as_chunks::<4>();
+        if !remainder.is_empty() {
+            return Err("malformed flamegraph bar".into());
+        }
+        let mut current = Vec::new();
+        let mut x = 0_i64;
+        for bar in bars {
+            x = x.checked_add(bar[0]).ok_or("flamegraph offset overflow")?;
+            let end = x.checked_add(bar[1]).ok_or("flamegraph extent overflow")?;
+            let name = usize::try_from(bar[3])
+                .ok()
+                .and_then(|index| graph.names.get(index))
+                .ok_or("flamegraph name index out of bounds")?;
+            let mut path = if depth == 0 {
+                Vec::new()
+            } else {
+                parents
+                    .iter()
+                    .find(|(left, right, _)| *left <= x && end <= *right)
+                    .ok_or("flamegraph bar has no parent")?
+                    .2
+                    .clone()
+            };
+            if depth != 0 {
+                path.push(name.clone());
+            }
+            if bar[2] != 0 {
+                stacks.push((path.clone(), bar[2]));
+            }
+            current.push((x, end, path));
+            x = end;
+        }
+        parents = current;
+    }
+    stacks.sort();
+    Ok(stacks)
+}
+
+fn assert_queried_series_count(
+    response: &pb::querier::v1::AnalyzeQueryResponse,
+    expected: u64,
+) -> TestResult {
+    let actual = response
+        .query_impact
+        .as_ref()
+        .ok_or("AnalyzeQuery missing queryImpact")?
+        .total_queried_series;
+    if actual != expected {
+        return Err(format!("AnalyzeQuery series count: expected {expected}, got {actual}").into());
+    }
+    Ok(())
+}
+
+#[test]
+fn select_series_fixture_uses_shared_timestamp_and_preserves_profile() -> TestResult {
+    use std::io::Read;
+
+    let original = synthetic_cpu_pprof(0)?;
+    let mut decoded = Vec::new();
+    flate2::read::GzDecoder::new(original.as_slice()).read_to_end(&mut decoded)?;
+    let mut expected: proto::Profile = PprofProfile::decode(&decoded)?.into();
+    expected.time_nanos = 100_000_000_000;
+    let stamped = timestamp_goroutine_profile(&original, expected.time_nanos)?;
+    decoded.clear();
+    flate2::read::GzDecoder::new(stamped.as_slice()).read_to_end(&mut decoded)?;
+    let actual: proto::Profile = PprofProfile::decode(&decoded)?.into();
+    assert2::assert!(actual == expected);
+    assert2::assert!(
+        select_series_body(actual.time_nanos / 1_000_000)
+            == json!({
+                "profileTypeID": PROFILE_TYPE,
+                "labelSelector": SELECTOR,
+                "start": 80_123,
+                "end": 120_000,
+                "groupBy": ["env"],
+                "step": 10.0,
+                "aggregation": "TIME_SERIES_AGGREGATION_TYPE_SUM",
+                "limit": 10,
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn profile_semantic_comparators_reject_index_timestamp_and_count_drift() -> TestResult {
+    let expected = json!({"flamegraph": {"names": ["total", "work", "hot"],
+        "levels": [{"values": [0, 140, 0, 0]}, {"values": [0, 140, 40, 1]},
+            {"values": [0, 100, 100, 2]}], "total": 140, "maxSelf": 100}});
+    let mut swapped_names = expected.clone();
+    swapped_names["flamegraph"]["names"] = json!(["total", "hot", "work"]);
+    assert2::assert!(
+        assert_connect_flamegraph_equal("SelectMergeSpanProfile", &expected, &swapped_names)
+            .is_err()
+    );
+    let mut swapped_values = expected.clone();
+    // Same values as the oracle, associated with different bar fields.
+    swapped_values["flamegraph"]["levels"][1]["values"] = json!([0, 40, 140, 1]);
+    assert2::assert!(
+        assert_connect_flamegraph_equal("SelectMergeSpanProfile", &expected, &swapped_values)
+            .is_err()
+    );
+    let series = json!({"series": [{"labels": [], "points": [{"timestamp": 10, "value": 7.0}]}]});
+    let mut shifted = series.clone();
+    shifted["series"][0]["points"][0]["timestamp"] = json!(11);
+    assert2::assert!(assert_select_series_equal(&series, &shifted).is_err());
+    let analysis = pb::querier::v1::AnalyzeQueryResponse {
+        query_impact: Some(pb::querier::v1::QueryImpact {
+            total_queried_series: 2,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    assert2::assert!(assert_queried_series_count(&analysis, 1).is_err());
+    assert2::assert!(
+        assert_queried_series_count(&pb::querier::v1::AnalyzeQueryResponse::default(), 0).is_err()
+    );
+    let graph: pb::querier::v1::FlameGraph =
+        serde_json::from_value(expected["flamegraph"].clone())?;
+    assert2::assert!(
+        normalized_flamegraph_stacks(&graph)?
+            == vec![
+                (vec!["work".to_string()], 40),
+                (vec!["work".to_string(), "hot".to_string()], 100),
+            ]
+    );
+    let mut duplicate = graph.clone();
+    duplicate.levels[2].values.extend([0, 100, 100, 2]);
+    assert2::assert!(normalized_flamegraph_stacks(&duplicate).is_err());
+    let mut repeated_stack = graph.clone();
+    repeated_stack.levels[2].values = vec![0, 50, 50, 2, 0, 50, 50, 2];
+    let repeated = normalized_flamegraph_stacks(&repeated_stack)?;
+    assert2::assert!(repeated.len() == 3);
+    assert2::assert!(repeated != normalized_flamegraph_stacks(&graph)?);
+    Ok(())
+}
+
+#[test]
+fn pprof_stack_comparator_rejects_value_and_symbol_association_drift() -> TestResult {
+    use std::io::Read;
+
+    use prost::Message;
+
+    let compressed = synthetic_cpu_pprof(123)?;
+    let mut bytes = Vec::new();
+    flate2::read::GzDecoder::new(compressed.as_slice()).read_to_end(&mut bytes)?;
+    let profile = pb::google::v1::Profile::decode(bytes.as_slice())?;
+    let expected = vec![
+        (vec![FUNC_WORK.to_string()], 40),
+        (vec![FUNC_WORK.to_string(), FUNC_HOT.to_string()], 100),
+    ];
+    assert2::assert!(normalized_pprof_stacks(&profile)? == expected);
+    let mut swapped_values = profile.clone();
+    swapped_values.sample[0].value[0] = 40;
+    swapped_values.sample[1].value[0] = 100;
+    // Totals and the set of function names still agree; their association
+    // with sample values is wrong and must fail the independent expectation.
+    assert2::assert!(normalized_pprof_stacks(&swapped_values)? != expected);
+    let mut swapped_symbols = profile.clone();
+    swapped_symbols.function[0].name = 4;
+    swapped_symbols.function[1].name = 3;
+    assert2::assert!(normalized_pprof_stacks(&swapped_symbols)? != expected);
+    let mut missing_location = profile.clone();
+    missing_location.sample[0].location_id[0] = 999;
+    assert2::assert!(normalized_pprof_stacks(&missing_location).is_err());
+    let mut duplicate_id = profile.clone();
+    duplicate_id.location[1].id = duplicate_id.location[0].id;
+    assert2::assert!(normalized_pprof_stacks(&duplicate_id).is_err());
+    let mut wrong_unit = profile.clone();
+    wrong_unit.sample_type[0].unit = 3;
+    assert2::assert!(normalized_pprof_stacks(&wrong_unit).is_err());
+    let mut malformed_value = profile;
+    malformed_value.sample[0].value.push(1);
+    assert2::assert!(normalized_pprof_stacks(&malformed_value).is_err());
+    Ok(())
+}
+
 const OTLP_JSON_SERVICE: &str = "krabkadiffotlp-json";
 const OTLP_GZIP_SERVICE: &str = "krabkadiffotlp-gzip";
 const OTLP_PROFILE_TYPE: &str = "cpu:cpu:nanoseconds:cpu:nanoseconds";
@@ -3920,5 +5595,1199 @@ async fn post_otlp_export(
         let body = response.text().await.unwrap_or_default();
         return Err(format!("OTLP export to {base} returned {status}: {body}").into());
     }
+    Ok(())
+}
+
+/// The modern RPC fields require v2; a successful v1 capability probe is not
+/// semantic evidence for heatmaps, linked samples or exemplars.
+#[tokio::test]
+#[ignore = "requires Docker and the mirror.gcr.io/grafana/pyroscope image"]
+async fn real_pyroscope_v2_request_fields_match_krabka() -> TestResult {
+    let client = reqwest::Client::new();
+    let oracle = start_pyroscope_with_options(&[
+        "-architecture.storage=v2",
+        "-write-path=segment-writer",
+        "-self-profiling.disable-push=true",
+        "-query-frontend.async-queries-enabled=true",
+    ])
+    .await?;
+    let oracle_base = mapped_base_url(&oracle, PYROSCOPE_HTTP_PORT).await?;
+    wait_for_http_ok(&client, &oracle_base, &["/ready"]).await?;
+    let sink = CapturingSink::default();
+    let store = WalTailProfileStore::new();
+    let candidate = start_krabka_pair_with_architecture(
+        sink.clone(),
+        store.clone(),
+        query::PyroscopeQueryArchitecture::V2,
+    )
+    .await?;
+    let time = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())? - 60_000;
+    let (profile_id, identity) =
+        profile_v2_fixtures(&client, &oracle_base, &candidate, &sink, &store, time).await?;
+
+    let selector = r#"{service_name="v2-matrix"}"#;
+    let base = json!({"profileTypeID": OTLP_PROFILE_TYPE, "labelSelector": selector, "start": time-1000, "end": time+1000});
+    connect_json_until(
+        &client,
+        &oracle_base,
+        None,
+        "SelectMergeStacktraces",
+        base.clone(),
+        |value| value["flamegraph"]["total"].as_str() == Some("140"),
+    )
+    .await?;
+    connect_json_until(&client,&oracle_base,None,"SelectMergeStacktraces",json!({"profileTypeID":OTLP_PROFILE_TYPE,"labelSelector":"{service_name=\"v2-matrix-other\"}","start":time-1000,"end":time+1000}),|value|value["flamegraph"]["total"].as_str()==Some("50")).await?;
+    let cases = profile_v2_request_cases(&base, time, &profile_id, selector)?;
+    let fixture_hash = hex::encode(Sha256::digest(synthetic_cpu_pprof(time * 1_000_000)?));
+    let mut evidence = json!({"fixture":{"cpu_pprof_sha256":fixture_hash,"primary_stacks":[[[FUNC_WORK],40],[[FUNC_WORK,FUNC_HOT],100]],"secondary_stacks":[[[FUNC_WORK],15],[[FUNC_WORK,FUNC_HOT],35]],"primary_total":140,"secondary_total":50},"suite":"pyroscope-v2-fields", "upstream_revision":"7aeaa0ff91e83538b3ff0d09bfefb168bddc022d", "storage":"v2", "upstream":{"image_tag":std::env::var("KRABKA_PYROSCOPE_IMAGE_TAG").ok(),"image_id":std::env::var("KRABKA_PYROSCOPE_IMAGE_ID").ok()}, "settings":{"oracle":{"query-frontend.async-queries-enabled":true},"candidate":{"query_architecture":"v2","async_queries_enabled":true}}, "identity_witness":{"requested":"03030303-0303-0303-0303-030303030303","upstream_assigned":profile_id,"candidate_stored":profile_id,"oracle_response":identity}, "planned":cases.len()+4, "status":"running", "cases":[]});
+    let mut failures = Vec::new();
+    for (method, name, request) in cases {
+        let oracle =
+            profile_v2_response(&client, &oracle_base, None, method, request.clone()).await;
+        let candidate = profile_v2_response(
+            &client,
+            &candidate.querier_base,
+            Some(TENANT),
+            method,
+            request.clone(),
+        )
+        .await;
+        let mut independent_expected = Value::Null;
+        let independent = if method == "SelectMergeStacktraces"
+            && oracle.as_ref().is_ok_and(|v| v.get("stacks").is_some())
+            && name != "bounded nodes"
+        {
+            let expected = match name.as_str() {
+                "leaf is not root"
+                | "reordered prefix"
+                | "missing profile ID"
+                | "missing modern span" => json!([]),
+                "hot prefix" | "hot trace" | "hot modern span" => {
+                    json!([[[FUNC_WORK, FUNC_HOT], 100]])
+                }
+                _ => json!([[[FUNC_WORK], 40], [[FUNC_WORK, FUNC_HOT], 100]]),
+            };
+            independent_expected = json!({"stacks":expected});
+            oracle.as_ref().is_ok_and(|v| v["stacks"] == expected)
+                && candidate.as_ref().is_ok_and(|v| v["stacks"] == expected)
+        } else if method == "SelectSeries"
+            && matches!(name.as_str(), "SUM" | "AVERAGE" | "grouping" | "limit")
+        {
+            let expected = match name.as_str() {
+                "SUM" | "AVERAGE" => json!([190.0]),
+                "grouping" => json!([140.0, 50.0]),
+                _ => json!([140.0]),
+            };
+            independent_expected = json!({"point_values":expected});
+            let values = |response: &Value| {
+                json!(
+                    response["series"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|series| series["points"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|point| point["value"].clone()))
+                        .collect::<Vec<_>>()
+                )
+            };
+            oracle.as_ref().is_ok_and(|value| values(value) == expected)
+                && candidate
+                    .as_ref()
+                    .is_ok_and(|value| values(value) == expected)
+        } else if method == "SelectSeries" && name == "empty span exemplars" {
+            independent_expected = json!({"series_count":0});
+            oracle.as_ref().is_ok_and(|value| *value == json!({}))
+                && candidate.as_ref().is_ok_and(|value| *value == json!({}))
+        } else if method == "SelectHeatmap"
+            && matches!(name.as_str(), "two groups" | "top group limit")
+        {
+            let expected = if name == "two groups" { 2 } else { 1 };
+            independent_expected = json!({"series_count":expected,"profile_count":expected});
+            let witness = |value: &Value| {
+                value["series"].as_array().is_some_and(|series| {
+                    series.len() == expected
+                        && series
+                            .iter()
+                            .flat_map(|series| series["slots"].as_array().into_iter().flatten())
+                            .flat_map(|slot| slot["counts"].as_array().into_iter().flatten())
+                            .filter_map(Value::as_u64)
+                            .sum::<u64>()
+                            == u64::try_from(expected).unwrap_or_default()
+                })
+            };
+            oracle.as_ref().is_ok_and(witness) && candidate.as_ref().is_ok_and(witness)
+        } else {
+            true
+        };
+        let matched = independent
+            && match (&oracle, &candidate) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => false,
+            };
+        evidence["cases"].as_array_mut().ok_or("evidence cases missing")?.push(json!({"id":format!("{method}/{name}"),"request":request,"independent_expected":independent_expected,"status":if matched {"passed"} else {"failed"},"classification":if matched && oracle.as_ref().is_ok_and(|v| v.get("error_code").is_some()) {"paired-expected-error"} else if matched {"matched"} else {"mismatch"},"oracle":oracle.as_ref().ok(),"candidate":candidate.as_ref().ok(),"oracle_error":oracle.as_ref().err().map(ToString::to_string),"candidate_error":candidate.as_ref().err().map(ToString::to_string)}));
+        if !matched {
+            failures.push(format!(
+                "{method}/{name}: oracle={oracle:?} candidate={candidate:?}"
+            ));
+        }
+    }
+    for format in [
+        "PROFILE_FORMAT_FLAMEGRAPH",
+        "PROFILE_FORMAT_TREE",
+        "PROFILE_FORMAT_DOT",
+        "PROFILE_FORMAT_PPROF",
+    ] {
+        let mut request = base.clone();
+        request["format"] = json!(format);
+        request["async"] = json!({"type":"ASYNC_QUERY_TYPE_FORCE"});
+        let expected = profile_async_lifecycle(&client, &oracle_base, None, request.clone()).await;
+        let actual = profile_async_lifecycle(
+            &client,
+            &candidate.querier_base,
+            Some(TENANT),
+            request.clone(),
+        )
+        .await;
+        let matched = match (&expected, &actual) {
+            (Ok((expected, _)), Ok((actual, _))) => expected == actual,
+            _ => false,
+        };
+        evidence["cases"].as_array_mut().ok_or("evidence cases missing")?.push(json!({"id":format!("SelectMergeStacktraces/async {format}"),"request":request,"status":if matched {"passed"} else {"failed"},"classification":if matched {"matched"} else {"mismatch"},"oracle":expected.as_ref().ok().map(|(value,_)|value),"candidate":actual.as_ref().ok().map(|(value,_)|value),"exchanges":{"oracle":expected.as_ref().ok().map(|(_,value)|value),"candidate":actual.as_ref().ok().map(|(_,value)|value)},"oracle_error":expected.as_ref().err().map(ToString::to_string),"candidate_error":actual.as_ref().err().map(ToString::to_string)}));
+        if !matched {
+            failures.push(format!(
+                "async {format}: expected={expected:?} actual={actual:?}"
+            ));
+        }
+    }
+    evidence["status"] = json!(if failures.is_empty() {
+        "passed"
+    } else {
+        "failed"
+    });
+    if let Some(dir) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(dir).join("pyroscope-v2-fields.json"),
+            serde_json::to_vec_pretty(&evidence)?,
+        )?;
+    }
+    candidate.shutdown();
+    drop(oracle);
+    profile_architecture_controls(&client, time).await?;
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n").into())
+    }
+}
+
+async fn profile_architecture_controls(client: &reqwest::Client, time: i64) -> TestResult {
+    use prost::Message;
+    for (architecture, options, artifact) in [
+        (
+            query::PyroscopeQueryArchitecture::V1,
+            vec!["-architecture.storage=v1", "-write-path=ingester"],
+            "pyroscope-v1-aggregation.json",
+        ),
+        (
+            query::PyroscopeQueryArchitecture::V2,
+            vec![
+                "-architecture.storage=v2",
+                "-write-path=segment-writer",
+                "-query-frontend.async-queries-enabled=false",
+            ],
+            "pyroscope-v2-async-disabled.json",
+        ),
+    ] {
+        let oracle = start_pyroscope_with_options(&options).await?;
+        let oracle_base = mapped_base_url(&oracle, PYROSCOPE_HTTP_PORT).await?;
+        wait_for_http_ok(client, &oracle_base, &["/ready"]).await?;
+        let sink = CapturingSink::default();
+        let store = WalTailProfileStore::new();
+        let candidate =
+            start_krabka_pair_with_query_options(sink.clone(), store.clone(), architecture, false)
+                .await?;
+        for (service, values) in [
+            ("architecture-primary", [100, 40]),
+            ("architecture-secondary", [35, 15]),
+        ] {
+            let mut export = pb::otlp_profiles::ExportProfilesServiceRequest::decode(
+                otlp_export_body(u64::try_from(time)? * 1_000_000, service, false)?.as_slice(),
+            )?;
+            let samples = &mut export.resource_profiles[0].scope_profiles[0].profiles[0].samples;
+            samples[0].values = vec![values[0]];
+            samples[1].values = vec![values[1]];
+            for (base, tenant) in [
+                (&oracle_base, None),
+                (&candidate.distributor_base, Some(TENANT)),
+            ] {
+                post_otlp_export(
+                    client,
+                    base,
+                    tenant,
+                    &export.encode_to_vec(),
+                    "application/x-protobuf",
+                    None,
+                )
+                .await?;
+            }
+        }
+        drain_sink_into_store(&sink, &store)?;
+        let base = json!({"profileTypeID":OTLP_PROFILE_TYPE,"labelSelector":"{service_name=~\"architecture-.*\"}","start":time-1000,"end":time+1000});
+        connect_json_until(
+            client,
+            &oracle_base,
+            None,
+            "SelectMergeStacktraces",
+            base.clone(),
+            |value| value["flamegraph"]["total"].as_str() == Some("190"),
+        )
+        .await?;
+        let mut report = json!({"suite":artifact.trim_end_matches(".json"),"upstream_revision":"7aeaa0ff91e83538b3ff0d09bfefb168bddc022d","upstream":{"image_tag":std::env::var("KRABKA_PYROSCOPE_IMAGE_TAG").ok(),"image_id":std::env::var("KRABKA_PYROSCOPE_IMAGE_ID").ok()},"settings":{"query_architecture":if architecture==query::PyroscopeQueryArchitecture::V1 {"v1"} else {"v2"},"oracle_async_enabled":false,"candidate_async_enabled":false},"fixture":{"primary_total":140,"secondary_total":50},"planned":2,"status":"running","cases":[]});
+        let mut failures = Vec::new();
+        for (name, field, value, expected) in
+            if architecture == query::PyroscopeQueryArchitecture::V1 {
+                [
+                    (
+                        "SUM",
+                        "aggregation",
+                        "TIME_SERIES_AGGREGATION_TYPE_SUM",
+                        190.0,
+                    ),
+                    (
+                        "AVERAGE",
+                        "aggregation",
+                        "TIME_SERIES_AGGREGATION_TYPE_AVERAGE",
+                        95.0,
+                    ),
+                ]
+            } else {
+                [
+                    (
+                        "FORCE falls through",
+                        "async",
+                        "ASYNC_QUERY_TYPE_FORCE",
+                        190.0,
+                    ),
+                    (
+                        "DISABLED falls through",
+                        "async",
+                        "ASYNC_QUERY_TYPE_DISABLED",
+                        190.0,
+                    ),
+                ]
+            }
+        {
+            let mut request = base.clone();
+            let method = if field == "aggregation" {
+                request["step"] = json!(1.0);
+                request[field] = json!(value);
+                "SelectSeries"
+            } else {
+                request[field] = json!({"type":value});
+                "SelectMergeStacktraces"
+            };
+            let oracle =
+                profile_v2_response(client, &oracle_base, None, method, request.clone()).await;
+            let candidate = profile_v2_response(
+                client,
+                &candidate.querier_base,
+                Some(TENANT),
+                method,
+                request.clone(),
+            )
+            .await;
+            let witness = |response: &Value| {
+                if method == "SelectSeries" {
+                    response["series"][0]["points"][0]["value"].as_f64() == Some(expected)
+                } else {
+                    response["total"].as_i64() == Some(190) && response.get("async").is_none()
+                }
+            };
+            let matched =
+                matches!((&oracle,&candidate),(Ok(a),Ok(b)) if a==b&&witness(a)&&witness(b));
+            report["cases"].as_array_mut().ok_or("cases missing")?.push(json!({"id":format!("{method}/{name}"),"request":request,"independent_expected":if method=="SelectSeries" {json!({"point_values":[expected]})} else {json!({"total":190,"async":null})},"classification":if matched {"matched"} else {"mismatch"},"status":if matched {"passed"} else {"failed"},"oracle":oracle.as_ref().ok(),"candidate":candidate.as_ref().ok(),"oracle_error":oracle.as_ref().err().map(ToString::to_string),"candidate_error":candidate.as_ref().err().map(ToString::to_string)}));
+            if !matched {
+                failures.push(format!("{artifact}/{name}: {oracle:?} vs {candidate:?}"));
+            }
+        }
+        report["status"] = json!(if failures.is_empty() {
+            "passed"
+        } else {
+            "failed"
+        });
+        if let Some(dir) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+            std::fs::write(
+                std::path::PathBuf::from(dir).join(artifact),
+                serde_json::to_vec_pretty(&report)?,
+            )?;
+        }
+        candidate.shutdown();
+        if !failures.is_empty() {
+            return Err(failures.join("\n").into());
+        }
+    }
+    Ok(())
+}
+
+async fn profile_v2_fixtures(
+    client: &reqwest::Client,
+    oracle_base: &str,
+    candidate: &KrabkaPair,
+    sink: &CapturingSink,
+    store: &WalTailProfileStore,
+    time: i64,
+) -> TestResult<(String, Value)> {
+    use pb::otlp_profiles::{ExportProfilesServiceRequest, Link};
+    use prost::Message;
+    let mut export = ExportProfilesServiceRequest::decode(
+        otlp_export_body(u64::try_from(time)? * 1_000_000, "v2-matrix", false)?.as_slice(),
+    )?;
+    export
+        .dictionary
+        .as_mut()
+        .ok_or("fixture dictionary missing")?
+        .link_table = vec![
+        Link::default(),
+        Link {
+            trace_id: vec![1; 16],
+            span_id: 42_u64.to_be_bytes().to_vec(),
+        },
+        Link {
+            trace_id: vec![2; 16],
+            span_id: 43_u64.to_be_bytes().to_vec(),
+        },
+    ];
+    let profile = &mut export.resource_profiles[0].scope_profiles[0].profiles[0];
+    profile.profile_id = vec![3; 16];
+    profile.samples[0].link_index = 1;
+    profile.samples[1].link_index = 2;
+    let mut second_export = export.clone();
+    second_export.resource_profiles[0]
+        .resource
+        .as_mut()
+        .ok_or("resource missing")?
+        .attributes[0]
+        .value
+        .as_mut()
+        .ok_or("service label missing")?
+        .value = Some(
+        pb::opentelemetry::proto::common::v1::any_value::Value::StringValue(
+            "v2-matrix-other".into(),
+        ),
+    );
+    second_export.resource_profiles[0].scope_profiles[0].profiles[0].samples[0].values = vec![35];
+    second_export.resource_profiles[0].scope_profiles[0].profiles[0].samples[1].values = vec![15];
+    for (base, tenant) in [
+        (oracle_base, None),
+        (&candidate.distributor_base, Some(TENANT)),
+    ] {
+        post_otlp_export(
+            client,
+            base,
+            tenant,
+            &export.encode_to_vec(),
+            "application/x-protobuf",
+            None,
+        )
+        .await?;
+        post_otlp_export(
+            client,
+            base,
+            tenant,
+            &second_export.encode_to_vec(),
+            "application/x-protobuf",
+            None,
+        )
+        .await?;
+    }
+    post_cpu_profile_with_id(
+        client,
+        oracle_base,
+        None,
+        &synthetic_cpu_pprof(time * 1_000_000)?,
+        "03030303-0303-0303-0303-030303030303",
+    )
+    .await?;
+    let identity = connect_json_until(client, oracle_base, None, "SelectSeries", json!({"profileTypeID":CPU_PROFILE_TYPE,"labelSelector":E2E_SELECTOR,"start":time-1000,"end":time+1000,"step":1.0,"exemplarType":"EXEMPLAR_TYPE_INDIVIDUAL"}),
+        |value| value["series"][0]["points"][0]["exemplars"][0]["profileId"].as_str().is_some()).await?;
+    let profile_id = identity["series"][0]["points"][0]["exemplars"][0]["profileId"]
+        .as_str()
+        .ok_or("oracle assigned profile ID missing")?
+        .to_string();
+    assert_eq!(identity["series"][0]["points"][0]["value"], 140.0);
+    post_cpu_profile_with_id(
+        client,
+        &candidate.distributor_base,
+        Some(TENANT),
+        &synthetic_cpu_pprof(time * 1_000_000)?,
+        &profile_id,
+    )
+    .await?;
+    drain_sink_into_store(sink, store)?;
+    Ok((profile_id, identity))
+}
+
+fn profile_v2_request_cases(
+    base: &Value,
+    time: i64,
+    profile_id: &str,
+    selector: &str,
+) -> TestResult<Vec<(&'static str, String, Value)>> {
+    let mut cases: Vec<(&str, String, Value)> = Vec::new();
+    for (name, fields) in [
+        ("default", json!({})),
+        (
+            "root prefix",
+            json!({"stackTraceSelector":{"callSite":[{"name":FUNC_WORK}]}}),
+        ),
+        (
+            "hot prefix",
+            json!({"stackTraceSelector":{"callSite":[{"name":FUNC_WORK},{"name":FUNC_HOT}]}}),
+        ),
+        (
+            "leaf is not root",
+            json!({"stackTraceSelector":{"callSite":[{"name":FUNC_HOT}]}}),
+        ),
+        (
+            "reordered prefix",
+            json!({"stackTraceSelector":{"callSite":[{"name":FUNC_HOT},{"name":FUNC_WORK}]}}),
+        ),
+        ("profile ID", json!({"profileIdSelector":[profile_id]})),
+        (
+            "missing profile ID",
+            json!({"profileIdSelector":["04040404-0404-0404-0404-040404040404"]}),
+        ),
+        (
+            "hot trace",
+            json!({"traceIdSelector":["01010101010101010101010101010101"]}),
+        ),
+        (
+            "both traces",
+            json!({"traceIdSelector":["01010101010101010101010101010101","02020202020202020202020202020202"]}),
+        ),
+        (
+            "hot modern span",
+            json!({"spanSelector":["000000000000002a"]}),
+        ),
+        (
+            "missing modern span",
+            json!({"spanSelector":["000000000000002c"]}),
+        ),
+        ("bounded nodes", json!({"maxNodes":2})),
+        (
+            "explicit disabled async",
+            json!({"async":{"type":"ASYNC_QUERY_TYPE_DISABLED","requestId":"ignored"}}),
+        ),
+    ] {
+        let mut request = base.clone();
+        request
+            .as_object_mut()
+            .ok_or("request missing")?
+            .extend(fields.as_object().ok_or("fields missing")?.clone());
+        if name.contains("profile ID") {
+            request["profileTypeID"] = json!(CPU_PROFILE_TYPE);
+            request["labelSelector"] = json!(E2E_SELECTOR);
+        }
+        cases.push(("SelectMergeStacktraces", name.into(), request));
+    }
+    for format in [
+        "PROFILE_FORMAT_UNSPECIFIED",
+        "PROFILE_FORMAT_FLAMEGRAPH",
+        "PROFILE_FORMAT_TREE",
+        "PROFILE_FORMAT_DOT",
+        "PROFILE_FORMAT_PPROF",
+    ] {
+        let mut request = base.clone();
+        request["format"] = json!(format);
+        cases.push(("SelectMergeStacktraces", format.into(), request));
+    }
+    append_profile_v2_timeseries_cases(&mut cases, base, time)?;
+    for (name, fields) in [
+        ("default", json!({})),
+        ("profile UUID", json!({"profileIdSelector":[profile_id]})),
+        (
+            "absent UUID",
+            json!({"profileIdSelector":["04040404-0404-0404-0404-040404040404"]}),
+        ),
+        (
+            "GoPGO leaf",
+            json!({"stackTraceSelector":{"goPgo":{"keepLocations":1}}}),
+        ),
+        (
+            "GoPGO aggregate",
+            json!({"stackTraceSelector":{"goPgo":{"keepLocations":1,"aggregateCallees":true}}}),
+        ),
+        (
+            "GoPGO default",
+            json!({"stackTraceSelector":{"callSite":[{"name":"does-not-exist"}],"goPgo":{"keepLocations":0}}}),
+        ),
+        (
+            "trace selector",
+            json!({"traceIdSelector":["01010101010101010101010101010101"]}),
+        ),
+        (
+            "empty",
+            json!({"labelSelector":"{service_name=\"missing\"}"}),
+        ),
+    ] {
+        let mut request = base.clone();
+        request["profileTypeID"] = json!(CPU_PROFILE_TYPE);
+        request["labelSelector"] = json!(E2E_SELECTOR);
+        request
+            .as_object_mut()
+            .ok_or("request missing")?
+            .extend(fields.as_object().ok_or("fields missing")?.clone());
+        if name == "trace selector" {
+            request["profileTypeID"] = json!(OTLP_PROFILE_TYPE);
+            request["labelSelector"] = json!(selector);
+        }
+        cases.push(("SelectMergeProfile", name.into(), request));
+    }
+    for (method, name, request) in [
+        (
+            "ProfileTypes",
+            "populated",
+            json!({"start":time-1000,"end":time+1000}),
+        ),
+        ("ProfileTypes", "unbounded", json!({})),
+        (
+            "ProfileTypes",
+            "empty",
+            json!({"start":time+3000,"end":time+4000}),
+        ),
+        (
+            "LabelValues",
+            "filtered",
+            json!({"name":"service_name","matchers":[selector],"start":time-1000,"end":time+1000}),
+        ),
+        (
+            "LabelValues",
+            "absent label",
+            json!({"name":"absent","matchers":[selector],"start":time-1000,"end":time+1000}),
+        ),
+        (
+            "LabelValues",
+            "empty",
+            json!({"name":"service_name","matchers":["{service_name=\"missing\"}"],"start":time-1000,"end":time+1000}),
+        ),
+        (
+            "LabelNames",
+            "filtered",
+            json!({"matchers":[selector],"start":time-1000,"end":time+1000}),
+        ),
+        (
+            "LabelNames",
+            "empty",
+            json!({"matchers":["{service_name=\"missing\"}"],"start":time-1000,"end":time+1000}),
+        ),
+        (
+            "Series",
+            "projected",
+            json!({"matchers":[selector],"labelNames":["service_name","__profile_type__"],"start":time-1000,"end":time+1000}),
+        ),
+        (
+            "Series",
+            "full",
+            json!({"matchers":[E2E_SELECTOR],"start":time-1000,"end":time+1000}),
+        ),
+        (
+            "Series",
+            "empty",
+            json!({"matchers":["{service_name=\"missing\"}"],"start":time-1000,"end":time+1000}),
+        ),
+        ("GetProfileStats", "populated", json!({})),
+    ] {
+        cases.push((method, name.into(), request));
+    }
+    append_profile_v2_span_diff_analysis_cases(&mut cases, base, time, profile_id, selector)?;
+    let mut bounded_profile = base.clone();
+    bounded_profile["profileTypeID"] = json!(CPU_PROFILE_TYPE);
+    bounded_profile["labelSelector"] = json!(E2E_SELECTOR);
+    bounded_profile["maxNodes"] = json!(1);
+    cases.push((
+        "SelectMergeProfile",
+        "bounded nodes".into(),
+        bounded_profile,
+    ));
+    cases.push((
+        "SelectMergeStacktraces",
+        "invalid async request ID".into(),
+        json!({"async":{"type":"ASYNC_QUERY_TYPE_FORCE","requestId":"missing-query"}}),
+    ));
+    cases.push(("SelectMergeStacktraces", "unknown async request ID".into(), json!({"async":{"type":"ASYNC_QUERY_TYPE_FORCE","requestId":"04040404-0404-4404-8404-040404040404"}})));
+    Ok(cases)
+}
+
+fn append_profile_v2_timeseries_cases(
+    cases: &mut Vec<(&'static str, String, Value)>,
+    base: &Value,
+    time: i64,
+) -> TestResult {
+    for (name, fields) in [
+        (
+            "SUM",
+            json!({"aggregation":"TIME_SERIES_AGGREGATION_TYPE_SUM"}),
+        ),
+        (
+            "AVERAGE",
+            json!({"aggregation":"TIME_SERIES_AGGREGATION_TYPE_AVERAGE"}),
+        ),
+        ("grouping", json!({"groupBy":["service_name"]})),
+        (
+            "individual exemplars",
+            json!({"exemplarType":"EXEMPLAR_TYPE_INDIVIDUAL"}),
+        ),
+        (
+            "span exemplars",
+            json!({"exemplarType":"EXEMPLAR_TYPE_SPAN"}),
+        ),
+        (
+            "stack filter",
+            json!({"stackTraceSelector":{"callSite":[{"name":FUNC_WORK},{"name":FUNC_HOT}]}}),
+        ),
+        ("limit", json!({"limit":1})),
+        (
+            "empty span exemplars",
+            json!({"labelSelector":"{service_name=\"missing\"}","exemplarType":"EXEMPLAR_TYPE_SPAN"}),
+        ),
+    ] {
+        let mut request = base.clone();
+        request["step"] = json!(1.0);
+        request
+            .as_object_mut()
+            .ok_or("request missing")?
+            .extend(fields.as_object().ok_or("fields missing")?.clone());
+        if matches!(name, "SUM" | "AVERAGE" | "grouping" | "limit") {
+            request["labelSelector"] = json!("{service_name=~\"v2-matrix.*\"}");
+        }
+        if name == "limit" {
+            request["groupBy"] = json!(["service_name"]);
+        }
+        if name == "individual exemplars" {
+            request["profileTypeID"] = json!(CPU_PROFILE_TYPE);
+            request["labelSelector"] = json!(E2E_SELECTOR);
+        }
+        cases.push(("SelectSeries", name.into(), request));
+    }
+    for query_type in [
+        "HEATMAP_QUERY_TYPE_UNSPECIFIED",
+        "HEATMAP_QUERY_TYPE_INDIVIDUAL",
+        "HEATMAP_QUERY_TYPE_SPAN",
+    ] {
+        for exemplar_type in [
+            "EXEMPLAR_TYPE_UNSPECIFIED",
+            "EXEMPLAR_TYPE_NONE",
+            "EXEMPLAR_TYPE_INDIVIDUAL",
+            "EXEMPLAR_TYPE_SPAN",
+        ] {
+            let mut request = base.clone();
+            request["step"] = json!(1.0);
+            request["queryType"] = json!(query_type);
+            request["exemplarType"] = json!(exemplar_type);
+            request["groupBy"] = json!(["service_name"]);
+            request["limit"] = json!(1);
+            if query_type == "HEATMAP_QUERY_TYPE_INDIVIDUAL" {
+                request["profileTypeID"] = json!(CPU_PROFILE_TYPE);
+                request["labelSelector"] = json!(E2E_SELECTOR);
+            }
+            cases.push((
+                "SelectHeatmap",
+                format!("{query_type}/{exemplar_type}"),
+                request,
+            ));
+        }
+    }
+    for (name, limit) in [("two groups", 2), ("top group limit", 1)] {
+        let mut request = base.clone();
+        request["labelSelector"] = json!("{service_name=~\"v2-matrix.*\"}");
+        request["queryType"] = json!("HEATMAP_QUERY_TYPE_INDIVIDUAL");
+        request["exemplarType"] = json!("EXEMPLAR_TYPE_NONE");
+        request["groupBy"] = json!(["service_name"]);
+        request["step"] = json!(1.0);
+        request["limit"] = json!(limit);
+        cases.push(("SelectHeatmap", name.into(), request));
+    }
+    for (name, start, end) in [
+        ("initial lookback", time + 123, time + 1500),
+        ("exact end", time - 123, time),
+        ("empty", time + 3000, time + 4000),
+    ] {
+        let mut request = base.clone();
+        request["start"] = json!(start);
+        request["end"] = json!(end);
+        request["step"] = json!(1.0);
+        request["queryType"] = json!("HEATMAP_QUERY_TYPE_SPAN");
+        cases.push(("SelectHeatmap", name.into(), request));
+    }
+    Ok(())
+}
+
+fn append_profile_v2_span_diff_analysis_cases(
+    cases: &mut Vec<(&'static str, String, Value)>,
+    base: &Value,
+    time: i64,
+    profile_id: &str,
+    selector: &str,
+) -> TestResult {
+    for (name, fields) in [
+        (
+            "hot deprecated span",
+            json!({"spanSelector":["000000000000002a"]}),
+        ),
+        (
+            "missing deprecated span",
+            json!({"spanSelector":["000000000000002c"]}),
+        ),
+        (
+            "bounded deprecated span",
+            json!({"spanSelector":["000000000000002a"],"maxNodes":1}),
+        ),
+    ] {
+        let mut request = base.clone();
+        request
+            .as_object_mut()
+            .ok_or("request missing")?
+            .extend(fields.as_object().ok_or("fields missing")?.clone());
+        cases.push(("SelectMergeSpanProfile", name.into(), request));
+    }
+    for format in [
+        "PROFILE_FORMAT_UNSPECIFIED",
+        "PROFILE_FORMAT_FLAMEGRAPH",
+        "PROFILE_FORMAT_TREE",
+        "PROFILE_FORMAT_DOT",
+        "PROFILE_FORMAT_PPROF",
+    ] {
+        let mut request = base.clone();
+        request["spanSelector"] = json!(["000000000000002a"]);
+        request["format"] = json!(format);
+        cases.push(("SelectMergeSpanProfile", format.into(), request));
+    }
+    for name in [
+        "empty left",
+        "empty right",
+        "both empty",
+        "hot prefix",
+        "linked traces",
+        "linked spans",
+        "profile IDs",
+        "ignored formats and async",
+        "bounded nodes",
+    ] {
+        let mut left = base.clone();
+        let mut right = base.clone();
+        match name {
+            "empty left" => left["labelSelector"] = json!("{service_name=\"missing\"}"),
+            "empty right" => right["labelSelector"] = json!("{service_name=\"missing\"}"),
+            "both empty" => {
+                left["labelSelector"] = json!("{service_name=\"missing\"}");
+                right = left.clone();
+            }
+            "hot prefix" => {
+                left["stackTraceSelector"] =
+                    json!({"callSite":[{"name":FUNC_WORK},{"name":FUNC_HOT}]});
+            }
+            "linked traces" => {
+                left["traceIdSelector"] = json!(["01010101010101010101010101010101"]);
+                right["traceIdSelector"] = json!(["02020202020202020202020202020202"]);
+            }
+            "linked spans" => {
+                left["spanSelector"] = json!(["000000000000002a"]);
+                right["spanSelector"] = json!(["000000000000002b"]);
+            }
+            "profile IDs" => {
+                left["profileTypeID"] = json!(CPU_PROFILE_TYPE);
+                left["labelSelector"] = json!(E2E_SELECTOR);
+                left["profileIdSelector"] = json!([profile_id]);
+                right = left.clone();
+                right["profileIdSelector"] = json!(["04040404-0404-0404-0404-040404040404"]);
+            }
+            "ignored formats and async" => {
+                left["format"] = json!("PROFILE_FORMAT_TREE");
+                right["format"] = json!("PROFILE_FORMAT_DOT");
+                left["async"] = json!({"type":"ASYNC_QUERY_TYPE_FORCE","requestId":"ignored"});
+            }
+            "bounded nodes" => {
+                left["maxNodes"] = json!(1);
+                right["maxNodes"] = json!(2);
+            }
+            _ => unreachable!(),
+        }
+        cases.push(("Diff", name.into(), json!({"left":left,"right":right})));
+    }
+    for (name, request) in [
+        (
+            "matching query",
+            json!({"query":format!("{OTLP_PROFILE_TYPE}{selector}"),"start":time-1000,"end":time+1000}),
+        ),
+        (
+            "excluded time",
+            json!({"query":format!("{OTLP_PROFILE_TYPE}{selector}"),"start":time+3000,"end":time+4000}),
+        ),
+        (
+            "malformed ignored query",
+            json!({"query":"invalid","start":10,"end":0}),
+        ),
+        ("omitted fields", json!({})),
+    ] {
+        cases.push(("AnalyzeQuery", name.into(), request));
+    }
+    Ok(())
+}
+
+async fn profile_v2_response(
+    client: &reqwest::Client,
+    base: &str,
+    tenant: Option<&str>,
+    method: &str,
+    body: Value,
+) -> TestResult<Value> {
+    let mut request = client
+        .post(format!("{base}/querier.v1.QuerierService/{method}"))
+        .header("content-type", "application/json")
+        .header("connect-protocol-version", "1")
+        .json(&body);
+    if let Some(tenant) = tenant {
+        request = request.header("x-scope-orgid", tenant);
+    }
+    let response = request.send().await?;
+    let status = response.status();
+    let response: Value = response.json().await?;
+    if status != StatusCode::OK {
+        return Ok(json!({"error_code": response["code"], "status": status.as_u16()}));
+    }
+    profile_v2_response_value(method, response)
+}
+
+fn profile_v2_response_value(method: &str, response: Value) -> TestResult<Value> {
+    match method {
+        "SelectMergeStacktraces" => {
+            let response: pb::querier::v1::SelectMergeStacktracesResponse =
+                serde_json::from_value(response)?;
+            if let Some(flamegraph) = response.flamegraph {
+                return Ok(
+                    json!({"stacks":normalized_flamegraph_stacks(&flamegraph)?,"total":flamegraph.total,"max_self":flamegraph.max_self}),
+                );
+            }
+            if let Some(pprof) = response.pprof {
+                return Ok(
+                    json!({"pprof":normalized_pprof_stacks(&pprof.profile.ok_or("pprof missing")?)?}),
+                );
+            }
+            if !response.dot.is_empty() {
+                return normalized_dot_graph(&response.dot);
+            }
+            Ok(serde_json::to_value(response)?)
+        }
+        "Diff" => {
+            let response: pb::querier::v1::DiffResponse = serde_json::from_value(response)?;
+            let graph = response.flamegraph.ok_or("Diff flamegraph missing")?;
+            let mut value = serde_json::to_value(&graph)?;
+            value["total"] = json!(graph.total);
+            value["maxSelf"] = json!(graph.max_self);
+            value["leftTicks"] = json!(graph.left_ticks);
+            value["rightTicks"] = json!(graph.right_ticks);
+            canonical_diff(&json!({"flamegraph":value}))
+        }
+        "AnalyzeQuery" => {
+            let response: pb::querier::v1::AnalyzeQueryResponse = serde_json::from_value(response)?;
+            Ok(serde_json::to_value(response)?)
+        }
+        "SelectMergeSpanProfile" => {
+            let response: pb::querier::v1::SelectMergeSpanProfileResponse =
+                serde_json::from_value(response)?;
+            if let Some(flamegraph) = response.flamegraph {
+                return Ok(
+                    json!({"stacks":normalized_flamegraph_stacks(&flamegraph)?,"total":flamegraph.total,"max_self":flamegraph.max_self}),
+                );
+            }
+            Ok(serde_json::to_value(response)?)
+        }
+        "ProfileTypes" => {
+            let mut response: pb::querier::v1::ProfileTypesResponse =
+                serde_json::from_value(response)?;
+            response.profile_types.sort_by(|a, b| a.id.cmp(&b.id));
+            Ok(serde_json::to_value(response)?)
+        }
+        "LabelNames" | "LabelValues" => {
+            let mut response: pb::types::v1::LabelNamesResponse = serde_json::from_value(response)?;
+            response.names.sort();
+            Ok(serde_json::to_value(response)?)
+        }
+        "Series" => {
+            let mut response: pb::querier::v1::SeriesResponse = serde_json::from_value(response)?;
+            for set in &mut response.labels_set {
+                set.labels
+                    .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
+            }
+            response
+                .labels_set
+                .sort_by_key(|set| serde_json::to_string(&set.labels).unwrap_or_default());
+            Ok(serde_json::to_value(response)?)
+        }
+        "GetProfileStats" => {
+            let response: pb::types::v1::GetProfileStatsResponse =
+                serde_json::from_value(response)?;
+            Ok(serde_json::to_value(response)?)
+        }
+        "SelectMergeProfile" => {
+            let profile: pb::google::v1::Profile = serde_json::from_value(response)?;
+            let stacks = normalized_pprof_stacks(&profile)?;
+            let mut locations = Vec::new();
+            for location in &profile.location {
+                let mut lines = Vec::new();
+                for line in &location.line {
+                    let function = profile
+                        .function
+                        .iter()
+                        .find(|function| function.id == line.function_id)
+                        .ok_or("missing line function")?;
+                    let name = profile
+                        .string_table
+                        .get(usize::try_from(function.name)?)
+                        .ok_or("missing function name")?;
+                    let file = profile
+                        .string_table
+                        .get(usize::try_from(function.filename)?)
+                        .ok_or("missing function filename")?;
+                    lines.push(json!({"name":name,"file":file,"line":line.line}));
+                }
+                locations.push(json!({"address":location.address,"lines":lines}));
+            }
+            locations.sort_by_key(ToString::to_string);
+            Ok(json!({"stacks":stacks,"locations":locations}))
+        }
+        "SelectSeries" => {
+            let mut response: pb::querier::v1::SelectSeriesResponse =
+                serde_json::from_value(response)?;
+            for series in &mut response.series {
+                series
+                    .labels
+                    .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
+                for point in &mut series.points {
+                    for exemplar in &mut point.exemplars {
+                        exemplar
+                            .labels
+                            .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
+                    }
+                    point.exemplars.sort_by_key(|e| {
+                        (
+                            e.timestamp,
+                            e.value,
+                            e.profile_id.clone(),
+                            e.trace_id.clone(),
+                            e.span_id.clone(),
+                        )
+                    });
+                }
+            }
+            response
+                .series
+                .sort_by_key(|series| serde_json::to_string(&series.labels).unwrap_or_default());
+            Ok(serde_json::to_value(response)?)
+        }
+        "SelectHeatmap" => {
+            let mut response: pb::querier::v1::SelectHeatmapResponse =
+                serde_json::from_value(response)?;
+            for series in &mut response.series {
+                series
+                    .labels
+                    .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
+                for slot in &mut series.slots {
+                    for exemplar in &mut slot.exemplars {
+                        exemplar
+                            .labels
+                            .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
+                    }
+                    slot.exemplars.sort_by_key(|e| {
+                        (
+                            e.timestamp,
+                            e.value,
+                            e.profile_id.clone(),
+                            e.trace_id.clone(),
+                            e.span_id.clone(),
+                        )
+                    });
+                }
+            }
+            response
+                .series
+                .sort_by_key(|series| serde_json::to_string(&series.labels).unwrap_or_default());
+            Ok(serde_json::to_value(response)?)
+        }
+        _ => Err(format!("unknown matrix RPC {method}").into()),
+    }
+}
+
+fn normalized_dot_graph(dot: &str) -> TestResult<Value> {
+    use std::collections::BTreeMap;
+    let node = regex::Regex::new(
+        r#"^(N[0-9]+) \[label=".*tooltip="([0-9a-f]+) ([^ ]+) ([^ ]+):([0-9]+) "#,
+    )?;
+    let percentage = regex::Regex::new(r"\(([0-9.]+)%\)")?;
+    let edge = regex::Regex::new(r"^(N[0-9]+) -> (N[0-9]+).*weight=([0-9]+)")?;
+    let mut nodes = BTreeMap::new();
+    let mut edges = Vec::new();
+    for line in dot.lines().map(str::trim) {
+        if let Some(capture) = node.captures(line) {
+            let percent = percentage
+                .captures(line)
+                .ok_or("DOT node lacks sample percentage")?[1]
+                .to_string();
+            let address = u64::from_str_radix(&capture[2], 16)?;
+            nodes.insert(capture[1].to_string(),json!({"function":&capture[3],"file":&capture[4],"line":capture[5].parse::<i64>()?,"address":address,"self_percent":percent}));
+        } else if let Some(capture) = edge.captures(line) {
+            edges.push((
+                capture[1].to_string(),
+                capture[2].to_string(),
+                capture[3].parse::<i64>()?,
+            ));
+        }
+    }
+    if nodes.is_empty() {
+        return Err("DOT graph has no associated function nodes".into());
+    }
+    let mut functions = nodes.values().cloned().collect::<Vec<_>>();
+    functions.sort_by_key(ToString::to_string);
+    let mut calls=edges.into_iter().map(|(caller,callee,weight)|Ok(json!({"caller":nodes.get(&caller).ok_or("DOT caller missing")?,"callee":nodes.get(&callee).ok_or("DOT callee missing")?,"weight":weight}))).collect::<TestResult<Vec<_>>>()?;
+    calls.sort_by_key(ToString::to_string);
+    Ok(json!({"nodes":functions,"edges":calls}))
+}
+
+/// Server-generated IDs remain exact in the exchange witness. Equality compares
+/// the lifecycle after checking each poll refers to its own submitted query.
+async fn profile_async_lifecycle(
+    client: &reqwest::Client,
+    base: &str,
+    tenant: Option<&str>,
+    request: Value,
+) -> TestResult<(Value, Value)> {
+    let submitted = connect_json(
+        client,
+        base,
+        tenant,
+        "SelectMergeStacktraces",
+        request.clone(),
+    )
+    .await?;
+    if submitted["async"]["status"] != "ASYNC_QUERY_STATUS_IN_PROGRESS"
+        || submitted.get("flamegraph").is_some()
+        || submitted.get("pprof").is_some()
+        || submitted.get("dot").is_some()
+        || submitted.get("tree").is_some()
+    {
+        return Err(format!("invalid async submission: {submitted}").into());
+    }
+    let id = submitted["async"]["requestId"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .ok_or("async request ID missing")?;
+    let poll_request = json!({"profileTypeID":"ignored on poll","labelSelector":"invalid on poll","start":10,"end":0,"async":{"type":"ASYNC_QUERY_TYPE_FORCE","requestId":id}});
+    let completed = connect_json_until(
+        client,
+        base,
+        tenant,
+        "SelectMergeStacktraces",
+        poll_request.clone(),
+        |response| response["async"]["status"] == "ASYNC_QUERY_STATUS_SUCCESS",
+    )
+    .await?;
+    let result = profile_async_completion_value(&completed, id)?;
+    Ok((
+        json!({"submission_status":"ASYNC_QUERY_STATUS_IN_PROGRESS","completion_status":"ASYNC_QUERY_STATUS_SUCCESS","result":result}),
+        json!({"submission":{"request":request,"response":submitted},"poll":{"request":poll_request,"response":completed}}),
+    ))
+}
+
+fn profile_async_completion_value(completed: &Value, submitted_id: &str) -> TestResult<Value> {
+    if completed["async"]["requestId"] != submitted_id
+        || completed["async"]["status"] != "ASYNC_QUERY_STATUS_SUCCESS"
+        || completed["async"].get("errorMessage").is_some()
+    {
+        return Err("async completion metadata changed".into());
+    }
+    // Normalize the successful exchange that is retained in the evidence.
+    // A later polling request is a separate observation and may fail transiently.
+    let mut result = profile_v2_response_value("SelectMergeStacktraces", completed.clone())?;
+    if let Some(result) = result.as_object_mut() {
+        result.remove("async");
+    }
+    Ok(result)
+}
+
+#[tokio::test]
+async fn async_lifecycle_compares_recorded_success_and_rejects_result_drift() -> TestResult {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let id = "12345678-1234-1234-1234-123456789abc";
+    let completed = json!({"async":{"requestId":id,"status":"ASYNC_QUERY_STATUS_SUCCESS"},"flamegraph":{"names":["total",FUNC_WORK,FUNC_HOT],"levels":[{"values":["0","140","0","0"]},{"values":["0","140","40","1"]},{"values":["40","100","100","2"]}],"total":"140","maxSelf":"100"}});
+    let expected =
+        json!({"stacks":[[[FUNC_WORK],40],[[FUNC_WORK,FUNC_HOT],100]],"total":140,"max_self":100});
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed_calls = Arc::clone(&calls);
+    let captured = completed.clone();
+    let router = axum::Router::new().route("/querier.v1.QuerierService/SelectMergeStacktraces", axum::routing::post(move |axum::Json(request):axum::Json<Value>| {
+        let calls = Arc::clone(&observed_calls);
+        let captured = captured.clone();
+        async move {
+            match calls.fetch_add(1,Ordering::SeqCst) {
+                0 => (StatusCode::OK,axum::Json(json!({"async":{"requestId":id,"status":"ASYNC_QUERY_STATUS_IN_PROGRESS"}}))),
+                1 => {
+                    assert2::assert!(request["async"]["requestId"]==id);
+                    (StatusCode::OK,axum::Json(captured))
+                },
+                _ => (StatusCode::INTERNAL_SERVER_ERROR,axum::Json(json!({"code":"internal","message":"a later poll failed"}))),
+            }
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let base = format!("http://{}", listener.local_addr()?);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.await;
+            })
+            .await
+    });
+    let (actual, exchange) = profile_async_lifecycle(
+        &reqwest::Client::new(),
+        &base,
+        None,
+        json!({"async":{"type":"ASYNC_QUERY_TYPE_FORCE"}}),
+    )
+    .await?;
+    assert2::assert!(calls.load(Ordering::SeqCst) == 2);
+    assert2::assert!(actual["result"] == expected);
+    assert2::assert!(exchange["poll"]["response"] == completed);
+    // The provider's next request fails; it cannot replace the recorded success.
+    let later = profile_v2_response(
+        &reqwest::Client::new(),
+        &base,
+        None,
+        "SelectMergeStacktraces",
+        json!({"async":{"type":"ASYNC_QUERY_TYPE_FORCE","requestId":id}}),
+    )
+    .await?;
+    assert2::assert!(later == json!({"error_code":"internal","status":500}));
+    assert2::assert!(actual["result"] == expected);
+    assert2::assert!(profile_async_completion_value(&completed, "different-id").is_err());
+    let mut incomplete = completed.clone();
+    incomplete["async"]["status"] = json!("ASYNC_QUERY_STATUS_IN_PROGRESS");
+    assert2::assert!(profile_async_completion_value(&incomplete, id).is_err());
+    incomplete = completed.clone();
+    incomplete["async"]["errorMessage"] = json!("background failure");
+    assert2::assert!(profile_async_completion_value(&incomplete, id).is_err());
+    let mut changed = completed;
+    changed["flamegraph"]["levels"][0]["values"][1] = json!("139");
+    changed["flamegraph"]["levels"][1]["values"][1] = json!("139");
+    changed["flamegraph"]["levels"][2]["values"][1] = json!("99");
+    changed["flamegraph"]["levels"][2]["values"][2] = json!("99");
+    changed["flamegraph"]["total"] = json!("139");
+    changed["flamegraph"]["maxSelf"] = json!("99");
+    assert2::assert!(profile_async_completion_value(&changed, id)? != expected);
+    let _ = shutdown_tx.send(());
+    server.await??;
     Ok(())
 }

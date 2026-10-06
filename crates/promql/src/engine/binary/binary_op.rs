@@ -5,6 +5,10 @@ use super::{
     float_sample_value, incompatible_types_in_binop_info, labels_without_metric_name,
     scaled_native_histogram,
 };
+use crate::{
+    engine::histogram::trim_native_histogram,
+    planner::histogram_trim_operators::{HISTOGRAM_TRIM_LOWER, HISTOGRAM_TRIM_UPPER},
+};
 
 #[derive(Clone, Copy)]
 pub(crate) enum BinaryOp {
@@ -15,6 +19,8 @@ pub(crate) enum BinaryOp {
     Mod,
     Pow,
     Atan2,
+    TrimUpper,
+    TrimLower,
     Eq,
     Neq,
     Gt,
@@ -26,6 +32,8 @@ pub(crate) enum BinaryOp {
 impl BinaryOp {
     pub(crate) fn try_from_token(token: TokenType) -> Result<Self> {
         match token.id() {
+            HISTOGRAM_TRIM_UPPER => Ok(Self::TrimUpper),
+            HISTOGRAM_TRIM_LOWER => Ok(Self::TrimLower),
             T_ADD => Ok(Self::Add),
             T_SUB => Ok(Self::Sub),
             T_MUL => Ok(Self::Mul),
@@ -59,6 +67,15 @@ impl BinaryOp {
         )
     }
 
+    /// Pinned Prometheus `changesMetricSchema`: vector/vector arithmetic clears
+    /// metadata before later consumers, even when name removal is delayed.
+    pub(crate) fn changes_metric_schema(self) -> bool {
+        matches!(
+            self,
+            Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Mod | Self::Pow | Self::Atan2
+        )
+    }
+
     /// Returns the `PromQL` surface symbol for this operator.
     ///
     /// The symbol matches the Prometheus annotation text, for example `==`,
@@ -72,6 +89,8 @@ impl BinaryOp {
             Self::Mod => "%",
             Self::Pow => "^",
             Self::Atan2 => "atan2",
+            Self::TrimUpper => "</",
+            Self::TrimLower => ">/",
             Self::Eq => "==",
             Self::Neq => "!=",
             Self::Gt => ">",
@@ -87,6 +106,14 @@ impl BinaryOp {
         right: f64,
         modifier: Option<&BinModifier>,
     ) -> Option<f64> {
+        if matches!(self, Self::TrimUpper | Self::TrimLower) {
+            emit_info(incompatible_types_in_binop_info(
+                "float",
+                self.symbol(),
+                "float",
+            ));
+            return None;
+        }
         if self.is_comparison() {
             let pass = self.compare(left, right);
             if binary_returns_bool(modifier) {
@@ -155,6 +182,20 @@ impl BinaryOp {
         scalar: f64,
         scalar_side: ScalarSide,
     ) -> Option<InstantSample> {
+        if matches!(self, Self::TrimUpper | Self::TrimLower)
+            && matches!(scalar_side, ScalarSide::Right)
+        {
+            return Some(InstantSample {
+                labels: labels.clone(),
+                ts_ms,
+                value: SampleValue::Histogram(trim_native_histogram(
+                    histogram,
+                    scalar,
+                    matches!(self, Self::TrimUpper),
+                )),
+                drop_name: false,
+            });
+        }
         let factor = match (self, scalar_side) {
             (Self::Mul, ScalarSide::Left | ScalarSide::Right) => scalar,
             (Self::Div, ScalarSide::Right) => 1.0 / scalar,
@@ -199,6 +240,9 @@ impl BinaryOp {
             Self::Mod => left % right,
             Self::Pow => left.powf(right),
             Self::Atan2 => left.atan2(right),
+            Self::TrimUpper | Self::TrimLower => {
+                unreachable!("histogram trim used as float arithmetic")
+            }
             Self::Eq | Self::Neq | Self::Gt | Self::Lt | Self::Gte | Self::Lte => {
                 unreachable!("comparison op used as arithmetic")
             }
@@ -217,7 +261,15 @@ impl BinaryOp {
             Self::Lt => left < right,
             Self::Gte => left >= right,
             Self::Lte => left <= right,
-            Self::Add | Self::Sub | Self::Mul | Self::Div | Self::Mod | Self::Pow | Self::Atan2 => {
+            Self::Add
+            | Self::Sub
+            | Self::Mul
+            | Self::Div
+            | Self::Mod
+            | Self::Pow
+            | Self::Atan2
+            | Self::TrimUpper
+            | Self::TrimLower => {
                 unreachable!("arithmetic op used as comparison")
             }
         }

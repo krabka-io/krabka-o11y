@@ -1149,7 +1149,7 @@ async fn differential_mismatches(
         let imported = krabka
             .get_json(&format!("{}{path}", krabka.base), &params)
             .await?;
-        if diff_corpus::normalize(&upstream) != diff_corpus::normalize(&imported) {
+        if !diff_corpus::queries_equal(&upstream, &imported) {
             mismatches.push(format!(
                 "{path} {params:?}\nprometheus: {upstream}\nkrabka: {imported}"
             ));

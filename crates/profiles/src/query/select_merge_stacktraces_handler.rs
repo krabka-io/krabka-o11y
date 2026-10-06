@@ -10,7 +10,7 @@ pub(crate) async fn select_merge_stacktraces_handler<S>(
     req: ConnectRequest<pb::querier::v1::SelectMergeStacktracesRequest>,
 ) -> Result<ConnectResponse<pb::querier::v1::SelectMergeStacktracesResponse>, ConnectError>
 where
-    S: ProfileStore,
+    S: ProfileStore + 'static,
 {
     let metrics = state.0.metrics.clone();
     timed_query(

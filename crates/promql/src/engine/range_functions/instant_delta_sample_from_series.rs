@@ -1,6 +1,7 @@
 use super::{
     IrateFn, RangeSeries, SampleValue, Time, TimeExt, ToPrimitive, emit_warning, instant_delta,
     instant_delta_histogram, mixed_floats_histograms_warning, scale_native_histogram_values,
+    start_timestamp_reset,
 };
 
 /// Folds one series' window into its `irate` or `idelta` value.
@@ -30,13 +31,43 @@ pub(crate) fn instant_delta_sample_from_series(
         return None;
     }
 
+    let previous_start = series
+        .start_timestamps_ms
+        .get(previous_ms)
+        .copied()
+        .or(match previous {
+            SampleValue::Histogram(h) => h.start_timestamp_ms,
+            SampleValue::Float(_) => None,
+        })
+        .unwrap_or(0);
+    let start = series
+        .start_timestamps_ms
+        .get(last_ms)
+        .copied()
+        .or(match last {
+            SampleValue::Histogram(h) => h.start_timestamp_ms,
+            SampleValue::Float(_) => None,
+        })
+        .unwrap_or(0);
+    let start_reset = matches!(kind, IrateFn::Irate)
+        && start_timestamp_reset(previous_start, *previous_ms, start, *last_ms);
     match (previous, last) {
-        (SampleValue::Float(previous), SampleValue::Float(last)) => Some(SampleValue::Float(
-            instant_delta(*previous, *last, interval_secs, kind),
-        )),
+        (SampleValue::Float(previous), SampleValue::Float(last)) => {
+            Some(SampleValue::Float(if start_reset {
+                *last / interval_secs
+            } else {
+                instant_delta(*previous, *last, interval_secs, kind)
+            }))
+        }
         (SampleValue::Histogram(previous), SampleValue::Histogram(last)) => {
             let metric = series.labels.get("__name__").unwrap_or("");
-            let mut out = instant_delta_histogram(previous, last, metric, kind)?;
+            let mut out = if start_reset {
+                let mut out = last.clone();
+                out.reset_hint = super::ResetHint::Gauge;
+                out
+            } else {
+                instant_delta_histogram(previous, last, metric, kind)?
+            };
             if matches!(kind, IrateFn::Irate) {
                 scale_native_histogram_values(&mut out, 1.0 / interval_secs);
             }

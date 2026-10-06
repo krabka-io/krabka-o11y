@@ -51,6 +51,12 @@ mod diff_corpus;
 #[path = "support/promql_corpus.rs"]
 mod promql_corpus;
 
+#[path = "support/compliance_fixture.rs"]
+mod compliance_fixture;
+
+#[path = "support/generated_differential.rs"]
+mod generated_differential;
+
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /// The deadline for a container to start, which includes the image pull.
@@ -77,51 +83,33 @@ const QUERY_CONCURRENCY: usize = 12;
 
 /// The Prometheus feature flags the corpus needs.
 ///
-/// Every one of these gates a *file* of the vendored corpus rather than
-/// changing how the rest of `PromQL` behaves: `info()` and the
-/// `double_exponential_smoothing` family are experimental functions,
-/// `duration_expression.test` needs duration expressions, `extended_vectors.test`
-/// needs the extended range selectors, `type_and_unit.test` needs `__type__` and
-/// `__unit__` to be understood rather than treated as ordinary labels, and the
-/// histogram corpora need native histograms.
+/// Native histograms, experimental functions, duration expressions, extended
+/// range selectors and type/unit labels enable the corresponding corpus
+/// features. Delayed name removal changes composed-expression semantics and
+/// matches the pinned upstream test engine and the candidate's behavior.
 const PROMETHEUS_FEATURES: &str = "native-histograms,promql-experimental-functions,\
-     promql-duration-expr,promql-extended-range-selectors,type-and-unit-labels";
+     promql-duration-expr,promql-extended-range-selectors,type-and-unit-labels,promql-delayed-name-removal";
 
 /// Query changes observed when the client oracle moved from Prometheus 3.8 to
 /// 3.14. The list is bidirectional: the suite fails if any case starts agreeing
 /// again, so each difference remains an explicit compatibility decision.
-const PROMETHEUS_DIVERGENCES: &[KnownDivergence] = &[
-    KnownDivergence {
-        reason: "Prometheus 3.14 rejects nested duration expressions that 3.8 and Krabka accept.",
-        cases: &[
-            "duration_expression.test:170",
-            "duration_expression.test:173",
-            "duration_expression.test:176",
-            "duration_expression.test:203",
-            "duration_expression.test:206",
-            "duration_expression.test:209",
-            "duration_expression.test:212",
-            "duration_expression.test:215",
-            "duration_expression.test:218",
-            "duration_expression.test:221",
-            "duration_expression.test:224",
-            "duration_expression.test:227",
-        ],
-    },
-    KnownDivergence {
-        reason: "Prometheus 3.14 changed the anchored boundary used by changes and resets.",
-        cases: &["extended_vectors.test:321", "extended_vectors.test:344"],
-    },
-    KnownDivergence {
-        reason: "Prometheus 3.14 adds sample-range detail to histogram monotonicity annotations; values agree.",
-        cases: &[
-            "histograms.test:958",
-            "histograms.test:962",
-            "histograms.test:966",
-            "native_histograms.test:1787",
-        ],
-    },
-];
+const PROMETHEUS_DIVERGENCES: &[KnownDivergence] = &[KnownDivergence {
+    reason: "Prometheus 3.14 rejects nested duration expressions that 3.8 and Krabka accept.",
+    cases: &[
+        "duration_expression.test:170",
+        "duration_expression.test:173",
+        "duration_expression.test:176",
+        "duration_expression.test:203",
+        "duration_expression.test:206",
+        "duration_expression.test:209",
+        "duration_expression.test:212",
+        "duration_expression.test:215",
+        "duration_expression.test:218",
+        "duration_expression.test:221",
+        "duration_expression.test:224",
+        "duration_expression.test:227",
+    ],
+}];
 
 /// The corpus builds, and every case it declines to run says why.
 ///
@@ -198,6 +186,10 @@ async fn prometheus_compliance_corpus_matches_krabka() -> TestResult {
         &corpus,
         &mismatches,
         PROMETHEUS_DIVERGENCES,
+        &promql_corpus::ReportConfiguration {
+            oracle_flags: vec![format!("--enable-feature={PROMETHEUS_FEATURES}")],
+            candidate_engine_opts: krabka_promql::EngineOpts::default(),
+        },
     );
     krabka.shutdown();
 
@@ -209,6 +201,213 @@ async fn prometheus_compliance_corpus_matches_krabka() -> TestResult {
         verdict.unwrap_or_default()
     );
     Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires Docker and the pinned Prometheus compliance executable"]
+async fn upstream_promql_http_compliance_matches_krabka() -> TestResult {
+    let executable = std::env::var_os("KRABKA_PROMQL_COMPLIANCE_BIN")
+        .ok_or("KRABKA_PROMQL_COMPLIANCE_BIN is required")?;
+    let queries = std::env::var_os("KRABKA_PROMQL_COMPLIANCE_QUERIES")
+        .ok_or("KRABKA_PROMQL_COMPLIANCE_QUERIES is required")?;
+    // Check inputs before starting any containers. Missing inputs are errors.
+    std::fs::metadata(&executable)?;
+    std::fs::read(&queries)?;
+    let client = reqwest::Client::new();
+    let prometheus = start_prometheus().await?;
+    let prometheus_base = mapped_base_url(&prometheus, PROMETHEUS_PORT).await?;
+    wait_for_http_ok(&client, &prometheus_base, "/-/ready").await?;
+    let krabka = start_krabka_query_server().await?;
+    for batch in compliance_fixture::batches() {
+        post_remote_write(&client, &prometheus_base, "/api/v1/write", None, &batch).await?;
+        post_remote_write(
+            &client,
+            &krabka.base_url,
+            "/api/v1/write",
+            Some(TENANT),
+            &batch,
+        )
+        .await?;
+    }
+    for (base, tenant) in [(&prometheus_base, None), (&krabka.base_url, Some(TENANT))] {
+        wait_for_query_ready(
+            &client,
+            base,
+            tenant,
+            "demo_memory_usage_bytes",
+            compliance_fixture::END_MS,
+        )
+        .await?;
+    }
+    let directory = tempfile::tempdir()?;
+    let config_path = directory.path().join("targets.yml");
+    let config = serde_json::json!({
+        "reference_target_config": {"query_url": prometheus_base},
+        "test_target_config": {"query_url": krabka.base_url, "headers": {"X-Scope-OrgID": TENANT}},
+        "query_time_parameters": {
+            "end_time": (compliance_fixture::END_MS / 1_000).to_string(), "range_in_seconds": 600, "resolution_in_seconds": 10,
+        },
+    });
+    std::fs::write(&config_path, serde_yaml::to_string(&config)?)?;
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new(executable)
+            .arg("-config-file")
+            .arg(config_path)
+            .arg("-config-file")
+            .arg(queries)
+            .arg("-output-format=json")
+            .arg("-output-passing=true")
+            .arg("-query-parallelism=8")
+            .output()
+    })
+    .await??;
+    let counts = write_compliance_report(&output)?;
+    let report_dir = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
+        || std::path::PathBuf::from("../../target"),
+        std::path::PathBuf::from,
+    );
+    generated_differential::run_typed(
+        "promql",
+        &[
+            generated_differential::TypedExpr::prom_metric(
+                "demo_memory_usage_bytes",
+                &[generated_differential::LabelMatcher::new(
+                    "type",
+                    generated_differential::MatchOp::Eq,
+                    "free",
+                )],
+            ),
+            generated_differential::TypedExpr::prom_metric("demo_cpu_usage_seconds_total", &[]),
+            generated_differential::TypedExpr::prom_metric("demo_num_cpus", &[]),
+        ],
+        &[
+            generated_differential::TypedConstructor::PromAbs,
+            generated_differential::TypedConstructor::PromSum { by: vec![] },
+            generated_differential::TypedConstructor::PromSum {
+                by: vec!["instance".into()],
+            },
+            generated_differential::TypedConstructor::PromAdd(1),
+            generated_differential::TypedConstructor::PromClampMin(0),
+        ],
+        &report_dir,
+        |query| {
+            let client = &client;
+            let krabka_base = &krabka.base_url;
+            let prometheus_base = &prometheus_base;
+            async move {
+                let case = CorpusCase {
+                    name: "generated seed-42 composition".to_owned(),
+                    promql: query,
+                    kind: QueryKind::Range {
+                        start: compliance_fixture::END_MS - 600_000,
+                        end: compliance_fixture::END_MS,
+                        step: 10_000,
+                    },
+                    expects_failure: false,
+                };
+                let krabka = query_case(client, krabka_base, "", Some(TENANT), &case).await?;
+                let upstream = query_case(client, prometheus_base, "", None, &case).await?;
+                if krabka["status"] != "success" || upstream["status"] != "success" {
+                    return Ok(Some(format!(
+                        "valid composition `{}` was rejected: krabka={krabka}; upstream={upstream}",
+                        case.promql
+                    )));
+                }
+                Ok(promql_corpus::compare_case(&case, &krabka, &upstream))
+            }
+        },
+    )
+    .await?;
+    generated_differential::run(
+        "promql-rejections",
+        &[
+            "abs(demo_num_cpus,0)",
+            "scalar(demo_num_cpus,0)",
+            "sum_over_time(demo_num_cpus)",
+        ],
+        &["sum({expr})", "abs({expr})", "sum by(instance)({expr})"],
+        &report_dir,
+        |query| {
+            let client = &client;
+            let krabka_base = &krabka.base_url;
+            let prometheus_base = &prometheus_base;
+            async move {
+                let case = CorpusCase {
+                    name: "generated seed-42 rejection".to_owned(),
+                    promql: query,
+                    kind: QueryKind::Instant { time: compliance_fixture::END_MS },
+                    expects_failure: true,
+                };
+                // First establish that this is an invalid query in the pinned
+                // oracle. Two successful replies must never qualify a refusal.
+                let upstream = query_case(client, prometheus_base, "", None, &case).await?;
+                if upstream["status"] != "error"
+                    || !matches!(upstream["errorType"].as_str(), Some("bad_data" | "execution"))
+                {
+                    return Ok(Some(format!(
+                        "invalid composition `{}` was not rejected by the oracle: {upstream}",
+                        case.promql
+                    )));
+                }
+                let krabka = query_case(client, krabka_base, "", Some(TENANT), &case).await?;
+                if krabka["status"] != "error" {
+                    return Ok(Some(format!(
+                        "invalid composition `{}` was accepted by Krabka: {krabka}; upstream={upstream}",
+                        case.promql
+                    )));
+                }
+                Ok(promql_corpus::compare_case(&case, &krabka, &upstream))
+            }
+        },
+    )
+    .await?;
+    krabka.shutdown();
+    assert!(counts.compared > 0, "no response payloads were compared");
+    assert!(
+        counts.skipped == 0,
+        "skipped comparisons are not conformance: {counts:?}"
+    );
+    assert!(
+        counts.mismatched == 0,
+        "upstream HTTP conformance mismatches: {counts:?}"
+    );
+    assert!(
+        output.status.success(),
+        "compliance tester failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    println!("upstream PromQL HTTP compliance: {counts:?}");
+    Ok(())
+}
+
+fn write_compliance_report(
+    output: &std::process::Output,
+) -> TestResult<compliance_fixture::ReportCounts> {
+    let report_dir = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR").map_or_else(
+        || std::path::PathBuf::from("../../target"),
+        std::path::PathBuf::from,
+    );
+    std::fs::create_dir_all(&report_dir)?;
+    std::fs::write(
+        report_dir.join("promql-http-compliance.json"),
+        &output.stdout,
+    )?;
+    std::fs::write(
+        report_dir.join("promql-http-compliance.stderr.txt"),
+        &output.stderr,
+    )?;
+    let counts = compliance_fixture::report_counts(&output.stdout)?;
+    std::fs::write(
+        report_dir.join("promql-http-compliance-summary.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "compared_payloads": counts.compared,
+            "paired_expected_errors": counts.paired_errors,
+            "skipped_comparisons": counts.skipped,
+            "mismatches": counts.mismatched,
+            "end_time_seconds": compliance_fixture::END_MS / 1_000,
+        }))?,
+    )?;
+    Ok(counts)
 }
 
 /// Writes the whole corpus to both engines, in batch order.

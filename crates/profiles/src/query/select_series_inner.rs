@@ -18,27 +18,39 @@ where
         .map_err(|error| tenant_connect_error(&error))?;
     authorize_tenant(&principal, &tenant).map_err(|denied| tenant_denied_connect_error(&denied))?;
     let req = req.0;
-    let agg = if req.aggregation == Some(pb::querier::v1::SeriesAggregationType::Average as i32) {
+    let agg = if state.query_architecture == super::PyroscopeQueryArchitecture::V1
+        && req.aggregation == Some(pb::querier::v1::SeriesAggregationType::Average as i32)
+    {
         SeriesAgg::Average
     } else {
         SeriesAgg::Sum
     };
-    let stack_trace_call_sites = stack_trace_call_sites(req.stack_trace_selector.as_ref());
+    let stack_trace_call_sites =
+        if state.query_architecture == super::PyroscopeQueryArchitecture::V2 {
+            Vec::new()
+        } else {
+            stack_trace_call_sites(req.stack_trace_selector.as_ref())
+        };
     // Pyroscope carries `step` as a float number of seconds on the request; it
     // becomes a `Time` here, at the Connect boundary, so nothing downstream has
     // to remember the unit.
     let step = step_from_secs(req.step).map_err(connect_error)?;
     let span_exemplars = match req.exemplar_type {
-        exemplar_type if exemplar_type == pb::querier::v1::ExemplarType::Span as i32 => state
-            .select_series_span_exemplars(
-                (&tenant, &req.profile_type_id, &req.label_selector),
-                &req.group_by,
-                step,
-                (req.start, req.end),
-                &stack_trace_call_sites,
-            )
-            .await
-            .map_err(connect_error)?,
+        exemplar_type
+            if exemplar_type == pb::querier::v1::ExemplarType::Span as i32
+                && state.query_architecture == super::PyroscopeQueryArchitecture::V1 =>
+        {
+            state
+                .select_series_span_exemplars(
+                    (&tenant, &req.profile_type_id, &req.label_selector),
+                    &req.group_by,
+                    step,
+                    (req.start, req.end),
+                    &stack_trace_call_sites,
+                )
+                .await
+                .map_err(connect_error)?
+        }
         exemplar_type if exemplar_type == pb::querier::v1::ExemplarType::Individual as i32 => state
             .select_series_individual_exemplars(
                 (&tenant, &req.profile_type_id, &req.label_selector),
@@ -62,6 +74,17 @@ where
         )
         .await
         .map_err(connect_error)?;
+    // No matching data returns an empty report without invoking the v2
+    // exemplar backend. Preserve its populated SPAN failure after planning.
+    if state.query_architecture == super::PyroscopeQueryArchitecture::V2
+        && req.exemplar_type == pb::querier::v1::ExemplarType::Span as i32
+        && !series.is_empty()
+    {
+        return Err(super::ConnectError::new(
+            super::Code::Unknown,
+            "span exemplars are unavailable in the v2 series backend",
+        ));
+    }
     series.sort_by(|left, right| {
         let total =
             |series: &krabka_pprof::Series| series.points.iter().map(|(_, v)| v).sum::<f64>();

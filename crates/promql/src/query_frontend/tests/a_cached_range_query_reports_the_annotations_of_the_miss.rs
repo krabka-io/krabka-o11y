@@ -37,6 +37,7 @@ pub(crate) async fn a_cached_range_query_reports_the_annotations_of_the_miss() {
                     "PromQL warning: block metrics/float/0001.parquet is missing".to_string()
                 ],
                 infos: vec!["PromQL info: metric might not be a counter".to_string()],
+                ..crate::Annotations::default()
             }
     );
     assert2::check!(hit == miss);

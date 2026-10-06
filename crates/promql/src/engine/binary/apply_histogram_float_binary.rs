@@ -1,4 +1,5 @@
 use super::{BinaryOp, NativeHistogram, SampleValue, ScalarSide, scaled_native_histogram};
+use crate::engine::histogram::trim_native_histogram;
 
 /// Applies a binary operator between a native histogram and a float.
 ///
@@ -14,6 +15,15 @@ pub(crate) fn apply_histogram_float_binary(
     op: BinaryOp,
     scalar_side: ScalarSide,
 ) -> Option<SampleValue> {
+    if matches!(scalar_side, ScalarSide::Right)
+        && matches!(op, BinaryOp::TrimUpper | BinaryOp::TrimLower)
+    {
+        return Some(SampleValue::Histogram(trim_native_histogram(
+            histogram,
+            scalar,
+            matches!(op, BinaryOp::TrimUpper),
+        )));
+    }
     let divide_by_zero = matches!((op, scalar_side), (BinaryOp::Div, ScalarSide::Right))
         && matches!(scalar.classify(), std::num::FpCategory::Zero);
     let factor = match (op, scalar_side) {

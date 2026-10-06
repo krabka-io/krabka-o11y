@@ -63,7 +63,7 @@ pub(crate) fn apply_simple_aggregate(
                 state.push_float(value);
             }
             SampleValue::Histogram(histogram) if op.aggregates_histograms() => {
-                state.push_histogram(histogram)?;
+                state.push_histogram(histogram, matches!(op, AggregateOp::Avg))?;
             }
             SampleValue::Histogram(_) if op.counts_histograms() => state.push_observation(),
             SampleValue::Histogram(_) if op.ignores_histograms() => {

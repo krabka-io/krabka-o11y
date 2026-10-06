@@ -1,7 +1,7 @@
 use super::*;
 
 #[tokio::test]
-pub(crate) async fn vector_and_default_set_matching_keeps_metadata_labels() {
+pub(crate) async fn vector_and_default_set_matching_ignores_metadata_labels() {
     let mut store = InMemoryMetricStore::new();
     store.push_float(
         "tenant-a",
@@ -28,5 +28,6 @@ pub(crate) async fn vector_and_default_set_matching_keeps_metadata_labels() {
     let QueryResult::InstantVector(samples) = result else {
         panic!("expected vector");
     };
-    check!(samples.is_empty());
+    check!(samples.len() == 1);
+    check!(samples[0].value == SampleValue::Float(11.0));
 }

@@ -10,6 +10,8 @@ pub struct EngineOpts {
     pub lookback_delta: Time,
     /// Global evaluation interval used when a subquery omits its resolution.
     pub eval_interval: Time,
+    /// Check counter metadata instead of conventional metric-name suffixes.
+    pub enable_type_and_unit_labels: bool,
     /// Maximum float samples returned by one query.
     pub max_samples: usize,
     /// Maximum series one query may select. `0` turns the cap off, which is the
@@ -22,6 +24,7 @@ impl Default for EngineOpts {
         Self {
             lookback_delta: minutes(5),
             eval_interval: minutes(1),
+            enable_type_and_unit_labels: true,
             max_samples: 50_000_000,
             max_fetched_series: 0,
         }

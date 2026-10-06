@@ -1,0 +1,1 @@
+sum by (__name__) (metric_total{env="1"} or rate(metric_total{env="2"}[5m]))

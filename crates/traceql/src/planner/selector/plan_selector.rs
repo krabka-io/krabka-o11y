@@ -27,6 +27,7 @@ pub(crate) async fn plan_selector<S: SpanStore>(
             &ctx.scan_options,
         )
         .await?;
+    super::super::register_field_comparison_columns(&scan.ctx, &scan.span_table, &[fe]).await?;
     let inspected = scan.inspected;
     let parent_table = if needs_unfiltered_parent_table(fe) {
         register_unfiltered_parent_table(store, ctx, &scan.ctx).await?

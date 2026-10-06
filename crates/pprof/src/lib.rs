@@ -28,12 +28,12 @@ pub mod proto {
 }
 
 pub use diff::diff_trees;
-pub use engine::{EngineOpts, FlameEngine, SampleSelector};
+pub use engine::{EngineOpts, FlameEngine, SampleSelector, stack_matches_call_sites};
 pub use error::ProfileError;
 pub use frame::{
     Frame, ResolvedFunction, ResolvedLine, ResolvedLocation, ResolvedMapping, SymbolSource,
 };
-pub use heatmap::{Heatmap, LabeledHeatmap, bin_heatmap};
+pub use heatmap::{Heatmap, LabeledHeatmap, LabeledHeatmapPoints, bin_heatmap};
 pub use in_memory::InMemoryProfileStore;
 pub use matcher::parse_label_selector;
 pub use pprof::PprofProfile;
@@ -44,7 +44,9 @@ pub use samples::{
     PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID, PCOL_VALUE, PCOL_WAL_SAMPLE_IDS,
     profile_samples_schema,
 };
-pub use series::{Series, SeriesAgg, fold_bucket, step_bucket_ms, step_from_secs};
+pub use series::{
+    Series, SeriesAgg, fold_bucket, series_bucket_ms, step_bucket_ms, step_from_secs,
+};
 pub use store::{ProfileQueryStats, ProfileScan, ProfileStats, ProfileStore};
 pub use symbol_db::{
     FunctionRec, LineRec, LocationRec, MappingRec, MappingSymbolization, RawLocation, SymbolDb,

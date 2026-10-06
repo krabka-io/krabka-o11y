@@ -16,6 +16,8 @@ The generated [route inventory](api/routes.json) is the exhaustive method and pa
 The [upstream surface manifest](api/upstream_surfaces.json) classifies each tagged upstream surface.
 See the [upstream upgrade process](compatibility_upgrade_process.md) before a version change.
 
+The [query-language qualification report](query_language_conformance_proposal.md) distinguishes complete corpus execution from semantic agreement. Its [feature inventory](../qualification/query-language-inventory.json) retains unqualified grammar, function and request-field entries. The [profile-query matrix](query_language_profile_matrix.md) records populated comparisons, divergences and unsupported oracle capabilities separately.
+
 ## Supported client window
 
 Krabka qualifies the current and previous minor release of each public client contract.

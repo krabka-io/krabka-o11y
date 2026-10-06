@@ -136,6 +136,59 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn field_comparisons_execute_typed_operands_through_structural_and_metric_plans() {
+        let mut store = InMemorySpanStore::new();
+        store.push_trace(
+            "t",
+            "svc",
+            "root",
+            vec![
+                span(
+                    1,
+                    "equal",
+                    10,
+                    vec![("lhs", AttrValue::Int(3)), ("rhs", AttrValue::Int(3))],
+                ),
+                span(
+                    2,
+                    "different",
+                    20,
+                    vec![("lhs", AttrValue::Int(4)), ("rhs", AttrValue::Int(3))],
+                ),
+                span(3, "missing", 30, vec![("lhs", AttrValue::Int(3))]),
+                span(
+                    4,
+                    "wrong-type",
+                    40,
+                    vec![
+                        ("text", AttrValue::Str("3".into())),
+                        ("rhs", AttrValue::Int(3)),
+                    ],
+                ),
+            ],
+        );
+        for (query, expected) in [
+            ("{ .lhs = .rhs }", vec!["equal"]),
+            ("{ .lhs > .rhs }", vec!["different"]),
+            ("{ .lhs != .rhs }", vec!["different"]),
+            ("{ .text = .rhs }", vec![]),
+            ("{ name = \"equal\" } && { .lhs = .rhs }", vec!["equal"]),
+            (
+                "{ .lhs = .rhs || name = \"wrong-type\" }",
+                vec!["equal", "wrong-type"],
+            ),
+        ] {
+            assert!(names(&planned(query, &store).await.unwrap()) == expected);
+        }
+        let engine = crate::TraceqlEngine::new(Arc::new(store), crate::EngineOpts::default());
+        let metrics = engine
+            .query_range("t", "{ .lhs = .rhs } | count_over_time()", 0, 100, 100)
+            .await
+            .unwrap();
+        assert!(metrics.series[0].points == vec![(0, 1.0), (100, 0.0)]);
+    }
+
     #[test]
     fn aggregate_pipeline_projects_nested_value_fields() {
         let matchers = pipeline_nested_projection_matchers(&[Pipeline::Aggregate(Aggregate::Avg(
@@ -1467,3 +1520,8 @@ use ungrouped_rank_parts::UngroupedRankParts;
 use ungrouped_rank_pipeline_parts::ungrouped_rank_pipeline_parts;
 use ungrouped_rank_pipeline_sql::ungrouped_rank_pipeline_sql;
 use ungrouped_rank_sql::ungrouped_rank_sql;
+
+mod register_field_comparison_columns;
+use register_field_comparison_columns::{
+    collect_field_selectors, register_field_comparison_columns,
+};

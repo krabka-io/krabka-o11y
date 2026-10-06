@@ -973,7 +973,7 @@ pub(crate) use comparison_to_sql::comparison_to_sql;
 use comparison_to_sql_qualified::comparison_to_sql_qualified;
 use comparison_value_sql::comparison_value_sql;
 use enum_value_sql::enum_value_sql;
-use field_expr_to_matcher_disjuncts::field_expr_to_matcher_disjuncts;
+pub(crate) use field_expr_to_matcher_disjuncts::field_expr_to_matcher_disjuncts;
 pub(crate) use field_expr_to_matchers::field_expr_to_matchers;
 use field_expr_to_negated_matcher_disjuncts::field_expr_to_negated_matcher_disjuncts;
 pub(crate) use field_expr_to_sql::field_expr_to_sql;

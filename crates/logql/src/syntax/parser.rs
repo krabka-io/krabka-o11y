@@ -62,6 +62,10 @@ impl<'a> Parser<'a> {
         };
         let (stream, range_ns, offset_ns) = self.parse_metric_range_stream_query()?;
         self.expect(')')?;
+        let range_grouping = self.try_parse_vector_grouping()?;
+        if range_grouping.is_some() && !range_aggregation_supports_grouping(&aggregation) {
+            return Err(self.error("range aggregation does not support grouping"));
+        }
         let vector_aggregation = if let Some(mut vector_aggregation) = vector_aggregation {
             self.expect(')')?;
             let suffix_grouping = self.try_parse_vector_grouping()?;
@@ -75,15 +79,6 @@ impl<'a> Parser<'a> {
                 return Err(self.error("approx_topk does not support grouping"));
             }
             Some(vector_aggregation)
-        } else {
-            None
-        };
-        let range_grouping = if vector_aggregation.is_none() {
-            let grouping = self.try_parse_vector_grouping()?;
-            if grouping.is_some() && !range_aggregation_supports_grouping(&aggregation) {
-                return Err(self.error("range aggregation does not support grouping"));
-            }
-            grouping
         } else {
             None
         };

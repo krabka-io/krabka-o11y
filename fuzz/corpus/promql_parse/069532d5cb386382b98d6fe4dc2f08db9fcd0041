@@ -1,0 +1,1 @@
+floor(0.004 * http_requests{group="production",job="api-server"})

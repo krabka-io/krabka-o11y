@@ -5,7 +5,6 @@ use super::{
     TimeExt, VALUE_COLUMN, build_leaf_batch, col, leaf_scan, leaf_schema, lit,
     prom_session_context,
 };
-use crate::planner::inject_created_timestamp_zeros;
 
 /// Builds the leaf table and operator chain that evaluates `f(selector[range])`
 /// at every instant of `grid` with the given `range` width.
@@ -35,11 +34,19 @@ pub async fn plan_rate_range_selector(
     range: Time,
     kind: RateUdfKind,
 ) -> Result<RateRangePlan> {
-    if matches!(kind, RateUdfKind::Rate | RateUdfKind::Increase) {
-        let range_start_ms = grid.start.saturating_sub(range.millis_i64());
-        for one in &mut series {
-            inject_created_timestamp_zeros(&mut one.samples, range_start_ms);
-        }
+    let created = series.iter().any(|series| {
+        series
+            .samples
+            .iter()
+            .any(|sample| sample.start_timestamp_ms.is_some())
+    });
+    if created {
+        super::fold_start_timestamp_rates::fold_start_timestamp_rates(
+            &mut series,
+            grid,
+            range,
+            kind,
+        );
     }
 
     // Collect the distinct label names across all matched series; these become
@@ -61,6 +68,20 @@ pub async fn plan_rate_range_selector(
 
     let ctx = prom_session_context();
     let leaf = leaf_scan("prom_rate_leaf", schema, batch)?;
+
+    if created {
+        let mut projections: Vec<Expr> = label_names.iter().map(col).collect();
+        projections.push(col(VALUE_COLUMN).alias(RATE_VALUE_COLUMN));
+        projections.push(col(TIME_COLUMN));
+        let plan = LogicalPlanBuilder::from(leaf)
+            .project(projections)?
+            .build()?;
+        return Ok(RateRangePlan {
+            ctx,
+            plan,
+            labels_by_fp,
+        });
+    }
 
     // SeriesDivide on every label column splits the sorted input into exact
     // per-series batches.

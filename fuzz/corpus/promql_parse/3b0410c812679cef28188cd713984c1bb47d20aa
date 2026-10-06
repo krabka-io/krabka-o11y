@@ -1,1 +1,0 @@
-histogram_quantile(0.4, histogram_nan{case="100% NaNs"})

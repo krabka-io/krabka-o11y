@@ -34,7 +34,10 @@ PROMQL_CORPUS = ["//crates/promql:tests/testdata/%s.test" % stem for stem in [
 ]]
 
 # Consumed by `crate.from_cargo` (see //MODULE.bazel).
-exports_files(["Cargo.toml"])
+exports_files([
+    "Cargo.toml",
+    "tests/support/generated_differential.rs",
+])
 
 crate_library(name = "metrics-service")
 

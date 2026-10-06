@@ -1,0 +1,1 @@
+histogram_quantile(5./6., rate(testhistogram2_bucket[15m]))

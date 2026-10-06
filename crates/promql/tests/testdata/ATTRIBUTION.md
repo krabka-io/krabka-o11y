@@ -41,16 +41,26 @@ and is an ordinary case under `experimental-functions`.
 
 The divergences, by file:
 
-- `functions.test` (5 of 370): four `double_exponential_smoothing` cases, which
-  need `experimental-functions`; and `label_replace(testmetric, "\xff", …)`,
-  whose destination label name is an invalid UTF-8 byte that a Rust `String`
-  cannot carry, so the label-name validation that upstream fails on never sees
-  it.
-- `aggregators.test` (3 of 160): `count_values("a\xc5z", …)`, an invalid UTF-8
-  label name; and the `limitk(NaN, …)` and `limit_ratio(NaN, …)` refusals,
-  which need `experimental-functions`.
-- `native_histograms.test` (3 of 374): the three `limitk` / `limit_ratio` range
-  queries, which need `experimental-functions`.
+- `functions.test`: four `double_exponential_smoothing` cases requiring
+  `experimental-functions`.
+- `aggregators.test`: the `limitk(NaN, …)` and `limit_ratio(NaN, …)` refusals
+  requiring `experimental-functions`.
+- `native_histograms.test`: three `limitk` / `limit_ratio` range queries
+  requiring `experimental-functions`.
 
 Each annotation in the file states its own reason; the list above only groups
 them.
+
+The separate `upstream-3.14.0/` qualification directory contains every upstream file at commit `d7598b7141418fa35be2b5ec5d0fefb634199610`, with no Krabka divergence annotations. Its machine report records all mismatches. It does not replace the existing regression gate.
+
+`extended_vectors.test` was refreshed to Prometheus 3.14.0 commit
+`d7598b7141418fa35be2b5ec5d0fefb634199610` when the anchored and smoothed
+boundary semantics were implemented. Histogram annotation strings in the
+curated fixtures use that revision's metric-name formatting. Invalid UTF-8
+label-name cases now reject rather than carry a divergence annotation.
+
+`name_label_dropping.test` also uses that 3.14.0 revision to qualify delayed
+metric-name removal through composed expressions.
+
+`type_and_unit.test` uses the same 3.14.0 revision for matching composed
+expressions while metric-name removal is delayed.

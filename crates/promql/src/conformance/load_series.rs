@@ -7,4 +7,6 @@ pub struct LoadSeries {
     pub metric: String,
     /// Expanded sample values.
     pub values: Vec<SampleSpec>,
+    /// Start-time offsets in milliseconds, paired with sample slots.
+    pub start_offsets_ms: Vec<Option<i64>>,
 }

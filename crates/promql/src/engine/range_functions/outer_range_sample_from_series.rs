@@ -2,9 +2,9 @@
 use super::double_exponential_smoothing_sample_from_series;
 use super::{
     ExtendedSelectorModifier, Labels, OuterRangeFn, RangeSeries, SampleValue, Time,
-    deriv_sample_from_series, instant_delta_sample_from_series, labels_without_label,
-    labels_without_metric_name, over_time_sample_from_series, predict_linear_sample_from_series,
-    quantile_over_time_sample_from_series, range_function_sample_from_series,
+    deriv_sample_from_series, instant_delta_sample_from_series, over_time_sample_from_series,
+    predict_linear_sample_from_series, quantile_over_time_sample_from_series,
+    range_function_sample_from_series,
 };
 
 /// Folds one series' window into its `(result labels, value)`.
@@ -23,53 +23,38 @@ pub(crate) fn outer_range_sample_from_series(
     outer: OuterRangeFn,
     modifier: Option<ExtendedSelectorModifier>,
     eval_ms: i64,
+    enable_type_and_unit_labels: bool,
 ) -> Option<(Labels, SampleValue)> {
-    let drop_range_name =
-        |labels: &Labels| labels_without_label(&labels_without_metric_name(labels), "__name__");
+    let drop_range_name = |labels: &Labels| labels.clone();
     match outer {
-        OuterRangeFn::Range(kind) => {
-            range_function_sample_from_series(series, range_end_ms, range, kind, modifier)
-                .map(|value| (drop_range_name(&series.labels), value))
-        }
+        OuterRangeFn::Range(kind) => range_function_sample_from_series(
+            series,
+            range_end_ms,
+            range,
+            kind,
+            modifier,
+            enable_type_and_unit_labels,
+        )
+        .map(|value| (drop_range_name(&series.labels), value)),
         OuterRangeFn::InstantDelta(kind) => {
             instant_delta_sample_from_series(series, range_end_ms, range, kind)
                 .map(|value| (drop_range_name(&series.labels), value))
         }
-        OuterRangeFn::Deriv => deriv_sample_from_series(series, range_end_ms, range).map(|value| {
-            (
-                labels_without_metric_name(&series.labels),
-                SampleValue::Float(value),
-            )
-        }),
+        OuterRangeFn::Deriv => deriv_sample_from_series(series, range_end_ms, range)
+            .map(|value| (series.labels.clone(), SampleValue::Float(value))),
         OuterRangeFn::OverTime(kind) => {
             over_time_sample_from_series(series, range_end_ms, range, kind).map(|value| {
-                let labels = if kind.preserves_metric_name() {
-                    series.labels.clone()
-                } else {
-                    labels_without_metric_name(&series.labels)
-                };
+                let labels = series.labels.clone();
                 (labels, value)
             })
         }
         OuterRangeFn::QuantileOverTime(quantile) => {
-            quantile_over_time_sample_from_series(series, range_end_ms, range, quantile).map(
-                |value| {
-                    (
-                        labels_without_metric_name(&series.labels),
-                        SampleValue::Float(value),
-                    )
-                },
-            )
+            quantile_over_time_sample_from_series(series, range_end_ms, range, quantile)
+                .map(|value| (series.labels.clone(), SampleValue::Float(value)))
         }
         OuterRangeFn::PredictLinear(duration) => {
-            predict_linear_sample_from_series(series, range_end_ms, range, duration, eval_ms).map(
-                |value| {
-                    (
-                        labels_without_metric_name(&series.labels),
-                        SampleValue::Float(value),
-                    )
-                },
-            )
+            predict_linear_sample_from_series(series, range_end_ms, range, duration, eval_ms)
+                .map(|value| (series.labels.clone(), SampleValue::Float(value)))
         }
         #[cfg(feature = "experimental-functions")]
         OuterRangeFn::DoubleExponentialSmoothing { smoothing, trend } => {
@@ -80,12 +65,7 @@ pub(crate) fn outer_range_sample_from_series(
                 smoothing,
                 trend,
             )
-            .map(|value| {
-                (
-                    labels_without_metric_name(&series.labels),
-                    SampleValue::Float(value),
-                )
-            })
+            .map(|value| (series.labels.clone(), SampleValue::Float(value)))
         }
     }
 }

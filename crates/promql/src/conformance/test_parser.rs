@@ -1,9 +1,9 @@
 use super::{
-    ExpectBlock, ExpectDirective, ExpectLine, Line, LoadSeries, PromqlError, Result, SampleSpec,
-    Statement, TestFile, Time, TimeExt, failure_message, is_block_line, load_with_nhcb_series,
-    parse_duration_ms, parse_error, parse_expect_directive, parse_expect_string,
-    parse_range_vector_directive, parse_sample_token, split_metric_and_tail, split_once_whitespace,
-    split_sample_tokens,
+    ExpectBlock, ExpectDirective, ExpectLine, ExpectedFailure, Line, LoadSeries, PromqlError,
+    Result, SampleSpec, Statement, TestFile, Time, TimeExt, failure_message, is_block_line,
+    load_with_nhcb_series, parse_duration_ms, parse_error, parse_expect_directive,
+    parse_expect_string, parse_range_vector_directive, parse_sample_token, split_metric_and_tail,
+    split_once_whitespace, split_sample_tokens,
 };
 
 /// Prefix of a Krabka-only directive. Prometheus reads the line as a comment,
@@ -124,6 +124,7 @@ impl<'a> TestParser<'a> {
         };
         let step = Time::from_millis(parse_duration_ms(step.trim(), header)?);
         let mut series = Vec::new();
+        let mut pending_start = None;
 
         while let Some(line) = self.peek() {
             if !is_block_line(line) {
@@ -131,19 +132,50 @@ impl<'a> TestParser<'a> {
             }
             let line = self.next().expect("peeked block line");
             let (metric, values) = split_metric_and_tail(line.trimmed, line)?;
+            if let Some(metric) = metric.strip_suffix("@st") {
+                if pending_start.is_some() {
+                    return Err(parse_error(line, "@st line has no following sample line"));
+                }
+                let offsets = split_sample_tokens(values, line)?
+                    .into_iter()
+                    .map(|token| {
+                        super::parse_start_offset_token::parse_start_offset_token(token, line)
+                    })
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>();
+                pending_start = Some((metric.to_string(), offsets));
+                continue;
+            }
             let values = split_sample_tokens(values, line)?
                 .into_iter()
                 .map(|token| parse_sample_token(token, line))
                 .collect::<Result<Vec<_>>>()?
                 .into_iter()
                 .flatten()
-                .collect();
+                .collect::<Vec<_>>();
+            let start_offsets_ms = if let Some((start_metric, offsets)) = pending_start.take() {
+                if start_metric != metric || offsets.len() != values.len() {
+                    return Err(parse_error(
+                        line,
+                        "@st metric or slot count does not match sample line",
+                    ));
+                }
+                offsets
+            } else {
+                Vec::new()
+            };
             series.push(LoadSeries {
                 metric: metric.to_string(),
                 values,
+                start_offsets_ms,
             });
         }
 
+        if pending_start.is_some() {
+            return Err(parse_error(header, "@st line has no following sample line"));
+        }
         if with_nhcb {
             series.extend(load_with_nhcb_series(&series, header)?);
         }
@@ -259,16 +291,24 @@ impl<'a> TestParser<'a> {
             }
             let line = self.next().expect("peeked block line");
             if line.trimmed == "fail" {
-                fail_message = Some(String::new());
+                fail_message = Some(ExpectedFailure::Message(String::new()));
                 continue;
             }
             if let Some(directive) = line.trimmed.strip_prefix("expect ") {
                 if directive == "fail" {
-                    fail_message = Some(String::new());
+                    fail_message = Some(ExpectedFailure::Message(String::new()));
                     continue;
                 }
                 if let Some(message) = directive.strip_prefix("fail msg:") {
-                    fail_message = Some(message.trim().to_string());
+                    fail_message = Some(ExpectedFailure::Message(message.trim().to_string()));
+                    continue;
+                }
+                if let Some(pattern) = directive.strip_prefix("fail regex:") {
+                    let pattern = pattern.trim();
+                    regex::Regex::new(pattern).map_err(|error| {
+                        parse_error(line, format!("invalid failure regex: {error}"))
+                    })?;
+                    fail_message = Some(ExpectedFailure::Regex(pattern.to_string()));
                     continue;
                 }
                 if let Some(value) = directive.trim().strip_prefix("string ") {

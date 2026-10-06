@@ -5,11 +5,13 @@ use std::path::Path;
 
 use krabka_promql::testkit::run_test_path;
 
+// The complete, unannotated 3.14 corpus has a separate qualification target.
+// Keep this historical regression target confined to its original flat files.
 fn corpus_pattern() -> &'static str {
     if cfg!(feature = "experimental-functions") {
-        r".*\.test$"
+        r"^[^/\\]+\.test$"
     } else {
-        r"^(?!limit\.test$).*\.test$"
+        r"^(?!limit\.test$)[^/\\]+\.test$"
     }
 }
 

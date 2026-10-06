@@ -18,4 +18,20 @@ pub(crate) async fn scalar_max_of_min_of_return_larger_and_smaller_scalar() {
                 }
         );
     }
+    for query in [
+        "max_of(NaN, 2)",
+        "max_of(2, NaN)",
+        "min_of(NaN, 2)",
+        "min_of(2, NaN)",
+    ] {
+        let result = engine
+            .query_instant(&tenant_id("tenant-a"), query, 10_000)
+            .await
+            .unwrap();
+        let QueryResult::Scalar { ts_ms, value } = result else {
+            panic!("expected scalar for {query}");
+        };
+        assert2::assert!(ts_ms == 10_000, "{query}");
+        assert2::assert!(value.is_nan(), "{query}: {value}");
+    }
 }

@@ -13,7 +13,7 @@ pub(crate) async fn created_timestamps_inject_counter_zeros_in_planner_and_inter
     let reset_counter = labels(&[("__name__", "http_requests_total"), ("job", "reset")]);
     store.push_float_with_start_timestamp("t", reset_counter.clone(), 100_000, 5.0, Some(50_000));
     // The value rose across the restart, so value-only reset detection cannot
-    // see it. The changed start timestamp contributes a zero between samples.
+    // see it. The changed start timestamp marks a reset without changing the sample spacing.
     store.push_float_with_start_timestamp("t", reset_counter, 200_000, 8.0, Some(150_000));
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
@@ -39,9 +39,9 @@ pub(crate) async fn created_timestamps_inject_counter_zeros_in_planner_and_inter
         };
         assert2::assert!(samples.len() == 1, "{query}");
         if query.starts_with("rate") {
-            assert2::assert!(approx_eq(float_value(&samples[0].value), 12.0 / 300.0));
+            assert2::assert!(approx_eq(float_value(&samples[0].value), 6.0 / 300.0));
         } else {
-            assert2::assert!(approx_eq(float_value(&samples[0].value), 12.0));
+            assert2::assert!(approx_eq(float_value(&samples[0].value), 6.0));
         }
     }
 

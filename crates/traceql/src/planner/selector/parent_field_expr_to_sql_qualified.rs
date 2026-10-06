@@ -36,6 +36,10 @@ pub(crate) fn parent_field_expr_to_sql_qualified(
                     .map(|predicate| format!("(NOT {predicate})")),
             )
         }
-        FieldExpr::Comparison { .. } | FieldExpr::Field(_) | FieldExpr::Const(_) => Ok(None),
+        FieldExpr::ExpressionComparison { .. }
+        | FieldExpr::FieldComparison { .. }
+        | FieldExpr::Comparison { .. }
+        | FieldExpr::Field(_)
+        | FieldExpr::Const(_) => Ok(None),
     }
 }

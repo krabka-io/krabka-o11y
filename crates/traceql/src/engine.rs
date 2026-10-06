@@ -18,8 +18,8 @@ use krabka_units::{ByteSize, Time, convert::TimeExt as _, millis};
 
 use crate::{
     ast::{
-        Aggregate, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query, QueryHints, Scope,
-        SpansetExpr, Value,
+        Aggregate, ArithmeticOp, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query,
+        QueryHints, ScalarExpr, Scope, SpansetExpr, Value,
     },
     error::{Result, TraceqlError},
     ids::{DurationNanos, UnixNano},
@@ -27,7 +27,8 @@ use crate::{
     planner::{PlannerContext, plan_query},
     result::{
         AttrValue, ScopedTag, SearchResponse, SpanRef, SpanSet, TagScope, TraceMetricExemplar,
-        TraceMetricSeries, TraceMetricsResponse, TraceResult, TraceSpans, TypedValue,
+        TraceMetricLabelType, TraceMetricSeries, TraceMetricsResponse, TraceResult, TraceSpans,
+        TypedValue,
     },
     span_columns::{
         ATTR_PREFIX, COL_CHILD_COUNT, COL_DURATION, COL_EVENT_NAME, COL_EVENT_TIME_SINCE_START,
@@ -115,6 +116,221 @@ mod tests {
             attrs: vec![("svc".into(), AttrValue::Str(svc.into()))],
             events: Vec::new(),
             links: Vec::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn typed_grouping_keeps_equal_spellings_separate_and_preserves_missing_group() {
+        let mut store = InMemorySpanStore::new();
+        let spans = [
+            Some(AttrValue::Int(1)),
+            Some(AttrValue::Int(1)),
+            Some(AttrValue::Str("1".into())),
+            Some(AttrValue::Float(1.0)),
+            Some(AttrValue::Bool(true)),
+            None,
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let mut span = sp_at(1, u8::try_from(index + 1).unwrap(), None, "typed", 1);
+            if let Some(value) = value {
+                span.attrs.push(("mixed".into(), value));
+            }
+            span
+        })
+        .collect();
+        store.push_trace("t", "typed", "root", spans);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        let response = engine
+            .query_range("t", "{} | count_over_time() by(span.mixed)", 0, 10, 10)
+            .await
+            .unwrap();
+        let mut expected = Vec::new();
+        for (value, kind, count) in [
+            (Some("1"), None, 1.0),
+            (Some("1"), Some(TraceMetricLabelType::Int), 2.0),
+            (Some("1"), Some(TraceMetricLabelType::Double), 1.0),
+            (Some("nil"), None, 1.0),
+            (Some("true"), Some(TraceMetricLabelType::Bool), 1.0),
+        ] {
+            expected.push(TraceMetricSeries {
+                labels: value
+                    .into_iter()
+                    .map(|value| ("span.mixed".into(), value.into()))
+                    .collect(),
+                label_types: kind
+                    .into_iter()
+                    .map(|kind| ("span.mixed".into(), kind))
+                    .collect(),
+                points: vec![(0, count), (10, 0.0)],
+                exemplars: Vec::new(),
+            });
+        }
+        assert!(response.series == expected);
+    }
+
+    #[tokio::test]
+    async fn numeric_metrics_read_original_types_from_heterogeneous_columns() {
+        let mut store = InMemorySpanStore::new();
+        let spans = [
+            AttrValue::Int(2),
+            AttrValue::Float(3.5),
+            AttrValue::Str("100".into()),
+            AttrValue::Bool(true),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let mut span = sp_at(1, u8::try_from(index + 1).unwrap(), None, "typed", 1);
+            span.attrs.push(("mixed".into(), value));
+            span
+        })
+        .collect();
+        store.push_trace("t", "typed", "root", spans);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        let summed = engine
+            .query_range("t", "{} | sum_over_time(span.mixed)", 0, 10, 10)
+            .await
+            .unwrap();
+        assert!(
+            summed.series
+                == vec![TraceMetricSeries {
+                    labels: Vec::new(),
+                    label_types: Default::default(),
+                    points: vec![(0, 5.5)],
+                    exemplars: Vec::new(),
+                }]
+        );
+        let histogram = engine
+            .query_range("t", "{} | histogram_over_time(span.mixed)", 0, 10, 10)
+            .await
+            .unwrap();
+        // The pinned Tempo histogram buckets integers; floats, strings and
+        // booleans contribute no observations.
+        assert!(
+            histogram.series
+                == vec![TraceMetricSeries {
+                    labels: vec![("__bucket".into(), "2".into())],
+                    label_types: Default::default(),
+                    points: vec![(0, 1.0), (10, 0.0)],
+                    exemplars: Vec::new(),
+                }]
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_comparison_presence_sibling_uses_original_integer_after_float_row() {
+        let mut first = sp_at(1, 1, None, "typed", 1);
+        first.attrs.push(("lhs".into(), AttrValue::Float(0.0)));
+        let mut second = sp_at(1, 2, None, "typed", 2);
+        second.attrs.extend([
+            ("lhs".into(), AttrValue::Int(2)),
+            ("rhs".into(), AttrValue::Int(0)),
+        ]);
+        let mut store = InMemorySpanStore::new();
+        store.push_trace("t", "typed", "root", vec![first, second]);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        let response = engine
+            .search_with_spss(
+                "t",
+                "{ (span.lhs != span.rhs) && span.lhs != nil }",
+                0,
+                10,
+                10,
+                10,
+            )
+            .await
+            .unwrap();
+        assert!(response.traces.len() == 1);
+        assert!(
+            response.traces[0].span_sets[0]
+                .spans
+                .iter()
+                .map(|span| span.span_id)
+                .collect::<Vec<_>>()
+                == vec![[2; 8]]
+        );
+    }
+
+    #[tokio::test]
+    async fn field_arithmetic_preserves_types_precedence_units_and_runtime_errors() {
+        let ledger = [
+            (Some(AttrValue::Int(2)), AttrValue::Int(3), 10),
+            (Some(AttrValue::Int(4)), AttrValue::Int(1), 9),
+            (Some(AttrValue::Str("2".into())), AttrValue::Int(3), 10),
+            (None, AttrValue::Int(3), 10),
+            (Some(AttrValue::Float(1.5)), AttrValue::Int(2), 7),
+        ];
+        let spans = ledger
+            .into_iter()
+            .enumerate()
+            .map(|(index, (a, b, total))| {
+                let mut span = sp_at(1, u8::try_from(index + 1).unwrap(), None, "typed", 1);
+                span.attrs
+                    .extend([("b".into(), b), ("total".into(), AttrValue::Int(total))]);
+                if let Some(a) = a {
+                    span.attrs.push(("a".into(), a));
+                }
+                span
+            })
+            .collect();
+        let mut store = InMemorySpanStore::new();
+        store.push_trace("t", "typed", "root", spans);
+        let engine = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
+        for (predicate, expected) in [
+            (
+                "(.a + .b) * 2 >= .total && -duration < 0ns",
+                vec![[1; 8], [2; 8], [5; 8]],
+            ),
+            (".a / .b > 0", vec![[2; 8], [5; 8]]),
+            (
+                "duration / 100ns = 2",
+                vec![[1; 8], [2; 8], [3; 8], [4; 8], [5; 8]],
+            ),
+            (".a ^ .b = 9", vec![[1; 8]]),
+        ] {
+            let query = format!("{{ {predicate} }}");
+            let response = engine
+                .search_with_spss("t", &query, 0, 100, 100, 100)
+                .await
+                .unwrap();
+            let mut ids = response
+                .traces
+                .iter()
+                .flat_map(|trace| trace.span_sets.iter())
+                .flat_map(|set| set.spans.iter())
+                .map(|span| span.span_id)
+                .collect::<Vec<_>>();
+            ids.sort_unstable();
+            assert!(ids == expected, "{query}");
+            let count = f64::from(u32::try_from(expected.len()).unwrap());
+            let response = engine
+                .query_range("t", &format!("{query} | count_over_time()"), 0, 100, 100)
+                .await
+                .unwrap();
+            assert!(
+                response.series
+                    == vec![TraceMetricSeries {
+                        labels: Vec::new(),
+                        label_types: Default::default(),
+                        points: vec![(0, count), (100, 0.0)],
+                        exemplars: Vec::new()
+                    }]
+            );
+        }
+        for query in ["{ .a / (.b - .b) > 0 }", "{ -.missing > 0 }"] {
+            assert!(
+                engine.search("t", query, 0, 100, 100).await.is_err(),
+                "{query}"
+            );
+            assert!(
+                engine
+                    .query_range("t", &format!("{query} | count_over_time()"), 0, 100, 100)
+                    .await
+                    .is_err(),
+                "{query}"
+            );
         }
     }
 
@@ -1195,11 +1411,13 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("span.svc".into(), "api".into())],
                     points: vec![(0, 2.0), (60_000, 0.0), (120_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("span.svc".into(), "db".into())],
                     points: vec![(0, 1.0), (60_000, 1.0), (120_000, 0.0)],
                     exemplars: vec![],
@@ -1237,6 +1455,7 @@ mod tests {
 
         assert!(
             got == vec![TraceMetricSeries {
+                label_types: Default::default(),
                 labels: vec![("span.svc".into(), "api".into())],
                 points: vec![(0, 2.0)],
                 exemplars: vec![],
@@ -1271,11 +1490,13 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("resource.service.name".into(), "billing".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("resource.service.name".into(), "checkout".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -1306,11 +1527,13 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("span.http.method".into(), "GET".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("span.http.method".into(), "POST".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -1352,11 +1575,13 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("name".into(), "cache.hit".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("name".into(), "cache.miss".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -1399,11 +1624,13 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("name".into(), "cache.hit".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("name".into(), "cache.miss".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -1446,11 +1673,13 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("event.cache.key".into(), "orders".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("event.cache.key".into(), "users".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -1484,6 +1713,7 @@ mod tests {
 
         assert!(
             got == vec![TraceMetricSeries {
+                label_types: Default::default(),
                 labels: vec![("traceID".into(), "09090909090909090909090909090909".into())],
                 points: vec![(0, 1.0), (60_000, 0.0)],
                 exemplars: vec![],
@@ -1525,11 +1755,13 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("spanID".into(), "0606060606060606".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("spanID".into(), "0808080808080808".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -1568,11 +1800,13 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("span.svc".into(), "api".into())],
                     points: vec![(0, 2.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("span.svc".into(), "db".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -1623,17 +1857,29 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
-                    labels: vec![("kind".into(), "2".into()), ("status".into(), "0".into())],
+                    label_types: Default::default(),
+                    labels: vec![
+                        ("kind".into(), "client".into()),
+                        ("status".into(), "error".into())
+                    ],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
-                    labels: vec![("kind".into(), "2".into()), ("status".into(), "2".into())],
+                    label_types: Default::default(),
+                    labels: vec![
+                        ("kind".into(), "server".into()),
+                        ("status".into(), "error".into())
+                    ],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
-                    labels: vec![("kind".into(), "3".into()), ("status".into(), "2".into())],
+                    label_types: Default::default(),
+                    labels: vec![
+                        ("kind".into(), "server".into()),
+                        ("status".into(), "unset".into())
+                    ],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
@@ -1680,11 +1926,13 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("statusMessage".into(), "cancelled".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("statusMessage".into(), "timeout".into())],
                     points: vec![(0, 2.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -1715,11 +1963,13 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("id".into(), "11111111111111111111111111111111".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("id".into(), "22222222222222222222222222222222".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -1757,11 +2007,13 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
+                    label_types: BTreeMap::from([("childCount".into(), TraceMetricLabelType::Int)]),
                     labels: vec![("childCount".into(), "0".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: BTreeMap::from([("childCount".into(), TraceMetricLabelType::Int)]),
                     labels: vec![("childCount".into(), "1".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -1789,6 +2041,7 @@ mod tests {
 
         assert!(
             got == vec![TraceMetricSeries {
+                label_types: Default::default(),
                 labels: vec![("name".into(), "tracer".into())],
                 points: vec![(0, 1.0), (60_000, 0.0)],
                 exemplars: vec![],
@@ -1827,11 +2080,19 @@ mod tests {
         assert!(
             got == vec![
                 TraceMetricSeries {
+                    label_types: BTreeMap::from([(
+                        "nestedSetParent".into(),
+                        TraceMetricLabelType::Int
+                    )]),
                     labels: vec![("nestedSetParent".into(), "-1".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: BTreeMap::from([(
+                        "nestedSetParent".into(),
+                        TraceMetricLabelType::Int
+                    )]),
                     labels: vec![("nestedSetParent".into(), "1".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -1874,7 +2135,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(avg.series[0].points == vec![(0, 200.0), (60_000, 50.0), (120_000, 0.0)]);
+        assert!(avg.series[0].points == vec![(0, 0.0000002), (60_000, 0.00000005)]);
 
         let sum = e
             .query_range(
@@ -1886,7 +2147,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(sum.series[0].points == vec![(0, 400.0), (60_000, 50.0), (120_000, 0.0)]);
+        assert!(sum.series[0].points == vec![(0, 0.0000004), (60_000, 0.00000005)]);
 
         let min = e
             .query_range(
@@ -1898,7 +2159,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(min.series[0].points == vec![(0, 100.0), (60_000, 50.0), (120_000, 0.0)]);
+        assert!(min.series[0].points == vec![(0, 0.0000001), (60_000, 0.00000005)]);
 
         let max = e
             .query_range(
@@ -1910,7 +2171,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(max.series[0].points == vec![(0, 300.0), (60_000, 50.0), (120_000, 0.0)]);
+        assert!(max.series[0].points == vec![(0, 0.0000003), (60_000, 0.00000005)]);
     }
 
     #[tokio::test]
@@ -1944,7 +2205,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(got.series[0].points == vec![(0, 700.0), (60_000, 0.0)]);
+        assert!(got.series[0].points == vec![(0, 700.0)]);
     }
 
     #[tokio::test]
@@ -1994,19 +2255,21 @@ mod tests {
             series
                 == vec![
                     TraceMetricSeries {
+                        label_types: Default::default(),
                         labels: vec![
                             ("p".into(), "0.5".into()),
                             ("span.svc".into(), "api".into())
                         ],
-                        points: vec![(0, 300.0), (60_000, 0.0)],
+                        points: vec![(0, 3.225397887730869e-07), (60_000, 0.0)],
                         exemplars: vec![],
                     },
                     TraceMetricSeries {
+                        label_types: Default::default(),
                         labels: vec![
                             ("p".into(), "0.9".into()),
                             ("span.svc".into(), "api".into())
                         ],
-                        points: vec![(0, 460.0), (60_000, 0.0)],
+                        points: vec![(0, 0.000000512), (60_000, 0.0)],
                         exemplars: vec![],
                     },
                 ]
@@ -2014,7 +2277,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn histogram_over_time_emits_cumulative_buckets_sum_and_count() {
+    async fn histogram_over_time_emits_non_cumulative_logarithmic_counts() {
         let mut s = InMemorySpanStore::new();
         s.push_trace(
             "t",
@@ -2049,33 +2312,42 @@ mod tests {
             .series;
 
         series.sort_by(|a, b| a.labels.cmp(&b.labels));
-        for (key, value, points) in [
-            ("le", "2000000", vec![(0, 1.0), (60_000, 0.0)]),
-            ("le", "2048000000", vec![(0, 2.0), (60_000, 0.0)]),
-            ("le", "+Inf", vec![(0, 3.0), (60_000, 0.0)]),
-            (
-                "__metric__",
-                "sum",
-                vec![(0, 14_001_000_000.0), (60_000, 0.0)],
-            ),
-            ("__metric__", "count", vec![(0, 3.0), (60_000, 0.0)]),
-        ] {
-            check!(
-                series.iter().any(|s| {
-                    s.labels
-                        == vec![
-                            (key.into(), value.into()),
-                            ("span.svc".into(), "api".into()),
-                        ]
-                        && s.points == points
-                }),
-                "missing series {key}={value}"
-            );
-        }
+        assert!(
+            series
+                == vec![
+                    TraceMetricSeries {
+                        label_types: Default::default(),
+                        labels: vec![
+                            ("__bucket".into(), "0.001048576".into()),
+                            ("span.svc".into(), "api".into())
+                        ],
+                        points: vec![(0, 1.0), (60_000, 0.0)],
+                        exemplars: vec![]
+                    },
+                    TraceMetricSeries {
+                        label_types: Default::default(),
+                        labels: vec![
+                            ("__bucket".into(), "17.179869184".into()),
+                            ("span.svc".into(), "api".into())
+                        ],
+                        points: vec![(0, 1.0), (60_000, 0.0)],
+                        exemplars: vec![]
+                    },
+                    TraceMetricSeries {
+                        label_types: Default::default(),
+                        labels: vec![
+                            ("__bucket".into(), "2.147483648".into()),
+                            ("span.svc".into(), "api".into())
+                        ],
+                        points: vec![(0, 1.0), (60_000, 0.0)],
+                        exemplars: vec![]
+                    },
+                ]
+        );
     }
 
     #[tokio::test]
-    async fn histogram_over_time_uses_configured_buckets() {
+    async fn histogram_over_time_uses_tempo_buckets_with_legacy_configuration() {
         let mut store = InMemorySpanStore::new();
         store.push_trace(
             "t",
@@ -2110,11 +2382,11 @@ mod tests {
                 series
                     .labels
                     .iter()
-                    .find(|(key, value)| key == "le" && value != "+Inf")
+                    .find(|(key, _)| key == "__bucket")
                     .map(|(_, value)| value.as_str())
             })
             .collect::<Vec<_>>();
-        check!(finite_buckets == ["2000000"]);
+        check!(finite_buckets == ["0.004194304"]);
     }
 
     #[tokio::test]
@@ -2145,7 +2417,7 @@ mod tests {
         assert!(series.iter().any(|s| {
             s.labels
                 == vec![
-                    ("le".into(), "2000000".into()),
+                    ("__bucket".into(), "0.001048576".into()),
                     ("span.svc".into(), "api".into()),
                 ]
                 && s.points == vec![(0, 1.0), (60_000, 0.0)]
@@ -2185,11 +2457,13 @@ mod tests {
         assert!(
             top == vec![
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("span.svc".into(), "api".into())],
                     points: vec![(0, 2.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("span.svc".into(), "worker".into())],
                     points: vec![(0, 3.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -2210,6 +2484,7 @@ mod tests {
         assert!(
             bottom.series
                 == vec![TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("span.svc".into(), "db".into())],
                     points: vec![(0, 1.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -2250,11 +2525,13 @@ mod tests {
         assert!(
             top == vec![
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("span.svc".into(), "api".into())],
                     points: vec![(0, 2.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("span.svc".into(), "worker".into())],
                     points: vec![(0, 3.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -2295,11 +2572,13 @@ mod tests {
             series
                 == vec![
                     TraceMetricSeries {
+                        label_types: Default::default(),
                         labels: vec![("span.svc".into(), "api".into())],
                         points: vec![(0, 2.0), (60_000, 0.0)],
                         exemplars: vec![],
                     },
                     TraceMetricSeries {
+                        label_types: Default::default(),
                         labels: vec![("span.svc".into(), "db".into())],
                         points: vec![(0, 1.0), (60_000, 0.0)],
                         exemplars: vec![],
@@ -2342,11 +2621,13 @@ mod tests {
         assert!(
             top == vec![
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("span.svc".into(), "api".into())],
                     points: vec![(0, 2.0), (60_000, 0.0)],
                     exemplars: vec![],
                 },
                 TraceMetricSeries {
+                    label_types: Default::default(),
                     labels: vec![("span.svc".into(), "worker".into())],
                     points: vec![(0, 3.0), (60_000, 0.0)],
                     exemplars: vec![],
@@ -2389,12 +2670,12 @@ mod tests {
         check!(
             got.series[0].exemplars[0].labels
                 == vec![
-                    ("trace_id".into(), "11111111111111111111111111111111".into()),
-                    ("span_id".into(), "2222222222222222".into())
+                    ("trace:id".into(), "11111111111111111111111111111111".into()),
+                    (".svc".into(), "api".into())
                 ]
         );
         check!(got.series[0].exemplars[0].timestamp_ns == 0);
-        check!((got.series[0].exemplars[0].value - 1.0).abs() < f64::EPSILON);
+        check!(got.series[0].exemplars[0].value.is_nan());
     }
 
     #[tokio::test]
@@ -2436,8 +2717,9 @@ mod tests {
         check!(
             got.series[0].exemplars[0].labels
                 == vec![
-                    ("trace_id".into(), "11111111111111111111111111111111".into()),
-                    ("span_id".into(), "2222222222222222".into())
+                    ("trace:id".into(), "11111111111111111111111111111111".into()),
+                    (".svc".into(), "api".into()),
+                    ("span.svc".into(), "api".into())
                 ]
         );
     }
@@ -2549,7 +2831,7 @@ mod tests {
             .await
             .unwrap();
         // min over the present values {10, 30} = 10, not dragged to 0.
-        assert!(min.series[0].points == vec![(0, 10.0), (60_000, 0.0)]);
+        assert!(min.series[0].points == vec![(0, 10.0)]);
 
         let avg = e
             .query_range(
@@ -2562,7 +2844,7 @@ mod tests {
             .await
             .unwrap();
         // avg over {10, 30} = 20, not (10+30+0)/3 = 13.33.
-        assert!(avg.series[0].points == vec![(0, 20.0), (60_000, 0.0)]);
+        assert!(avg.series[0].points == vec![(0, 20.0)]);
 
         let max = e
             .query_range(
@@ -2574,7 +2856,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(max.series[0].points == vec![(0, 30.0), (60_000, 0.0)]);
+        assert!(max.series[0].points == vec![(0, 30.0)]);
     }
 
     #[tokio::test]
@@ -3203,6 +3485,7 @@ mod tests {
             value: None,
             quantiles: Vec::new(),
             by: Vec::new(),
+            exemplar_fields: Vec::new(),
             filter: None,
             rank: None,
             compare: None,
@@ -4592,7 +4875,7 @@ use metric_filter_passes::metric_filter_passes;
 use metric_function::MetricFunction;
 use metric_label_key::metric_label_key;
 use metric_label_value::metric_label_value;
-use metric_labels::metric_labels;
+use metric_labels::{MetricLabels, metric_labels};
 use metric_nested_projection_matchers::metric_nested_projection_matchers;
 use metric_numeric_value::metric_numeric_value;
 use metric_pipeline_parts::metric_pipeline_parts;
@@ -4628,3 +4911,15 @@ use unsupported_metric_pipeline::unsupported_metric_pipeline;
 use usize_from_integer_f64::usize_from_integer_f64;
 use validate_compare_field_expr::validate_compare_field_expr;
 use validate_compare_selection::validate_compare_selection;
+
+mod field_comparison;
+pub(crate) use field_comparison::field_comparison_column_values;
+
+mod metric_log2_bucket_value;
+use metric_log2_bucket_value::metric_log2_bucket_value;
+
+mod metric_duration_label;
+use metric_duration_label::metric_duration_label;
+
+mod scalar_expression_value;
+use scalar_expression_value::{evaluate_typed_predicate, scalar_expression_value};

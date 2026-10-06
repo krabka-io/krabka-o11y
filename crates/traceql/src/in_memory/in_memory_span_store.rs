@@ -93,6 +93,28 @@ impl InMemorySpanStore {
                 }
             }
         }
+        // SQL evaluates every branch, including attributes missing from every
+        // row or an empty store. Preserve types inferred from actual values,
+        // then supply nullable columns for the remaining dependencies.
+        for matcher in projection_matchers {
+            let key = match matcher.scope {
+                MatchScope::Both | MatchScope::Span | MatchScope::Resource | MatchScope::Parent => {
+                    matcher.key.clone()
+                }
+                MatchScope::Event => format!("{EVENT_ATTR_PREFIX}{}", matcher.key),
+                MatchScope::Link => format!("{LINK_ATTR_PREFIX}{}", matcher.key),
+                MatchScope::Instrumentation => {
+                    format!("{INSTRUMENTATION_ATTR_PREFIX}{}", matcher.key)
+                }
+                MatchScope::Intrinsic => continue,
+            };
+            cols.entry(key).or_insert_with(|| match matcher.value {
+                MatchValue::Int(_) => DataType::Int64,
+                MatchValue::Float(_) => DataType::Float64,
+                MatchValue::Bool(_) => DataType::Boolean,
+                MatchValue::Str(_) | MatchValue::Nil => DataType::Utf8,
+            });
+        }
         cols.into_iter().collect()
     }
 }
@@ -103,22 +125,16 @@ impl InMemorySpanStore {
         tenant: &str,
         matchers: &[SpanMatcher],
         projection_matchers: &[SpanMatcher],
+        include_raw_attributes: bool,
         start_ns: i64,
         end_ns: i64,
     ) -> Result<ScanResult> {
-        let in_range: Vec<&StoredTrace> = self
-            .traces
-            .get(tenant)
-            .into_iter()
-            .flatten()
-            .filter(|trace| {
-                start_ns <= trace.trace_start_unix_nano && trace.trace_start_unix_nano <= end_ns
-            })
-            .collect();
+        let in_range = self.traces_in_range(tenant, start_ns, end_ns);
         let row_count: usize = in_range.iter().map(|trace| trace.spans.len()).sum();
         let attr_cols = Self::attr_columns(&in_range, projection_matchers);
         let schema = span_schema_with_attrs(&attr_cols);
 
+        let mut raw_rows = Vec::new();
         let mut builders = ScanBuilders::new(row_count);
         let mut attr_builders: Vec<(String, AttrBuilder)> = attr_cols
             .iter()
@@ -136,6 +152,9 @@ impl InMemorySpanStore {
                 for event in event_rows {
                     for link in &link_rows {
                         builders.append(trace, span, i, event, *link, &mut attr_builders)?;
+                        if include_raw_attributes {
+                            raw_rows.push(span);
+                        }
                     }
                 }
             }
@@ -144,6 +163,21 @@ impl InMemorySpanStore {
         let mut columns = builders.finish();
         columns.extend(attr_builders.into_iter().map(|(_, b)| b.finish()));
 
+        let schema = if include_raw_attributes {
+            let raw = super::raw_attribute_columns::raw_attribute_columns(&raw_rows);
+            let mut fields = schema.fields().to_vec();
+            for (name, array) in raw {
+                fields.push(Arc::new(arrow::datatypes::Field::new(
+                    name,
+                    array.data_type().clone(),
+                    false,
+                )));
+                columns.push(array);
+            }
+            Arc::new(arrow::datatypes::Schema::new(fields))
+        } else {
+            schema
+        };
         let batch = RecordBatch::try_new(schema.clone(), columns)
             .map_err(|e| TraceqlError::Store(e.to_string()))?;
         let inspected =
@@ -168,7 +202,7 @@ impl SpanStore for InMemorySpanStore {
         start_ns: i64,
         end_ns: i64,
     ) -> Result<ScanResult> {
-        self.scan_with_projection(tenant, matchers, &[], start_ns, end_ns)
+        self.scan_with_projection(tenant, matchers, &[], false, start_ns, end_ns)
     }
 
     async fn scan_with_options(
@@ -183,6 +217,7 @@ impl SpanStore for InMemorySpanStore {
             tenant,
             matchers,
             &options.projection_matchers,
+            options.include_raw_attributes,
             start_ns,
             end_ns,
         )
@@ -361,7 +396,11 @@ impl InMemorySpanStore {
             .into_iter()
             .flatten()
             .filter(|trace| {
-                start_ns <= trace.trace_start_unix_nano && trace.trace_start_unix_nano <= end_ns
+                trace.trace_start_unix_nano <= end_ns
+                    && trace
+                        .trace_start_unix_nano
+                        .saturating_add(trace.trace_duration.nanos_i64())
+                        >= start_ns
             })
             .collect()
     }
