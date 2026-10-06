@@ -12,7 +12,7 @@ mod regex_anchored;
 mod row_matches;
 
 pub(super) use all_match::all_match;
-pub(super) use prepare_matchers::prepare_matchers;
+pub(crate) use prepare_matchers::prepare_matchers;
 pub(super) use prepared_matcher::PreparedMatcher;
 use regex_anchored::regex_anchored;
-pub(super) use row_matches::row_matches;
+pub(crate) use row_matches::row_matches;

@@ -1,0 +1,1314 @@
+{
+  "schema_version": 1,
+  "source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+  "measurement_qualified": true,
+  "retained_in_branch": true,
+  "decision": "Retain: RSS is lower in every pair, with a 2.9% lower median. CPU and query p99 ranges overlap and each regresses in one pair, so neither has a consistent gain. These are three matched deployments, not confidence intervals or a production qualification.",
+  "same_vm_revision_comparison": {
+    "measurement_qualified": true,
+    "provenance": {
+      "run_id": 37298567310,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37298567310",
+      "head_sha": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111725570549,
+          "name": "compare (traces)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37298567310/job/111725570549",
+          "runner_name": "gcp-runner-7539f401a1b44fbe",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T10:46:14Z",
+          "completed_at": "2026-10-05T11:18:28Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11341699541,
+          "name": "grafana-comparison-traces-ca99cacd35074c404e0e57500eb10d4767d95bc5-1",
+          "digest": "sha256:466f55733d0e9eb0b70855254d5626b74ad196ebb832e5efff7623a5efaef446",
+          "size_in_bytes": 5883591,
+          "expires_at": "2027-01-03T10:45:10Z",
+          "signal": "traces",
+          "verified_raw_files": 725
+        }
+      ]
+    },
+    "host": {
+      "cpu_count": 16,
+      "kernel": "7.0.0-1011-gcp",
+      "lscpu": {
+        "lscpu": [
+          {
+            "field": "Architecture:",
+            "data": "x86_64"
+          },
+          {
+            "field": "CPU op-mode(s):",
+            "data": "32-bit, 64-bit"
+          },
+          {
+            "field": "Address sizes:",
+            "data": "48 bits physical, 48 bits virtual"
+          },
+          {
+            "field": "Byte Order:",
+            "data": "Little Endian"
+          },
+          {
+            "field": "CPU(s):",
+            "data": "16"
+          },
+          {
+            "field": "On-line CPU(s) list:",
+            "data": "0-15"
+          },
+          {
+            "field": "Vendor ID:",
+            "data": "AuthenticAMD"
+          },
+          {
+            "field": "Model name:",
+            "data": "AMD EPYC 7B12"
+          },
+          {
+            "field": "CPU family:",
+            "data": "23"
+          },
+          {
+            "field": "Model:",
+            "data": "49"
+          },
+          {
+            "field": "Thread(s) per core:",
+            "data": "2"
+          },
+          {
+            "field": "Core(s) per socket:",
+            "data": "8"
+          },
+          {
+            "field": "Socket(s):",
+            "data": "1"
+          },
+          {
+            "field": "Stepping:",
+            "data": "0"
+          },
+          {
+            "field": "BogoMIPS:",
+            "data": "4499.99"
+          },
+          {
+            "field": "Flags:",
+            "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+          },
+          {
+            "field": "Hypervisor vendor:",
+            "data": "KVM"
+          },
+          {
+            "field": "Virtualization type:",
+            "data": "full"
+          },
+          {
+            "field": "L1d cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L1i cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L2 cache:",
+            "data": "4 MiB (8 instances)"
+          },
+          {
+            "field": "L3 cache:",
+            "data": "32 MiB (2 instances)"
+          },
+          {
+            "field": "NUMA node(s):",
+            "data": "1"
+          },
+          {
+            "field": "NUMA node0 CPU(s):",
+            "data": "0-15"
+          },
+          {
+            "field": "Vulnerability Gather data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Ghostwrite:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Indirect target selection:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Itlb multihit:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability L1tf:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Meltdown:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Mmio stale data:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Old microcode:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Reg file data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Retbleed:",
+            "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+          },
+          {
+            "field": "Vulnerability Spec rstack overflow:",
+            "data": "Mitigation; Safe RET"
+          },
+          {
+            "field": "Vulnerability Spec store bypass:",
+            "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+          },
+          {
+            "field": "Vulnerability Spectre v1:",
+            "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+          },
+          {
+            "field": "Vulnerability Spectre v2:",
+            "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+          },
+          {
+            "field": "Vulnerability Srbds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsa:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsx async abort:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Vmscape:",
+            "data": "Not affected"
+          }
+        ]
+      }
+    },
+    "pairing": "Three fresh baseline/candidate deployment pairs on one VM, alternating first revision; native comparison also retained separately.",
+    "image_producers": {
+      "baseline": {
+        "run_id": 37291441308,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37291441308",
+        "source_commit": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+        "artifact": {
+          "id": 11336964006,
+          "name": "comparison-image-metrics-8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+          "digest": "sha256:3f05e54dd82a88417a91a94409ba404a3025427b1ef0cb700101e5df2b9bb9bd",
+          "size_in_bytes": 308299590,
+          "expires_at": "2027-01-03T09:39:03Z"
+        },
+        "archive_digest_verified": true,
+        "all_image_file_checksums_verified": true,
+        "image_tag": "localhost/krabka-o11y:sha-8541b68fba52",
+        "manifest_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700",
+        "config_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700",
+        "docker_image_id": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700",
+        "oci_config_digest": "sha256:1927f644fdd4044477520da4fd5273e88e43a648201445ed4950507c208739f2",
+        "identity_note": "The archived config-digest field is Docker inspect Id; this containerd store reports OCI manifest identity. The OCI config digest comes from the independently verified archive."
+      },
+      "candidate": {
+        "run_id": 37298567310,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37298567310",
+        "source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+        "artifact": {
+          "id": 11341335545,
+          "name": "comparison-image-traces-ca99cacd35074c404e0e57500eb10d4767d95bc5",
+          "digest": "sha256:b1dbed1ddd21977f7cefd95fae227c5121c79638463f7de8b37deed8a56dd9fd",
+          "size_in_bytes": 308303621,
+          "expires_at": "2027-01-03T10:45:10Z"
+        },
+        "archive_digest_verified": true,
+        "all_image_file_checksums_verified": true,
+        "image_tag": "localhost/krabka-o11y:sha-ca99cacd3507",
+        "manifest_digest": "sha256:92b07517d101d4ff7b24ef7de2477ffb3fd62cb8c1b336611a9bdb7491cf7c9d",
+        "config_digest": "sha256:92b07517d101d4ff7b24ef7de2477ffb3fd62cb8c1b336611a9bdb7491cf7c9d",
+        "docker_image_id": "sha256:92b07517d101d4ff7b24ef7de2477ffb3fd62cb8c1b336611a9bdb7491cf7c9d",
+        "oci_config_digest": "sha256:159b8f5782478f3fc7b3d40bcfbf00189754eedd6291668bd9f2bb24e74a0422",
+        "identity_note": "The archived config-digest field is Docker inspect Id; this containerd store reports OCI manifest identity. The OCI config digest comes from the independently verified archive."
+      }
+    },
+    "pairs": [
+      {
+        "pair": 1,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "source_commit": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+          "image_manifest_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700",
+          "report": "revisions/1-baseline/comparison-report.json",
+          "accepted_rows": 12000,
+          "query_attempts": 235,
+          "errors": 0,
+          "empty_queries": 0,
+          "objectives_met": true,
+          "coverage_fraction": 0.9997407535412112,
+          "broker_started_at": "2026-10-05T11:07:37.356967697Z"
+        },
+        "candidate": {
+          "source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+          "image_manifest_digest": "sha256:92b07517d101d4ff7b24ef7de2477ffb3fd62cb8c1b336611a9bdb7491cf7c9d",
+          "report": "revisions/1-candidate/comparison-report.json",
+          "accepted_rows": 12000,
+          "query_attempts": 235,
+          "errors": 0,
+          "empty_queries": 0,
+          "objectives_met": true,
+          "coverage_fraction": 0.9997559981549249,
+          "broker_started_at": "2026-10-05T11:09:25.432652132Z"
+        }
+      },
+      {
+        "pair": 2,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "source_commit": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+          "image_manifest_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700",
+          "report": "revisions/2-baseline/comparison-report.json",
+          "accepted_rows": 12000,
+          "query_attempts": 235,
+          "errors": 0,
+          "empty_queries": 0,
+          "objectives_met": true,
+          "coverage_fraction": 0.9997589160407192,
+          "broker_started_at": "2026-10-05T11:13:01.205358731Z"
+        },
+        "candidate": {
+          "source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+          "image_manifest_digest": "sha256:92b07517d101d4ff7b24ef7de2477ffb3fd62cb8c1b336611a9bdb7491cf7c9d",
+          "report": "revisions/2-candidate/comparison-report.json",
+          "accepted_rows": 12000,
+          "query_attempts": 235,
+          "errors": 0,
+          "empty_queries": 0,
+          "objectives_met": true,
+          "coverage_fraction": 0.9997264876316688,
+          "broker_started_at": "2026-10-05T11:11:13.425148867Z"
+        }
+      },
+      {
+        "pair": 3,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "source_commit": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+          "image_manifest_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700",
+          "report": "revisions/3-baseline/comparison-report.json",
+          "accepted_rows": 12000,
+          "query_attempts": 235,
+          "errors": 0,
+          "empty_queries": 0,
+          "objectives_met": true,
+          "coverage_fraction": 0.9997097861232578,
+          "broker_started_at": "2026-10-05T11:14:49.109649836Z"
+        },
+        "candidate": {
+          "source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+          "image_manifest_digest": "sha256:92b07517d101d4ff7b24ef7de2477ffb3fd62cb8c1b336611a9bdb7491cf7c9d",
+          "report": "revisions/3-candidate/comparison-report.json",
+          "accepted_rows": 12000,
+          "query_attempts": 235,
+          "errors": 0,
+          "empty_queries": 0,
+          "objectives_met": true,
+          "coverage_fraction": 0.9998710075179462,
+          "broker_started_at": "2026-10-05T11:16:37.110651585Z"
+        }
+      }
+    ],
+    "summary": {
+      "baseline": {
+        "query_attempts": {
+          "median": 235,
+          "min": 235,
+          "max": 235,
+          "values": [
+            235,
+            235,
+            235
+          ]
+        },
+        "average_cpu_cores": {
+          "median": 0.4020989387304655,
+          "min": 0.40193711762135315,
+          "max": 0.40809356560142224,
+          "values": [
+            0.40809356560142224,
+            0.4020989387304655,
+            0.40193711762135315
+          ]
+        },
+        "rss_kib": {
+          "median": 523012,
+          "min": 511784,
+          "max": 523724,
+          "values": [
+            523724,
+            511784,
+            523012
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.09449547799999891,
+          "min": 0.09432262999985142,
+          "max": 0.10320836800019606,
+          "values": [
+            0.10320836800019606,
+            0.09432262999985142,
+            0.09449547799999891
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.01954417599995395,
+          "min": 0.018480314000044018,
+          "max": 0.01958060500010106,
+          "values": [
+            0.018480314000044018,
+            0.01958060500010106,
+            0.01954417599995395
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.018887897732954552,
+            "min": 0.01862600879598978,
+            "max": 0.02013261535322315,
+            "values": [
+              0.02013261535322315,
+              0.01862600879598978,
+              0.018887897732954552
+            ]
+          },
+          "traces-all": {
+            "median": 0.30300073804029637,
+            "min": 0.3029603428764113,
+            "max": 0.30781818293866886,
+            "values": [
+              0.30781818293866886,
+              0.30300073804029637,
+              0.3029603428764113
+            ]
+          },
+          "minio": {
+            "median": 0.08014276730953025,
+            "min": 0.0800888770119872,
+            "max": 0.08047219189417933,
+            "values": [
+              0.08014276730953025,
+              0.08047219189417933,
+              0.0800888770119872
+            ]
+          }
+        }
+      },
+      "candidate": {
+        "query_attempts": {
+          "median": 235,
+          "min": 235,
+          "max": 235,
+          "values": [
+            235,
+            235,
+            235
+          ]
+        },
+        "average_cpu_cores": {
+          "median": 0.3987359045365735,
+          "min": 0.3961106258077066,
+          "max": 0.4114851923816939,
+          "values": [
+            0.3987359045365735,
+            0.3961106258077066,
+            0.4114851923816939
+          ]
+        },
+        "rss_kib": {
+          "median": 507756,
+          "min": 507288,
+          "max": 517324,
+          "values": [
+            517324,
+            507756,
+            507288
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.09271013299985498,
+          "min": 0.09189330200001677,
+          "max": 0.09773021799992421,
+          "values": [
+            0.09271013299985498,
+            0.09189330200001677,
+            0.09773021799992421
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.018466775999968377,
+          "min": 0.016468945000042368,
+          "max": 0.02004514400005064,
+          "values": [
+            0.02004514400005064,
+            0.016468945000042368,
+            0.018466775999968377
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.01913114268816975,
+            "min": 0.018282557429810362,
+            "max": 0.019250040480358912,
+            "values": [
+              0.01913114268816975,
+              0.018282557429810362,
+              0.019250040480358912
+            ]
+          },
+          "traces-all": {
+            "median": 0.29993793623169557,
+            "min": 0.29923320171705403,
+            "max": 0.30971556037993403,
+            "values": [
+              0.29993793623169557,
+              0.29923320171705403,
+              0.30971556037993403
+            ]
+          },
+          "minio": {
+            "median": 0.07966682561670814,
+            "min": 0.07859486666084223,
+            "max": 0.08251959152140098,
+            "values": [
+              0.07966682561670814,
+              0.07859486666084223,
+              0.08251959152140098
+            ]
+          }
+        }
+      }
+    },
+    "candidate_divided_by_baseline": {
+      "query_attempts": 1.0,
+      "average_cpu_cores": 0.9916363017407854,
+      "rss_kib": 0.9708304971970051,
+      "query_p99_seconds": 0.9811065562296647,
+      "ingest_p99_seconds": 0.944873603267382
+    },
+    "scope": "Single-node API-accepted steady load with identical query pacing and accepted span counts; actual query completions are recorded and may vary with latency. Matched aggregate budgets; CPU and RSS include broker and MinIO."
+  },
+  "matched_revision_workload": {
+    "accepted_spans_per_deployment": 12000,
+    "query_completions_per_deployment": 235,
+    "all_six_revision_deployments_match": true
+  },
+  "native_comparison": {
+    "schema_version": 1,
+    "scope": "Fixed deployment-shape, single-node API-accepted performance; different durability contracts",
+    "aggregation": "median/min/max and raw values of three repetitions, no confidence intervals",
+    "signals": {
+      "traces": {
+        "host": {
+          "cpu_count": 16,
+          "kernel": "7.0.0-1011-gcp",
+          "lscpu": {
+            "lscpu": [
+              {
+                "field": "Architecture:",
+                "data": "x86_64"
+              },
+              {
+                "field": "CPU op-mode(s):",
+                "data": "32-bit, 64-bit"
+              },
+              {
+                "field": "Address sizes:",
+                "data": "48 bits physical, 48 bits virtual"
+              },
+              {
+                "field": "Byte Order:",
+                "data": "Little Endian"
+              },
+              {
+                "field": "CPU(s):",
+                "data": "16"
+              },
+              {
+                "field": "On-line CPU(s) list:",
+                "data": "0-15"
+              },
+              {
+                "field": "Vendor ID:",
+                "data": "AuthenticAMD"
+              },
+              {
+                "field": "Model name:",
+                "data": "AMD EPYC 7B12"
+              },
+              {
+                "field": "CPU family:",
+                "data": "23"
+              },
+              {
+                "field": "Model:",
+                "data": "49"
+              },
+              {
+                "field": "Thread(s) per core:",
+                "data": "2"
+              },
+              {
+                "field": "Core(s) per socket:",
+                "data": "8"
+              },
+              {
+                "field": "Socket(s):",
+                "data": "1"
+              },
+              {
+                "field": "Stepping:",
+                "data": "0"
+              },
+              {
+                "field": "BogoMIPS:",
+                "data": "4499.99"
+              },
+              {
+                "field": "Flags:",
+                "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+              },
+              {
+                "field": "Hypervisor vendor:",
+                "data": "KVM"
+              },
+              {
+                "field": "Virtualization type:",
+                "data": "full"
+              },
+              {
+                "field": "L1d cache:",
+                "data": "256 KiB (8 instances)"
+              },
+              {
+                "field": "L1i cache:",
+                "data": "256 KiB (8 instances)"
+              },
+              {
+                "field": "L2 cache:",
+                "data": "4 MiB (8 instances)"
+              },
+              {
+                "field": "L3 cache:",
+                "data": "32 MiB (2 instances)"
+              },
+              {
+                "field": "NUMA node(s):",
+                "data": "1"
+              },
+              {
+                "field": "NUMA node0 CPU(s):",
+                "data": "0-15"
+              },
+              {
+                "field": "Vulnerability Gather data sampling:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Ghostwrite:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Indirect target selection:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Itlb multihit:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability L1tf:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Mds:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Meltdown:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Mmio stale data:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Old microcode:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Reg file data sampling:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Retbleed:",
+                "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+              },
+              {
+                "field": "Vulnerability Spec rstack overflow:",
+                "data": "Mitigation; Safe RET"
+              },
+              {
+                "field": "Vulnerability Spec store bypass:",
+                "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+              },
+              {
+                "field": "Vulnerability Spectre v1:",
+                "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+              },
+              {
+                "field": "Vulnerability Spectre v2:",
+                "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+              },
+              {
+                "field": "Vulnerability Srbds:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Tsa:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Tsx async abort:",
+                "data": "Not affected"
+              },
+              {
+                "field": "Vulnerability Vmscape:",
+                "data": "Not affected"
+              }
+            ]
+          }
+        },
+        "harness_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+        "resource_coverage": [
+          {
+            "repetition": 1,
+            "backend": "krabka",
+            "phase": "steady",
+            "level": 2,
+            "sample_count": 61,
+            "sampled_seconds": 60.5873384475708,
+            "coverage_fraction": 0.9996983869472067,
+            "valid": true
+          },
+          {
+            "repetition": 1,
+            "backend": "tempo",
+            "phase": "steady",
+            "level": 2,
+            "sample_count": 61,
+            "sampled_seconds": 60.564213514328,
+            "coverage_fraction": 0.9997215474701974,
+            "valid": true
+          },
+          {
+            "repetition": 2,
+            "backend": "tempo",
+            "phase": "steady",
+            "level": 2,
+            "sample_count": 61,
+            "sampled_seconds": 60.60326409339905,
+            "coverage_fraction": 0.9996863320910618,
+            "valid": true
+          },
+          {
+            "repetition": 2,
+            "backend": "krabka",
+            "phase": "steady",
+            "level": 2,
+            "sample_count": 61,
+            "sampled_seconds": 60.61407828330994,
+            "coverage_fraction": 0.9997317143121248,
+            "valid": true
+          },
+          {
+            "repetition": 3,
+            "backend": "krabka",
+            "phase": "steady",
+            "level": 2,
+            "sample_count": 61,
+            "sampled_seconds": 60.63716530799866,
+            "coverage_fraction": 0.999709790777934,
+            "valid": true
+          },
+          {
+            "repetition": 3,
+            "backend": "tempo",
+            "phase": "steady",
+            "level": 2,
+            "sample_count": 61,
+            "sampled_seconds": 60.575745582580566,
+            "coverage_fraction": 0.9997538286906281,
+            "valid": true
+          }
+        ],
+        "seed_value_mismatches": [],
+        "correctness_disqualified": false,
+        "host_activity_disqualified": false,
+        "host_activity_failures": [],
+        "backends": {
+          "krabka": {
+            "steady_objectives_met": true,
+            "steady": {
+              "rows_per_second": {
+                "median": 197.92069617346317,
+                "min": 197.84100111541238,
+                "max": 198.00144635413452,
+                "values": [
+                  198.00144635413452,
+                  197.92069617346317,
+                  197.84100111541238
+                ]
+              },
+              "accepted_rows": {
+                "median": 12000,
+                "min": 12000,
+                "max": 12000,
+                "values": [
+                  12000,
+                  12000,
+                  12000
+                ]
+              },
+              "ingest_p99_seconds": {
+                "median": 0.018514064000100916,
+                "min": 0.012621341999988545,
+                "max": 0.01870933400005015,
+                "values": [
+                  0.012621341999988545,
+                  0.018514064000100916,
+                  0.01870933400005015
+                ]
+              },
+              "query_p99_seconds": {
+                "median": 0.09801379199996063,
+                "min": 0.09287453199999618,
+                "max": 0.09914456000001337,
+                "values": [
+                  0.09801379199996063,
+                  0.09287453199999618,
+                  0.09914456000001337
+                ]
+              },
+              "query_attempts": {
+                "median": 235,
+                "min": 235,
+                "max": 236,
+                "values": [
+                  236,
+                  235,
+                  235
+                ]
+              },
+              "cpu_seconds": {
+                "median": 24.447833,
+                "min": 24.335729,
+                "max": 24.491158,
+                "values": [
+                  24.335729,
+                  24.447833,
+                  24.491158
+                ]
+              },
+              "rss_kib": {
+                "median": 523980,
+                "min": 498292,
+                "max": 529696,
+                "values": [
+                  498292,
+                  523980,
+                  529696
+                ]
+              },
+              "cpu_seconds_per_million_rows": {
+                "median": 2037.3194166666667,
+                "min": 2027.9774166666666,
+                "max": 2040.9298333333334,
+                "values": [
+                  2027.9774166666666,
+                  2037.3194166666667,
+                  2040.9298333333334
+                ]
+              },
+              "generator_cpu_seconds": {
+                "median": 2.0879781919999996,
+                "min": 1.9740992199999998,
+                "max": 2.0995828700000008,
+                "values": [
+                  1.9740992199999998,
+                  2.0879781919999996,
+                  2.0995828700000008
+                ]
+              },
+              "s3_requests": {
+                "median": 4813.0,
+                "min": 4812.0,
+                "max": 4859.0,
+                "values": [
+                  4859.0,
+                  4812.0,
+                  4813.0
+                ]
+              },
+              "s3_read_bytes": {
+                "median": 11128501.0,
+                "min": 11106283.0,
+                "max": 11194546.0,
+                "values": [
+                  11194546.0,
+                  11106283.0,
+                  11128501.0
+                ]
+              },
+              "s3_write_bytes": {
+                "median": 924490.0,
+                "min": 923980.0,
+                "max": 924507.0,
+                "values": [
+                  924490.0,
+                  923980.0,
+                  924507.0
+                ]
+              },
+              "duration_seconds": {
+                "median": 60.630344537000155,
+                "min": 60.60561789299993,
+                "max": 60.654767881,
+                "values": [
+                  60.60561789299993,
+                  60.630344537000155,
+                  60.654767881
+                ]
+              },
+              "query_attempts_per_second": {
+                "median": 3.87594696673032,
+                "min": 3.8743862718434925,
+                "max": 3.894028444964645,
+                "values": [
+                  3.894028444964645,
+                  3.87594696673032,
+                  3.8743862718434925
+                ]
+              },
+              "average_cpu_cores": {
+                "median": 0.4032276772743805,
+                "min": 0.4015424616735213,
+                "max": 0.4037796014329784,
+                "values": [
+                  0.4015424616735213,
+                  0.4032276772743805,
+                  0.4037796014329784
+                ]
+              },
+              "driver_average_cpu_cores": {
+                "median": 0.034437841446304074,
+                "min": 0.03257287506721406,
+                "max": 0.03461529807713091,
+                "values": [
+                  0.03257287506721406,
+                  0.034437841446304074,
+                  0.03461529807713091
+                ]
+              }
+            },
+            "service_cpu": 7.0,
+            "service_memory_gib": 7.0,
+            "burst": {
+              "passing_levels": [],
+              "highest_consistently_passing_tested_level": null,
+              "per_repetition": [
+                {
+                  "repetition": 1,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 2,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 3,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                }
+              ],
+              "failed_points": []
+            },
+            "high_cardinality": {
+              "passing_levels": [],
+              "highest_consistently_passing_tested_level": null,
+              "per_repetition": [
+                {
+                  "repetition": 1,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 2,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 3,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                }
+              ],
+              "failed_points": []
+            }
+          },
+          "tempo": {
+            "steady_objectives_met": true,
+            "steady": {
+              "rows_per_second": {
+                "median": 198.05032243362865,
+                "min": 197.94702751661492,
+                "max": 198.08163721641088,
+                "values": [
+                  198.08163721641088,
+                  197.94702751661492,
+                  198.05032243362865
+                ]
+              },
+              "accepted_rows": {
+                "median": 12000,
+                "min": 12000,
+                "max": 12000,
+                "values": [
+                  12000,
+                  12000,
+                  12000
+                ]
+              },
+              "ingest_p99_seconds": {
+                "median": 0.008713936999924954,
+                "min": 0.007916038000075787,
+                "max": 0.012929235999990851,
+                "values": [
+                  0.008713936999924954,
+                  0.007916038000075787,
+                  0.012929235999990851
+                ]
+              },
+              "query_p99_seconds": {
+                "median": 0.10888986700001624,
+                "min": 0.10595213399994918,
+                "max": 0.11284704900003817,
+                "values": [
+                  0.10595213399994918,
+                  0.11284704900003817,
+                  0.10888986700001624
+                ]
+              },
+              "query_attempts": {
+                "median": 232,
+                "min": 232,
+                "max": 232,
+                "values": [
+                  232,
+                  232,
+                  232
+                ]
+              },
+              "cpu_seconds": {
+                "median": 35.379679,
+                "min": 34.935124,
+                "max": 35.995185,
+                "values": [
+                  34.935124,
+                  35.995185,
+                  35.379679
+                ]
+              },
+              "rss_kib": {
+                "median": 549132,
+                "min": 547928,
+                "max": 553924,
+                "values": [
+                  547928,
+                  549132,
+                  553924
+                ]
+              },
+              "cpu_seconds_per_million_rows": {
+                "median": 2948.3065833333335,
+                "min": 2911.260333333333,
+                "max": 2999.59875,
+                "values": [
+                  2911.260333333333,
+                  2999.59875,
+                  2948.3065833333335
+                ]
+              },
+              "generator_cpu_seconds": {
+                "median": 2.8417754219999996,
+                "min": 2.731350039,
+                "max": 2.884359096,
+                "values": [
+                  2.731350039,
+                  2.884359096,
+                  2.8417754219999996
+                ]
+              },
+              "s3_requests": {
+                "median": 9312.0,
+                "min": 9294.0,
+                "max": 9565.0,
+                "values": [
+                  9294.0,
+                  9312.0,
+                  9565.0
+                ]
+              },
+              "s3_read_bytes": {
+                "median": 26545266.0,
+                "min": 26527537.0,
+                "max": 26594765.0,
+                "values": [
+                  26594765.0,
+                  26527537.0,
+                  26545266.0
+                ]
+              },
+              "s3_write_bytes": {
+                "median": 1170400.0,
+                "min": 1169604.0,
+                "max": 1187469.0,
+                "values": [
+                  1187469.0,
+                  1169604.0,
+                  1170400.0
+                ]
+              },
+              "duration_seconds": {
+                "median": 60.59066126499988,
+                "min": 60.581082469999956,
+                "max": 60.622279357000025,
+                "values": [
+                  60.581082469999956,
+                  60.622279357000025,
+                  60.59066126499988
+                ]
+              },
+              "query_attempts_per_second": {
+                "median": 3.828972900383487,
+                "min": 3.826975865321222,
+                "max": 3.8295783195172772,
+                "values": [
+                  3.8295783195172772,
+                  3.826975865321222,
+                  3.828972900383487
+                ]
+              },
+              "average_cpu_cores": {
+                "median": 0.5839130694623568,
+                "min": 0.5766672131898608,
+                "max": 0.5937616563050537,
+                "values": [
+                  0.5766672131898608,
+                  0.5937616563050537,
+                  0.5839130694623568
+                ]
+              },
+              "driver_average_cpu_cores": {
+                "median": 0.04690121155092175,
+                "min": 0.045085857294685644,
+                "max": 0.047579192445309205,
+                "values": [
+                  0.045085857294685644,
+                  0.047579192445309205,
+                  0.04690121155092175
+                ]
+              }
+            },
+            "service_cpu": 7.0,
+            "service_memory_gib": 7.0,
+            "burst": {
+              "passing_levels": [],
+              "highest_consistently_passing_tested_level": null,
+              "per_repetition": [
+                {
+                  "repetition": 1,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 2,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 3,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                }
+              ],
+              "failed_points": []
+            },
+            "high_cardinality": {
+              "passing_levels": [],
+              "highest_consistently_passing_tested_level": null,
+              "per_repetition": [
+                {
+                  "repetition": 1,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 2,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                },
+                {
+                  "repetition": 3,
+                  "passing_levels": [],
+                  "highest_passing_tested_level": null,
+                  "failed_levels": []
+                }
+              ],
+              "failed_points": []
+            }
+          }
+        },
+        "deployment_target": "all",
+        "highest_common_burst_writers": null,
+        "steady_krabka_divided_by_native": {
+          "average_cpu_cores": 0.690561144051213,
+          "rss_kib": 0.9541968051397478,
+          "query_p99_seconds": 0.9001185757711139,
+          "ingest_p99_seconds": 2.1246497421613633
+        }
+      }
+    },
+    "harness_commits": {
+      "traces": "ca99cacd35074c404e0e57500eb10d4767d95bc5"
+    },
+    "dataset": {
+      "metric_samples_per_request": 1000,
+      "metric_points_per_series": 1,
+      "other_signals": "deployment-envelope dataset; profile units=nanoseconds, unquoted legacy labels, sampleRate=1e9",
+      "seed_concurrency": 64
+    },
+    "image_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+    "image_digest": "sha256:92b07517d101d4ff7b24ef7de2477ffb3fd62cb8c1b336611a9bdb7491cf7c9d"
+  },
+  "binary_sha256": {
+    "krabka-metrics": {
+      "path": "usr/local/bin/krabka-metrics",
+      "sha256": "433897cf8d9d07b85a92ae27ccf23e450e1223a16f5acf305e9fb27922a5e0f5",
+      "size_in_bytes": 72322888
+    },
+    "krabka-metrics-service": {
+      "path": "usr/local/bin/krabka-metrics-service",
+      "sha256": "1a6309b6359fbf72740f97647a998363064d3b49cc0026ae047ea384a637f24b",
+      "size_in_bytes": 236257280
+    },
+    "krabka-o11y-bootstrap": {
+      "path": "usr/local/bin/krabka-o11y-bootstrap",
+      "sha256": "3f21b08affb06c3c7c703fa3b2bff0a1215610b516cde6b95e39b987178d8ec9",
+      "size_in_bytes": 26755024
+    },
+    "krabka-o11y-recovery": {
+      "path": "usr/local/bin/krabka-o11y-recovery",
+      "sha256": "11d55653ba224a20a00209dcd20529b914afe76ab55cdb23d23e885f14171ef5",
+      "size_in_bytes": 36712848
+    },
+    "krabka-observability": {
+      "path": "usr/local/bin/krabka-observability",
+      "sha256": "721f108379d44c80db18598833cb4665c2ff783aab19ac96c09ed42fe15d59df",
+      "size_in_bytes": 222384288
+    },
+    "krabka-profiles": {
+      "path": "usr/local/bin/krabka-profiles",
+      "sha256": "3b4bfbecf433404becd086eb9c87d2784ff15a208143604ecb199ad262d188ed",
+      "size_in_bytes": 219811904
+    },
+    "krabka-traces": {
+      "path": "usr/local/bin/krabka-traces",
+      "sha256": "208df2eb947dc03780e6e905d2589e70106ab8cef961155ba7be4432bdaa87e6",
+      "size_in_bytes": 223532928
+    }
+  },
+  "image_equivalence": {
+    "changed_paths": [
+      "usr/local/bin/krabka-traces"
+    ],
+    "unchanged_binaries": [
+      "krabka-metrics",
+      "krabka-metrics-service",
+      "krabka-o11y-bootstrap",
+      "krabka-o11y-recovery",
+      "krabka-observability",
+      "krabka-profiles"
+    ],
+    "filesystem_entries_verified": 380
+  },
+  "diagnostic_record": "qualification/grafana-profiling-gcp.json#tempo_borrowed_selection_candidate_captures",
+  "validation": {
+    "scoped_targets_passed": 37,
+    "native_oracles": [
+      "Tempo",
+      "Grafana"
+    ],
+    "regression": "Independent complete SpanRow ledger through the live-source Arrow batch API, covering clipped roots, sorting, duplicate and reserved attributes, bytes, events, links, tenant filtering and returned batch lifetime."
+  }
+}

@@ -632,7 +632,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[inline(never)]
     fn object_symbol_anchor() -> u64 {
-        42
+        std::hint::black_box(42)
     }
 }
 

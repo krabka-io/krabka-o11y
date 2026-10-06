@@ -1,3 +1,5 @@
+use std::borrow::Borrow;
+
 use super::{
     ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, Labels, MetricQuery, MetricWindow,
     RangeAggregation, StreamPlan, TimeRange, Value, WalLogRecord,
@@ -5,11 +7,11 @@ use super::{
     format_metric_samples, json_object_to_labels, unix_ns_string_to_loki_seconds,
 };
 
-pub(crate) fn count_loki_metric_result_hot_tail_samples(
+pub(crate) fn count_loki_metric_result_hot_tail_samples<R: Borrow<WalLogRecord> + Sync>(
     value: &Value,
     plan: &StreamPlan,
     query: &MetricQuery,
-    hot_tail: &[WalLogRecord],
+    hot_tail: &[R],
     frontier: &CompactionFrontier,
     evaluation: (TimeRange, i64),
     delete_filters: &[ActiveLogDeleteFilter],
@@ -22,6 +24,7 @@ pub(crate) fn count_loki_metric_result_hot_tail_samples(
     let eval_times = eval_times(eval_range, step_ns);
     let mut hot_samples = BTreeMap::new();
     for record in hot_tail {
+        let record: &WalLogRecord = record.borrow();
         append_matching_hot_metric_record(
             &mut hot_samples,
             plan,

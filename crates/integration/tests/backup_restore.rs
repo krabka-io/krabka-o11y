@@ -1,3 +1,6 @@
+// The PromQL router's query future holds DataFusion state. Its axum `Send`
+// check needs the same trait recursion depth as the other router suites.
+#![recursion_limit = "512"]
 //! A consistent backup of a whole deployment, restored into an empty one.
 //!
 //! The suite boots a real broker in-process and drives every signal through

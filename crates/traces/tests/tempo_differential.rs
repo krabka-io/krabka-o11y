@@ -962,16 +962,20 @@ async fn grafana_accepts_tempo_datasource_pointing_at_krabka() -> TestResult {
     );
 
     // Probe the datasource proxy with a seeded trace query from Tempo's API.
-    let trace: JsonValue = client
+    let trace_response = client
         .get(format!(
             "{grafana_base}/api/datasources/proxy/uid/{GRAFANA_TEMPO_DATASOURCE_UID}/api/v2/traces/{TRACE_ID_HEX}?start=0&end=1"
         ))
         .basic_auth("admin", Some("admin"))
         .send()
-        .await?
-        .error_for_status()?
-        .json()
         .await?;
+    let trace_status = trace_response.status();
+    let trace_body = trace_response.text().await?;
+    assert2::assert!(
+        trace_status.is_success(),
+        "Grafana trace response: {trace_body}"
+    );
+    let trace: JsonValue = serde_json::from_str(&trace_body)?;
     assert2::assert!(
         trace["trace"]["resourceSpans"]
             .as_array()

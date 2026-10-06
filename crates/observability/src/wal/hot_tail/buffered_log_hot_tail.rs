@@ -27,17 +27,31 @@ impl BufferedLogHotTail {
             .lock()
             .expect("hot tail buffer lock poisoned")
             .records
-            .clone()
+            .iter()
+            .map(|record| record.as_ref().clone())
+            .collect()
     }
 
     #[must_use]
     /// # Panics
     /// Panics if synchronized telemetry state is poisoned or validated columnar data is missing a required field.
     pub fn records_in_range(&self, start_ns: i64, end_ns: i64) -> Vec<WalLogRecord> {
+        self.records_shared_in_range(start_ns, end_ns)
+            .into_iter()
+            .map(|record| record.as_ref().clone())
+            .collect()
+    }
+
+    /// Shares the immutable records in an inclusive time window, in arrival order.
+    ///
+    /// # Panics
+    /// Panics if the hot-tail buffer lock is poisoned.
+    #[must_use]
+    pub fn records_shared_in_range(&self, start_ns: i64, end_ns: i64) -> Vec<Arc<WalLogRecord>> {
         self.buffer
             .lock()
             .expect("hot tail buffer lock poisoned")
-            .records_in_range(start_ns, end_ns)
+            .records_shared_in_range(start_ns, end_ns)
     }
 
     /// # Panics
@@ -67,5 +81,9 @@ impl LogHotTail for BufferedLogHotTail {
 
     fn records_in_range(&self, start_ns: i64, end_ns: i64) -> Vec<WalLogRecord> {
         BufferedLogHotTail::records_in_range(self, start_ns, end_ns)
+    }
+
+    fn records_shared_in_range(&self, start_ns: i64, end_ns: i64) -> Vec<Arc<WalLogRecord>> {
+        BufferedLogHotTail::records_shared_in_range(self, start_ns, end_ns)
     }
 }

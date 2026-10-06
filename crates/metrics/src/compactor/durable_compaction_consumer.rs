@@ -18,6 +18,12 @@ impl<C> DurableCompactionConsumer<C> {
             topic: topic.into(),
         }
     }
+
+    /// Returns the owning consumer so its shutdown can be awaited.
+    #[must_use]
+    pub fn into_inner(self) -> C {
+        self.inner
+    }
 }
 
 #[async_trait]

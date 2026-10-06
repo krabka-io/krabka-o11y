@@ -18,7 +18,7 @@ mod matcher;
 mod store_impl;
 
 pub use head::WalHead;
-use matcher::{prepare_matchers, row_matches};
+pub(crate) use matcher::{prepare_matchers, row_matches};
 
 #[cfg(test)]
 mod tests;

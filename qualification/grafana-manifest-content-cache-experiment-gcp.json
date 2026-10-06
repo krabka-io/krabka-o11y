@@ -1,0 +1,850 @@
+{
+  "schema_version": 1,
+  "experiment": "Bounded compactor manifest contents with fresh object identity",
+  "status": "rejected_production_cache_removed_metrics_restoration_passed",
+  "baseline_source_commit": "670cd7d1e4c9c21f3229ededf76f15b4dee53109",
+  "base_main": "92989bb29d44c629fa4ac88147a3fce8b1604776",
+  "performance_qualified": false,
+  "correctness_qualified": true,
+  "retained": false,
+  "source_comparison": "docs/grafana-upstream-source-comparison.md",
+  "selection": "Repeated manifest GETs in the existing two-second compactor passes contribute to object traffic. Cache verified raw contents, preserving fresh listings, key validation and decode on every use. This does not change publication timing or reduce durability. Actual gain requires matched measurements.",
+  "candidate_draft_sha256": "c430713efdea69a844f39e3588167ed3243d7c64b835e8595dc0d9f17c308414",
+  "candidate_applied": false,
+  "baseline_capture": {
+    "run_id": 37385206080,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37385206080",
+    "harness_head_sha": "670cd7d1e4c9c21f3229ededf76f15b4dee53109",
+    "inputs": {
+      "signal": "metrics",
+      "profiling": "cpu",
+      "deployment_target": "split",
+      "profiles_target": "all"
+    },
+    "status": "success_verified",
+    "diagnostic_only": true,
+    "live_instances_at_dispatch": [],
+    "verified_raw_files": 238,
+    "proof_path": "qualification/evidence/profiling/gcp-37385206080/provenance.json",
+    "proof_sha256": "4f917d8425a1953c29d0df605763b4d73c8f06d78492787686ef93b35dd3993f",
+    "image_provenance": {
+      "run_id": 37385206080,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37385206080",
+      "source_commit": "670cd7d1e4c9c21f3229ededf76f15b4dee53109",
+      "artifact": {
+        "id": 11380040596,
+        "name": "comparison-image-metrics-670cd7d1e4c9c21f3229ededf76f15b4dee53109",
+        "digest": "sha256:d674a273fa1995abe28ce26a74cc578bfe0dfe95fb4ffc2c6b578ebab21d4bba",
+        "size_in_bytes": 308353127,
+        "expires_at": "2027-01-03T22:52:43Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-670cd7d1e4c9",
+      "manifest_digest": "sha256:7b80cdcf6a26140660e325bc03af7dbabc6d955f8d4c6c55d376e7c19eceb72f",
+      "config_digest": "sha256:7b80cdcf6a26140660e325bc03af7dbabc6d955f8d4c6c55d376e7c19eceb72f"
+    },
+    "workload": {
+      "ingest": {
+        "attempts": 360,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 360000,
+        "accepted_rows_per_sec": 1992.647147921066,
+        "latency_seconds": {
+          "count": 360,
+          "p50": 0.029955157000017607,
+          "p95": 0.036804508000045644,
+          "p99": 0.09244929400006185
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 360
+        }
+      },
+      "query": {
+        "attempts": 719,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 719,
+          "p50": 0.012843624999959502,
+          "p95": 0.020539372000030198,
+          "p99": 0.027317731000039203
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 719
+        }
+      }
+    }
+  },
+  "next_action": "Finish checkpoint CI and Pyroscope validation, then publish and measure the separate equal-label key candidate on GCP.",
+  "candidate_design": {
+    "contents_byte_budget": 1048576,
+    "entry_limit": 128,
+    "fresh_listing_each_pass": true,
+    "full_object_meta_identity_checked": true,
+    "etag_or_version_required": true,
+    "decode_and_key_validation_each_use": true,
+    "cache_bound_to_store_handle": true,
+    "publication_timing_unchanged": true,
+    "erasure_and_retention_paths_unchanged": true,
+    "fetched_contents_match_listed_strong_validators": true,
+    "transport_timestamp_precision_handled": "Fetched and listed timestamps must identify the same second and supplied ETag/version must match. Cache stores the full listing metadata; future hits require exact listing equality."
+  },
+  "draft_checks": {
+    "rustfmt_syntax_and_formatting": "passed",
+    "patch_applies_to_current_source": true,
+    "type_checks_or_tests": "not_run_yet",
+    "cache_invalidated_on_overwrite_removal_or_publication_marker_change": "independent_ledger_prepared_not_run",
+    "compaction_samples_tenant_and_deferred_deletion": "caller_ledger_prepared_not_run",
+    "superseded_by_applied_source_validation": true
+  },
+  "candidate_parent_commit": "ff518b06d82f6a99aaf857f0a0e6f2a73e3d46ba",
+  "previous_validation_attempts": [
+    {
+      "status": "superseded_before_qualification",
+      "compiler_setting": "repository default (single-CGU experiment is not enabled)",
+      "scope": "Metrics unit suites, content identity/invalidation ledger, cached compactor caller, release binary Clippy, TSDB publication and three real metrics compatibility/deployment wrappers.",
+      "targets": [
+        "//crates/metrics:metrics_test",
+        "//crates/metrics:metrics_clippy",
+        "//crates/metrics:level_compaction_test",
+        "//crates/metrics:level_compaction_test_clippy",
+        "//crates/metrics:tsdb_publish_test",
+        "//crates/metrics:tsdb_publish_test_clippy",
+        "//crates/metrics:krabka-metrics_test",
+        "//crates/metrics:krabka-metrics_clippy",
+        "//crates/metrics-service:diff_mimir_docker_test",
+        "//crates/metrics-service:diff_prometheus_docker_test",
+        "//crates/metrics-service:metrics_deployment_docker_test"
+      ],
+      "retries_disabled": true,
+      "source_files_sha256": {
+        "crates/integration/tests/support/metrics.rs": "a69ccb2e696037ec6073ef2d2ed9f1b4e8c38560fdee90c9a7a14ba5184c2199",
+        "crates/metrics/src/bin/krabka-metrics/compactor_loop.rs": "b9b1b0afd227e06d8392c237603ef2e0a886008219c3bb71e40f0829ab7e967f",
+        "crates/metrics/src/bin/krabka-metrics/run_compactor_once.rs": "2dd5e4f1541da0a3746bdac842c61eb72887eb39a6622b347e7d8e340ad81745",
+        "crates/metrics/src/compactor.rs": "efb7721f064c37ff9d2644b84168f1e4082e8dc320241f5580805feb083969ea",
+        "crates/metrics/src/compactor/compact_metric_blocks_once.rs": "c7a3a2179a4a5c4179d0d53f7aa347c21c8ea3e246454a0d51e68bd8637e85be",
+        "crates/metrics/src/compactor/list_compaction_index.rs": "f55e54dbb1e522e6778811ec838a675cc69f595bce525c5eb97152d9b7764f74",
+        "crates/metrics/src/compactor/list_compaction_manifests.rs": "4c344c92ec76fa5fd4c32ccc1b1240cfd585241203290af30a15cb73701ac47f",
+        "crates/metrics/src/compactor/read_compaction_manifests.rs": "2a5698fd6fb047a888030f02de4dea9bafb29bcb5e752191cc756f00d08fbde5",
+        "crates/metrics/src/lib.rs": "f9b2fce6fb3183cb3e833644c9c63a1f90623f72982133b311c1e171f95ab076",
+        "crates/metrics/tests/level_compaction.rs": "491e24dad08548b056a670171296a2dd596506460760ba35a2c1d1732ee584ad",
+        "crates/metrics/src/compactor/compaction_manifest_cache.rs": "ac0baf1f847d4a0c76075874acff5ba1b06ca1a253b9a2f985d4414a41c6977b"
+      },
+      "formatter_passed": true,
+      "reason": "Source inspection found S3 LIST/GET modification-time precision differences. Validation is cancelled before applying the corrected fetched-content admission guard."
+    }
+  ],
+  "validation": {
+    "status": "passed",
+    "compiler_setting": "repository default (single-CGU experiment is not enabled)",
+    "scope": "Metrics unit suites, content identity/invalidation ledger, cached compactor caller, release binary Clippy, TSDB publication and three real metrics compatibility/deployment wrappers.",
+    "targets": [
+      "//crates/metrics:metrics_test",
+      "//crates/metrics:metrics_clippy",
+      "//crates/metrics:level_compaction_test",
+      "//crates/metrics:level_compaction_test_clippy",
+      "//crates/metrics:tsdb_publish_test",
+      "//crates/metrics:tsdb_publish_test_clippy",
+      "//crates/metrics:krabka-metrics_test",
+      "//crates/metrics:krabka-metrics_clippy",
+      "//crates/metrics-service:diff_mimir_docker_test",
+      "//crates/metrics-service:diff_prometheus_docker_test",
+      "//crates/metrics-service:metrics_deployment_docker_test"
+    ],
+    "retries_disabled": true,
+    "formatter_passed": true,
+    "source_files_sha256": {
+      "crates/integration/tests/support/metrics.rs": "a69ccb2e696037ec6073ef2d2ed9f1b4e8c38560fdee90c9a7a14ba5184c2199",
+      "crates/metrics/src/bin/krabka-metrics/compactor_loop.rs": "b9b1b0afd227e06d8392c237603ef2e0a886008219c3bb71e40f0829ab7e967f",
+      "crates/metrics/src/bin/krabka-metrics/run_compactor_once.rs": "2dd5e4f1541da0a3746bdac842c61eb72887eb39a6622b347e7d8e340ad81745",
+      "crates/metrics/src/compactor.rs": "efb7721f064c37ff9d2644b84168f1e4082e8dc320241f5580805feb083969ea",
+      "crates/metrics/src/compactor/compact_metric_blocks_once.rs": "c7a3a2179a4a5c4179d0d53f7aa347c21c8ea3e246454a0d51e68bd8637e85be",
+      "crates/metrics/src/compactor/list_compaction_index.rs": "f55e54dbb1e522e6778811ec838a675cc69f595bce525c5eb97152d9b7764f74",
+      "crates/metrics/src/compactor/list_compaction_manifests.rs": "4c344c92ec76fa5fd4c32ccc1b1240cfd585241203290af30a15cb73701ac47f",
+      "crates/metrics/src/compactor/read_compaction_manifests.rs": "c520ef5209eb662007032f0843990130ad760df327d55a963be6869500986c81",
+      "crates/metrics/src/lib.rs": "f9b2fce6fb3183cb3e833644c9c63a1f90623f72982133b311c1e171f95ab076",
+      "crates/metrics/tests/level_compaction.rs": "491e24dad08548b056a670171296a2dd596506460760ba35a2c1d1732ee584ad",
+      "crates/metrics/src/compactor/compaction_manifest_cache.rs": "55aa98007c89cae5e03cc40f55c4acb2826b99bb1b493613fa0a12d716d0088d"
+    },
+    "native": {
+      "status": "passed",
+      "targets_passed": 3,
+      "rust_cases_passed": 14,
+      "ignored_cases": 0,
+      "proof_path": "qualification/evidence/correctness/manifest-content-cache-native-55aa9800/provenance.json",
+      "proof_sha256": "8052a7fc381f1e8d8da12a37ab8261f6c697996d7f65711d9db67d895d588ba7"
+    },
+    "native_scope_note": "The Docker configuration executes only the three native wrappers. Other selected targets were built; ordinary execution is separately checked by the full default-config suite.",
+    "ordinary": {
+      "status": "passed",
+      "targets_passed": 385,
+      "rust_cases_passed": 5571,
+      "ignored_cases": 63,
+      "proof_path": "qualification/evidence/correctness/manifest-content-cache-ordinary-55aa9800/provenance.json",
+      "proof_sha256": "cf54d4c7dbad47038310d7aea705aa4f83a363cc9383aeb53eeca31c6be835fb"
+    },
+    "key_only_negative_control": {
+      "status": "failed_as_expected",
+      "proof_path": "qualification/evidence/correctness/manifest-content-cache-key-only-negative-55aa9800/provenance.json",
+      "proof_sha256": "4ca9860d2b4c88ff8120ac9ffbbdf56c7303c55be28e76c160d41c48b75319e0",
+      "original_source_restored": true
+    },
+    "restored_identity_guard": {
+      "status": "passed",
+      "proof_path": "qualification/evidence/correctness/manifest-content-cache-restored-55aa9800/provenance.json",
+      "proof_sha256": "326e429dfa407f2c62c88a064a168a53d42a075887b6d9168c0ec5b23e6142b7",
+      "candidate_source_hashes_unchanged": true
+    }
+  },
+  "correctness_qualification_scope": "Applied candidate source hashes: all 385 ordinary default-compiler targets (5571 Rust cases, 63 explicitly ignored container cases), three native Mimir/Prometheus/deployment wrappers (14 cases, none ignored), and key-only cache negative control followed by restored-guard success. Performance retention remains unqualified.",
+  "candidate_draft_is_historical": true,
+  "candidate_capture": {
+    "run_id": 37390739256,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37390739256",
+    "harness_head_sha": "d26b82c17940fb8e51514101cadf3c1e815484c0",
+    "candidate_source_commit": "d26b82c17940fb8e51514101cadf3c1e815484c0",
+    "inputs": {
+      "signal": "metrics",
+      "profiling": "cpu",
+      "deployment_target": "split",
+      "profiles_target": "all"
+    },
+    "status": "success_verified",
+    "diagnostic_only": true,
+    "live_instances_at_dispatch": [
+      {
+        "name": "gcp-runner-accdc255b322409f",
+        "status": "RUNNING"
+      }
+    ],
+    "verified_raw_files": 238,
+    "proof_path": "qualification/evidence/profiling/gcp-37390739256/provenance.json",
+    "proof_sha256": "fc83bff802e21131bb0dba280a65702b8da67e623efa59db09ff7a06b7fdb3ec",
+    "image_provenance": {
+      "run_id": 37390739256,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37390739256",
+      "source_commit": "d26b82c17940fb8e51514101cadf3c1e815484c0",
+      "artifact": {
+        "id": 11381018772,
+        "name": "comparison-image-metrics-d26b82c17940fb8e51514101cadf3c1e815484c0",
+        "digest": "sha256:41a7dfc9de1d04507ac4a56001ad81ef8881ae949bb217e09e07532f04197b1c",
+        "size_in_bytes": 308376972,
+        "expires_at": "2027-01-03T23:50:15Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-d26b82c17940",
+      "manifest_digest": "sha256:468dd9d2baa54c2db476de46d05e15c1b0eb0c5f89e7dd0848b4fafad5899aa5",
+      "config_digest": "sha256:468dd9d2baa54c2db476de46d05e15c1b0eb0c5f89e7dd0848b4fafad5899aa5"
+    },
+    "workload": {
+      "signal": "metrics",
+      "writers": 2,
+      "cardinality": 1000,
+      "warmup_seconds": 15,
+      "duration_seconds": 180.11820075100002,
+      "write_interval_seconds": 1,
+      "ingest": {
+        "attempts": 360,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 360000,
+        "accepted_rows_per_sec": 1998.6875201894402,
+        "latency_seconds": {
+          "count": 360,
+          "p50": 0.03215744099998119,
+          "p95": 0.04268659200010916,
+          "p99": 0.045864722000033
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 360
+        }
+      },
+      "query": {
+        "attempts": 719,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 719,
+          "p50": 0.012328441000022394,
+          "p95": 0.021529912000005424,
+          "p99": 0.026804588000004514
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 719
+        }
+      },
+      "telemetry": {
+        "wal_lag_records_max": 4000.0,
+        "wal_lag_records_last": [
+          4000.0,
+          0.0
+        ],
+        "rss_kib_peak_by_role": {
+          "broker": 36276,
+          "minio": 327336,
+          "metrics-distributor": 25020,
+          "metrics-block-builder": 42824,
+          "metrics-compactor": 34508,
+          "metrics-querier": 113788
+        },
+        "object_requests": 4148.0,
+        "object_bytes": 84976651.0,
+        "maintenance": {
+          "krabka_metrics_compaction_runs_total{status=\"ok\"}": 162.0,
+          "krabka_metrics_compaction_blocks_total": 67.0,
+          "krabka_metrics_compaction_deletion_sweeps_total": 178.0,
+          "krabka_metrics_compaction_deleted_blocks_total": 134.0,
+          "krabka_metrics_compaction_deleted_sidecars_total": 134.0,
+          "krabka_metrics_compaction_deletion_failures_total": 0.0,
+          "krabka_metrics_compaction_orphan_sweeps_total": 88.0,
+          "krabka_metrics_compaction_orphans_deleted_total": 0.0,
+          "krabka_metrics_compaction_orphan_failures_total": 0.0
+        },
+        "cpu_seconds_by_role": {},
+        "expected_restart_gaps": 0,
+        "scrape_errors": 0
+      },
+      "tenant": "soak",
+      "tenants": {
+        "soak": {
+          "attempts": 360,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 360000,
+          "accepted_rows_per_sec": 1998.6875201894402,
+          "latency_seconds": {
+            "count": 360,
+            "p50": 0.03215744099998119,
+            "p95": 0.04268659200010916,
+            "p99": 0.045864722000033
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "200": 360
+          }
+        }
+      },
+      "objectives_met": true
+    }
+  },
+  "image_runtime_control": {
+    "verified": true,
+    "baseline_source_commit": "670cd7d1e4c9c21f3229ededf76f15b4dee53109",
+    "candidate_source_commit": "d26b82c17940fb8e51514101cadf3c1e815484c0",
+    "configuration_equal": true,
+    "base_image_layer_equal": true,
+    "filesystem_paths_equal": true,
+    "filesystem_paths_checked": 380,
+    "changed_paths": [
+      "usr/local/bin/krabka-metrics",
+      "usr/local/bin/krabka-metrics-service",
+      "usr/local/bin/krabka-profiles",
+      "usr/local/bin/krabka-traces"
+    ],
+    "production_source_changed_paths": [
+      "crates/integration/tests/support/metrics.rs",
+      "crates/metrics/src/bin/krabka-metrics/compactor_loop.rs",
+      "crates/metrics/src/bin/krabka-metrics/run_compactor_once.rs",
+      "crates/metrics/src/compactor.rs",
+      "crates/metrics/src/compactor/compact_metric_blocks_once.rs",
+      "crates/metrics/src/compactor/compaction_manifest_cache.rs",
+      "crates/metrics/src/compactor/list_compaction_index.rs",
+      "crates/metrics/src/compactor/list_compaction_manifests.rs",
+      "crates/metrics/src/compactor/read_compaction_manifests.rs",
+      "crates/metrics/src/lib.rs",
+      "crates/metrics/tests/level_compaction.rs"
+    ],
+    "compiler_dependencies_and_comparison_workflow_equal": true
+  },
+  "preserved_experiment_branch": "codex/grafana-manifest-content-cache",
+  "gcp_comparison": {
+    "run_id": 37392223425,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37392223425",
+    "harness_head_sha": "fe62ff6ed2b34ed56d1e14332ad845fcc9c84b8a",
+    "harness_ref": "codex/grafana-manifest-content-cache",
+    "status": "success_verified",
+    "inputs": {
+      "signal": "metrics",
+      "profiling": "none",
+      "phases": "steady",
+      "phase_seconds": "60",
+      "repetitions": "3",
+      "deployment_target": "all",
+      "profiles_target": "all",
+      "image_artifact_run": "37390739256",
+      "image_artifact_name": "comparison-image-metrics-d26b82c17940fb8e51514101cadf3c1e815484c0",
+      "baseline_image_artifact_run": "37385206080",
+      "baseline_image_artifact_name": "comparison-image-metrics-670cd7d1e4c9c21f3229ededf76f15b4dee53109"
+    },
+    "live_instances_at_dispatch": [
+      {
+        "name": "gcp-runner-accdc255b322409f",
+        "status": "STOPPING"
+      },
+      {
+        "name": "gcp-runner-c8fb8b8d92084cf9",
+        "status": "RUNNING"
+      }
+    ]
+  },
+  "object_traffic_diagnostic": {
+    "diagnostic_only": true,
+    "proof_path": "qualification/evidence/profiling/manifest-content-cache-object-traffic-diagnostic.json",
+    "proof_sha256": "abc1a35eac2e932aa2446f766cc621fb7f9ba8da335fec1197c4d4b41dd8af07",
+    "captures": {
+      "baseline": {
+        "run_id": 37385206080,
+        "telemetry_sha256": "73f563e5632eb0ba03004f6bf05c40c39d0f03bc95376f9bfffed4c54f8e0b9e",
+        "duration_seconds": 180.6541919708252,
+        "compactor_counters": {
+          "krabka_metrics_objstore_operations_total{operation=\"get\"}": 1433.0,
+          "krabka_metrics_objstore_operations_total{operation=\"delete_stream\"}": 268.0,
+          "krabka_metrics_objstore_operations_total{operation=\"put\"}": 134.0,
+          "krabka_metrics_objstore_operations_total{operation=\"list\"}": 180.0,
+          "krabka_metrics_objstore_operation_transferred_bytes_total{operation=\"put\"}": 6812290.0,
+          "krabka_metrics_objstore_operation_transferred_bytes_total{operation=\"get\"}": 47971538.0
+        },
+        "minio_getobject_requests": 1835.0
+      },
+      "candidate": {
+        "run_id": 37390739256,
+        "telemetry_sha256": "c32ab6b1747f9ee093e2befd87baacdf3b103deabd180d8f31d8481cdefc53e5",
+        "duration_seconds": 180.1060209274292,
+        "compactor_counters": {
+          "krabka_metrics_objstore_operations_total{operation=\"put\"}": 134.0,
+          "krabka_metrics_objstore_operations_total{operation=\"delete_stream\"}": 268.0,
+          "krabka_metrics_objstore_operations_total{operation=\"get\"}": 1078.0,
+          "krabka_metrics_objstore_operations_total{operation=\"list\"}": 180.0,
+          "krabka_metrics_objstore_operation_transferred_bytes_total{operation=\"get\"}": 16277064.0,
+          "krabka_metrics_objstore_operation_transferred_bytes_total{operation=\"put\"}": 6804821.0
+        },
+        "minio_getobject_requests": 1507.0
+      }
+    }
+  },
+  "comparison_result": {
+    "run_id": 37392223425,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37392223425",
+    "source_scope": "Original exact baseline and candidate images, not the rebased source.",
+    "measurement_qualified": true,
+    "verified_raw_files": 725,
+    "evidence_path": "qualification/evidence/performance/gcp-37392223425/metrics/verified-revision-pairs.json",
+    "evidence_sha256": "9fbe80854b323de45abd574b3fa165a82d054cc1361a29f78d092c586063d9f0",
+    "candidate_divided_by_baseline": {
+      "query_attempts": 1.0,
+      "average_cpu_cores": 0.9757258526113497,
+      "rss_kib": 1.0036291493273977,
+      "query_p99_seconds": 1.0689976617982215,
+      "ingest_p99_seconds": 1.0818940732049622
+    },
+    "summary": {
+      "baseline": {
+        "query_attempts": {
+          "median": 240,
+          "min": 240,
+          "max": 240,
+          "values": [
+            240,
+            240,
+            240
+          ]
+        },
+        "average_cpu_cores": {
+          "median": 0.2307674320159976,
+          "min": 0.21954852465011904,
+          "max": 0.23191051702394672,
+          "values": [
+            0.21954852465011904,
+            0.2307674320159976,
+            0.23191051702394672
+          ]
+        },
+        "rss_kib": {
+          "median": 495984,
+          "min": 494692,
+          "max": 510208,
+          "values": [
+            510208,
+            495984,
+            494692
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.03025448900007177,
+          "min": 0.02906409899992468,
+          "max": 0.03366617699998642,
+          "values": [
+            0.02906409899992468,
+            0.03366617699998642,
+            0.03025448900007177
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.044400416999906156,
+          "min": 0.04207491799991203,
+          "max": 0.04507609699999193,
+          "values": [
+            0.04207491799991203,
+            0.044400416999906156,
+            0.04507609699999193
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.049089819172655536,
+            "min": 0.045875603737079045,
+            "max": 0.050482200067327745,
+            "values": [
+              0.045875603737079045,
+              0.049089819172655536,
+              0.050482200067327745
+            ]
+          },
+          "metrics-block-builder": {
+            "median": 0.030517252263134988,
+            "min": 0.028241203507452434,
+            "max": 0.030558975429760004,
+            "values": [
+              0.028241203507452434,
+              0.030517252263134988,
+              0.030558975429760004
+            ]
+          },
+          "metrics-compactor": {
+            "median": 0.008616126829275933,
+            "min": 0.008396795126109727,
+            "max": 0.00866983992987623,
+            "values": [
+              0.00866983992987623,
+              0.008616126829275933,
+              0.008396795126109727
+            ]
+          },
+          "metrics-distributor": {
+            "median": 0.03296324986414256,
+            "min": 0.02986570960554725,
+            "max": 0.03304961012099559,
+            "values": [
+              0.02986570960554725,
+              0.03296324986414256,
+              0.03304961012099559
+            ]
+          },
+          "metrics-querier": {
+            "median": 0.05061259736413024,
+            "min": 0.0494146329661545,
+            "max": 0.051698300557098224,
+            "values": [
+              0.0494146329661545,
+              0.051698300557098224,
+              0.05061259736413024
+            ]
+          },
+          "minio": {
+            "median": 0.05788268332969034,
+            "min": 0.05748153490400958,
+            "max": 0.05881033891562342,
+            "values": [
+              0.05748153490400958,
+              0.05788268332969034,
+              0.05881033891562342
+            ]
+          }
+        }
+      },
+      "candidate": {
+        "query_attempts": {
+          "median": 240,
+          "min": 240,
+          "max": 240,
+          "values": [
+            240,
+            240,
+            240
+          ]
+        },
+        "average_cpu_cores": {
+          "median": 0.22516574935874092,
+          "min": 0.21947864300880776,
+          "max": 0.2512682899056757,
+          "values": [
+            0.21947864300880776,
+            0.22516574935874092,
+            0.2512682899056757
+          ]
+        },
+        "rss_kib": {
+          "median": 497784,
+          "min": 493676,
+          "max": 506200,
+          "values": [
+            506200,
+            497784,
+            493676
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.032341977999976734,
+          "min": 0.0305326980000018,
+          "max": 0.035984778000056394,
+          "values": [
+            0.0305326980000018,
+            0.032341977999976734,
+            0.035984778000056394
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.048036548000027324,
+          "min": 0.04711112699999376,
+          "max": 0.05780239600017012,
+          "values": [
+            0.04711112699999376,
+            0.048036548000027324,
+            0.05780239600017012
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.04799589115606581,
+            "min": 0.04677602009470114,
+            "max": 0.054644037010223204,
+            "values": [
+              0.04677602009470114,
+              0.04799589115606581,
+              0.054644037010223204
+            ]
+          },
+          "metrics-block-builder": {
+            "median": 0.029558292409121997,
+            "min": 0.029104037040889975,
+            "max": 0.03341198523475149,
+            "values": [
+              0.029558292409121997,
+              0.029104037040889975,
+              0.03341198523475149
+            ]
+          },
+          "metrics-compactor": {
+            "median": 0.00901870869219485,
+            "min": 0.007781752662426854,
+            "max": 0.009136638685264384,
+            "values": [
+              0.007781752662426854,
+              0.00901870869219485,
+              0.009136638685264384
+            ]
+          },
+          "metrics-distributor": {
+            "median": 0.031176440390807986,
+            "min": 0.030937122940715475,
+            "max": 0.0356305540940583,
+            "values": [
+              0.030937122940715475,
+              0.031176440390807986,
+              0.0356305540940583
+            ]
+          },
+          "metrics-querier": {
+            "median": 0.05028117563138018,
+            "min": 0.05010571158967981,
+            "max": 0.055908110306487804,
+            "values": [
+              0.05028117563138018,
+              0.05010571158967981,
+              0.055908110306487804
+            ]
+          },
+          "minio": {
+            "median": 0.0577649604891025,
+            "min": 0.054144279270462135,
+            "max": 0.06253696457489048,
+            "values": [
+              0.054144279270462135,
+              0.0577649604891025,
+              0.06253696457489048
+            ]
+          }
+        }
+      }
+    },
+    "paired_directions": {
+      "average_cpu_cores": {
+        "lower": 2,
+        "higher": 1,
+        "ranges_overlap": true
+      },
+      "rss_kib": {
+        "lower": 2,
+        "higher": 1,
+        "ranges_overlap": true
+      },
+      "query_p99_seconds": {
+        "lower": 1,
+        "higher": 2,
+        "ranges_overlap": true
+      },
+      "ingest_p99_seconds": {
+        "lower": 0,
+        "higher": 3,
+        "ranges_overlap": false
+      }
+    }
+  },
+  "retention_decision": "Reject: after excluding MinIO, candidate/baseline median application CPU and RSS ratios are 0.968280 and 1.004972. Neither improves consistently. Query p99 is 1.068998 and ingest p99 1.081894; ingest is higher in all three pairs with disjoint ranges. Avoided object reads alone do not justify production cache complexity.",
+  "source_removal_status": "Production cache removed; publication and compaction ledgers retained. Ordinary checks and all three metrics native wrappers pass after the explicit-close repair. The separate Pyroscope failure is recorded in the PR validation scope.",
+  "restoration": {
+    "parent_commit": "7a8de487de51e704dfe84eae08690b78350e45ca",
+    "patch_sha256": "235f4585f9c98bffd37a25240ce897a99517bc656052a04b13427c618ed4918d",
+    "validation": "passed",
+    "source_files_sha256": {
+      "crates/integration/tests/support/metrics.rs": "9e056f4eed1185527f33a07f7602c862c2c4a595dc88b97fd38e7910f78eeac4",
+      "crates/metrics/src/bin/krabka-metrics/compactor_loop.rs": "025c0d9e657a95a86add2eda9441c775ea88f2cd240e5e712da68f7018bd9b21",
+      "crates/metrics/src/bin/krabka-metrics/run_compactor_once.rs": "10fd1338bcbe9576fb2ce633d17ed3c6d5fec430237cd809b688afc4869c2323",
+      "crates/metrics/src/compactor.rs": "34cf2dd62fa2b0b80b98d0458b8ac47b7654c0352186681c55c5402f51cd4e4c",
+      "crates/metrics/src/compactor/compact_metric_blocks_once.rs": "c7911650ac185305387a62ae9f4c1ec0b3fc71d20fe76695d97112d67301b89b",
+      "crates/metrics/src/compactor/compaction_manifest_cache.rs": null,
+      "crates/metrics/src/compactor/list_compaction_index.rs": "0b9b5c76bb903372d202aded56ea222ff9c753f4b6a4ccce01f68ffad2fc3641",
+      "crates/metrics/src/compactor/list_compaction_manifests.rs": "fc85d491ea330605f83a8cb86f9394966248965cdf1436294dc56e75b9a2a5bf",
+      "crates/metrics/src/compactor/read_compaction_manifests.rs": "10df92637a7f8fc1a32542f6871268ab3480389cf533cf2b467a8e63735a06b7",
+      "crates/metrics/src/lib.rs": "70be2c278a1464a72dcbf7cb07bbe7d45b6cf129e36f60df465cb401a12611b2",
+      "crates/metrics/tests/level_compaction.rs": "04e3019c30ff1079018e2a99066e23989b6363aad39d9f1d2ec5c62868838a68"
+    },
+    "production_matches_pre_cache_source_files": [
+      "crates/integration/tests/support/metrics.rs",
+      "crates/metrics/src/bin/krabka-metrics/compactor_loop.rs",
+      "crates/metrics/src/bin/krabka-metrics/run_compactor_once.rs",
+      "crates/metrics/src/compactor.rs",
+      "crates/metrics/src/compactor/compact_metric_blocks_once.rs",
+      "crates/metrics/src/compactor/list_compaction_index.rs",
+      "crates/metrics/src/compactor/list_compaction_manifests.rs",
+      "crates/metrics/src/compactor/read_compaction_manifests.rs",
+      "crates/metrics/src/lib.rs"
+    ],
+    "cache_module_removed": true,
+    "formatter": "passed",
+    "full_ordinary_scope": {
+      "status": "passed",
+      "targets_passed": 387,
+      "rust_cases_passed": 5571,
+      "ignored_cases": 78,
+      "proof_path": "qualification/evidence/correctness/manifest-cache-restoration-ordinary-7a8de487/provenance.json",
+      "proof_sha256": "9ca023029265333bc9161f3a76fa4675301b09cfe3496ec0c727cd3b3e401bdf"
+    },
+    "native_metrics_scope": {
+      "status": "passed",
+      "source_commit": "c7ed6004226c8de0afc4767736a8d2dad5daf47d",
+      "targets": [
+        "//crates/metrics-service:diff_mimir_docker_test",
+        "//crates/metrics-service:diff_prometheus_docker_test",
+        "//crates/metrics-service:metrics_deployment_docker_test"
+      ],
+      "wrappers_passed": 3,
+      "rust_cases_passed": 14,
+      "ignored_cases": 0,
+      "proof_path": "qualification/evidence/correctness/retained-gains-pr-native-failure-c7ed6004/provenance.json",
+      "proof_sha256": "b787ab9322671cf5539857dcdc0df9a9e53ee139378d0444fa0cd865076d21b6",
+      "proof_scope": "The three metrics targets passed in a nine-target run whose separate Pyroscope differential target failed."
+    },
+    "post_restoration_lifecycle_validation": {
+      "status": "metrics_native_passed",
+      "record": "qualification/grafana-retained-gains-pr-validation.json",
+      "consumer_close_repair": "Await underlying coordinator shutdown after durable flush and before replacing failed consumer; restart query timeout unchanged.",
+      "diagnostics": "Bounded post-wait restart logs and recovery status preserve original query result."
+    },
+    "previous_failed_validation": {
+      "validation": "failed_native_metrics",
+      "full_ordinary_scope": {
+        "status": "passed",
+        "targets_passed": 387,
+        "rust_cases_passed": 5571,
+        "ignored_cases": 78,
+        "proof_path": "qualification/evidence/correctness/manifest-cache-restoration-ordinary-7a8de487/provenance.json",
+        "proof_sha256": "9ca023029265333bc9161f3a76fa4675301b09cfe3496ec0c727cd3b3e401bdf"
+      },
+      "native_metrics_scope": {
+        "status": "failed",
+        "proof_path": "qualification/evidence/correctness/manifest-cache-restoration-native-metrics-failure-7a8de487/provenance.json",
+        "proof_sha256": "d8f3d28e0bdcb4c4eadf100e930baa8e0a8551d18e47e8d4c0905069d052c9f4",
+        "wrappers_passed": 2,
+        "wrappers_failed": 1
+      }
+    }
+  },
+  "minio_live_heap_diagnostic": {
+    "proof_path": "qualification/evidence/profiling/manifest-cache-minio-live-heap-diagnostic.json",
+    "proof_sha256": "e7aba6403b1e17812ec8e9173ed2d2776c8ae2da8cc633d66e6048fe5f098d4a",
+    "captures": [
+      {
+        "run_id": 37385206080,
+        "source_path": "qualification/evidence/profiling/gcp-37385206080/metrics/profiles/minio-profile-127.0.0.1_9000-mem.pprof.inuse_space.cum.txt",
+        "source_sha256": "0d613315278513093822ff17ec7c4c53d30a5d5cf0c9bffa097f8866971479d8",
+        "sampled_live_heap_mb": 190.86,
+        "bootstrap_cumulative_mb": 157.57,
+        "bootstrap_cumulative_percent": 82.56
+      },
+      {
+        "run_id": 37390739256,
+        "source_path": "qualification/evidence/profiling/gcp-37390739256/metrics/profiles/minio-profile-127.0.0.1_9000-mem.pprof.inuse_space.cum.txt",
+        "source_sha256": "1f577ec0ff69d6dc58889f68525a3e6a32eecf4e81f8c1d1a3cdb4c62f4243f9",
+        "sampled_live_heap_mb": 189.09,
+        "bootstrap_cumulative_mb": 156.46,
+        "bootstrap_cumulative_percent": 82.74
+      }
+    ],
+    "rss_or_native_gap_attribution_qualified": false
+  },
+  "historical_resource_accounting_scope": "legacy_full_stack_including_object_store",
+  "application_only_rederivation": {
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37392223425",
+    "source_scope": "Original cache candidate image, not current rebased/restored source.",
+    "verified_checksum_entries": 725,
+    "distinct_verified_raw_files": 485,
+    "native_summary_path": "qualification/evidence/performance/gcp-37392223425/metrics/application-only-summary.json",
+    "native_summary_sha256": "40e08e5dc8884899451f9bb96fdf7d6e2cd20cd440d4c7453918ed86c5c737ff",
+    "revision_pairs_path": "qualification/evidence/performance/gcp-37392223425/metrics/application-only-revision-pairs.json",
+    "revision_pairs_sha256": "818508afaa478ee5ea0abfbccfe35acf7927703f2646f490f1deffc3fe172f46",
+    "native_krabka_divided_by_mimir": {
+      "average_cpu_cores": 0.45944804024440605,
+      "rss_kib": 1.4064246147891923,
+      "query_p99_seconds": 1.0649976411953932,
+      "ingest_p99_seconds": 2.745098876418148
+    },
+    "candidate_divided_by_baseline": {
+      "average_cpu_cores": 0.9682796784659169,
+      "rss_kib": 1.0049718606497946,
+      "query_p99_seconds": 1.0689976617982215,
+      "ingest_p99_seconds": 1.0818940732049622,
+      "object_store_average_cpu_cores": 0.9979661820458925,
+      "object_store_rss_kib": 1.0038888635707668
+    },
+    "native_medians": {
+      "krabka": {
+        "average_cpu_cores": 0.1668110019100346,
+        "rss_kib": 232572,
+        "query_p99_seconds": 0.028083221000002823,
+        "ingest_p99_seconds": 0.042304317999992236,
+        "object_store_average_cpu_cores": 0.055423089663227475,
+        "object_store_rss_kib": 264744
+      },
+      "mimir": {
+        "average_cpu_cores": 0.3630682629994428,
+        "rss_kib": 165364,
+        "query_p99_seconds": 0.026369279999983064,
+        "ingest_p99_seconds": 0.0154108539999811,
+        "object_store_average_cpu_cores": 0.013109489005339744,
+        "object_store_rss_kib": 136640
+      }
+    }
+  }
+}

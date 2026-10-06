@@ -1,0 +1,684 @@
+{
+  "baseline_source_commit": "7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+  "candidate_source_commit": "8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+  "baseline_image_run": 37371016528,
+  "baseline_cpu": 37371016528,
+  "baseline_artifact_signal": "metrics",
+  "candidate_artifact_signal": "logs",
+  "candidate_ref": "codex/grafana-single-cgu",
+  "base_main": "92989bb29d44c629fa4ac88147a3fce8b1604776",
+  "source_code_equal": true,
+  "dependency_versions_equal": true,
+  "changed_configuration_path": ".bazelrc",
+  "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
+  "baseline_bazelrc_sha256": "4890c4a703f638f304c88dd013469e6936f226c92d2067e91b83fb148021e7f9",
+  "candidate_bazelrc_sha256": "b3995facba2df63a796eef11d3d511863ead53c113e483c1137143a1e35438b0",
+  "selection_capture": 37361260446,
+  "selection": "The exact metrics querier executable mapping holds about 68 MiB RSS. Try one codegen unit before adding memory caches. Static code-size and diagnostic profiles cannot qualify RSS or CPU advantage.",
+  "compiler_reference": "https://doc.rust-lang.org/rustc/codegen-options/index.html#codegen-units",
+  "performance_qualified": false,
+  "correctness_qualified": false,
+  "retained": false,
+  "candidate_cpu": 37371662781,
+  "candidate_image_run": 37371662781,
+  "candidate_inputs": {
+    "signal": "logs",
+    "profiling": "cpu",
+    "deployment_target": "all",
+    "profiles_target": "all"
+  },
+  "candidate_dispatch_live_instances": [
+    {
+      "name": "gcp-runner-3040588ffed24118",
+      "status": "RUNNING"
+    },
+    {
+      "name": "gcp-runner-6fe9ac82325b445a",
+      "status": "RUNNING"
+    }
+  ],
+  "setting_analysis": {
+    "analysis_succeeded": true,
+    "setting": "--@rules_rust//rust/settings:codegen_units=1",
+    "analyzed_target": "//crates/blockstore:blockstore",
+    "rustc_actions": 1,
+    "all_rustc_actions_contain_codegen_units_1": true,
+    "analysis_log_sha256": "2283691c75c198ae4c19f2fa9c5c19f38797c5af5940fab5844a672f06714e8f",
+    "runtime_or_correctness_qualification": false
+  },
+  "schema_version": 1,
+  "experiment": "One Rust code generation unit for executable footprint and runtime efficiency",
+  "status": "all_signal_controls_verified_global_setting_not_retained",
+  "baseline_image_reuse": "The exact restored-source cold fingerprint reuse candidate supplies the baseline image. All source, dependencies and workload harness files match; only .bazelrc differs. Both contain the same dense metadata and cold fingerprint reuse candidates.",
+  "candidate_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371662781",
+  "baseline_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
+  "setting_analysis_provenance_path": "qualification/evidence/profiling/single-cgu-setting-analysis/single-cgu-setting-analysis.json",
+  "setting_analysis_provenance_sha256": "0ba966d16e8a5bc5a92917b405014e06ef39931af775e52deb1c79f2b2452d7c",
+  "validation": {
+    "canonical_goldens_status": "passed",
+    "source_commit": "7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+    "configuration_equivalent_to_candidate_ref": "codex/grafana-single-cgu",
+    "explicit_compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
+    "targets": [
+      "//crates/blockstore:label_fingerprint_test",
+      "//crates/profiles:label_fingerprint_test"
+    ],
+    "retries_disabled": true,
+    "targets_passed": 2,
+    "provenance_path": "qualification/evidence/correctness/single-cgu-canonical-goldens/provenance.json",
+    "provenance_sha256": "392aaff4e15c0bbbe575e2bd11622c2085043288895d40cdcc513af7567d761d",
+    "core_scope": {
+      "status": "passed",
+      "source_commit": "df216f0730426dad2b978e11ea1d748d82d0796b",
+      "targets": 23,
+      "explicit_compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
+      "scope": "Ten core unit suites, library Clippy checks, both canonical goldens and the full metadata ledger on the current source with the original metadata implementation restored. This supplements the earlier two goldens on the immutable trial source.",
+      "targets_passed": 23,
+      "rust_cases_passed": 3022,
+      "retries_disabled": true,
+      "provenance_path": "qualification/evidence/correctness/single-cgu-core-df216f07/provenance.json",
+      "provenance_sha256": "f9fd78261d750d4767ede6d103132999bf40bead1334524ebc1c4ec5fef9d08f"
+    },
+    "metrics_native_scope": {
+      "status": "passed",
+      "source_commit": "a5a52c1c934c7865caaeaca0d3dc4b40bad0915b",
+      "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
+      "targets": [
+        "//crates/metrics-service:diff_mimir_docker_test",
+        "//crates/metrics-service:diff_prometheus_docker_test",
+        "//crates/metrics-service:metrics_deployment_docker_test"
+      ],
+      "retries_disabled": true,
+      "scope": "Current source with original metadata restored. This differs from both immutable matched images, which contain the same dense metadata implementation.",
+      "native_wrappers_passed": 3,
+      "rust_cases_passed": 14,
+      "provenance_path": "qualification/evidence/correctness/single-cgu-metrics-native-a5a52c1c/provenance.json",
+      "provenance_sha256": "684a830d6b4d78c47e0ebbdd1e702a2b3d16cefe7a320d175a0d9086ceb49bd3"
+    },
+    "other_native_scope": {
+      "status": "passed",
+      "source_commit": "116f67626ea8c242549b283c0ca85dcedc03f3e9",
+      "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
+      "targets": [
+        "//crates/observability:loki_differential_docker_test",
+        "//crates/observability:loki_deployment_docker_test",
+        "//crates/traces:tempo_differential_docker_test",
+        "//crates/traces:tempo_differential_previous_docker_test",
+        "//crates/traces:tempo_deployment_docker_test",
+        "//crates/profiles:pyroscope_differential_docker_test",
+        "//crates/profiles:pyroscope_differential_previous_docker_test"
+      ],
+      "retries_disabled": true,
+      "scope": "Native compatibility and deployment checks on current source with original metadata restored. They supplement core checks and do not qualify the historical image source globally.",
+      "targets_passed": 7,
+      "rust_cases_passed": 53,
+      "ignored_cases": 0,
+      "provenance_path": "qualification/evidence/correctness/single-cgu-other_native_scope-116f6762/provenance.json",
+      "provenance_sha256": "c54648081ce7f714b280420bbe0fe1c114e6e3def88eaa8c013008384089242b",
+      "native_wrappers_passed": 7
+    },
+    "full_ordinary_scope": {
+      "status": "passed",
+      "source_commit": "502ab8f4dc0ff42e63dc0f6bd55b635591f10713",
+      "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
+      "target_pattern": "//...",
+      "docker_and_scale_excluded_by_repository_defaults": true,
+      "retries_disabled": true,
+      "scope": "Full ordinary Bazel suite after the backup/restore test recursion-depth repair, including integration tests and Clippy, with one codegen unit. Native compatibility checks remain separate. The compiler setting stays experimental and is not enabled globally.",
+      "targets": 385,
+      "previous_build_failure": {
+        "status": "build_failed",
+        "source_commit": "45d9c94b273b6cf0781249a9c71002ca46afac07",
+        "compiler_setting": "--@rules_rust//rust/settings:codegen_units=1",
+        "target_pattern": "//...",
+        "docker_and_scale_excluded_by_repository_defaults": true,
+        "retries_disabled": true,
+        "scope": "Full ordinary Bazel suite on current source, including integration tests and Clippy, with one codegen unit. Native compatibility checks remain a separate scope.",
+        "targets": 385,
+        "targets_passed_before_abort": 80,
+        "targets_skipped_after_abort": 304,
+        "failed_target": "//crates/integration:backup_restore_test",
+        "failure": "Rust E0275: sqlparser AST Sync trait recursion overflow in backup_restore_test. The same failure reproduces with the default compiler setting; it is independent of the single-codegen-unit experiment.",
+        "failure_log_path": "qualification/evidence/correctness/single-cgu-full-ordinary-45d9c94b-failed/validation.log",
+        "failure_log_sha256": "b6f6c60b489da4e50493679a539b31c5b0287ce21c08a3005179c4445419a9d2",
+        "default_configuration_diagnosis": {
+          "status": "same_build_failure_reproduced",
+          "target": "//crates/integration:backup_restore_test",
+          "compiler_setting": "repository default",
+          "source_commit": "848eb6a6f23e92f3ec44b3cb7625db0a9a9eebe8",
+          "production_source_unchanged_during_diagnosis": true,
+          "log_path": "qualification/evidence/correctness/single-cgu-full-ordinary-45d9c94b-failed/default-configuration-diagnosis.log",
+          "log_sha256": "8ef80e1622d2dc5d61f55a5ba7d99b193f0a438a9de0aef13cadcf166cad7a34"
+        }
+      },
+      "targets_passed": 385,
+      "rust_cases_passed": 5564,
+      "ignored_cases": 63,
+      "ignored_cases_by_target": {
+        "//crates/integration:alloy_client_test": {
+          "cases": 1,
+          "names": [
+            "alloy_sends_every_public_protocol_without_a_krabka_adapter"
+          ]
+        },
+        "//crates/integration:prometheus_client_test": {
+          "cases": 1,
+          "names": [
+            "official_prometheus_sends_remote_write_v1_and_v2"
+          ]
+        },
+        "//crates/logql:parser_proptest_test": {
+          "cases": 2,
+          "names": [
+            "a_bare_group_modifier_round_trips_before_a_parenthesised_operand",
+            "a_signed_operand_round_trips_after_a_vector_matching_modifier"
+          ]
+        },
+        "//crates/metrics-service:diff_mimir_test": {
+          "cases": 1,
+          "names": [
+            "mimir_compliance_corpus_matches_krabka"
+          ]
+        },
+        "//crates/metrics-service:diff_prometheus_test": {
+          "cases": 1,
+          "names": [
+            "prometheus_compliance_corpus_matches_krabka"
+          ]
+        },
+        "//crates/metrics-service:grafana_integration_test": {
+          "cases": 1,
+          "names": [
+            "grafana_e2e_covers_all_api_surfaces_and_query_shapes"
+          ]
+        },
+        "//crates/metrics-service:metrics_deployment_test": {
+          "cases": 12,
+          "names": [
+            "mimir_deployment::frontend_preserves_unaligned_float_and_histogram_queries_across_cache_hits",
+            "mimir_deployment::ha_replicas_v1_are_deduplicated_and_tenant_isolated",
+            "mimir_deployment::ha_replicas_v2_are_deduplicated_and_tenant_isolated",
+            "mimir_deployment::metadata_and_exemplars_v1_survive_storage_and_restart",
+            "mimir_deployment::metadata_and_exemplars_v2_survive_storage_and_restart",
+            "mimir_deployment::native_histograms_v1_survive_compaction_and_restart",
+            "mimir_deployment::native_histograms_v2_survive_compaction_and_restart",
+            "mimir_deployment::otlp_gauges_counters_and_histograms_preserve_translation_and_metadata",
+            "mimir_deployment::out_of_order_floats_and_histograms_obey_the_tenant_window",
+            "mimir_deployment::remote_read_preserves_samples_histograms_hints_and_streamed_frames",
+            "remote_write_v1_survives_the_hot_to_block_transition_and_restart",
+            "remote_write_v2_survives_the_hot_to_block_transition_and_restart"
+          ]
+        },
+        "//crates/metrics-service:tsdb_import_test": {
+          "cases": 1,
+          "names": [
+            "an_imported_block_answers_queries_as_prometheus_serving_the_block"
+          ]
+        },
+        "//crates/observability:grafana_e2e_test": {
+          "cases": 1,
+          "names": [
+            "grafana_reads_the_same_answer_from_krabka_and_from_loki"
+          ]
+        },
+        "//crates/observability:grafana_integration_test": {
+          "cases": 1,
+          "names": [
+            "a_grafana_loki_datasource_reads_the_querier_over_the_proxy_and_the_backend_path"
+          ]
+        },
+        "//crates/observability:loki_deployment_test": {
+          "cases": 12,
+          "names": [
+            "categorized_metadata_and_parser_labels_survive_storage",
+            "deletes_cancel_and_remove_matching_metadata_from_stored_blocks",
+            "duplicate_identity_includes_timestamp_stream_and_metadata",
+            "explore_detected_fields_and_label_index_survive_storage",
+            "gzip_push_survives_storage_and_restart",
+            "json_push_survives_storage_and_restart",
+            "multi_tenant_queries_preserve_isolation_across_restart",
+            "otlp_normalization_and_metadata_survive_storage",
+            "single_binary_shutdown_drains_logs_to_storage",
+            "snappy_protobuf_push_survives_storage_and_restart",
+            "tail_reads_backlog_then_live_wal_without_cross_tenant_entries",
+            "tenant_query_limits_apply_before_and_after_storage"
+          ]
+        },
+        "//crates/observability:loki_differential_test": {
+          "cases": 1,
+          "names": [
+            "loki_corpus_matches_krabka"
+          ]
+        },
+        "//crates/profiles:pyroscope_differential_test": {
+          "cases": 8,
+          "names": [
+            "grafana_accepts_pyroscope_datasource_pointing_at_krabka",
+            "grafana_renders_krabka_profiles_end_to_end",
+            "official_profilecli_uploads_elf_through_public_debuginfo_api",
+            "real_pyroscope_legacy_ingest_formats_match_krabka",
+            "real_pyroscope_otlp_export_matches_krabka",
+            "real_pyroscope_profile_types_match_krabka",
+            "real_pyroscope_render_matches_krabka_after_identical_ingest",
+            "real_pyroscope_series_and_stats_match_krabka_after_identical_ingest"
+          ]
+        },
+        "//crates/traces:compaction_memory_test": {
+          "cases": 1,
+          "names": [
+            "compaction_memory_worker"
+          ]
+        },
+        "//crates/traces:grafana_e2e_test": {
+          "cases": 1,
+          "names": [
+            "grafana_e2e_full_surface"
+          ]
+        },
+        "//crates/traces:tempo_deployment_test": {
+          "cases": 12,
+          "names": [
+            "gzip_otlp_http_survives_storage_and_restart",
+            "jaeger_grpc_receiver_survives_storage_and_restart",
+            "otlp_grpc_survives_storage_and_restart",
+            "otlp_http_survives_storage_and_restart",
+            "otlp_ingest_limit_rejects_a_batch_without_leaking_spans",
+            "single_binary_shutdown_drains_an_in_flight_trace_to_storage",
+            "tag_names_with_special_characters_survive_storage_and_restart",
+            "tag_scopes_and_typed_values_survive_storage_and_restart",
+            "tenants_keep_the_same_trace_id_isolated_across_restart",
+            "trace_by_id_assembles_separate_persisted_batches_without_duplicates",
+            "traceql_search_uses_structural_relationships_after_restart",
+            "zipkin_receiver_survives_storage_and_restart"
+          ]
+        },
+        "//crates/traces:tempo_differential_test": {
+          "cases": 6,
+          "names": [
+            "grafana_accepts_tempo_datasource_pointing_at_krabka",
+            "grafana_service_graph_prometheus_datasource_and_series",
+            "real_tempo_and_krabka_accept_query_param_alias",
+            "real_tempo_and_krabka_match_basic_by_id_and_search",
+            "real_tempo_and_krabka_match_traceql_metrics_by_labels",
+            "real_tempo_and_krabka_match_traceql_metrics_query_range"
+          ]
+        }
+      },
+      "provenance_path": "qualification/evidence/correctness/single-cgu-full_ordinary_scope-502ab8f4/provenance.json",
+      "provenance_sha256": "5809f9b5cf65733f0b869e460546dd06e5e8b734f7483386a4f384d2825fd7db"
+    },
+    "native_wrappers_passed": 10,
+    "native_cases_passed": 67,
+    "backup_restore_recursion_repair": {
+      "status": "passed_default_configuration",
+      "targets_passed": 2,
+      "rust_cases_passed": 3,
+      "ignored_cases": 0,
+      "provenance_path": "qualification/evidence/correctness/backup-restore-recursion-repair-fd779981/provenance.json",
+      "provenance_sha256": "9fe05af472c79c7536c00f97d38b66ac428d894a6b2a15ec4690da419b9136e7"
+    }
+  },
+  "next_action": "Full ordinary scope passed after the test-only repair. Global compiler setting stays rejected due to Loki query regression. Test a metrics-specific setting separately; proceed with guarded compactor content-cache experiment.",
+  "baseline_image_verified": {
+    "image_provenance": {
+      "run_id": 37371016528,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
+      "source_commit": "7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+      "artifact": {
+        "id": 11370623488,
+        "name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+        "digest": "sha256:23dbcd9961bbe0b94637404828d35ba6b5a09569594b231b0c50c36eb5d80830",
+        "size_in_bytes": 308374623,
+        "expires_at": "2027-01-03T20:38:45Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-7fbd49b60f16",
+      "manifest_digest": "sha256:78777fbc9fd21daaaf6129c1ef4e65e67f9dc336034817697f3f7d542f776ee7",
+      "config_digest": "sha256:78777fbc9fd21daaaf6129c1ef4e65e67f9dc336034817697f3f7d542f776ee7"
+    },
+    "reused_existing_verification": true,
+    "cpu_profile_provenance_path": "qualification/evidence/profiling/gcp-37371016528/provenance.json",
+    "cpu_profile_provenance_sha256": "3e9f8d995dd8c8c987c6794eec4c32fabd766b193d7ddf310ed0ec51a09d3443",
+    "raw_files_verified": 238,
+    "diagnostic_only": true,
+    "performance_qualified": false
+  },
+  "candidate_image_verified": {
+    "image_provenance": {
+      "run_id": 37371662781,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371662781",
+      "source_commit": "8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+      "artifact": {
+        "id": 11369739706,
+        "name": "comparison-image-logs-8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+        "digest": "sha256:af6d8ebab2943f29ae8a4ebbf3d3c6a4d1b65132a88f9c22e93d72d8eae35982",
+        "size_in_bytes": 212855054,
+        "expires_at": "2027-01-03T20:45:00Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-8b4356bd16c0",
+      "manifest_digest": "sha256:a4c7192ee7e48f9a573f7534e863b152cac56c02bb092a8255fb5837a9c1c995",
+      "config_digest": "sha256:a4c7192ee7e48f9a573f7534e863b152cac56c02bb092a8255fb5837a9c1c995"
+    },
+    "verified_before_profile_artifact_upload_complete": true,
+    "diagnostic_only": true
+  },
+  "image_runtime_control": {
+    "verified": true,
+    "proof_path": "qualification/evidence/profiling/single-cgu-image-pair.json",
+    "proof_sha256": "5b14419f3c0452871bfd245b37cbdc2cbc0fa090a8772701da3a610066471704",
+    "filesystem_paths_checked": 380,
+    "changed_application_binary_paths": [
+      "usr/local/bin/krabka-metrics",
+      "usr/local/bin/krabka-metrics-service",
+      "usr/local/bin/krabka-o11y-bootstrap",
+      "usr/local/bin/krabka-o11y-recovery",
+      "usr/local/bin/krabka-observability",
+      "usr/local/bin/krabka-profiles",
+      "usr/local/bin/krabka-traces"
+    ]
+  },
+  "static_code_sections": {
+    "proof_path": "qualification/evidence/profiling/single-cgu-code-sections.json",
+    "proof_sha256": "a30466b9b24f93952627653a7cafb369bcf885092e428a11cbe7e6607756f477",
+    "metrics_service_text_bytes_before": 127234880,
+    "metrics_service_text_bytes_after": 87449056,
+    "metrics_service_text_ratio": 0.6873041103194344,
+    "diagnostic_only": true,
+    "runtime_rss_cpu_qualified": false
+  },
+  "candidate_profile_verified": {
+    "provenance_path": "qualification/evidence/profiling/gcp-37371662781/provenance.json",
+    "provenance_sha256": "50101091304bef5c8ba125bfa6877203cb0875de2f24fec6d720b3701d87ec3f",
+    "raw_files_verified": 166,
+    "diagnostic_only": true,
+    "performance_qualified": false
+  },
+  "comparison_run": 37377084215,
+  "comparison_head_sha": "a5a52c1c934c7865caaeaca0d3dc4b40bad0915b",
+  "comparison_inputs": {
+    "signal": "metrics",
+    "profiling": "none",
+    "phases": "steady",
+    "phase_seconds": "60",
+    "repetitions": "3",
+    "deployment_target": "all",
+    "profiles_target": "all",
+    "image_artifact_run": "37371662781",
+    "image_artifact_name": "comparison-image-logs-8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+    "baseline_image_artifact_run": "37371016528",
+    "baseline_image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6"
+  },
+  "comparison_run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37377084215",
+  "gcp_comparison": {
+    "status": "success_verified",
+    "measurement_qualified": true,
+    "run_id": 37377084215,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37377084215",
+    "proof_path": "qualification/evidence/performance/gcp-37377084215/metrics/verified-revision-pairs.json",
+    "proof_sha256": "e58b6bd12d4bb58c89586da13d8fbf5cf295c5a6c72372670625ef6dfb6ea8e1",
+    "verified_raw_files": 725,
+    "candidate_divided_by_baseline": {
+      "query_attempts": 1.0,
+      "average_cpu_cores": 0.9771611831199547,
+      "rss_kib": 0.918144314974307,
+      "query_p99_seconds": 0.9683512025291627,
+      "ingest_p99_seconds": 0.9552933314121346
+    },
+    "pair_directions": {
+      "query_attempts": {
+        "candidate_lower_pairs": 0,
+        "ranges_overlap": true
+      },
+      "average_cpu_cores": {
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": false
+      },
+      "rss_kib": {
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": false
+      },
+      "query_p99_seconds": {
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      },
+      "ingest_p99_seconds": {
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": true
+      }
+    },
+    "role_cpu": {
+      "broker": {
+        "candidate_divided_by_baseline": 1.0046451078748029,
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      },
+      "metrics-block-builder": {
+        "candidate_divided_by_baseline": 0.9671009994739233,
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": false
+      },
+      "metrics-compactor": {
+        "candidate_divided_by_baseline": 0.9441024079354545,
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": false
+      },
+      "metrics-distributor": {
+        "candidate_divided_by_baseline": 0.9607176839782425,
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": false
+      },
+      "metrics-querier": {
+        "candidate_divided_by_baseline": 0.9863817344363248,
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": false
+      },
+      "minio": {
+        "candidate_divided_by_baseline": 0.9597041485002291,
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": true
+      }
+    },
+    "scope": "Both exact images contain equal dense metadata and cold fingerprint reuse. Only the compiler setting differs. This isolates one codegen unit and does not qualify final HEAD."
+  },
+  "decision": "Do not enable codegen_units=1 globally. Mimir CPU and RSS fall in all three pairs, and all signals have lower RSS in all three pairs with disjoint ranges. Loki query p99 increases in all three pairs with disjoint ranges (+10.8% median). A metrics-specific setting is a separate candidate requiring a fresh build and final-source control.",
+  "gcp_signal_comparisons": {
+    "logs": {
+      "run_id": 37380543910,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37380543910",
+      "harness_head_sha": "f3e6a78274f141f39ddab5b29189eda991d94b9f",
+      "inputs": {
+        "signal": "logs",
+        "profiling": "none",
+        "phases": "steady",
+        "phase_seconds": "60",
+        "repetitions": "3",
+        "deployment_target": "all",
+        "profiles_target": "all",
+        "image_artifact_run": "37371662781",
+        "image_artifact_name": "comparison-image-logs-8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+        "baseline_image_artifact_run": "37371016528",
+        "baseline_image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6"
+      },
+      "status": "success_verified",
+      "live_instances_at_dispatch": [
+        {
+          "name": "gcp-runner-4aa75c0c7e6e4406",
+          "status": "RUNNING"
+        }
+      ],
+      "image_runtime_control_verified": true,
+      "performance_qualified": false,
+      "measurement_qualified": true,
+      "verified_raw_files": 725,
+      "proof_path": "qualification/evidence/performance/gcp-37380543910/logs/verified-revision-pairs.json",
+      "proof_sha256": "b3afa8a9cfff3aa4abb16b177805292c979c2e1ecd14663a2f236d17a70f2ead",
+      "candidate_divided_by_baseline": {
+        "query_attempts": 1.0,
+        "average_cpu_cores": 0.9926776594782724,
+        "rss_kib": 0.9268961718534839,
+        "query_p99_seconds": 1.1082326961242484,
+        "ingest_p99_seconds": 1.145543246641662
+      },
+      "pair_directions": {
+        "query_attempts": {
+          "candidate_lower_pairs": 0,
+          "ranges_overlap": true
+        },
+        "average_cpu_cores": {
+          "candidate_lower_pairs": 2,
+          "ranges_overlap": true
+        },
+        "rss_kib": {
+          "candidate_lower_pairs": 3,
+          "ranges_overlap": false
+        },
+        "query_p99_seconds": {
+          "candidate_lower_pairs": 0,
+          "ranges_overlap": false
+        },
+        "ingest_p99_seconds": {
+          "candidate_lower_pairs": 1,
+          "ranges_overlap": true
+        }
+      },
+      "decision": "Loki RSS is lower in all three pairs with disjoint ranges, but query p99 is higher in all three pairs with disjoint ranges (median +10.8%). Global retention is not justified. CPU and ingest results are mixed. Assess a metrics-specific setting after remaining signal measurements."
+    },
+    "traces": {
+      "run_id": 37380619358,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37380619358",
+      "harness_head_sha": "f3e6a78274f141f39ddab5b29189eda991d94b9f",
+      "inputs": {
+        "signal": "traces",
+        "profiling": "none",
+        "phases": "steady",
+        "phase_seconds": "60",
+        "repetitions": "3",
+        "deployment_target": "all",
+        "profiles_target": "all",
+        "image_artifact_run": "37371662781",
+        "image_artifact_name": "comparison-image-logs-8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+        "baseline_image_artifact_run": "37371016528",
+        "baseline_image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6"
+      },
+      "status": "success_verified",
+      "live_instances_at_dispatch": [
+        {
+          "name": "gcp-runner-10bca65550514f20",
+          "status": "RUNNING"
+        },
+        {
+          "name": "gcp-runner-4aa75c0c7e6e4406",
+          "status": "RUNNING"
+        }
+      ],
+      "image_runtime_control_verified": true,
+      "performance_qualified": false,
+      "measurement_qualified": true,
+      "verified_raw_files": 725,
+      "proof_path": "qualification/evidence/performance/gcp-37380619358/traces/verified-revision-pairs.json",
+      "proof_sha256": "d0a29750acfe45c319295626aa9dd199e58d1c1f0f3bec8ad54b3cb3d9e91b09",
+      "candidate_divided_by_baseline": {
+        "query_attempts": 1.0,
+        "average_cpu_cores": 0.9916426239886301,
+        "rss_kib": 0.9510206013187368,
+        "query_p99_seconds": 0.9847806960239596,
+        "ingest_p99_seconds": 0.9806693245860278
+      },
+      "pair_directions": {
+        "query_attempts": {
+          "candidate_lower_pairs": 0,
+          "ranges_overlap": true
+        },
+        "average_cpu_cores": {
+          "candidate_lower_pairs": 2,
+          "ranges_overlap": true
+        },
+        "rss_kib": {
+          "candidate_lower_pairs": 3,
+          "ranges_overlap": false
+        },
+        "query_p99_seconds": {
+          "candidate_lower_pairs": 2,
+          "ranges_overlap": true
+        },
+        "ingest_p99_seconds": {
+          "candidate_lower_pairs": 2,
+          "ranges_overlap": true
+        }
+      },
+      "decision": "Preserved-image measurement only. See pair directions for reproducibility; does not reverse Loki query regression or qualify final source."
+    },
+    "profiles": {
+      "run_id": 37380853989,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37380853989",
+      "harness_head_sha": "f3e6a78274f141f39ddab5b29189eda991d94b9f",
+      "inputs": {
+        "signal": "profiles",
+        "profiling": "none",
+        "phases": "steady",
+        "phase_seconds": "60",
+        "repetitions": "3",
+        "deployment_target": "all",
+        "profiles_target": "all",
+        "image_artifact_run": "37371662781",
+        "image_artifact_name": "comparison-image-logs-8b4356bd16c03be860fb364534ea4ebaf6424c9a",
+        "baseline_image_artifact_run": "37371016528",
+        "baseline_image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6"
+      },
+      "status": "success_verified",
+      "live_instances_at_dispatch": [
+        {
+          "name": "gcp-runner-10bca65550514f20",
+          "status": "RUNNING"
+        },
+        {
+          "name": "gcp-runner-4aa75c0c7e6e4406",
+          "status": "RUNNING"
+        },
+        {
+          "name": "gcp-runner-ea92cef24f98422a",
+          "status": "RUNNING"
+        }
+      ],
+      "image_runtime_control_verified": true,
+      "performance_qualified": false,
+      "measurement_qualified": true,
+      "verified_raw_files": 743,
+      "proof_path": "qualification/evidence/performance/gcp-37380853989/profiles/verified-revision-pairs.json",
+      "proof_sha256": "8dc454e924a5d74e1dfebbdf071e5293c6782ca7ef2a195079889a384292b4d8",
+      "candidate_divided_by_baseline": {
+        "query_attempts": 1.0,
+        "average_cpu_cores": 0.9955964030977509,
+        "rss_kib": 0.9548249304252152,
+        "query_p99_seconds": 0.9641552600760218,
+        "ingest_p99_seconds": 1.0223445342071242
+      },
+      "pair_directions": {
+        "query_attempts": {
+          "candidate_lower_pairs": 0,
+          "ranges_overlap": true
+        },
+        "average_cpu_cores": {
+          "candidate_lower_pairs": 2,
+          "ranges_overlap": true
+        },
+        "rss_kib": {
+          "candidate_lower_pairs": 3,
+          "ranges_overlap": false
+        },
+        "query_p99_seconds": {
+          "candidate_lower_pairs": 2,
+          "ranges_overlap": true
+        },
+        "ingest_p99_seconds": {
+          "candidate_lower_pairs": 1,
+          "ranges_overlap": true
+        }
+      },
+      "decision": "RSS falls in all three pairs with disjoint ranges. CPU/query/ingest results are mixed. This does not reverse the Loki query regression or qualify final source."
+    }
+  }
+}

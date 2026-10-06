@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use futures::StreamExt;
 use krabka_units::ByteSize;
 
 use super::{
@@ -8,7 +9,7 @@ use super::{
     Int64Type, LabelMatcher, LazySymbolizer, LocalPartition, MemTable, Mutex, NativeResolver,
     ObjectStore, ObjectStoreExt, ParquetRecordBatchReaderBuilder, Path, ProfileError, ProfileIndex,
     ProfileQueryStats, ProfileScan, ProfileStats, ProfileStore, RecordBatch, RwLock,
-    SeriesFingerprint, SessionContext, SymbolDb, UInt64Type, VecDeque, batch_fingerprints_overlap,
+    SeriesFingerprint, SymbolDb, UInt64Type, VecDeque, batch_fingerprints_overlap,
     block_partition_map, filter_and_remap_batch, is_unbounded_metadata_range,
     local_native_resolver, profile_samples_schema,
 };
@@ -175,37 +176,44 @@ impl ColdProfileStore {
             Self::index_block_keys(index, tenant, profile_type, matchers, start_ms, end_ms)?;
         let mut batches = Vec::new();
         let mut symbols = CompositeSymbols::default();
-        for (block_idx, block_key) in blocks.iter().enumerate() {
-            // Re-base this block's stored partitions to a dense local `0..n` range
-            // before OR-ing the per-block high-bit base. A block that has already
-            // been compacted stores partitions that occupy the high bits; OR-ing a
-            // fresh base straight onto them folds bits together and can collide
-            // across blocks (e.g. `1<<32 | (2<<32)` and `2<<32 | (1<<32)` both ==
-            // `3<<32`). Dense re-basing keeps each block's external keys unique.
-            let stored_partitions = index.stacktrace_partitions(block_key);
-            let partition_map = block_partition_map(block_idx, &stored_partitions)?;
-            let symdb = self.load_symdb(block_key).await?;
+        // Keep partition identities and output order stable while overlapping
+        // object-store waits. Four reads bound each query's transient decoding
+        // memory independently of how many cold blocks its index selects.
+        let mut loaded = futures::stream::iter(blocks.into_iter().enumerate().map(
+            |(block_idx, block_key)| {
+                let fps = &fps;
+                async move {
+                    // Dense local rebasing prevents collisions when a compacted
+                    // block already uses high bits for its stored partitions.
+                    let stored_partitions = index.stacktrace_partitions(&block_key);
+                    let partition_map = block_partition_map(block_idx, &stored_partitions)?;
+                    let symdb = self.load_symdb(&block_key).await?;
+                    let batches = self
+                        .load_block_batches(
+                            &block_key,
+                            &partition_map,
+                            fps,
+                            profile_type,
+                            start_ms,
+                            end_ms,
+                        )
+                        .await?;
+                    Ok::<_, ProfileError>((partition_map, symdb, batches))
+                }
+            },
+        ))
+        .buffered(4);
+        while let Some(result) = loaded.next().await {
+            let (partition_map, symdb, block_batches) = result?;
             let source = Arc::new(LazySymbolizer::new(symdb, Arc::clone(&self.resolver)));
             for (source_partition, external) in &partition_map {
-                // `source_partition` is the partition key within this block's own
-                // symbol DB, so resolution stays scoped to the correct block.
                 symbols.insert(
                     ExternalPartition(*external),
                     source.clone(),
                     LocalPartition(*source_partition),
                 );
             }
-            batches.extend(
-                self.load_block_batches(
-                    block_key,
-                    &partition_map,
-                    &fps,
-                    profile_type,
-                    start_ms,
-                    end_ms,
-                )
-                .await?,
-            );
+            batches.extend(block_batches);
         }
 
         if batches.is_empty() {
@@ -213,7 +221,7 @@ impl ColdProfileStore {
         }
         let table = MemTable::try_new(profile_samples_schema(), vec![batches])
             .map_err(|err| ProfileError::Store(err.to_string()))?;
-        let ctx = SessionContext::new();
+        let ctx = krabka_pprof::profile_session_context();
         let samples_table = "samples".to_string();
         ctx.register_table(&samples_table, Arc::new(table))
             .map_err(|err| ProfileError::Store(err.to_string()))?;

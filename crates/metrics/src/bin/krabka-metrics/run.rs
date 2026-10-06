@@ -75,7 +75,7 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     run_distributor(cli, metrics, readiness, &server_security, wal_security).await
                 }
                 Target::BlockBuilder => {
-                    run_block_builder(cli, metrics, readiness, wal_security).await
+                    Box::pin(run_block_builder(cli, metrics, readiness, wal_security)).await
                 }
                 Target::Compactor => run_compactor(cli, metrics, readiness).await,
             }

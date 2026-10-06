@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "status": "rebased_correctness_scopes_passed",
+  "base_main": "2ac3b9c6cfce1624bc94b32370a43cc2ed300deb",
+  "rebased_source_commit": "7bc01c61eef24917d3ca45f4ce546c295680f27d",
+  "preserved_experiment_branch": "codex/grafana-manifest-content-cache",
+  "preserved_experiment_head": "fe62ff6ed2b34ed56d1e14332ad845fcc9c84b8a",
+  "manifest_cache_candidate_source_commit": "d26b82c17940fb8e51514101cadf3c1e815484c0",
+  "manifest_cache_candidate_run": 37390739256,
+  "preserved_prior_branch_head": "fe62ff6ed2b34ed56d1e14332ad845fcc9c84b8a",
+  "superseded_commit": {
+    "source_commit": "54f73c01486f2f09068fa3f974bafc616ac51622",
+    "reason": "Main deduplicates persisted/hot copies by per-sample WAL identities, including payload identity and downsampling contributors. The old offset-range exclusion is superseded and can hide distinct payloads that reuse offsets.",
+    "harness_seed_handoff_check_restored": true,
+    "harness_sha256": "f407e6f1a6730d35b395a207a3e567455bc4ac8dc379d1d0eac04acaf416be67",
+    "independent_symbolizer_anchor_fix_restored": true
+  },
+  "conflict_resolution": "Keep main sample identity/union behavior; use the existing isolated profile session factory; retain bounded parallel cold-block reads.",
+  "correctness_qualified": true,
+  "performance_qualified": false,
+  "validation": {
+    "formatter": "passed",
+    "full_ordinary_scope": {
+      "status": "passed",
+      "targets_passed": 387,
+      "rust_cases_passed": 5572,
+      "ignored_cases": 78,
+      "proof_path": "qualification/evidence/correctness/main-2ac3b9c6-rebase-ordinary-b9d80f01/provenance.json",
+      "proof_sha256": "21601099158cc1eca27f07d393edeb65da8eaf8f5d30b5173e925ba01c75e9b4"
+    },
+    "native_profiles_and_metrics_scope": {
+      "status": "passed",
+      "targets_passed": 5,
+      "rust_cases_passed": 37,
+      "ignored_cases": 0,
+      "proof_path": "qualification/evidence/correctness/main-2ac3b9c6-rebase-native-b9d80f01/provenance.json",
+      "proof_sha256": "ff1eca43f0929ae3a908f7f156224fe52f0c1cb796a36faa8827331b135c5d41"
+    },
+    "retries_disabled": true,
+    "ordinary_command": "bazel test -c opt --jobs=6 --local_test_jobs=3 --flaky_test_attempts=1 --keep_going --test_output=errors --bes_backend= //...",
+    "production_tree_committed": true,
+    "ordinary_targets_expected": 387,
+    "source_file_overrides_sha256": {
+      "tools/compare-grafana.py": "f407e6f1a6730d35b395a207a3e567455bc4ac8dc379d1d0eac04acaf416be67",
+      "crates/pprof/src/union_store/collect_and_remap.rs": "5d490e1f37604741d675f7fbbfaa7722242bee3c4cde1e18284d33f809c50c9d",
+      "crates/pprof/src/symbolizer.rs": "b9d80f019b0e4315caa6694719fde4d5ab405614e2776e67ea558989cb0caeb5"
+    },
+    "profile_core_scope": {
+      "status": "passed",
+      "targets_passed": 2,
+      "rust_cases_passed": 124,
+      "ignored_cases": 0,
+      "proof_path": "qualification/evidence/correctness/main-2ac3b9c6-rebase-core-b9d80f01/provenance.json",
+      "proof_sha256": "dc7ef817ff7522622f298042c4ca1d60e3eab12d90c2729928ea72b2485754fa"
+    }
+  },
+  "scope": "The preserved manifest-cache experiment measures its original exact images. It does not qualify performance of this rebased source.",
+  "previous_validation_attempts": [
+    {
+      "status": "superseded_before_qualification",
+      "log": "/home/matt/.cache/o11y-performance/main-2ac3b9c6-rebase-full-ordinary-validation.log",
+      "reason": "The existing complete-batch test fixture has nine columns. Main adds a tenth WAL identity list column. Cancel before fixing the fixture; preserve a complete comparison with nonempty, empty and repeated identities."
+    },
+    {
+      "status": "failed_then_superseded_before_qualification",
+      "proof_path": "qualification/evidence/correctness/main-2ac3b9c6-rebase-missing-anchor/provenance.json",
+      "proof_sha256": "25c1badeba51d9a4a14f8ff49f260386d225666b7dfc2d2383ab3096cda3c7d7",
+      "failed_target": "//crates/pprof:pprof_test",
+      "cases_failed": 5,
+      "reason": "The test anchor returned a constant after its prior black_box fixture fix was dropped with the superseded handoff commit. Optimized builds remove the unused call; symbolizer tests cannot find it.",
+      "native_scope_started": false
+    }
+  ],
+  "fixture_repair": "Add WAL identity lists to the independent full-batch namespace/order/null/duplicate ledger. Production remapping behavior is unchanged.",
+  "correctness_qualification_scope": "Rebased commit plus recorded source-file overrides: all 387 ordinary targets and five native metrics/profiles wrappers. Ordinary ignored container cases are explicitly catalogued; native scope has zero ignored cases. This does not qualify performance of the rebased source."
+}

@@ -57,9 +57,23 @@ impl<S: MetricStore> PromqlEngine<S> {
         // while preserving a genuine NaN value (matching interpreter staleness
         // handling). Pre-filtering markers here would instead reveal an older
         // sample and diverge from Prometheus.
-        let samples = self
-            .labeled_series_sets(tenant, &matcher_sets, start_ms, eval_time_ms, false)
+        let latest = self
+            .latest_labeled_series(tenant, &matcher_sets, start_ms, eval_time_ms)
             .await?;
+        let mut samples = match latest {
+            Some(samples) => samples,
+            None => {
+                self.labeled_series_sets(tenant, &matcher_sets, start_ms, eval_time_ms, false)
+                    .await?
+            }
+        };
+        // This plan evaluates one instant. Earlier samples cannot affect its
+        // result, and the scan has already counted them against query limits.
+        // Keep the latest sample, including a stale marker, before building
+        // the Arrow leaf and the normalization operators.
+        for series in &mut samples {
+            series.samples = series.samples.last().copied().into_iter().collect();
+        }
 
         let InstantSelectorPlan {
             ctx,

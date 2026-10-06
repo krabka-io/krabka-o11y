@@ -1,0 +1,1297 @@
+{
+  "schema_version": 1,
+  "experiment": "Rebuild block fingerprints by live time-order position",
+  "status": "rejected_original_metadata_restored_scope_passed",
+  "performance_qualified": false,
+  "retained": false,
+  "production_paths": [
+    "crates/blockstore/src/index/block_list.rs"
+  ],
+  "change": "Replace the temporary ordinal BTreeMap with one vector per live block, indexed by the existing dense time-order position. Skip NO_POSITION tombstones. Preserve sorted fingerprint traversal, deduplication, every metadata field, time order and persisted formats. Add no stored field, cache, dependency or configuration.",
+  "base_source_commit": "771bfb39070b19359c7ec09eeafbb216957d43b6",
+  "baseline_source_sha256": "aaf1157eead62e4f92b93f2d77ddd561669edfc000c8a4c96e96f1809c32dad2",
+  "candidate_source_sha256": "cac37c079bcc8c5a4bddf7d674f6ab082fa3be79fe46bcf96ac16b90d7e2be17",
+  "profile_selection": [
+    {
+      "run_id": 37351427961,
+      "source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
+      "source_sha256": "aaf1157eead62e4f92b93f2d77ddd561669edfc000c8a4c96e96f1809c32dad2",
+      "windows": [
+        {
+          "window": 1,
+          "samples": 220,
+          "block_metadata_self_percent": 2.73,
+          "report_sha256": "028ab6a15f0359471e04be0df310f74d67185c14578e450dc58f180164d021ef",
+          "symbol_reported": true
+        },
+        {
+          "window": 2,
+          "samples": 276,
+          "block_metadata_self_percent": 1.09,
+          "report_sha256": "c1e332cd675ff8f8e7486465b9eba665a047025e84d8dfaaf690f55e328714e0",
+          "symbol_reported": true
+        },
+        {
+          "window": 3,
+          "samples": 314,
+          "block_metadata_self_percent": 0.64,
+          "report_sha256": "954899fdcaa1916fad3b7323f9b154981046f5bc7065ba805a76618f8de73e04",
+          "symbol_reported": true
+        }
+      ],
+      "diagnostic_only": true,
+      "performance_qualified": false
+    },
+    {
+      "run_id": 37354008253,
+      "source_commit": "7ea9840085ab587b5491c3d47a17388b749a9649",
+      "source_sha256": "aaf1157eead62e4f92b93f2d77ddd561669edfc000c8a4c96e96f1809c32dad2",
+      "windows": [
+        {
+          "window": 1,
+          "samples": 206,
+          "block_metadata_self_percent": 1.94,
+          "report_sha256": "f3ef4d53e4874abee23dc4a332e5cf4754c8dc4e59be598b6548397cbc2e4107",
+          "symbol_reported": true
+        },
+        {
+          "window": 2,
+          "samples": 233,
+          "block_metadata_self_percent": null,
+          "report_sha256": "9f0230be6fac5be52ec6855556f542e92743448b9a5a3df52d6f8271dcfad32c",
+          "symbol_reported": false
+        },
+        {
+          "window": 3,
+          "samples": 289,
+          "block_metadata_self_percent": 1.73,
+          "report_sha256": "2ab9f14dbf33483f16a54f3ab28beffc23e5d6896d97d032f9f376bb6356a055",
+          "symbol_reported": true
+        }
+      ],
+      "diagnostic_only": true,
+      "performance_qualified": false
+    }
+  ],
+  "callers": [
+    "Index::all_blocks",
+    "Index::all_blocks_unscoped",
+    "Index::merge_from",
+    "MergedMetricStore::try_latest_float_scan"
+  ],
+  "validation": {
+    "regression_path": "crates/blockstore/tests/block_metadata.rs",
+    "regression_sha256": "57f4134abc389e9961623d755139e735759edf98698ba61a9b392d6b35fd4bf6",
+    "scope": "Full metadata records across unsorted insertion, duplicate fingerprints, time restatement, set replacement with tombstones, retention, compaction, empty sets, snapshot lifetime, tenant isolation and JSON restoration.",
+    "original_production_targets_passed": 2,
+    "original_production_log_sha256": "b930e66cff652f63253c13fe8e436d82cc9c6324491f93e524b9db7699086a49",
+    "initial_scoped_targets": 8,
+    "initial_scope_status": "passed",
+    "negative_control_status": "passed",
+    "final_scope_status": "passed_with_one_flaky_target",
+    "initial_scope_log_sha256": "8c1217d2f56f8380edd6388d5687928e9939b98082e17062964bd2d333b31c82",
+    "negative_control": {
+      "mutation": "Use persistent ordinals as vector positions instead of live time-order positions.",
+      "result": "The first independent full metadata ledger fails. Exactly one test fails; the candidate source is restored.",
+      "log_sha256": "bbed1bb4e7a96b8801356c1e0c70549ae9d0525ada16fb84f4d60599c81aba6d",
+      "golden_log_sha256": "d34f57cc2b610eaa8f437491a4fcf551f9143f8072e48ba3aece991690786cd3",
+      "raw_test_log_sha256": "60a7bed673b5eb7f937567c43bdb9cb125cd3b48bed0501f7ec28b6bafb88938",
+      "restored_source_sha256": "cac37c079bcc8c5a4bddf7d674f6ab082fa3be79fe46bcf96ac16b90d7e2be17"
+    },
+    "final_scoped_targets": 376,
+    "final_scope_target_list": [
+      "//crates/blockstore:block_metadata_test",
+      "//crates/blockstore:block_metadata_test_clippy",
+      "//crates/blockstore:blockstore_clippy",
+      "//crates/blockstore:blockstore_doc_test",
+      "//crates/blockstore:blockstore_no_harness_check",
+      "//crates/blockstore:blockstore_test",
+      "//crates/blockstore:blockstore_test_clippy",
+      "//crates/blockstore:datafusion_test",
+      "//crates/blockstore:datafusion_test_clippy",
+      "//crates/blockstore:deployment_recovery_test",
+      "//crates/blockstore:deployment_recovery_test_clippy",
+      "//crates/blockstore:index_test",
+      "//crates/blockstore:index_test_clippy",
+      "//crates/blockstore:krabka-storage-admin_clippy",
+      "//crates/blockstore:krabka-storage-admin_test",
+      "//crates/blockstore:krabka-storage-admin_test_clippy",
+      "//crates/blockstore:label_fingerprint_test",
+      "//crates/blockstore:label_fingerprint_test_clippy",
+      "//crates/blockstore:lifecycle_test",
+      "//crates/blockstore:lifecycle_test_clippy",
+      "//crates/blockstore:nested_set_proptest_test",
+      "//crates/blockstore:nested_set_proptest_test_clippy",
+      "//crates/blockstore:object_store_faults_test",
+      "//crates/blockstore:object_store_faults_test_clippy",
+      "//crates/blockstore:object_store_semantics_test",
+      "//crates/blockstore:object_store_semantics_test_clippy",
+      "//crates/blockstore:parquet_test",
+      "//crates/blockstore:parquet_test_clippy",
+      "//crates/blockstore:persistence_test",
+      "//crates/blockstore:persistence_test_clippy",
+      "//crates/blockstore:roundtrip_proptest_test",
+      "//crates/blockstore:roundtrip_proptest_test_clippy",
+      "//crates/blockstore:span_block_roundtrip_test",
+      "//crates/blockstore:span_block_roundtrip_test_clippy",
+      "//crates/blockstore:span_id_proptest_test",
+      "//crates/blockstore:span_id_proptest_test_clippy",
+      "//crates/blockstore:storage_audit_test",
+      "//crates/blockstore:storage_audit_test_clippy",
+      "//crates/blockstore:storage_repair_test",
+      "//crates/blockstore:storage_repair_test_clippy",
+      "//crates/blockstore:tenant_path_proptest_test",
+      "//crates/blockstore:tenant_path_proptest_test_clippy",
+      "//crates/blockstore:trace_pipeline_e2e_test",
+      "//crates/blockstore:trace_pipeline_e2e_test_clippy",
+      "//crates/integration:logs_to_traces_trace_id_test",
+      "//crates/integration:logs_to_traces_trace_id_test_clippy",
+      "//crates/integration:traces_to_metrics_exemplars_test",
+      "//crates/integration:traces_to_metrics_exemplars_test_clippy",
+      "//crates/integration:traces_to_profiles_span_profiles_test",
+      "//crates/integration:traces_to_profiles_span_profiles_test_clippy",
+      "//crates/logql:logql_clippy",
+      "//crates/logql:logql_doc_test",
+      "//crates/logql:logql_no_harness_check",
+      "//crates/logql:logql_test",
+      "//crates/logql:logql_test_clippy",
+      "//crates/logql:parser_proptest_test",
+      "//crates/logql:parser_proptest_test_clippy",
+      "//crates/logql:parser_test",
+      "//crates/logql:parser_test_clippy",
+      "//crates/logql:planner_proptest_test",
+      "//crates/logql:planner_proptest_test_clippy",
+      "//crates/logql:planner_test",
+      "//crates/logql:planner_test_clippy",
+      "//crates/metrics-service:clock_rules_bundle_test",
+      "//crates/metrics-service:clock_rules_bundle_test_clippy",
+      "//crates/metrics-service:diff_mimir_docker_test",
+      "//crates/metrics-service:diff_mimir_test",
+      "//crates/metrics-service:diff_mimir_test_clippy",
+      "//crates/metrics-service:diff_prometheus_docker_test",
+      "//crates/metrics-service:diff_prometheus_previous_docker_test",
+      "//crates/metrics-service:diff_prometheus_test",
+      "//crates/metrics-service:diff_prometheus_test_clippy",
+      "//crates/metrics-service:grafana_integration_docker_test",
+      "//crates/metrics-service:grafana_integration_previous_docker_test",
+      "//crates/metrics-service:grafana_integration_test",
+      "//crates/metrics-service:grafana_integration_test_clippy",
+      "//crates/metrics-service:krabka-metrics-service_clippy",
+      "//crates/metrics-service:krabka-metrics-service_test",
+      "//crates/metrics-service:krabka-metrics-service_test_clippy",
+      "//crates/metrics-service:metrics-service_clippy",
+      "//crates/metrics-service:metrics-service_doc_test",
+      "//crates/metrics-service:metrics-service_no_harness_check",
+      "//crates/metrics-service:metrics-service_test",
+      "//crates/metrics-service:metrics-service_test_clippy",
+      "//crates/metrics-service:metrics_deployment_docker_test",
+      "//crates/metrics-service:metrics_deployment_test_clippy",
+      "//crates/metrics-service:ruler_bundled_rules_test",
+      "//crates/metrics-service:ruler_bundled_rules_test_clippy",
+      "//crates/metrics-service:ruler_fencing_test",
+      "//crates/metrics-service:ruler_fencing_test_clippy",
+      "//crates/metrics-service:server_security_test",
+      "//crates/metrics-service:server_security_test_clippy",
+      "//crates/metrics-service:tsdb_import_docker_test",
+      "//crates/metrics-service:tsdb_import_test",
+      "//crates/metrics-service:tsdb_import_test_clippy",
+      "//crates/metrics:block_deletion_protocol_model_test",
+      "//crates/metrics:block_deletion_protocol_model_test_clippy",
+      "//crates/metrics:clock_decode_proptest_test",
+      "//crates/metrics:clock_decode_proptest_test_clippy",
+      "//crates/metrics:clock_ingest_test",
+      "//crates/metrics:clock_ingest_test_clippy",
+      "//crates/metrics:diff_corpus_selftest_test",
+      "//crates/metrics:diff_corpus_selftest_test_clippy",
+      "//crates/metrics:histogram_roundtrip_test",
+      "//crates/metrics:histogram_roundtrip_test_clippy",
+      "//crates/metrics:index_snapshot_protocol_model_test",
+      "//crates/metrics:index_snapshot_protocol_model_test_clippy",
+      "//crates/metrics:ingest_roundtrip_test",
+      "//crates/metrics:ingest_roundtrip_test_clippy",
+      "//crates/metrics:krabka-metrics_clippy",
+      "//crates/metrics:krabka-metrics_test",
+      "//crates/metrics:krabka-metrics_test_clippy",
+      "//crates/metrics:level_compaction_test",
+      "//crates/metrics:level_compaction_test_clippy",
+      "//crates/metrics:metrics_clippy",
+      "//crates/metrics:metrics_doc_test",
+      "//crates/metrics:metrics_no_harness_check",
+      "//crates/metrics:metrics_test",
+      "//crates/metrics:metrics_test_clippy",
+      "//crates/metrics:runtime_overrides_test",
+      "//crates/metrics:runtime_overrides_test_clippy",
+      "//crates/metrics:storage_protocol_model_test",
+      "//crates/metrics:storage_protocol_model_test_clippy",
+      "//crates/metrics:tenant_quota_isolation_test",
+      "//crates/metrics:tenant_quota_isolation_test_clippy",
+      "//crates/metrics:tsdb_import_test",
+      "//crates/metrics:tsdb_import_test_clippy",
+      "//crates/metrics:tsdb_publish_test",
+      "//crates/metrics:tsdb_publish_test_clippy",
+      "//crates/observability:all_in_one_drain_failure_test",
+      "//crates/observability:all_in_one_drain_failure_test_clippy",
+      "//crates/observability:all_in_one_test",
+      "//crates/observability:all_in_one_test_clippy",
+      "//crates/observability:analytics_test",
+      "//crates/observability:analytics_test_clippy",
+      "//crates/observability:audit_test",
+      "//crates/observability:audit_test_clippy",
+      "//crates/observability:cli_test",
+      "//crates/observability:cli_test_clippy",
+      "//crates/observability:compactor_test",
+      "//crates/observability:compactor_test_clippy",
+      "//crates/observability:config_file_test",
+      "//crates/observability:config_file_test_clippy",
+      "//crates/observability:crypto_provider_absent_test",
+      "//crates/observability:crypto_provider_absent_test_clippy",
+      "//crates/observability:crypto_provider_install_test",
+      "//crates/observability:crypto_provider_install_test_clippy",
+      "//crates/observability:deletes_test",
+      "//crates/observability:deletes_test_clippy",
+      "//crates/observability:distributor_loki_push_test",
+      "//crates/observability:distributor_loki_push_test_clippy",
+      "//crates/observability:distributor_otlp_test",
+      "//crates/observability:distributor_otlp_test_clippy",
+      "//crates/observability:environment_test",
+      "//crates/observability:environment_test_clippy",
+      "//crates/observability:format_query_test",
+      "//crates/observability:format_query_test_clippy",
+      "//crates/observability:grafana_e2e_docker_test",
+      "//crates/observability:grafana_e2e_previous_docker_test",
+      "//crates/observability:grafana_e2e_test",
+      "//crates/observability:grafana_e2e_test_clippy",
+      "//crates/observability:grafana_integration_docker_test",
+      "//crates/observability:grafana_integration_previous_docker_test",
+      "//crates/observability:grafana_integration_test",
+      "//crates/observability:grafana_integration_test_clippy",
+      "//crates/observability:ingest_roundtrip_test",
+      "//crates/observability:ingest_roundtrip_test_clippy",
+      "//crates/observability:krabka-o11y-bootstrap_clippy",
+      "//crates/observability:krabka-o11y-bootstrap_test",
+      "//crates/observability:krabka-o11y-bootstrap_test_clippy",
+      "//crates/observability:krabka-o11y-recovery_clippy",
+      "//crates/observability:krabka-o11y-recovery_test",
+      "//crates/observability:krabka-o11y-recovery_test_clippy",
+      "//crates/observability:krabka-observability_clippy",
+      "//crates/observability:krabka-observability_test",
+      "//crates/observability:krabka-observability_test_clippy",
+      "//crates/observability:log_level_fixed_test",
+      "//crates/observability:log_level_fixed_test_clippy",
+      "//crates/observability:log_level_test",
+      "//crates/observability:log_level_test_clippy",
+      "//crates/observability:logql_engine_proptest_test",
+      "//crates/observability:logql_engine_proptest_test_clippy",
+      "//crates/observability:loki_differential_docker_test",
+      "//crates/observability:loki_differential_test",
+      "//crates/observability:loki_differential_test_clippy",
+      "//crates/observability:metadata_test",
+      "//crates/observability:metadata_test_clippy",
+      "//crates/observability:observability_clippy",
+      "//crates/observability:observability_doc_test",
+      "//crates/observability:observability_no_harness_check",
+      "//crates/observability:observability_test",
+      "//crates/observability:observability_test_clippy",
+      "//crates/observability:panic_and_task_supervision_test",
+      "//crates/observability:panic_and_task_supervision_test_clippy",
+      "//crates/observability:per_tenant_limits_test",
+      "//crates/observability:per_tenant_limits_test_clippy",
+      "//crates/observability:querier_authorization_test",
+      "//crates/observability:querier_authorization_test_clippy",
+      "//crates/observability:querier_object_store_test",
+      "//crates/observability:querier_object_store_test_clippy",
+      "//crates/observability:querier_test",
+      "//crates/observability:querier_test_clippy",
+      "//crates/observability:query_instant_metric_test",
+      "//crates/observability:query_instant_metric_test_clippy",
+      "//crates/observability:query_instant_test",
+      "//crates/observability:query_instant_test_clippy",
+      "//crates/observability:query_instant_vector_test",
+      "//crates/observability:query_instant_vector_test_clippy",
+      "//crates/observability:query_range_line_format_test",
+      "//crates/observability:query_range_line_format_test_clippy",
+      "//crates/observability:query_range_test",
+      "//crates/observability:query_range_test_clippy",
+      "//crates/observability:ruler_test",
+      "//crates/observability:ruler_test_clippy",
+      "//crates/observability:server_security_test",
+      "//crates/observability:server_security_test_clippy",
+      "//crates/observability:service_router_test",
+      "//crates/observability:service_router_test_clippy",
+      "//crates/observability:service_security_test",
+      "//crates/observability:service_security_test_clippy",
+      "//crates/observability:sigterm_drain_test",
+      "//crates/observability:sigterm_drain_test_clippy",
+      "//crates/observability:status_endpoints_test",
+      "//crates/observability:status_endpoints_test_clippy",
+      "//crates/observability:tail_test",
+      "//crates/observability:tail_test_clippy",
+      "//crates/observability:tenant_header_test",
+      "//crates/observability:tenant_header_test_clippy",
+      "//crates/observability:topic_contract_test",
+      "//crates/observability:topic_contract_test_clippy",
+      "//crates/observability:wal_client_security_test",
+      "//crates/observability:wal_client_security_test_clippy",
+      "//crates/observability:wal_live_broker_test",
+      "//crates/observability:wal_live_broker_test_clippy",
+      "//crates/observability:wal_records_test",
+      "//crates/observability:wal_records_test_clippy",
+      "//crates/pprof:golden_merge_test",
+      "//crates/pprof:golden_merge_test_clippy",
+      "//crates/pprof:merge_associativity_test",
+      "//crates/pprof:merge_associativity_test_clippy",
+      "//crates/pprof:pprof_clippy",
+      "//crates/pprof:pprof_doc_test",
+      "//crates/pprof:pprof_no_harness_check",
+      "//crates/pprof:pprof_test",
+      "//crates/pprof:pprof_test_clippy",
+      "//crates/profiles:all_drain_order_test",
+      "//crates/profiles:all_drain_order_test_clippy",
+      "//crates/profiles:block_builder_drain_test",
+      "//crates/profiles:block_builder_drain_test_clippy",
+      "//crates/profiles:block_builder_object_store_retry_test",
+      "//crates/profiles:block_builder_object_store_retry_test_clippy",
+      "//crates/profiles:ingest_query_proptest_test",
+      "//crates/profiles:ingest_query_proptest_test_clippy",
+      "//crates/profiles:ingest_roundtrip_test",
+      "//crates/profiles:ingest_roundtrip_test_clippy",
+      "//crates/profiles:krabka-profiles_clippy",
+      "//crates/profiles:krabka-profiles_test",
+      "//crates/profiles:krabka-profiles_test_clippy",
+      "//crates/profiles:label_fingerprint_test",
+      "//crates/profiles:label_fingerprint_test_clippy",
+      "//crates/profiles:lifecycle_test",
+      "//crates/profiles:lifecycle_test_clippy",
+      "//crates/profiles:profiles_clippy",
+      "//crates/profiles:profiles_doc_test",
+      "//crates/profiles:profiles_no_harness_check",
+      "//crates/profiles:profiles_test",
+      "//crates/profiles:profiles_test_clippy",
+      "//crates/profiles:pyroscope_differential_docker_test",
+      "//crates/profiles:pyroscope_differential_previous_docker_test",
+      "//crates/profiles:pyroscope_differential_test",
+      "//crates/profiles:pyroscope_differential_test_clippy",
+      "//crates/profiles:tenant_resolution_test",
+      "//crates/profiles:tenant_resolution_test_clippy",
+      "//crates/promql:conformance_experimental_test",
+      "//crates/promql:conformance_report_experimental_test",
+      "//crates/promql:conformance_report_experimental_test_clippy",
+      "//crates/promql:conformance_report_test",
+      "//crates/promql:conformance_report_test_clippy",
+      "//crates/promql:conformance_test",
+      "//crates/promql:engine_proptest_experimental_test",
+      "//crates/promql:engine_proptest_experimental_test_clippy",
+      "//crates/promql:engine_proptest_test",
+      "//crates/promql:engine_proptest_test_clippy",
+      "//crates/promql:http_api_experimental_test",
+      "//crates/promql:http_api_experimental_test_clippy",
+      "//crates/promql:http_api_test",
+      "//crates/promql:http_api_test_clippy",
+      "//crates/promql:parser_proptest_experimental_test",
+      "//crates/promql:parser_proptest_experimental_test_clippy",
+      "//crates/promql:parser_proptest_test",
+      "//crates/promql:parser_proptest_test_clippy",
+      "//crates/promql:promql_clippy",
+      "//crates/promql:promql_doc_test",
+      "//crates/promql:promql_experimental_clippy",
+      "//crates/promql:promql_experimental_test",
+      "//crates/promql:promql_experimental_test_clippy",
+      "//crates/promql:promql_no_harness_check",
+      "//crates/promql:promql_test",
+      "//crates/promql:promql_test_clippy",
+      "//crates/promql:tenant_isolation_experimental_test",
+      "//crates/promql:tenant_isolation_experimental_test_clippy",
+      "//crates/promql:tenant_isolation_test",
+      "//crates/promql:tenant_isolation_test_clippy",
+      "//crates/traceql:engine_proptest_test",
+      "//crates/traceql:engine_proptest_test_clippy",
+      "//crates/traceql:golden_corpus_test",
+      "//crates/traceql:golden_queries_test",
+      "//crates/traceql:golden_queries_test_clippy",
+      "//crates/traceql:parser_proptest_test",
+      "//crates/traceql:parser_proptest_test_clippy",
+      "//crates/traceql:traceql_clippy",
+      "//crates/traceql:traceql_doc_test",
+      "//crates/traceql:traceql_no_harness_check",
+      "//crates/traceql:traceql_test",
+      "//crates/traceql:traceql_test_clippy",
+      "//crates/traces:all_in_one_drain_order_test",
+      "//crates/traces:all_in_one_drain_order_test_clippy",
+      "//crates/traces:block_lifecycle_test",
+      "//crates/traces:block_lifecycle_test_clippy",
+      "//crates/traces:blockbuilder_test",
+      "//crates/traces:blockbuilder_test_clippy",
+      "//crates/traces:compaction_memory_test",
+      "//crates/traces:compaction_memory_test_clippy",
+      "//crates/traces:compactor_test",
+      "//crates/traces:compactor_test_clippy",
+      "//crates/traces:diff_corpus_selftest_test",
+      "//crates/traces:diff_corpus_selftest_test_clippy",
+      "//crates/traces:frontend_http_backend_test",
+      "//crates/traces:frontend_http_backend_test_clippy",
+      "//crates/traces:frontend_membership_fanout_test",
+      "//crates/traces:frontend_membership_fanout_test_clippy",
+      "//crates/traces:frontend_search_behavior_test",
+      "//crates/traces:frontend_search_behavior_test_clippy",
+      "//crates/traces:frontend_server_test",
+      "//crates/traces:frontend_server_test_clippy",
+      "//crates/traces:frontend_shard_equivalence_test",
+      "//crates/traces:frontend_shard_equivalence_test_clippy",
+      "//crates/traces:frontend_trace_by_id_assembly_test",
+      "//crates/traces:frontend_trace_by_id_assembly_test_clippy",
+      "//crates/traces:grafana_e2e_docker_test",
+      "//crates/traces:grafana_e2e_previous_docker_test",
+      "//crates/traces:grafana_e2e_test",
+      "//crates/traces:grafana_e2e_test_clippy",
+      "//crates/traces:index_shard_publication_test",
+      "//crates/traces:index_shard_publication_test_clippy",
+      "//crates/traces:ingest_roundtrip_test",
+      "//crates/traces:ingest_roundtrip_test_clippy",
+      "//crates/traces:jaeger_thrift_decode_bounds_test",
+      "//crates/traces:jaeger_thrift_decode_bounds_test_clippy",
+      "//crates/traces:krabka-traces_clippy",
+      "//crates/traces:krabka-traces_test",
+      "//crates/traces:krabka-traces_test_clippy",
+      "//crates/traces:livestore_test",
+      "//crates/traces:livestore_test_clippy",
+      "//crates/traces:metrics_generator_e2e_test",
+      "//crates/traces:metrics_generator_e2e_test_clippy",
+      "//crates/traces:metricsgen_scaffold_test",
+      "//crates/traces:metricsgen_scaffold_test_clippy",
+      "//crates/traces:querier_readiness_test",
+      "//crates/traces:querier_readiness_test_clippy",
+      "//crates/traces:tempo_differential_docker_test",
+      "//crates/traces:tempo_differential_previous_docker_test",
+      "//crates/traces:tempo_differential_test",
+      "//crates/traces:tempo_differential_test_clippy",
+      "//crates/traces:tenant_isolation_test",
+      "//crates/traces:tenant_isolation_test_clippy",
+      "//crates/traces:traceql_conformance_test",
+      "//crates/traces:traces_clippy",
+      "//crates/traces:traces_doc_test",
+      "//crates/traces:traces_no_harness_check",
+      "//crates/traces:traces_test",
+      "//crates/traces:traces_test_clippy",
+      "//crates/traces:wal_group_rebalance_test",
+      "//crates/traces:wal_group_rebalance_test_clippy",
+      "//crates/traces:wal_group_scale_out_test",
+      "//crates/traces:wal_group_scale_out_test_clippy"
+    ],
+    "final_scope_target_list_sha256": "515f423297bb26f6f2f44b7ade20c354e4146f194ab153da3156732c5ca18fa7",
+    "final_validation_source_commit": "e2fa65371cf99eaa7f439dcce86191a1177c9e1c",
+    "final_validation_log_sha256": "ec48a17b843d1456c0e460b532ca9a76226487670b14999297241c47ad880d24",
+    "native_docker_wrappers": [
+      {
+        "target": "//crates/metrics-service:diff_mimir_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "3685ebe1d695f3b3e360c6052ad945a83ad10cb2b2ea14070c0e8ebd234bd4f9"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "f58ea80f73f8cac11ec165468d622ab3651e241d60b0338986dc6f57125f05e1"
+      },
+      {
+        "target": "//crates/metrics-service:diff_prometheus_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "04093e1157c2a4e51e54436a21f48f73c54e003164a032adf356deda6c478b22"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "f953a5998c72d6cbc6f7c313b72589e63e92a06ed57ce1865635dfc801b903f6"
+      },
+      {
+        "target": "//crates/metrics-service:grafana_integration_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "73221fcc2a8f7c055435ea22bcbf657254f4465a859753460ec6a4a6beec315c"
+      },
+      {
+        "target": "//crates/metrics-service:metrics_deployment_docker_test",
+        "passed": 12,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "4d7c987bc6f1c69fcdd2232d54a40b812ee344491eb8787dac384038d9b3c0a3"
+      },
+      {
+        "target": "//crates/metrics-service:tsdb_import_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "5f16bed08827dd1794fbcb511f4bcb5af46321220822c11ec4121991193a1f07"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "04b926a815f1230b858ecf6109722489d4fbebe209fad4c65d13d5ebb15ee591"
+      },
+      {
+        "target": "//crates/observability:grafana_e2e_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "47938fce2bf9dba67859844bce799a8aa6d5e76e834f7a869060b3f50b099f22"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "56390b25620c2933422669ea03a1fb3c485a2ade04a2879a0cefaf1021156329"
+      },
+      {
+        "target": "//crates/observability:grafana_integration_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "71becbf164097a68cc26ab29108e1fc4e11118532290b5bdabb04fbbd6a73ccd"
+      },
+      {
+        "target": "//crates/observability:loki_differential_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "1f76a684acc75e80b914c8e5cd4e5280c56b28966defc87a7edc9896f881938e"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_docker_test",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "e685ab0bbec9e54d9a98ff50c32977193c110cdde245077b3396f532e7570108"
+      },
+      {
+        "target": "//crates/profiles:pyroscope_differential_previous_docker_test",
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "48d3bd3196f7927877947198aab308b045abfd2a3d5790527c7ed7a731512f01"
+      },
+      {
+        "target": "//crates/traces:grafana_e2e_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "d3310a4817f754ba090ea2c2dae2269cf6f3c9cebb2cb660c139a30258a88fb3"
+      },
+      {
+        "target": "//crates/traces:grafana_e2e_previous_docker_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "5d5e8fccef470e98680e75beeffda59aeb9269ad3481e3f75d9c6ff430f8385d"
+      },
+      {
+        "target": "//crates/traces:tempo_differential_docker_test",
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "36bdb10a48959de62e77419f5afa7831f8f4d9bda17176ea6bfca3f64bd2dc5c"
+      },
+      {
+        "target": "//crates/traces:tempo_differential_previous_docker_test",
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "b76f9e50d135477de5a355827547dbc3f93e53d46a46faad2796e682f6cefd28"
+      }
+    ],
+    "full_unit_checks": [
+      {
+        "target": "//crates/blockstore:blockstore_test",
+        "passed": 337,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "72eaa9929692f9c480517977cb29a7efd5d1a63612524743934a7c603c2b6e70"
+      },
+      {
+        "target": "//crates/promql:promql_test",
+        "passed": 569,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "b6f7fe2f05669c25d10c7f19dfd4643f4d3b6f553a553d7a0d34c1b64cbc78aa"
+      },
+      {
+        "target": "//crates/metrics:metrics_test",
+        "passed": 327,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "4d3864d0847551924dcca1c5c91dcf881960dbda09bd64f77ee6a1334ce3752f"
+      },
+      {
+        "target": "//crates/metrics-service:metrics-service_test",
+        "passed": 66,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "0d5636624228f2b14ed6e6e0fe8cd65482f0ff66f4080198cfde56b4a273123d"
+      },
+      {
+        "target": "//crates/logql:logql_test",
+        "passed": 60,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "cc0bd0a70fc7e3ef7ccbbdc3b7eb381aa21d1cf1d7afa2a6cec6e84e66fd4672"
+      },
+      {
+        "target": "//crates/traceql:traceql_test",
+        "passed": 405,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "797fbde679010b316aac7c11c5e0dab4b243051c61d69b00b5676f2734ccddad"
+      },
+      {
+        "target": "//crates/pprof:pprof_test",
+        "passed": 123,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "ed9e66f54afbfd920efa096516b8270b101536334adaa275c7f9a938a2a1ccf3"
+      },
+      {
+        "target": "//crates/profiles:profiles_test",
+        "passed": 284,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "803b4568b0b9a44cf0717fa97132300590091588689324d44e5fd7d1455b076e"
+      },
+      {
+        "target": "//crates/observability:observability_test",
+        "passed": 383,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "2840bf75df8d4b45258e1452314d2ccd1d04e9903c160ebdea64d023d4fa62f0"
+      },
+      {
+        "target": "//crates/traces:traces_test",
+        "passed": 465,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "22e6b6bc1616c7cfa2489f73c8d48a677e2ff7f3cb21b5cfe39b2bce14bbf8ef"
+      }
+    ],
+    "cross_signal_caller_checks": [
+      {
+        "target": "//crates/integration:logs_to_traces_trace_id_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "36b24636d06b7172fcf395e34b3d5f62f64ee29c2a51fbc0832a2f046bfba496"
+      },
+      {
+        "target": "//crates/integration:traces_to_metrics_exemplars_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "5d44f4288fe132d09973ff833ef76f10478e12a469b0a1eacfb4e8a277869425"
+      },
+      {
+        "target": "//crates/integration:traces_to_profiles_span_profiles_test",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0,
+        "log_sha256": "adbc64aa23e4793bec59051e018714206f0f11da2c3ad61fac3e840d3f0e4868"
+      }
+    ],
+    "correctness_scope_qualified": true,
+    "flaky_follow_up_status": "six_fresh_full_wrappers_and_clippy_passed_with_unresolved_original_flake",
+    "raw_evidence": "qualification/evidence/correctness/dense-block-metadata/full376-e2fa6537",
+    "full_validation_flaky_targets": [
+      {
+        "target": "//crates/traces:tempo_differential_docker_test",
+        "failed_attempts": 1,
+        "successful_attempts": 1,
+        "failure": "HTTP 404 through Grafana Tempo datasource proxy for /api/echo; failure body was not captured and cause is unverified.",
+        "failed_attempt_sha256": "8e9117d5a717ec96aa956cb33d1ffd24e8a2d709a216c8bb9d383c65dd6ae84b"
+      }
+    ],
+    "flaky_follow_up": {
+      "source_commit": "d456369f",
+      "production_source_sha256": "cac37c079bcc8c5a4bddf7d674f6ab082fa3be79fe46bcf96ac16b90d7e2be17",
+      "targets": [
+        "//crates/traces:tempo_differential_docker_test",
+        "//crates/traces:tempo_differential_previous_docker_test"
+      ],
+      "runs_per_target": 3,
+      "flaky_test_attempts": 1,
+      "current_failed": 2,
+      "previous_failed": 0,
+      "log_sha256": "0128b41bb251c3905c2058557e158b897a7719423c0e9bd065a81c751705ceb7",
+      "raw_evidence": "qualification/evidence/correctness/dense-block-metadata/tempo-fresh-unmodified",
+      "failure": "HTTP 404 through Grafana datasource proxy for /api/echo; response-body diagnostic queued. No product code change is attributed to this setup failure."
+    },
+    "rebased_main_bridge": {
+      "source_commit": "d456369fbea27aef0c537a0abb0a03042758af06",
+      "base_main": "664e698749dd3faa7d2196f951de5e5517c6ad26",
+      "production_source_sha256": "cac37c079bcc8c5a4bddf7d674f6ab082fa3be79fe46bcf96ac16b90d7e2be17",
+      "targets_passed": 7,
+      "retries": 1,
+      "status": "passed",
+      "native_and_compactor_cases": [
+        {
+          "target": "//crates/metrics-service:metrics_deployment_docker_test",
+          "passed": 12,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "d78918813ece4d100d805c34993d5a3e5a8c25e747c68df980d7d837a67e56c8"
+        },
+        {
+          "target": "//crates/observability:loki_deployment_docker_test",
+          "passed": 12,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "e133ac7429f3efb7300717dc79a333f7e1cd41c715c9e78a1b5207b22efd9811"
+        },
+        {
+          "target": "//crates/observability:compactor_test",
+          "passed": 50,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "2f1339a9a33603095ad113a02c9c14077296a7ee3c0047ae4de29fd4e59445b6"
+        }
+      ],
+      "bazel_log_sha256": "332a86dfdceffec2f5becf5ca5df358d6510639e6ae214cee44ec1e1e2d746e2",
+      "raw_evidence": "qualification/evidence/correctness/dense-block-metadata/rebased-main-deployments",
+      "scope": "Changed upstream deployment tests, new Loki deployment suite, compactor deletion behavior, and their Clippy gates. This supplements the 376-target pre-rebase run; Tempo/Grafana readiness qualification remains pending."
+    },
+    "response_capture_follow_up": {
+      "status": "six_fresh_full_wrappers_and_clippy_passed",
+      "runs_per_target": 3,
+      "flaky_test_attempts": 1,
+      "runs": [
+        {
+          "target": "//crates/traces:tempo_differential_docker_test",
+          "run": 1,
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "0b3b10af5ef0747c400208f358089fc47d8429a5963d1c753e341676688e8d34"
+        },
+        {
+          "target": "//crates/traces:tempo_differential_docker_test",
+          "run": 2,
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "ef63eacb6afbeaa695d5ad943c90ccf62481d4f0dd29bcf0978be99d0a6aebab"
+        },
+        {
+          "target": "//crates/traces:tempo_differential_docker_test",
+          "run": 3,
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "c8868c66058703483a65e3b18d2930741430cfd88386990fd321c975cd47dcbd"
+        },
+        {
+          "target": "//crates/traces:tempo_differential_previous_docker_test",
+          "run": 1,
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "db4acf9e1fb0f4986c3a792132ede460083937a3f19bbd65f6206dccc167ebec"
+        },
+        {
+          "target": "//crates/traces:tempo_differential_previous_docker_test",
+          "run": 2,
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "42816320c6bad9822a77c2d2b214d02306f9e51d90ea6efa62b242d2aacc8687"
+        },
+        {
+          "target": "//crates/traces:tempo_differential_previous_docker_test",
+          "run": 3,
+          "passed": 6,
+          "failed": 0,
+          "ignored": 0,
+          "log_sha256": "db4acf9e1fb0f4986c3a792132ede460083937a3f19bbd65f6206dccc167ebec"
+        }
+      ],
+      "clippy_target": "//crates/traces:tempo_differential_test_clippy",
+      "clippy_log_sha256": "c8e138186f806efaadab1f3f216fd3a68e0b015ee77c60c0b7a8ea418392fc8b",
+      "test_source_sha256": "4925065f80e0de328c5c7d014b7f3c5d19376d7cd46fc95f1321a91b0ffb8356",
+      "raw_evidence": "qualification/evidence/correctness/dense-block-metadata/tempo-response-diagnostics",
+      "diagnostic_negative": "Removing the fixed Grafana startup delay in a temporary diagnostic also passed three filtered runs. This did not reproduce the failure or establish a cause. The test source is byte-restored.",
+      "limitation": "Original proxy 404 and two failed unmodified follow-up attempts remain preserved. Fresh runs pass, but the response body and cause remain unverified. The assertion only improves future failure reporting; no setup fix is claimed."
+    },
+    "rebased_tempo_follow_up": {
+      "source_commit": "d4125ea317b203173f80e5feba1991b0b942c469",
+      "base_main": "92989bb29d44c629fa4ac88147a3fce8b1604776",
+      "targets_passed": 4,
+      "deployment_cases_passed": 12,
+      "deployment_cases_ignored": 0,
+      "retries_disabled": true,
+      "provenance_path": "qualification/evidence/correctness/dense-block-metadata/rebased-tempo-92989bb2/provenance.json",
+      "provenance_sha256": "8d3e972c6c59130d328551e8631dc11cc10ee2da0557a8866e75ca685d078bef",
+      "scope": "Tempo unit tests, library Clippy, deployment test Clippy and the deployed Tempo lifecycle suite. Supplements the earlier correctness scope."
+    }
+  },
+  "retention_decision": "Reject the dense metadata change as an unproven optimization. The matched Mimir control has higher total CPU in all three pairs (median ratio 1.0097) and higher RSS in two pairs (1.0034). Querier CPU is higher in two pairs (1.0086); its ranges overlap. Query and ingest p99 medians are lower (0.9808 and 0.9351), but only two pairs are lower and ranges overlap. There is no localized resource advantage supporting a confirmation run. Preserve all verified artifacts and the independent full metadata ledger; restore the original production function.",
+  "comparison_plan": "Preserve and verify rebased baseline/candidate release images while the independent fingerprint confirmation finishes. Both sources have the same main revision and fingerprint implementation; their sole production difference is dense block metadata. Retention and qualified performance comparisons remain gated on correctness and the fingerprint decision. If that source decision changes, qualify the final combined source separately.",
+  "source_commit": "e2fa65371cf99eaa7f439dcce86191a1177c9e1c",
+  "rebase_note": "The 376-target run qualified the original e2fa6537 source before rebase. Upstream main 664e6987 adds Loki deployment coverage and changes compactor deletion handling; these changes need separate validation. Historical source references remain immutable.",
+  "rebased_image_builds": {
+    "base_main": "664e698749dd3faa7d2196f951de5e5517c6ad26",
+    "runs": {
+      "baseline": {
+        "run_id": 37365264758,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37365264758",
+        "source_commit": "a2e9e16ebbd2df7fda125f186ee2e4bdb4615908",
+        "ref": "codex/grafana-metadata-baseline",
+        "inputs": {
+          "signal": "metrics",
+          "profiling": "cpu",
+          "deployment_target": "split",
+          "profiles_target": "all"
+        },
+        "status_at_dispatch_observation": "queued",
+        "diagnostic_only": true,
+        "verified": {
+          "status": "image_and_cpu_profile_verified",
+          "image_provenance": {
+            "run_id": 37365264758,
+            "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37365264758",
+            "source_commit": "a2e9e16ebbd2df7fda125f186ee2e4bdb4615908",
+            "artifact": {
+              "id": 11368212125,
+              "name": "comparison-image-metrics-a2e9e16ebbd2df7fda125f186ee2e4bdb4615908",
+              "digest": "sha256:d2276d63ee61a8650ed8ceeff9a8b0f60a83a6b3418922857543150a19f39ff2",
+              "size_in_bytes": 308350009,
+              "expires_at": "2027-01-03T19:43:45Z"
+            },
+            "archive_digest_verified": true,
+            "all_image_file_checksums_verified": true,
+            "image_tag": "localhost/krabka-o11y:sha-a2e9e16ebbd2",
+            "manifest_digest": "sha256:16cead7d885c2105d908397215801f9fc315132e751275c70f83b63e4663e52f",
+            "config_digest": "sha256:16cead7d885c2105d908397215801f9fc315132e751275c70f83b63e4663e52f"
+          },
+          "cpu_profile_provenance_path": "qualification/evidence/profiling/gcp-37365264758/provenance.json",
+          "cpu_profile_provenance_sha256": "965a0547cbf96c808f0c8be7479253ca3165251f4b9469a9efd2687cf04d052c",
+          "raw_files_verified": 234,
+          "diagnostic_only": true,
+          "performance_qualified": false,
+          "binary_checksums_path": "qualification/evidence/profiling/gcp-37365264758/dense-block-metadata-baseline-image.binaries.json",
+          "binary_checksums_sha256": "cc93b37cd667d1ccf59145d4bfdea822a8c3493f799e3673598ed6706240a565",
+          "runtime_snapshot_path": "qualification/evidence/profiling/gcp-37365264758/dense-block-metadata-baseline-image.runtime.json",
+          "runtime_snapshot_sha256": "f081cd38b50ff661042955f64b4b962a94d071df3ae2c216c5f22929c906cf5d"
+        }
+      },
+      "candidate": {
+        "run_id": 37365268018,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37365268018",
+        "source_commit": "f7da956aee6f6f8eb1c4f261c255ad519915128b",
+        "ref": "codex/grafana-performance",
+        "inputs": {
+          "signal": "metrics",
+          "profiling": "cpu",
+          "deployment_target": "split",
+          "profiles_target": "all"
+        },
+        "status_at_dispatch_observation": "pending",
+        "diagnostic_only": true,
+        "latest_observed_status": "completed_success_verified",
+        "verified": {
+          "status": "image_and_cpu_profile_verified",
+          "image_provenance": {
+            "run_id": 37365268018,
+            "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37365268018",
+            "source_commit": "f7da956aee6f6f8eb1c4f261c255ad519915128b",
+            "artifact": {
+              "id": 11369650277,
+              "name": "comparison-image-metrics-f7da956aee6f6f8eb1c4f261c255ad519915128b",
+              "digest": "sha256:2ab4a266789b73e8c49719677283dc44410d7d1b5187fb4a3d7ee6846b0469c0",
+              "size_in_bytes": 308373702,
+              "expires_at": "2027-01-03T19:43:47Z"
+            },
+            "archive_digest_verified": true,
+            "all_image_file_checksums_verified": true,
+            "image_tag": "localhost/krabka-o11y:sha-f7da956aee6f",
+            "manifest_digest": "sha256:9ae38176078fce504380f994d687e34f8d0391fe7958edbfd9071dc8b01dd909",
+            "config_digest": "sha256:9ae38176078fce504380f994d687e34f8d0391fe7958edbfd9071dc8b01dd909"
+          },
+          "cpu_profile_provenance_path": "qualification/evidence/profiling/gcp-37365268018/provenance.json",
+          "cpu_profile_provenance_sha256": "2ed062c96c3db782f0ac61a6ad014416a001f032c5cf54e88a9c36685786d96b",
+          "raw_files_verified": 238,
+          "diagnostic_only": true,
+          "performance_qualified": false,
+          "binary_checksums_path": "qualification/evidence/profiling/gcp-37365268018/dense-block-metadata-candidate-image.binaries.json",
+          "binary_checksums_sha256": "b411806af1d779b1972d013bb918f6d04674aa4d43572db1e84d6a1f8b18d82d",
+          "runtime_snapshot_path": "qualification/evidence/profiling/gcp-37365268018/dense-block-metadata-candidate-image.runtime.json",
+          "runtime_snapshot_sha256": "e9ea134b46486372e561eef389a12182fffa9da5ba947ac979fde15d88c6cabd"
+        }
+      }
+    },
+    "production_diff_paths": [
+      "crates/blockstore/src/index/block_list.rs"
+    ],
+    "regression_diff_paths": [
+      "crates/blockstore/tests/block_metadata.rs"
+    ],
+    "dependency_configuration_equal": true,
+    "performance_qualified": false
+  },
+  "image_runtime_control": {
+    "verified": true,
+    "proof_path": "qualification/evidence/profiling/dense-block-metadata-image-pair.json",
+    "proof_sha256": "972e49ba70469b821b77e4d3992d2a2cc1bd9ceaf44444633162cd70584ab11c",
+    "runtime_config_equal": true,
+    "architecture_os_equal": true,
+    "base_layers_equal": true,
+    "filesystem_paths_checked": 380,
+    "all_non_application_binary_paths_equal": true,
+    "changed_application_binary_paths": [
+      "usr/local/bin/krabka-metrics",
+      "usr/local/bin/krabka-metrics-service",
+      "usr/local/bin/krabka-o11y-bootstrap",
+      "usr/local/bin/krabka-o11y-recovery",
+      "usr/local/bin/krabka-observability",
+      "usr/local/bin/krabka-profiles",
+      "usr/local/bin/krabka-traces"
+    ]
+  },
+  "next_action": "Keep the original metadata implementation and full ledger. No confirmation is planned for this rejected candidate. The running reuse and compiler experiments preserve equal dense metadata in both image sources and require separate final-source qualification.",
+  "gcp_comparison": {
+    "run_id": 37370310006,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37370310006",
+    "harness_head_sha": "8e85542b74b89e805f3235615fef9b405a037d4a",
+    "inputs": {
+      "signal": "metrics",
+      "profiling": "none",
+      "phases": "steady",
+      "phase_seconds": "60",
+      "repetitions": "3",
+      "deployment_target": "all",
+      "profiles_target": "all",
+      "image_artifact_run": "37365268018",
+      "image_artifact_name": "comparison-image-metrics-f7da956aee6f6f8eb1c4f261c255ad519915128b",
+      "baseline_image_artifact_run": "37365264758",
+      "baseline_image_artifact_name": "comparison-image-metrics-a2e9e16ebbd2df7fda125f186ee2e4bdb4615908"
+    },
+    "status_at_dispatch_observation": "queued",
+    "live_instances_at_dispatch": [],
+    "image_runtime_control_verified": true,
+    "same_shared_fingerprint_implementation": true,
+    "performance_qualified": false,
+    "limitations": "Both exact images contain the same subsequently rejected fingerprint fold and predate main 92989bb2 and cold fingerprint reuse. This run isolates dense metadata; it does not qualify current HEAD.",
+    "status": "measurement_verified",
+    "measurement_qualified": true,
+    "provenance": {
+      "run_id": 37370310006,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37370310006",
+      "head_sha": "8e85542b74b89e805f3235615fef9b405a037d4a",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111965528870,
+          "name": "compare (metrics)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37370310006/job/111965528870",
+          "runner_name": "gcp-runner-3040588ffed24118",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T20:33:31Z",
+          "completed_at": "2026-10-05T20:56:30Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11371052883,
+          "name": "grafana-comparison-metrics-8e85542b74b89e805f3235615fef9b405a037d4a-1",
+          "digest": "sha256:dba352320d9ea4718de3c70aa422a7316c813ebf6731b6b5eba87b1bf1dd22d7",
+          "size_in_bytes": 9234864,
+          "expires_at": "2027-01-03T20:31:51Z",
+          "signal": "metrics",
+          "verified_raw_files": 725
+        }
+      ]
+    },
+    "candidate_divided_by_baseline": {
+      "query_attempts": 1.0,
+      "average_cpu_cores": 1.009722565785448,
+      "rss_kib": 1.003381498818041,
+      "query_p99_seconds": 0.9808324247391894,
+      "ingest_p99_seconds": 0.9351421082010042
+    },
+    "summary": {
+      "baseline": {
+        "query_attempts": {
+          "median": 240,
+          "min": 240,
+          "max": 240,
+          "values": [
+            240,
+            240,
+            240
+          ]
+        },
+        "average_cpu_cores": {
+          "median": 0.1674090106565816,
+          "min": 0.16293736667419373,
+          "max": 0.16897701432895,
+          "values": [
+            0.1674090106565816,
+            0.16293736667419373,
+            0.16897701432895
+          ]
+        },
+        "rss_kib": {
+          "median": 511016,
+          "min": 495836,
+          "max": 514368,
+          "values": [
+            511016,
+            495836,
+            514368
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.021891084000003502,
+          "min": 0.02064252399986799,
+          "max": 0.02846677999991698,
+          "values": [
+            0.021891084000003502,
+            0.02064252399986799,
+            0.02846677999991698
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.030020540999998957,
+          "min": 0.02758546099994419,
+          "max": 0.08752448999985063,
+          "values": [
+            0.030020540999998957,
+            0.02758546099994419,
+            0.08752448999985063
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.03372106100953582,
+            "min": 0.032657935295185694,
+            "max": 0.03396073715313213,
+            "values": [
+              0.03372106100953582,
+              0.032657935295185694,
+              0.03396073715313213
+            ]
+          },
+          "metrics-block-builder": {
+            "median": 0.022211431663717994,
+            "min": 0.02115837029289769,
+            "max": 0.022253719452529373,
+            "values": [
+              0.022211431663717994,
+              0.02115837029289769,
+              0.022253719452529373
+            ]
+          },
+          "metrics-compactor": {
+            "median": 0.006210900557144413,
+            "min": 0.006084457145330082,
+            "max": 0.0063651936368600386,
+            "values": [
+              0.006210900557144413,
+              0.006084457145330082,
+              0.0063651936368600386
+            ]
+          },
+          "metrics-distributor": {
+            "median": 0.023831398954136097,
+            "min": 0.02318661008561639,
+            "max": 0.024048624800230445,
+            "values": [
+              0.024048624800230445,
+              0.02318661008561639,
+              0.023831398954136097
+            ]
+          },
+          "metrics-querier": {
+            "median": 0.038444420681691786,
+            "min": 0.03742729481811171,
+            "max": 0.03951874941232131,
+            "values": [
+              0.038444420681691786,
+              0.03742729481811171,
+              0.03951874941232131
+            ]
+          },
+          "minio": {
+            "median": 0.04277257194426114,
+            "min": 0.04242269903705214,
+            "max": 0.043047215719971055,
+            "values": [
+              0.04277257194426114,
+              0.04242269903705214,
+              0.043047215719971055
+            ]
+          }
+        }
+      },
+      "candidate": {
+        "query_attempts": {
+          "median": 240,
+          "min": 240,
+          "max": 240,
+          "values": [
+            240,
+            240,
+            240
+          ]
+        },
+        "average_cpu_cores": {
+          "median": 0.169036655775767,
+          "min": 0.16802148363223407,
+          "max": 0.1720712556144172,
+          "values": [
+            0.1720712556144172,
+            0.16802148363223407,
+            0.169036655775767
+          ]
+        },
+        "rss_kib": {
+          "median": 512744,
+          "min": 508044,
+          "max": 513252,
+          "values": [
+            512744,
+            513252,
+            508044
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.02147148499989271,
+          "min": 0.02058023399990816,
+          "max": 0.021483094000018355,
+          "values": [
+            0.021483094000018355,
+            0.02147148499989271,
+            0.02058023399990816
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.028073472000073707,
+          "min": 0.027989261000129773,
+          "max": 0.028890501999967455,
+          "values": [
+            0.028073472000073707,
+            0.028890501999967455,
+            0.027989261000129773
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.03384252397825645,
+            "min": 0.033731331243613084,
+            "max": 0.03429978248018945,
+            "values": [
+              0.03429978248018945,
+              0.03384252397825645,
+              0.033731331243613084
+            ]
+          },
+          "metrics-block-builder": {
+            "median": 0.022003114912561694,
+            "min": 0.021833005992258906,
+            "max": 0.02226319898490835,
+            "values": [
+              0.02226319898490835,
+              0.022003114912561694,
+              0.021833005992258906
+            ]
+          },
+          "metrics-compactor": {
+            "median": 0.006335245571681388,
+            "min": 0.006167863468265731,
+            "max": 0.006551688726391382,
+            "values": [
+              0.006551688726391382,
+              0.006167863468265731,
+              0.006335245571681388
+            ]
+          },
+          "metrics-distributor": {
+            "median": 0.024305461262250076,
+            "min": 0.02401057605634763,
+            "max": 0.024741560939315788,
+            "values": [
+              0.024741560939315788,
+              0.024305461262250076,
+              0.02401057605634763
+            ]
+          },
+          "metrics-querier": {
+            "median": 0.038773952504060814,
+            "min": 0.03803846473182659,
+            "max": 0.039437772817348546,
+            "values": [
+              0.039437772817348546,
+              0.03803846473182659,
+              0.038773952504060814
+            ]
+          },
+          "minio": {
+            "median": 0.044352544407805165,
+            "min": 0.043664055279073515,
+            "max": 0.044777251666263666,
+            "values": [
+              0.044777251666263666,
+              0.043664055279073515,
+              0.044352544407805165
+            ]
+          }
+        }
+      }
+    },
+    "pair_comparison": {
+      "average_cpu_cores": {
+        "candidate_divided_by_baseline": 1.009722565785448,
+        "candidate_lower_pairs": 0,
+        "pairs": 3,
+        "ranges_overlap": true
+      },
+      "rss_kib": {
+        "candidate_divided_by_baseline": 1.003381498818041,
+        "candidate_lower_pairs": 1,
+        "pairs": 3,
+        "ranges_overlap": true
+      },
+      "query_p99_seconds": {
+        "candidate_divided_by_baseline": 0.9808324247391894,
+        "candidate_lower_pairs": 2,
+        "pairs": 3,
+        "ranges_overlap": true
+      },
+      "ingest_p99_seconds": {
+        "candidate_divided_by_baseline": 0.9351421082010042,
+        "candidate_lower_pairs": 2,
+        "pairs": 3,
+        "ranges_overlap": true
+      }
+    },
+    "verified_pairs_path": "qualification/evidence/performance/gcp-37370310006/metrics/verified-revision-pairs.json",
+    "verified_pairs_sha256": "1e6c9c23c5bbd0d87549b555270281cce2d83dc3899d7cc8a90974c06a137b2f"
+  },
+  "restoration": {
+    "source_commit": "0c1e117a37b53d8f7098a4a75d3571e0fa9963ce",
+    "production_source_byte_equal_to": "a2e9e16ebbd2df7fda125f186ee2e4bdb4615908",
+    "production_source_sha256": "aaf1157eead62e4f92b93f2d77ddd561669edfc000c8a4c96e96f1809c32dad2",
+    "independent_full_metadata_ledger_retained": true,
+    "status": "passed",
+    "targets_passed": 7,
+    "provenance_path": "qualification/evidence/correctness/dense-block-metadata/restored-original-0c1e117a/provenance.json",
+    "provenance_sha256": "12f8d33f5eb5980b709060a0c065237258773083f2f5320ec12c41fcf04743e6"
+  }
+}

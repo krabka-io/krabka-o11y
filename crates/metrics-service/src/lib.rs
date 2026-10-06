@@ -50,6 +50,9 @@ use url::Url;
 
 #[cfg(test)]
 mod tests {
+    mod instant_float_scan;
+    mod owned_wal_replay;
+    mod parallel_manifest_reads;
     use std::{
         sync::{
             Arc,
@@ -436,7 +439,12 @@ mod tests {
         inner: Arc<InMemory>,
         list_calls: Arc<AtomicUsize>,
         get_calls: Arc<AtomicUsize>,
+        parquet_reads: Arc<AtomicUsize>,
+        parquet_keys: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
         list_delay: Time,
+        manifest_get_delay: Time,
+        manifest_active: Arc<AtomicUsize>,
+        manifest_peak: Arc<AtomicUsize>,
         retire_on_get: std::sync::Mutex<Option<ManifestRetirement>>,
     }
 
@@ -446,7 +454,12 @@ mod tests {
                 inner: Arc::new(InMemory::new()),
                 list_calls,
                 get_calls: Arc::new(AtomicUsize::new(0)),
+                parquet_reads: Arc::new(AtomicUsize::new(0)),
+                parquet_keys: Arc::new(std::sync::Mutex::new(std::collections::BTreeSet::new())),
                 list_delay,
+                manifest_get_delay: Time::ZERO,
+                manifest_active: Arc::new(AtomicUsize::new(0)),
+                manifest_peak: Arc::new(AtomicUsize::new(0)),
                 retire_on_get: std::sync::Mutex::new(None),
             }
         }
@@ -515,8 +528,34 @@ mod tests {
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("index"))
             {
                 self.get_calls.fetch_add(1, Ordering::SeqCst);
+                let active = self.manifest_active.fetch_add(1, Ordering::SeqCst) + 1;
+                self.manifest_peak.fetch_max(active, Ordering::SeqCst);
+                tokio::time::sleep(self.manifest_get_delay.to_std()).await;
+                self.manifest_active.fetch_sub(1, Ordering::SeqCst);
+            }
+            if !options.head && location.as_ref().ends_with(".parquet") {
+                self.parquet_reads.fetch_add(1, Ordering::SeqCst);
+                self.parquet_keys
+                    .lock()
+                    .unwrap()
+                    .insert(location.to_string());
             }
             self.inner.get_opts(location, options).await
+        }
+
+        async fn get_ranges(
+            &self,
+            location: &Path,
+            ranges: &[std::ops::Range<u64>],
+        ) -> object_store::Result<Vec<Bytes>> {
+            if location.as_ref().ends_with(".parquet") {
+                self.parquet_reads.fetch_add(ranges.len(), Ordering::SeqCst);
+                self.parquet_keys
+                    .lock()
+                    .unwrap()
+                    .insert(location.to_string());
+            }
+            self.inner.get_ranges(location, ranges).await
         }
 
         fn delete_stream(
@@ -745,6 +784,7 @@ mod tests {
             start_ms: 0,
             end_ms: 100,
             cold,
+            manifests: Vec::new(),
         };
         check!(cached.covers(0, 100, secs(3)));
         check!(!cached.covers(0, 100, secs(1)));
@@ -2459,6 +2499,64 @@ rules:
             get_calls.load(Ordering::SeqCst) == 2,
             "cold refresh should list for new manifest keys but not re-download known .index objects"
         );
+    }
+
+    #[tokio::test]
+    async fn advancing_query_windows_keep_footer_cache() {
+        let object_store = Arc::new(CountingObjectStore::new(
+            Arc::new(AtomicUsize::new(0)),
+            Time::ZERO,
+        ));
+        let parquet_reads = Arc::clone(&object_store.parquet_reads);
+        let store: Arc<dyn ObjectStore> = object_store;
+        let base = url::Url::parse("memory:///").unwrap();
+        let writer = krabka_blockstore::BlockStore::new(Arc::clone(&store), base.clone());
+        let sink = krabka_metrics::ObjectStoreCompactionIndexSink::new(Arc::clone(&store));
+        write_float_manifest(
+            &writer,
+            &sink,
+            "tenant-a",
+            "api",
+            10_000,
+            "metrics/tenant-a/float/cached.parquet",
+            1,
+        )
+        .await;
+        let engine = krabka_promql::PromqlEngine::new(
+            Arc::new(super::RefreshingMetricBlockStore::new(
+                store,
+                base,
+                "metrics",
+                krabka_promql::WalHead::new(),
+            )),
+            krabka_promql::EngineOpts::default(),
+        );
+        let tenant = krabka_blockstore::TenantId::new("tenant-a").unwrap();
+        let first = engine
+            .query_instant(&tenant, "sum(up)", 10_000)
+            .await
+            .unwrap();
+        let cold_reads = parquet_reads.swap(0, Ordering::SeqCst);
+        let second = engine
+            .query_instant(&tenant, "sum(up)", 11_000)
+            .await
+            .unwrap();
+        let warm_reads = parquet_reads.load(Ordering::SeqCst);
+        let value = |result| {
+            let krabka_promql::QueryResult::InstantVector(samples) = result else {
+                panic!("expected an instant vector");
+            };
+            samples
+                .into_iter()
+                .map(|sample| sample.value)
+                .collect::<Vec<_>>()
+        };
+        check!(value(first) == vec![krabka_promql::SampleValue::Float(1.0)]);
+        check!(value(second) == vec![krabka_promql::SampleValue::Float(1.0)]);
+        // This single-row block can answer the projection from its statistics.
+        // Only its footer needs a payload read, and the next window reuses it.
+        check!(cold_reads == 1);
+        check!(warm_reads == 0);
     }
 
     #[tokio::test]

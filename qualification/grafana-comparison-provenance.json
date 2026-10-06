@@ -1,0 +1,412 @@
+{
+  "scope": "Three paired repetitions per signal; discarded original metrics job is excluded",
+  "signals": {
+    "metrics": {
+      "run": 37215333087,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37215333087",
+      "run_conclusion": "success",
+      "job_id": 111474566237,
+      "job_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37215333087/job/111474566237",
+      "job_conclusion": "success",
+      "runner": "gcp-runner-f21daf23da7c4388",
+      "harness_commit": "67a30ac579bbf7a5f9db79641cb49337949ed0b0",
+      "artifact_id": 11309650738,
+      "artifact_name": "grafana-comparison-metrics-67a30ac579bbf7a5f9db79641cb49337949ed0b0-1",
+      "artifact_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37215333087/artifacts/11309650738",
+      "artifact_sha256": "32d1c813227ab84edd5609da8efd2d81e6a9a401d99f67d5c119b42d779877b4",
+      "verified_files": 890,
+      "artifact_expires": "2027-01-02T16:03:20Z",
+      "size_in_bytes": 40257703,
+      "gce_metadata_lines": [
+        "projects/328552641247/machineTypes/e2-standard-16",
+        "projects/328552641247/zones/us-central1-b",
+        "projects/robot-head/global/images/ubuntu-2404-lts-amd64-v2026-10-04-1791083478"
+      ]
+    },
+    "logs": {
+      "run": 37213464194,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37213464194",
+      "run_conclusion": "failure",
+      "job_id": 111469137964,
+      "job_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37213464194/job/111469137964",
+      "job_conclusion": "success",
+      "runner": "gcp-runner-daff1b88afb849e8",
+      "harness_commit": "ed6c3a479405169eba1008055f1bbed90f1a0a58",
+      "artifact_id": 11309066721,
+      "artifact_name": "grafana-comparison-logs-ed6c3a479405169eba1008055f1bbed90f1a0a58-1",
+      "artifact_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37213464194/artifacts/11309066721",
+      "artifact_sha256": "4a1c04e3193e86f13620a949d26cda7a68c3c2d44d4a76f62a05d450048340b4",
+      "verified_files": 901,
+      "artifact_expires": "2027-01-02T15:33:43Z",
+      "size_in_bytes": 29813763,
+      "gce_metadata_lines": [
+        "projects/328552641247/machineTypes/e2-standard-16",
+        "projects/328552641247/zones/us-central1-b",
+        "projects/robot-head/global/images/ubuntu-2404-lts-amd64-v2026-10-04-1791083478"
+      ]
+    },
+    "traces": {
+      "run": 37213464194,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37213464194",
+      "run_conclusion": "failure",
+      "job_id": 111474254858,
+      "job_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37213464194/job/111474254858",
+      "job_conclusion": "success",
+      "runner": "gcp-runner-16c6389e8186446d",
+      "harness_commit": "ed6c3a479405169eba1008055f1bbed90f1a0a58",
+      "artifact_id": 11310060363,
+      "artifact_name": "grafana-comparison-traces-ed6c3a479405169eba1008055f1bbed90f1a0a58-1",
+      "artifact_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37213464194/artifacts/11310060363",
+      "artifact_sha256": "ab781b02cdb4eea12c7be7adc66414c29a1006e3292c4ca5c95a3aafc5ed66d3",
+      "verified_files": 881,
+      "artifact_expires": "2027-01-02T15:33:43Z",
+      "size_in_bytes": 20394644,
+      "gce_metadata_lines": [
+        "projects/328552641247/machineTypes/e2-standard-16",
+        "projects/328552641247/zones/us-central1-b",
+        "projects/robot-head/global/images/ubuntu-2404-lts-amd64-v2026-10-04-1791083478"
+      ]
+    },
+    "profiles": {
+      "run": 37213464194,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37213464194",
+      "run_conclusion": "failure",
+      "job_id": 111479462459,
+      "job_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37213464194/job/111479462459",
+      "job_conclusion": "success",
+      "runner": "gcp-runner-b261ddde2fd149a6",
+      "harness_commit": "ed6c3a479405169eba1008055f1bbed90f1a0a58",
+      "artifact_id": 11310655586,
+      "artifact_name": "grafana-comparison-profiles-ed6c3a479405169eba1008055f1bbed90f1a0a58-1",
+      "artifact_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37213464194/artifacts/11310655586",
+      "artifact_sha256": "2c824131fa2acfea7dabeeac58e9ed97b2474c127e70485c91bcb3399a2cccbd",
+      "verified_files": 917,
+      "artifact_expires": "2027-01-02T15:33:43Z",
+      "size_in_bytes": 50842963,
+      "gce_metadata_lines": [
+        "projects/328552641247/machineTypes/e2-standard-16",
+        "projects/328552641247/zones/us-central1-b",
+        "projects/robot-head/global/images/ubuntu-2404-lts-amd64-v2026-10-04-1791083478"
+      ]
+    }
+  },
+  "schema_version": 1,
+  "measurement_date": "2026-10-04",
+  "qualified_krabka_image": {
+    "source_commit": "47ddda37177501c43c823f17db59ee149340b436",
+    "manifest_digest": "sha256:d9a83da975c23d56f2bcdb4f555978badcdf8687c2d3a4bf4079bbc2d34cddd3",
+    "oci_config_digest": "sha256:46118cc62d5800460c8e5964108581d355fe1e815315011b74ff969e8fcbf62c",
+    "docker_image_id": "sha256:d9a83da975c23d56f2bcdb4f555978badcdf8687c2d3a4bf4079bbc2d34cddd3",
+    "archive_sha256": "09af2dc5d62270fe1db6a9afe48c9699ce14bea2aa8ca1a8c216fa239cc70c8b",
+    "producer_run": {
+      "id": 37183330836,
+      "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37183330836",
+      "head_sha": "47ddda37177501c43c823f17db59ee149340b436",
+      "run_attempt": 1,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    "artifact": {
+      "id": 11295824757,
+      "name": "deployment-image-47ddda37177501c43c823f17db59ee149340b436",
+      "digest": "sha256:3abf8f62388dc007a08f6b768b969e6539c5043cceb5130145aa15ef8141f8e1",
+      "size_in_bytes": 309558417,
+      "created_at": "2026-10-04T06:56:24Z",
+      "expires_at": "2027-01-02T06:37:11Z"
+    }
+  },
+  "runner": {
+    "project": "robot-head",
+    "zone": "us-central1-b",
+    "manager": "https://github.com/Cyclenerd/google-cloud-github-runner",
+    "label": "gcp-ubuntu-24-04-16core",
+    "template": "gcp-ubuntu-24-04-16core-20261004031232486100000008",
+    "machine_type": "e2-standard-16",
+    "boot_disk_gb": 600,
+    "boot_disk_type": "pd-ssd"
+  },
+  "excluded_metrics_job": {
+    "run": 37213464194,
+    "harness_commit": "ed6c3a479405169eba1008055f1bbed90f1a0a58",
+    "reason": "Python encoder CPU starvation made telemetry and high-rate measurements invalid; rerun with byte-equivalent cached encoder",
+    "replacement_run": 37215333087
+  },
+  "upstream": {
+    "mimir": {
+      "release": "3.2.1",
+      "release_url": "https://github.com/grafana/mimir/releases/tag/mimir-3.2.1",
+      "release_tag_source_commit": "e49585d43c6e852225e114bd1ddd98da58a4c060",
+      "image_reference": "mirror.gcr.io/grafana/mimir@sha256:d42bfba7a8ef82a14b883a4cf235406324aeecae94c85eba000bdaa21aa2f289",
+      "docker_image_id": "sha256:d42bfba7a8ef82a14b883a4cf235406324aeecae94c85eba000bdaa21aa2f289",
+      "captured_version_banners": [
+        "mimir-1          | ts=2026-10-04T16:12:09.039525543Z caller=main.go:232 level=info msg=\"Starting application\" version=\"(version=3.2.1, branch=HEAD, revision=e49585d4)\""
+      ],
+      "effective_config_captured": true,
+      "effective_config_statuses": {
+        "1-mimir-burst/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "1-mimir-high_cardinality/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "1-mimir-steady/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "2-mimir-burst/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "2-mimir-high_cardinality/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "2-mimir-steady/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "3-mimir-burst/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "3-mimir-high_cardinality/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "3-mimir-steady/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        }
+      },
+      "effective_config_sha256": {
+        "1-mimir-burst/effective-config.txt": "04a11544d5d173a6db5822987c084cf90093080a43c93d3befcae24a5f3372f7",
+        "1-mimir-high_cardinality/effective-config.txt": "20bbb24e8f908cd3340e517a4cedd631ea597264cf33466201d5336bc37ce933",
+        "1-mimir-steady/effective-config.txt": "3576b4414538ea96549ec52d281a4c628b0692d92cc4d7acbb87f7c8690dc541",
+        "2-mimir-burst/effective-config.txt": "b3efd313e10b445346b39814b0e0f174698727b15be678eb4a2d0d2bd8008988",
+        "2-mimir-high_cardinality/effective-config.txt": "1f4618c094779ec1c063631af5442adf94d039a6bf731c7909309c244de60cff",
+        "2-mimir-steady/effective-config.txt": "53f9ca600e5076668ef71f272bb2883e7667cbd29295170bf927b7b68cb67f72",
+        "3-mimir-burst/effective-config.txt": "37fd6edcd2850689c1d2453ca7c9c2b28d53fa4ed4182d7816ae9012ee93621b",
+        "3-mimir-high_cardinality/effective-config.txt": "94efa60205c53aeee5c722f160f20c620b57b9715c5ef4acedecda8d727069f5",
+        "3-mimir-steady/effective-config.txt": "44c426479d231470a13395e60fb9baf56d7996f2af29c2e4c9f1b4dbed36d71a"
+      },
+      "input_config": {
+        "source_commit": "67a30ac579bbf7a5f9db79641cb49337949ed0b0",
+        "path": "deploy/compare/mimir.yaml",
+        "sha256": "ea77f126bf510029e83103e106e46b47919f5728505f7dc1fcd09ac093590d02"
+      }
+    },
+    "loki": {
+      "release": "3.7.8",
+      "release_url": "https://github.com/grafana/loki/releases/tag/v3.7.8",
+      "release_tag_source_commit": "09e6ce2ff1bdc19763a10265b870c86f51c98655",
+      "image_reference": "mirror.gcr.io/grafana/loki@sha256:81a6802ec4bd1b88c564494f06376889ed022998a188826190d26d2754ac2aae",
+      "docker_image_id": "sha256:81a6802ec4bd1b88c564494f06376889ed022998a188826190d26d2754ac2aae",
+      "captured_version_banners": [
+        "loki-1           | level=info ts=2026-10-04T15:47:06.833619442Z caller=main.go:146 msg=\"Starting Loki\" version=\"(version=3.7.8, branch=release-3.7.x, revision=09e6ce2f)\""
+      ],
+      "effective_config_captured": true,
+      "effective_config_statuses": {
+        "1-loki-burst/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "1-loki-high_cardinality/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "1-loki-steady/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "2-loki-burst/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "2-loki-high_cardinality/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "2-loki-steady/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "3-loki-burst/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "3-loki-high_cardinality/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        },
+        "3-loki-steady/effective-config-status.json": {
+          "path": "/config",
+          "status": 200
+        }
+      },
+      "effective_config_sha256": {
+        "1-loki-burst/effective-config.txt": "e27dc5b02425fad3cedc5638e291576d80c715e9e1d8290b35e0b74d6b133c21",
+        "1-loki-high_cardinality/effective-config.txt": "e174d33ca9ca9e84d7bfad8fe934f2bb53477804831334debef564021f94887b",
+        "1-loki-steady/effective-config.txt": "f35bf35a25c82f57cf1d835f2e8841e8204c6fba2bf43dd0cc5622771256bd62",
+        "2-loki-burst/effective-config.txt": "c62a3d6959deb74e0e3cb7b53a6f0c187ac5146a7dea9849f620687d553e354d",
+        "2-loki-high_cardinality/effective-config.txt": "27c4862a3cb40dd3f906e8bc788df54e977b8f7af9a719e0065ad7cd84ffae8f",
+        "2-loki-steady/effective-config.txt": "932e86caf1db70e88c4a24e7067aa5f00ef1932e403c4d087633374e2ce124c1",
+        "3-loki-burst/effective-config.txt": "48645dd3a8631754b015192b2d729d358b0e691efd6a3d6c6bfc7ab4874f0c44",
+        "3-loki-high_cardinality/effective-config.txt": "0e42d84f1de3f53d2c8bb65f67cf8cb43f775ba61a5af2119b7e264c869661e4",
+        "3-loki-steady/effective-config.txt": "b98bdbb452bffb65cf0105da973e121ac6338db98c5988d6e3b2b904e01e9f15"
+      },
+      "input_config": {
+        "source_commit": "ed6c3a479405169eba1008055f1bbed90f1a0a58",
+        "path": "deploy/compare/loki.yaml",
+        "sha256": "02e262c33a2b1265d62ab3ba6e83f7e0e045068705146417bc6b84ff4113579b"
+      }
+    },
+    "tempo": {
+      "release": "3.1.0",
+      "release_url": "https://github.com/grafana/tempo/releases/tag/v3.1.0",
+      "release_tag_source_commit": "77fc4563d1135d0ca2656709c7384c278a9c67b0",
+      "image_reference": "mirror.gcr.io/grafana/tempo@sha256:19dca9c0b1801209424a757cd5970d6ffd7cfc9a7f4966c2a6795fbe29b495a8",
+      "docker_image_id": "sha256:19dca9c0b1801209424a757cd5970d6ffd7cfc9a7f4966c2a6795fbe29b495a8",
+      "captured_version_banners": [
+        "tempo-1          | level=info ts=2026-10-04T16:11:44.732527981Z caller=main.go:105 msg=\"Starting Tempo\" version=\"(version=v3.1.0, branch=HEAD, revision=77fc4563d)\" target=all"
+      ],
+      "effective_config_captured": true,
+      "effective_config_statuses": {
+        "1-tempo-burst/effective-config-status.json": {
+          "path": "/status/config",
+          "status": 200
+        },
+        "1-tempo-high_cardinality/effective-config-status.json": {
+          "path": "/status/config",
+          "status": 200
+        },
+        "1-tempo-steady/effective-config-status.json": {
+          "path": "/status/config",
+          "status": 200
+        },
+        "2-tempo-burst/effective-config-status.json": {
+          "path": "/status/config",
+          "status": 200
+        },
+        "2-tempo-high_cardinality/effective-config-status.json": {
+          "path": "/status/config",
+          "status": 200
+        },
+        "2-tempo-steady/effective-config-status.json": {
+          "path": "/status/config",
+          "status": 200
+        },
+        "3-tempo-burst/effective-config-status.json": {
+          "path": "/status/config",
+          "status": 200
+        },
+        "3-tempo-high_cardinality/effective-config-status.json": {
+          "path": "/status/config",
+          "status": 200
+        },
+        "3-tempo-steady/effective-config-status.json": {
+          "path": "/status/config",
+          "status": 200
+        }
+      },
+      "effective_config_sha256": {
+        "1-tempo-burst/effective-config.txt": "1bf3a1e3a33403d1fdd0cc9c7122d1ee9b32ab6bc2bf386f0cd51e4acabd8325",
+        "1-tempo-high_cardinality/effective-config.txt": "c0a5a3a1f59218b8fa5fb56a74aadd52e90686f411688a19dd185ae8022129a3",
+        "1-tempo-steady/effective-config.txt": "f42971f9064c17cc2b0c8c3f855afdb0d8e91bbc1b20c97686b0b03ee9f8f1b2",
+        "2-tempo-burst/effective-config.txt": "18c791e497b5044c556beace2c81f753a1e7aa43fec55bc7cb7066081307bb85",
+        "2-tempo-high_cardinality/effective-config.txt": "3507ee4acfefd64800b7c1e6839288fb1cef21f294a4629447e17e33657cb47f",
+        "2-tempo-steady/effective-config.txt": "de95fc5ef793187ca63d3b4872bb8e71a3df0e36f77830666314476dbe6c466c",
+        "3-tempo-burst/effective-config.txt": "11a8cfbf9de7ed417394f9fc20f2702186904792fe2e2c72ce0bb77a5fdffdc0",
+        "3-tempo-high_cardinality/effective-config.txt": "8becc48bf33a8581ba8e381f6bdb2bb45b0304affb3646e0f687f6b2de8714fb",
+        "3-tempo-steady/effective-config.txt": "5f3ce1946580c82e3bfe5a76526b95907ee8102f055ef6f82108b70844bdf041"
+      },
+      "input_config": {
+        "source_commit": "ed6c3a479405169eba1008055f1bbed90f1a0a58",
+        "path": "deploy/compare/tempo.yaml",
+        "sha256": "06691366b3faf2052cd36bb7a03ba7d10d0ff6571f49bab0506d249dd568e556"
+      }
+    },
+    "pyroscope": {
+      "release": "2.3.1",
+      "release_url": "https://github.com/grafana/pyroscope/releases/tag/v2.3.1",
+      "release_tag_source_commit": "7aeaa0ff91e83538b3ff0d09bfefb168bddc022d",
+      "image_reference": "mirror.gcr.io/grafana/pyroscope@sha256:718b585ea168a616ca737018dbd1676992db9e5f1084ec4e9cd18f669326f334",
+      "docker_image_id": "sha256:718b585ea168a616ca737018dbd1676992db9e5f1084ec4e9cd18f669326f334",
+      "captured_version_banners": [
+        "pyroscope-1      | ts=2026-10-04T16:41:17.42265235Z caller=pyroscope.go:758 level=info msg=\"Pyroscope started\" version=\"(version=2.3.1, branch=HEAD, revision=7aeaa0ff9)\""
+      ],
+      "effective_config_captured": false,
+      "effective_config_statuses": {
+        "1-pyroscope-burst/effective-config-status.json": {
+          "path": "/config",
+          "status": 404
+        },
+        "1-pyroscope-high_cardinality/effective-config-status.json": {
+          "path": "/config",
+          "status": 404
+        },
+        "1-pyroscope-steady/effective-config-status.json": {
+          "path": "/config",
+          "status": 404
+        },
+        "2-pyroscope-burst/effective-config-status.json": {
+          "path": "/config",
+          "status": 404
+        },
+        "2-pyroscope-high_cardinality/effective-config-status.json": {
+          "path": "/config",
+          "status": 404
+        },
+        "2-pyroscope-steady/effective-config-status.json": {
+          "path": "/config",
+          "status": 404
+        },
+        "3-pyroscope-burst/effective-config-status.json": {
+          "path": "/config",
+          "status": 404
+        },
+        "3-pyroscope-high_cardinality/effective-config-status.json": {
+          "path": "/config",
+          "status": 404
+        },
+        "3-pyroscope-steady/effective-config-status.json": {
+          "path": "/config",
+          "status": 404
+        }
+      },
+      "effective_config_sha256": {
+        "1-pyroscope-burst/effective-config.txt": "b16e15764b8bc06c5c3f9f19bc8b99fa48e7894aa5a6ccdad65da49bbf564793",
+        "1-pyroscope-high_cardinality/effective-config.txt": "b16e15764b8bc06c5c3f9f19bc8b99fa48e7894aa5a6ccdad65da49bbf564793",
+        "1-pyroscope-steady/effective-config.txt": "b16e15764b8bc06c5c3f9f19bc8b99fa48e7894aa5a6ccdad65da49bbf564793",
+        "2-pyroscope-burst/effective-config.txt": "b16e15764b8bc06c5c3f9f19bc8b99fa48e7894aa5a6ccdad65da49bbf564793",
+        "2-pyroscope-high_cardinality/effective-config.txt": "b16e15764b8bc06c5c3f9f19bc8b99fa48e7894aa5a6ccdad65da49bbf564793",
+        "2-pyroscope-steady/effective-config.txt": "b16e15764b8bc06c5c3f9f19bc8b99fa48e7894aa5a6ccdad65da49bbf564793",
+        "3-pyroscope-burst/effective-config.txt": "b16e15764b8bc06c5c3f9f19bc8b99fa48e7894aa5a6ccdad65da49bbf564793",
+        "3-pyroscope-high_cardinality/effective-config.txt": "b16e15764b8bc06c5c3f9f19bc8b99fa48e7894aa5a6ccdad65da49bbf564793",
+        "3-pyroscope-steady/effective-config.txt": "b16e15764b8bc06c5c3f9f19bc8b99fa48e7894aa5a6ccdad65da49bbf564793"
+      },
+      "input_config": {
+        "source_commit": "ed6c3a479405169eba1008055f1bbed90f1a0a58",
+        "path": "deploy/compare/pyroscope.yaml",
+        "sha256": "3f3d7eb751dfe7fde59bae7fed487ddadfa323e051f07b7ac4206497c4fdc75a"
+      },
+      "effective_config_capture_note": "/config returned HTTP404. The mounted input YAML is fixed by its recorded source commit and hash; a full runtime configuration dump was not captured."
+    }
+  },
+  "validation": {
+    "comparison_self_test": "passed locally and in measurement jobs",
+    "deployment_envelope_self_test": "passed locally",
+    "repository_format": "passed",
+    "local_bazel_full_check": {
+      "command": "bazel test //...",
+      "status": "failed",
+      "failed_action": "DockerSave //bazel/images:grafana_previous",
+      "structural_tests_passed_before_failure": 13,
+      "disk_free_before_mib": 1500,
+      "disk_free_after_mib": 426,
+      "notes": "Full local run did not complete. Freshly generated Docker tar outputs from this check were removed; product code was not changed."
+    },
+    "artifact_digest_negative_control": "passed: an altered digest was rejected before summary publication"
+  }
+}

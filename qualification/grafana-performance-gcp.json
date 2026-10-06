@@ -1,0 +1,2954 @@
+{
+  "schema_version": 2,
+  "qualified": true,
+  "scope": "Single-node API-accepted steady load; different durability contracts; excludes ramps, HA and long-running production maintenance",
+  "aggregation": "Median, minimum, maximum and each of three paired 60-second repetitions; no confidence intervals",
+  "qualified_revision": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+  "runs": [
+    {
+      "run_id": 37268167393,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37268167393",
+      "head_sha": "a1b2743de6a66d23ac5702fd3dd3cc926c5d09d2",
+      "jobs": [
+        {
+          "id": 111629298498,
+          "name": "compare (traces)",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37268167393/job/111629298498",
+          "conclusion": "success",
+          "runner_name": "gcp-runner-4f21cefabf8746ba",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T05:32:38Z",
+          "completed_at": "2026-10-05T05:44:30Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11327940794,
+          "name": "grafana-comparison-traces-a1b2743de6a66d23ac5702fd3dd3cc926c5d09d2-1",
+          "digest": "sha256:3e7cf3fe31e49a2e9513a23710a02c35db7fce290c600ad095d8a7bc8fbe9486",
+          "size_in_bytes": 3041269,
+          "expires_at": "2027-01-03T05:31:28Z",
+          "signal": "traces",
+          "verified_raw_files": 239,
+          "reports": [
+            "qualification/evidence/performance/gcp-37268167393/traces/comparison-report.json"
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": 37268169814,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37268169814",
+      "head_sha": "a1b2743de6a66d23ac5702fd3dd3cc926c5d09d2",
+      "jobs": [
+        {
+          "id": 111629306032,
+          "name": "compare (profiles)",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37268169814/job/111629306032",
+          "conclusion": "success",
+          "runner_name": "gcp-runner-78bf4d0a65a14104",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T05:32:38Z",
+          "completed_at": "2026-10-05T05:48:07Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11327502011,
+          "name": "grafana-comparison-profiles-a1b2743de6a66d23ac5702fd3dd3cc926c5d09d2-1",
+          "digest": "sha256:6eb1802ab4e5d4831f416277a96b2d2176cd34ea01afe9fed50bc7e1d2b4f2cd",
+          "size_in_bytes": 5970972,
+          "expires_at": "2027-01-03T05:31:30Z",
+          "signal": "profiles",
+          "verified_raw_files": 245,
+          "reports": [
+            "qualification/evidence/performance/gcp-37268169814/profiles/comparison-report.json"
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": 37268825786,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37268825786",
+      "head_sha": "28c0b7419bd994650887978eb886c76b8d005293",
+      "jobs": [
+        {
+          "id": 111631276714,
+          "name": "compare (logs)",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37268825786/job/111631276714",
+          "conclusion": "success",
+          "runner_name": "gcp-runner-f89342b5a2364a9d",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T05:41:19Z",
+          "completed_at": "2026-10-05T05:53:04Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11327786552,
+          "name": "grafana-comparison-logs-28c0b7419bd994650887978eb886c76b8d005293-1",
+          "digest": "sha256:bda0745d5f830bbf51ced27b826d8ed124fe1c33a4a0ac32ee4aa1075e0c087f",
+          "size_in_bytes": 4755998,
+          "expires_at": "2027-01-03T05:40:29Z",
+          "signal": "logs",
+          "verified_raw_files": 239,
+          "reports": [
+            "qualification/evidence/performance/gcp-37268825786/logs/comparison-report.json"
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": 37289143258,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37289143258",
+      "head_sha": "114a027b253ce80476da684f03f4df01d41659ba",
+      "jobs": [
+        {
+          "id": 111695159087,
+          "name": "compare (metrics)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37289143258/job/111695159087",
+          "runner_name": "gcp-runner-2bcf8f3cb5b14fd4",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T09:19:41Z",
+          "completed_at": "2026-10-05T09:42:41Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11337310630,
+          "name": "grafana-comparison-metrics-114a027b253ce80476da684f03f4df01d41659ba-1",
+          "digest": "sha256:7b2043e1bfcb80ea627d547605369cc4b08c9d6c9f7af1fa8ad950f605ce030e",
+          "size_in_bytes": 9221626,
+          "expires_at": "2027-01-03T09:18:16Z",
+          "signal": "metrics",
+          "verified_raw_files": 725
+        }
+      ]
+    }
+  ],
+  "runner": {
+    "pool": "gcp-ubuntu-24-04-16core",
+    "provider": "https://github.com/Cyclenerd/google-cloud-github-runner",
+    "machine_type": "e2-standard-16",
+    "zone": "us-central1-b",
+    "pairing": "Both backends sequentially on each fresh VM, alternating order across three fresh deployment pairs"
+  },
+  "signals": {
+    "metrics": {
+      "run_id": 37289143258,
+      "source_commit": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+      "harness_commit": "114a027b253ce80476da684f03f4df01d41659ba",
+      "image_manifest_digest": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+      "image_config_digest": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+      "deployment_target": "split",
+      "native_product": "mimir",
+      "host": {
+        "cpu_count": 16,
+        "cpu_models": [
+          "AMD EPYC 7B12"
+        ],
+        "kernel": "7.0.0-1011-gcp"
+      },
+      "images": {
+        "krabka": {
+          "bootstrap": "localhost/krabka-o11y:sha-5b40aec6a591",
+          "broker": "ghcr.io/krabka-io/krabka-broker@sha256:54ae711e5a7c8bdb03414402722f5c41dd50980ab315ab84d0803cca775fb463",
+          "broker-format": "ghcr.io/krabka-io/krabka-broker@sha256:54ae711e5a7c8bdb03414402722f5c41dd50980ab315ab84d0803cca775fb463",
+          "broker-permissions": "localhost/krabka-o11y:sha-5b40aec6a591",
+          "metrics-block-builder": "localhost/krabka-o11y:sha-5b40aec6a591",
+          "metrics-distributor": "localhost/krabka-o11y:sha-5b40aec6a591",
+          "metrics-querier": "localhost/krabka-o11y:sha-5b40aec6a591",
+          "minio": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-buckets": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-permissions": "localhost/krabka-o11y:sha-5b40aec6a591",
+          "metrics-compactor": "localhost/krabka-o11y:sha-5b40aec6a591"
+        },
+        "mimir": {
+          "minio": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-buckets": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-permissions": "localhost/krabka-o11y:sha-5b40aec6a591",
+          "mimir": "mirror.gcr.io/grafana/mimir@sha256:d42bfba7a8ef82a14b883a4cf235406324aeecae94c85eba000bdaa21aa2f289"
+        }
+      },
+      "checks": [
+        {
+          "backend": "krabka",
+          "repetition": 1,
+          "deployment_target": "split",
+          "objectives_met": true,
+          "duration_seconds": 60.120320901000014,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 120000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 60,
+            "sampled_seconds": 60.11186170578003,
+            "coverage_fraction": 0.999859295574388,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.08260719773253232,
+            "external_cpu_cores_peak_window": 0.09426888125754705,
+            "cpu_seconds_by_role": {
+              "broker": 2.248471,
+              "metrics-block-builder": 1.414791,
+              "metrics-compactor": 0.41919,
+              "metrics-distributor": 1.58228,
+              "metrics-querier": 2.845707,
+              "minio": 2.76377
+            },
+            "throttled_seconds_by_role": {
+              "broker": 0.0,
+              "metrics-block-builder": 0.0,
+              "metrics-compactor": 0.0,
+              "metrics-distributor": 0.0,
+              "metrics-querier": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "mimir",
+          "repetition": 1,
+          "deployment_target": "native",
+          "objectives_met": true,
+          "duration_seconds": 60.16334630900002,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 120000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 60,
+            "sampled_seconds": 60.15425443649292,
+            "coverage_fraction": 0.9998488802058915,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.26789069911942687,
+            "external_cpu_cores_peak_window": 1.0716567021523733,
+            "cpu_seconds_by_role": {
+              "mimir": 18.386219,
+              "minio": 0.658824
+            },
+            "throttled_seconds_by_role": {
+              "mimir": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "mimir",
+          "repetition": 2,
+          "deployment_target": "native",
+          "objectives_met": true,
+          "duration_seconds": 60.134267421000004,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 120000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 60,
+            "sampled_seconds": 60.12447261810303,
+            "coverage_fraction": 0.9998371177813076,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.02256627193419212,
+            "external_cpu_cores_peak_window": 0.028001665527136666,
+            "cpu_seconds_by_role": {
+              "mimir": 14.380609,
+              "minio": 0.651984
+            },
+            "throttled_seconds_by_role": {
+              "mimir": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 2,
+          "deployment_target": "split",
+          "objectives_met": true,
+          "duration_seconds": 60.11307125800005,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 120000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 60,
+            "sampled_seconds": 60.10528826713562,
+            "coverage_fraction": 0.9998705274792727,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.2712327535730979,
+            "external_cpu_cores_peak_window": 1.0430431475695947,
+            "cpu_seconds_by_role": {
+              "broker": 2.291114,
+              "metrics-block-builder": 1.442872,
+              "metrics-compactor": 0.417691,
+              "metrics-distributor": 1.570653,
+              "metrics-querier": 2.900893,
+              "minio": 2.795953
+            },
+            "throttled_seconds_by_role": {
+              "broker": 0.0,
+              "metrics-block-builder": 0.0,
+              "metrics-compactor": 0.0,
+              "metrics-distributor": 0.0,
+              "metrics-querier": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 3,
+          "deployment_target": "split",
+          "objectives_met": true,
+          "duration_seconds": 60.10491501499996,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 120000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 60,
+            "sampled_seconds": 60.095669746398926,
+            "coverage_fraction": 0.9998461811550897,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.685448799735997,
+            "external_cpu_cores_peak_window": 1.7164486929653167,
+            "cpu_seconds_by_role": {
+              "broker": 2.299752,
+              "metrics-block-builder": 1.46322,
+              "metrics-compactor": 0.419496,
+              "metrics-distributor": 1.588357,
+              "metrics-querier": 2.945308,
+              "minio": 2.847102
+            },
+            "throttled_seconds_by_role": {
+              "broker": 0.0,
+              "metrics-block-builder": 0.0,
+              "metrics-compactor": 0.0,
+              "metrics-distributor": 0.0,
+              "metrics-querier": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "mimir",
+          "repetition": 3,
+          "deployment_target": "native",
+          "objectives_met": true,
+          "duration_seconds": 60.237947217000055,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 120000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 60,
+            "sampled_seconds": 60.229180335998535,
+            "coverage_fraction": 0.9998544624874095,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.03425532890353571,
+            "external_cpu_cores_peak_window": 0.0461423903306049,
+            "cpu_seconds_by_role": {
+              "mimir": 18.913108,
+              "minio": 0.71792
+            },
+            "throttled_seconds_by_role": {
+              "mimir": 0.0,
+              "minio": 0.0
+            }
+          }
+        }
+      ],
+      "telemetry_coverage": [
+        {
+          "repetition": 1,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 60,
+          "sampled_seconds": 60.11186170578003,
+          "coverage_fraction": 0.999859295574388,
+          "valid": true
+        },
+        {
+          "repetition": 1,
+          "backend": "mimir",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 60,
+          "sampled_seconds": 60.15425443649292,
+          "coverage_fraction": 0.9998488802058915,
+          "valid": true
+        },
+        {
+          "repetition": 2,
+          "backend": "mimir",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 60,
+          "sampled_seconds": 60.12447261810303,
+          "coverage_fraction": 0.9998371177813076,
+          "valid": true
+        },
+        {
+          "repetition": 2,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 60,
+          "sampled_seconds": 60.10528826713562,
+          "coverage_fraction": 0.9998705274792727,
+          "valid": true
+        },
+        {
+          "repetition": 3,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 60,
+          "sampled_seconds": 60.095669746398926,
+          "coverage_fraction": 0.9998461811550897,
+          "valid": true
+        },
+        {
+          "repetition": 3,
+          "backend": "mimir",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 60,
+          "sampled_seconds": 60.229180335998535,
+          "coverage_fraction": 0.9998544624874095,
+          "valid": true
+        }
+      ],
+      "backends": {
+        "krabka": {
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "steady": {
+            "rows_per_second": {
+              "median": 1996.2380475449422,
+              "min": 1995.9973300475842,
+              "max": 1996.5089372483505,
+              "values": [
+                1995.9973300475842,
+                1996.2380475449422,
+                1996.5089372483505
+              ]
+            },
+            "accepted_rows": {
+              "median": 120000,
+              "min": 120000,
+              "max": 120000,
+              "values": [
+                120000,
+                120000,
+                120000
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.03160224800001288,
+              "min": 0.03143596200004595,
+              "max": 0.03362522899999476,
+              "values": [
+                0.03160224800001288,
+                0.03143596200004595,
+                0.03362522899999476
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.02579296799990516,
+              "min": 0.025218401000074664,
+              "max": 0.026557123000003457,
+              "values": [
+                0.026557123000003457,
+                0.025218401000074664,
+                0.02579296799990516
+              ]
+            },
+            "query_attempts": {
+              "median": 240,
+              "min": 240,
+              "max": 240,
+              "values": [
+                240,
+                240,
+                240
+              ]
+            },
+            "cpu_seconds": {
+              "median": 11.419176,
+              "min": 11.274209,
+              "max": 11.563235,
+              "values": [
+                11.274209,
+                11.419176,
+                11.563235
+              ]
+            },
+            "rss_kib": {
+              "median": 496392,
+              "min": 495676,
+              "max": 515492,
+              "values": [
+                495676,
+                515492,
+                496392
+              ]
+            },
+            "cpu_seconds_per_million_rows": {
+              "median": 95.1598,
+              "min": 93.95174166666666,
+              "max": 96.36029166666667,
+              "values": [
+                93.95174166666666,
+                95.1598,
+                96.36029166666667
+              ]
+            },
+            "generator_cpu_seconds": {
+              "median": 0.9883011589999997,
+              "min": 0.9842603030000001,
+              "max": 1.0001185540000002,
+              "values": [
+                1.0001185540000002,
+                0.9883011589999997,
+                0.9842603030000001
+              ]
+            },
+            "s3_requests": {
+              "median": 1184.0,
+              "min": 1184.0,
+              "max": 1186.0,
+              "values": [
+                1184.0,
+                1184.0,
+                1186.0
+              ]
+            },
+            "s3_read_bytes": {
+              "median": 22273089.0,
+              "min": 22041446.0,
+              "max": 22281138.0,
+              "values": [
+                22273089.0,
+                22281138.0,
+                22041446.0
+              ]
+            },
+            "s3_write_bytes": {
+              "median": 4050098.0,
+              "min": 4050010.0,
+              "max": 4051284.0,
+              "values": [
+                4051284.0,
+                4050010.0,
+                4050098.0
+              ]
+            },
+            "duration_seconds": {
+              "median": 60.11307125800005,
+              "min": 60.10491501499996,
+              "max": 60.120320901000014,
+              "values": [
+                60.120320901000014,
+                60.11307125800005,
+                60.10491501499996
+              ]
+            },
+            "query_attempts_per_second": {
+              "median": 3.9924760950898843,
+              "min": 3.9919946600951683,
+              "max": 3.9930178744967013,
+              "values": [
+                3.9919946600951683,
+                3.9924760950898843,
+                3.9930178744967013
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.1899616133567672,
+              "min": 0.18752742551998705,
+              "max": 0.19238418350835776,
+              "values": [
+                0.18752742551998705,
+                0.1899616133567672,
+                0.19238418350835776
+              ]
+            },
+            "driver_average_cpu_cores": {
+              "median": 0.016440703133571356,
+              "min": 0.016375704095985582,
+              "max": 0.01663528302929209,
+              "values": [
+                0.01663528302929209,
+                0.016440703133571356,
+                0.016375704095985582
+              ]
+            }
+          }
+        },
+        "mimir": {
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "steady": {
+            "rows_per_second": {
+              "median": 1994.5699061298528,
+              "min": 1992.099756781456,
+              "max": 1995.5344123489524,
+              "values": [
+                1994.5699061298528,
+                1995.5344123489524,
+                1992.099756781456
+              ]
+            },
+            "accepted_rows": {
+              "median": 120000,
+              "min": 120000,
+              "max": 120000,
+              "values": [
+                120000,
+                120000,
+                120000
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.0104255599999874,
+              "min": 0.010234784999965996,
+              "max": 0.01123080000002119,
+              "values": [
+                0.0104255599999874,
+                0.010234784999965996,
+                0.01123080000002119
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.022682409000026382,
+              "min": 0.01875859900002297,
+              "max": 0.0241545389999942,
+              "values": [
+                0.0241545389999942,
+                0.01875859900002297,
+                0.022682409000026382
+              ]
+            },
+            "query_attempts": {
+              "median": 240,
+              "min": 240,
+              "max": 240,
+              "values": [
+                240,
+                240,
+                240
+              ]
+            },
+            "cpu_seconds": {
+              "median": 19.045043,
+              "min": 15.032593,
+              "max": 19.631028,
+              "values": [
+                19.045043,
+                15.032593,
+                19.631028
+              ]
+            },
+            "rss_kib": {
+              "median": 300160,
+              "min": 297052,
+              "max": 302880,
+              "values": [
+                302880,
+                300160,
+                297052
+              ]
+            },
+            "cpu_seconds_per_million_rows": {
+              "median": 158.70869166666665,
+              "min": 125.27160833333333,
+              "max": 163.5919,
+              "values": [
+                158.70869166666665,
+                125.27160833333333,
+                163.5919
+              ]
+            },
+            "generator_cpu_seconds": {
+              "median": 0.9001917240000001,
+              "min": 0.890621801,
+              "max": 0.9358016179999993,
+              "values": [
+                0.9001917240000001,
+                0.890621801,
+                0.9358016179999993
+              ]
+            },
+            "s3_requests": {
+              "median": 23.0,
+              "min": 23.0,
+              "max": 28.0,
+              "values": [
+                23.0,
+                23.0,
+                28.0
+              ]
+            },
+            "s3_read_bytes": {
+              "median": 6959.0,
+              "min": 6959.0,
+              "max": 8454.0,
+              "values": [
+                6959.0,
+                6959.0,
+                8454.0
+              ]
+            },
+            "s3_write_bytes": {
+              "median": 0.0,
+              "min": 0.0,
+              "max": 0.0,
+              "values": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            "duration_seconds": {
+              "median": 60.16334630900002,
+              "min": 60.134267421000004,
+              "max": 60.237947217000055,
+              "values": [
+                60.16334630900002,
+                60.134267421000004,
+                60.237947217000055
+              ]
+            },
+            "query_attempts_per_second": {
+              "median": 3.989139812259706,
+              "min": 3.984199513562912,
+              "max": 3.991068824697905,
+              "values": [
+                3.989139812259706,
+                3.991068824697905,
+                3.984199513562912
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.3165555802395751,
+              "min": 0.24998380531946648,
+              "max": 0.3258913842014163,
+              "values": [
+                0.3165555802395751,
+                0.24998380531946648,
+                0.3258913842014163
+              ]
+            },
+            "driver_average_cpu_cores": {
+              "median": 0.014962461020312923,
+              "min": 0.01481055376903084,
+              "max": 0.015535084796779097,
+              "values": [
+                0.014962461020312923,
+                0.01481055376903084,
+                0.015535084796779097
+              ]
+            }
+          }
+        }
+      },
+      "steady_krabka_divided_by_native": {
+        "average_cpu_cores": 0.6000892898902643,
+        "rss_kib": 1.6537579957356077,
+        "query_p99_seconds": 1.1371353016284627,
+        "ingest_p99_seconds": 3.0312278669012573
+      },
+      "harness_sha256": {
+        "compare-grafana.py": "f407e6f1a6730d35b395a207a3e567455bc4ac8dc379d1d0eac04acaf416be67",
+        "deployment-envelope.py": "184a1a12717fe93a25080df5e7b00d95e84f4f75a29e8be13c63170bcc5b2923",
+        "fuzz-corpus.py": "5e2def627007234cdf5ae081ed2f8b894bb9dd678daf4cc5578be7a903a33eeb"
+      },
+      "docker_image_id": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+      "oci_config_digest": "sha256:6fb26a50f075528482e962e0793c4e50f21c8b17daa47779dae691a7e4339ff0",
+      "reused_for_qualified_revision": false
+    },
+    "logs": {
+      "run_id": 37268825786,
+      "source_commit": "50f03683f5b7dc2a19bb55b00172f99bad6b24f5",
+      "harness_commit": "28c0b7419bd994650887978eb886c76b8d005293",
+      "image_manifest_digest": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "image_config_digest": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "deployment_target": "all",
+      "native_product": "loki",
+      "host": {
+        "cpu_count": 16,
+        "cpu_models": [
+          "AMD EPYC 7B12"
+        ],
+        "kernel": "7.0.0-1011-gcp"
+      },
+      "images": {
+        "krabka": {
+          "bootstrap": "localhost/krabka-o11y:sha-50f03683f5b7",
+          "broker": "ghcr.io/krabka-io/krabka-broker@sha256:54ae711e5a7c8bdb03414402722f5c41dd50980ab315ab84d0803cca775fb463",
+          "broker-format": "ghcr.io/krabka-io/krabka-broker@sha256:54ae711e5a7c8bdb03414402722f5c41dd50980ab315ab84d0803cca775fb463",
+          "broker-permissions": "localhost/krabka-o11y:sha-50f03683f5b7",
+          "minio": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-buckets": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-permissions": "localhost/krabka-o11y:sha-50f03683f5b7",
+          "logs-all": "localhost/krabka-o11y:sha-50f03683f5b7"
+        },
+        "loki": {
+          "minio": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-buckets": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-permissions": "localhost/krabka-o11y:sha-50f03683f5b7",
+          "loki": "docker.io/grafana/loki@sha256:81a6802ec4bd1b88c564494f06376889ed022998a188826190d26d2754ac2aae"
+        }
+      },
+      "checks": [
+        {
+          "backend": "krabka",
+          "repetition": 1,
+          "deployment_target": "all",
+          "objectives_met": true,
+          "duration_seconds": 60.62258633399999,
+          "service_cpu": 5.0,
+          "service_memory_gib": 5.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 120000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.59809494018555,
+            "coverage_fraction": 0.9995960021619746,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.05431442827119871,
+            "external_cpu_cores_peak_window": 0.06408408729105501,
+            "cpu_seconds_by_role": {
+              "broker": 2.309886,
+              "logs-all": 14.252838,
+              "minio": 1.284001
+            },
+            "throttled_seconds_by_role": {
+              "broker": 0.0,
+              "logs-all": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "loki",
+          "repetition": 1,
+          "deployment_target": "native",
+          "objectives_met": true,
+          "duration_seconds": 60.77618757900001,
+          "service_cpu": 5.0,
+          "service_memory_gib": 5.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 239,
+          "accepted_rows": 120000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.74893569946289,
+            "coverage_fraction": 0.9995516026815322,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.021540497540133662,
+            "external_cpu_cores_peak_window": 0.03304063495987693,
+            "cpu_seconds_by_role": {
+              "loki": 19.25003,
+              "minio": 1.135318
+            },
+            "throttled_seconds_by_role": {
+              "loki": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "loki",
+          "repetition": 2,
+          "deployment_target": "native",
+          "objectives_met": true,
+          "duration_seconds": 60.78054730500003,
+          "service_cpu": 5.0,
+          "service_memory_gib": 5.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 239,
+          "accepted_rows": 120000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.75207853317261,
+            "coverage_fraction": 0.9995316137631245,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.0223774308932934,
+            "external_cpu_cores_peak_window": 0.03944045516893913,
+            "cpu_seconds_by_role": {
+              "loki": 19.421946,
+              "minio": 1.127835
+            },
+            "throttled_seconds_by_role": {
+              "loki": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 2,
+          "deployment_target": "all",
+          "objectives_met": true,
+          "duration_seconds": 60.63588083099995,
+          "service_cpu": 5.0,
+          "service_memory_gib": 5.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 120000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.60923504829407,
+            "coverage_fraction": 0.9995605608042514,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.051252793712456654,
+            "external_cpu_cores_peak_window": 0.061585600535312805,
+            "cpu_seconds_by_role": {
+              "broker": 2.375738,
+              "logs-all": 15.000177,
+              "minio": 1.304582
+            },
+            "throttled_seconds_by_role": {
+              "broker": 0.0,
+              "logs-all": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 3,
+          "deployment_target": "all",
+          "objectives_met": true,
+          "duration_seconds": 60.67019972200001,
+          "service_cpu": 5.0,
+          "service_memory_gib": 5.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 239,
+          "accepted_rows": 120000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.64253067970276,
+            "coverage_fraction": 0.999543943444656,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.06877767957985342,
+            "external_cpu_cores_peak_window": 0.16754445657923653,
+            "cpu_seconds_by_role": {
+              "broker": 2.491474,
+              "logs-all": 14.875365,
+              "minio": 1.325709
+            },
+            "throttled_seconds_by_role": {
+              "broker": 0.0,
+              "logs-all": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "loki",
+          "repetition": 3,
+          "deployment_target": "native",
+          "objectives_met": true,
+          "duration_seconds": 60.79867474299999,
+          "service_cpu": 5.0,
+          "service_memory_gib": 5.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 239,
+          "accepted_rows": 120000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.768996238708496,
+            "coverage_fraction": 0.9995118560656634,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.027764788599968247,
+            "external_cpu_cores_peak_window": 0.037040415199859615,
+            "cpu_seconds_by_role": {
+              "loki": 20.835773,
+              "minio": 1.181746
+            },
+            "throttled_seconds_by_role": {
+              "loki": 0.0,
+              "minio": 0.0
+            }
+          }
+        }
+      ],
+      "telemetry_coverage": [
+        {
+          "repetition": 1,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.59809494018555,
+          "coverage_fraction": 0.9995960021619746,
+          "valid": true
+        },
+        {
+          "repetition": 1,
+          "backend": "loki",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.74893569946289,
+          "coverage_fraction": 0.9995516026815322,
+          "valid": true
+        },
+        {
+          "repetition": 2,
+          "backend": "loki",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.75207853317261,
+          "coverage_fraction": 0.9995316137631245,
+          "valid": true
+        },
+        {
+          "repetition": 2,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.60923504829407,
+          "coverage_fraction": 0.9995605608042514,
+          "valid": true
+        },
+        {
+          "repetition": 3,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.64253067970276,
+          "coverage_fraction": 0.999543943444656,
+          "valid": true
+        },
+        {
+          "repetition": 3,
+          "backend": "loki",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.768996238708496,
+          "coverage_fraction": 0.9995118560656634,
+          "valid": true
+        }
+      ],
+      "backends": {
+        "krabka": {
+          "service_cpu": 5.0,
+          "service_memory_gib": 5.0,
+          "steady": {
+            "rows_per_second": {
+              "median": 1979.026252367893,
+              "min": 1977.9067903164664,
+              "max": 1979.4602516438395,
+              "values": [
+                1979.4602516438395,
+                1979.026252367893,
+                1977.9067903164664
+              ]
+            },
+            "accepted_rows": {
+              "median": 120000,
+              "min": 120000,
+              "max": 120000,
+              "values": [
+                120000,
+                120000,
+                120000
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.06715703699995856,
+              "min": 0.06290778499999305,
+              "max": 0.08560925699998734,
+              "values": [
+                0.06290778499999305,
+                0.06715703699995856,
+                0.08560925699998734
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.05836718800003382,
+              "min": 0.05511122500001875,
+              "max": 0.058727078000003985,
+              "values": [
+                0.05511122500001875,
+                0.058727078000003985,
+                0.05836718800003382
+              ]
+            },
+            "query_attempts": {
+              "median": 240,
+              "min": 239,
+              "max": 240,
+              "values": [
+                240,
+                240,
+                239
+              ]
+            },
+            "cpu_seconds": {
+              "median": 18.680497,
+              "min": 17.846725,
+              "max": 18.692548,
+              "values": [
+                17.846725,
+                18.680497,
+                18.692548
+              ]
+            },
+            "rss_kib": {
+              "median": 407476,
+              "min": 406556,
+              "max": 407528,
+              "values": [
+                407476,
+                407528,
+                406556
+              ]
+            },
+            "cpu_seconds_per_million_rows": {
+              "median": 155.67080833333333,
+              "min": 148.72270833333334,
+              "max": 155.77123333333333,
+              "values": [
+                148.72270833333334,
+                155.67080833333333,
+                155.77123333333333
+              ]
+            },
+            "generator_cpu_seconds": {
+              "median": 1.0431103789999998,
+              "min": 1.021924119,
+              "max": 1.0765994560000003,
+              "values": [
+                1.021924119,
+                1.0431103789999998,
+                1.0765994560000003
+              ]
+            },
+            "s3_requests": {
+              "median": 265.0,
+              "min": 258.0,
+              "max": 265.0,
+              "values": [
+                258.0,
+                265.0,
+                265.0
+              ]
+            },
+            "s3_read_bytes": {
+              "median": 1526613.0,
+              "min": 1385519.0,
+              "max": 1526613.0,
+              "values": [
+                1385519.0,
+                1526613.0,
+                1526613.0
+              ]
+            },
+            "s3_write_bytes": {
+              "median": 1713629.0,
+              "min": 1713629.0,
+              "max": 1713629.0,
+              "values": [
+                1713629.0,
+                1713629.0,
+                1713629.0
+              ]
+            },
+            "duration_seconds": {
+              "median": 60.63588083099995,
+              "min": 60.62258633399999,
+              "max": 60.67019972200001,
+              "values": [
+                60.62258633399999,
+                60.63588083099995,
+                60.67019972200001
+              ]
+            },
+            "query_attempts_per_second": {
+              "median": 3.958052504735786,
+              "min": 3.939331024046962,
+              "max": 3.9589205032876786,
+              "values": [
+                3.9589205032876786,
+                3.958052504735786,
+                3.939331024046962
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.30807661641899725,
+              "min": 0.2943906896626533,
+              "max": 0.30810098014597065,
+              "values": [
+                0.2943906896626533,
+                0.30807661641899725,
+                0.30810098014597065
+              ]
+            },
+            "driver_average_cpu_cores": {
+              "median": 0.01720285686798685,
+              "min": 0.016857151447972073,
+              "max": 0.01774511145394512,
+              "values": [
+                0.016857151447972073,
+                0.01720285686798685,
+                0.01774511145394512
+              ]
+            }
+          }
+        },
+        "loki": {
+          "service_cpu": 5.0,
+          "service_memory_gib": 5.0,
+          "steady": {
+            "rows_per_second": {
+              "median": 1974.3158842883333,
+              "min": 1973.727231839311,
+              "max": 1974.45751009008,
+              "values": [
+                1974.45751009008,
+                1974.3158842883333,
+                1973.727231839311
+              ]
+            },
+            "accepted_rows": {
+              "median": 120000,
+              "min": 120000,
+              "max": 120000,
+              "values": [
+                120000,
+                120000,
+                120000
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.013604338000021698,
+              "min": 0.01266180200002509,
+              "max": 0.016282527000043956,
+              "values": [
+                0.013604338000021698,
+                0.01266180200002509,
+                0.016282527000043956
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.08336319499994715,
+              "min": 0.07603154800000311,
+              "max": 0.08580358900007923,
+              "values": [
+                0.07603154800000311,
+                0.08336319499994715,
+                0.08580358900007923
+              ]
+            },
+            "query_attempts": {
+              "median": 239,
+              "min": 239,
+              "max": 239,
+              "values": [
+                239,
+                239,
+                239
+              ]
+            },
+            "cpu_seconds": {
+              "median": 20.549781,
+              "min": 20.385348,
+              "max": 22.017519,
+              "values": [
+                20.385348,
+                20.549781,
+                22.017519
+              ]
+            },
+            "rss_kib": {
+              "median": 381236,
+              "min": 380076,
+              "max": 384120,
+              "values": [
+                381236,
+                380076,
+                384120
+              ]
+            },
+            "cpu_seconds_per_million_rows": {
+              "median": 171.248175,
+              "min": 169.8779,
+              "max": 183.479325,
+              "values": [
+                169.8779,
+                171.248175,
+                183.479325
+              ]
+            },
+            "generator_cpu_seconds": {
+              "median": 1.1807435610000003,
+              "min": 1.1760897,
+              "max": 1.2252426659999998,
+              "values": [
+                1.1760897,
+                1.1807435610000003,
+                1.2252426659999998
+              ]
+            },
+            "s3_requests": {
+              "median": 201.0,
+              "min": 201.0,
+              "max": 201.0,
+              "values": [
+                201.0,
+                201.0,
+                201.0
+              ]
+            },
+            "s3_read_bytes": {
+              "median": 241.0,
+              "min": 241.0,
+              "max": 241.0,
+              "values": [
+                241.0,
+                241.0,
+                241.0
+              ]
+            },
+            "s3_write_bytes": {
+              "median": 607031.0,
+              "min": 602934.0,
+              "max": 612597.0,
+              "values": [
+                607031.0,
+                602934.0,
+                612597.0
+              ]
+            },
+            "duration_seconds": {
+              "median": 60.78054730500003,
+              "min": 60.77618757900001,
+              "max": 60.79867474299999,
+              "values": [
+                60.77618757900001,
+                60.78054730500003,
+                60.79867474299999
+              ]
+            },
+            "query_attempts_per_second": {
+              "median": 3.9321791362075973,
+              "min": 3.9310067367466273,
+              "max": 3.932461207596076,
+              "values": [
+                3.932461207596076,
+                3.9321791362075973,
+                3.9310067367466273
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.3380979920578882,
+              "min": 0.3354166954533316,
+              "max": 0.36213814023199525,
+              "values": [
+                0.3354166954533316,
+                0.3380979920578882,
+                0.36213814023199525
+              ]
+            },
+            "driver_average_cpu_cores": {
+              "median": 0.019426339731278927,
+              "min": 0.019351159505871574,
+              "max": 0.02015245679579664,
+              "values": [
+                0.019351159505871574,
+                0.019426339731278927,
+                0.02015245679579664
+              ]
+            }
+          }
+        }
+      },
+      "steady_krabka_divided_by_native": {
+        "average_cpu_cores": 0.9112051051940268,
+        "rss_kib": 1.0688287569904207,
+        "query_p99_seconds": 0.7001553623283131,
+        "ingest_p99_seconds": 4.936442846381166
+      },
+      "harness_sha256": {
+        "compare-grafana.py": "f407e6f1a6730d35b395a207a3e567455bc4ac8dc379d1d0eac04acaf416be67",
+        "deployment-envelope.py": "184a1a12717fe93a25080df5e7b00d95e84f4f75a29e8be13c63170bcc5b2923",
+        "fuzz-corpus.py": "5e2def627007234cdf5ae081ed2f8b894bb9dd678daf4cc5578be7a903a33eeb"
+      },
+      "docker_image_id": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "oci_config_digest": "sha256:894c385ee87004feb760111cb6346c1b830d61a724e86a85be3bb90fa3af03b3",
+      "reused_for_qualified_revision": true
+    },
+    "traces": {
+      "run_id": 37268167393,
+      "source_commit": "50f03683f5b7dc2a19bb55b00172f99bad6b24f5",
+      "harness_commit": "a1b2743de6a66d23ac5702fd3dd3cc926c5d09d2",
+      "image_manifest_digest": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "image_config_digest": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "deployment_target": "all",
+      "native_product": "tempo",
+      "host": {
+        "cpu_count": 16,
+        "cpu_models": [
+          "Intel(R) Xeon(R) CPU @ 2.20GHz"
+        ],
+        "kernel": "7.0.0-1011-gcp"
+      },
+      "images": {
+        "krabka": {
+          "bootstrap": "localhost/krabka-o11y:sha-50f03683f5b7",
+          "broker": "ghcr.io/krabka-io/krabka-broker@sha256:54ae711e5a7c8bdb03414402722f5c41dd50980ab315ab84d0803cca775fb463",
+          "broker-format": "ghcr.io/krabka-io/krabka-broker@sha256:54ae711e5a7c8bdb03414402722f5c41dd50980ab315ab84d0803cca775fb463",
+          "broker-permissions": "localhost/krabka-o11y:sha-50f03683f5b7",
+          "minio": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-buckets": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-permissions": "localhost/krabka-o11y:sha-50f03683f5b7",
+          "traces-all": "localhost/krabka-o11y:sha-50f03683f5b7"
+        },
+        "tempo": {
+          "minio": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-buckets": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-permissions": "localhost/krabka-o11y:sha-50f03683f5b7",
+          "tempo": "mirror.gcr.io/grafana/tempo@sha256:19dca9c0b1801209424a757cd5970d6ffd7cfc9a7f4966c2a6795fbe29b495a8"
+        }
+      },
+      "checks": [
+        {
+          "backend": "krabka",
+          "repetition": 1,
+          "deployment_target": "all",
+          "objectives_met": true,
+          "duration_seconds": 60.758252799999994,
+          "service_cpu": 7.0,
+          "service_memory_gib": 7.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 234,
+          "accepted_rows": 12000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.743958473205566,
+            "coverage_fraction": 0.9997647344000908,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.052178355077041876,
+            "external_cpu_cores_peak_window": 0.062495137887258585,
+            "cpu_seconds_by_role": {
+              "broker": 1.287841,
+              "traces-all": 26.207681,
+              "minio": 5.328213
+            },
+            "throttled_seconds_by_role": {
+              "broker": 0.0,
+              "traces-all": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "tempo",
+          "repetition": 1,
+          "deployment_target": "native",
+          "objectives_met": true,
+          "duration_seconds": 60.644142638000005,
+          "service_cpu": 7.0,
+          "service_memory_gib": 7.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 232,
+          "accepted_rows": 12000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.62241816520691,
+            "coverage_fraction": 0.9996417712931853,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.030730821870599632,
+            "external_cpu_cores_peak_window": 0.04262333247615094,
+            "cpu_seconds_by_role": {
+              "tempo": 30.413178,
+              "minio": 10.329515
+            },
+            "throttled_seconds_by_role": {
+              "tempo": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "tempo",
+          "repetition": 2,
+          "deployment_target": "native",
+          "objectives_met": true,
+          "duration_seconds": 60.66610466099996,
+          "service_cpu": 7.0,
+          "service_memory_gib": 7.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 232,
+          "accepted_rows": 12000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.64440178871155,
+            "coverage_fraction": 0.9996422570328244,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.03933935535075346,
+            "external_cpu_cores_peak_window": 0.05242007303082622,
+            "cpu_seconds_by_role": {
+              "tempo": 31.164522,
+              "minio": 10.767021
+            },
+            "throttled_seconds_by_role": {
+              "tempo": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 2,
+          "deployment_target": "all",
+          "objectives_met": true,
+          "duration_seconds": 60.74217896800002,
+          "service_cpu": 7.0,
+          "service_memory_gib": 7.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 234,
+          "accepted_rows": 12000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.72417593002319,
+            "coverage_fraction": 0.9997036155389435,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.06300299304857969,
+            "external_cpu_cores_peak_window": 0.07297906319904028,
+            "cpu_seconds_by_role": {
+              "broker": 1.299595,
+              "traces-all": 27.178501,
+              "minio": 5.612175
+            },
+            "throttled_seconds_by_role": {
+              "broker": 0.0,
+              "traces-all": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 3,
+          "deployment_target": "all",
+          "objectives_met": true,
+          "duration_seconds": 60.84571065700004,
+          "service_cpu": 7.0,
+          "service_memory_gib": 7.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 234,
+          "accepted_rows": 12000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.824692487716675,
+            "coverage_fraction": 0.999654566130358,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.23847893534240752,
+            "external_cpu_cores_peak_window": 1.0434770372066144,
+            "cpu_seconds_by_role": {
+              "broker": 1.26926,
+              "traces-all": 27.422975,
+              "minio": 5.633781
+            },
+            "throttled_seconds_by_role": {
+              "broker": 0.0,
+              "traces-all": 0.0,
+              "minio": 0.0
+            }
+          }
+        },
+        {
+          "backend": "tempo",
+          "repetition": 3,
+          "deployment_target": "native",
+          "objectives_met": true,
+          "duration_seconds": 60.670985411999936,
+          "service_cpu": 7.0,
+          "service_memory_gib": 7.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 232,
+          "accepted_rows": 12000,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.649585485458374,
+            "coverage_fraction": 0.9996472790676426,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.03416403664451685,
+            "external_cpu_cores_peak_window": 0.043514060933961596,
+            "cpu_seconds_by_role": {
+              "tempo": 31.058899,
+              "minio": 10.605151
+            },
+            "throttled_seconds_by_role": {
+              "tempo": 0.0,
+              "minio": 0.0
+            }
+          }
+        }
+      ],
+      "telemetry_coverage": [
+        {
+          "repetition": 1,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.743958473205566,
+          "coverage_fraction": 0.9997647344000908,
+          "valid": true
+        },
+        {
+          "repetition": 1,
+          "backend": "tempo",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.62241816520691,
+          "coverage_fraction": 0.9996417712931853,
+          "valid": true
+        },
+        {
+          "repetition": 2,
+          "backend": "tempo",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.64440178871155,
+          "coverage_fraction": 0.9996422570328244,
+          "valid": true
+        },
+        {
+          "repetition": 2,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.72417593002319,
+          "coverage_fraction": 0.9997036155389435,
+          "valid": true
+        },
+        {
+          "repetition": 3,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.824692487716675,
+          "coverage_fraction": 0.999654566130358,
+          "valid": true
+        },
+        {
+          "repetition": 3,
+          "backend": "tempo",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.649585485458374,
+          "coverage_fraction": 0.9996472790676426,
+          "valid": true
+        }
+      ],
+      "backends": {
+        "krabka": {
+          "service_cpu": 7.0,
+          "service_memory_gib": 7.0,
+          "steady": {
+            "rows_per_second": {
+              "median": 197.5040335590427,
+              "min": 197.2201469984713,
+              "max": 197.55629784571605,
+              "values": [
+                197.5040335590427,
+                197.55629784571605,
+                197.2201469984713
+              ]
+            },
+            "accepted_rows": {
+              "median": 12000,
+              "min": 12000,
+              "max": 12000,
+              "values": [
+                12000,
+                12000,
+                12000
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.02519951799999376,
+              "min": 0.0194498849999718,
+              "max": 0.028633189000061066,
+              "values": [
+                0.02519951799999376,
+                0.0194498849999718,
+                0.028633189000061066
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.14536647400001357,
+              "min": 0.13641262999999526,
+              "max": 0.15281261300003735,
+              "values": [
+                0.13641262999999526,
+                0.14536647400001357,
+                0.15281261300003735
+              ]
+            },
+            "query_attempts": {
+              "median": 234,
+              "min": 234,
+              "max": 234,
+              "values": [
+                234,
+                234,
+                234
+              ]
+            },
+            "cpu_seconds": {
+              "median": 34.090271,
+              "min": 32.823735,
+              "max": 34.326016,
+              "values": [
+                32.823735,
+                34.090271,
+                34.326016
+              ]
+            },
+            "rss_kib": {
+              "median": 492184,
+              "min": 487004,
+              "max": 500144,
+              "values": [
+                492184,
+                487004,
+                500144
+              ]
+            },
+            "cpu_seconds_per_million_rows": {
+              "median": 2840.855916666667,
+              "min": 2735.31125,
+              "max": 2860.501333333333,
+              "values": [
+                2735.31125,
+                2840.855916666667,
+                2860.501333333333
+              ]
+            },
+            "generator_cpu_seconds": {
+              "median": 2.4085760930000006,
+              "min": 2.406745166,
+              "max": 2.413924166000001,
+              "values": [
+                2.406745166,
+                2.413924166000001,
+                2.4085760930000006
+              ]
+            },
+            "s3_requests": {
+              "median": 5044.0,
+              "min": 4822.0,
+              "max": 5051.0,
+              "values": [
+                4822.0,
+                5044.0,
+                5051.0
+              ]
+            },
+            "s3_read_bytes": {
+              "median": 11349420.0,
+              "min": 11098702.0,
+              "max": 11393220.0,
+              "values": [
+                11098702.0,
+                11393220.0,
+                11349420.0
+              ]
+            },
+            "s3_write_bytes": {
+              "median": 924844.0,
+              "min": 923212.0,
+              "max": 925892.0,
+              "values": [
+                923212.0,
+                925892.0,
+                924844.0
+              ]
+            },
+            "duration_seconds": {
+              "median": 60.758252799999994,
+              "min": 60.74217896800002,
+              "max": 60.84571065700004,
+              "values": [
+                60.758252799999994,
+                60.74217896800002,
+                60.84571065700004
+              ]
+            },
+            "query_attempts_per_second": {
+              "median": 3.851328654401333,
+              "min": 3.8457928664701906,
+              "max": 3.8523478079914626,
+              "values": [
+                3.851328654401333,
+                3.8523478079914626,
+                3.8457928664701906
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.5612289776097646,
+              "min": 0.5402350049144271,
+              "max": 0.5641484934493232,
+              "values": [
+                0.5402350049144271,
+                0.5612289776097646,
+                0.5641484934493232
+              ]
+            },
+            "driver_average_cpu_cores": {
+              "median": 0.03961182316947732,
+              "min": 0.03958497759320532,
+              "max": 0.039740493459605654,
+              "values": [
+                0.03961182316947732,
+                0.039740493459605654,
+                0.03958497759320532
+              ]
+            }
+          }
+        },
+        "tempo": {
+          "service_cpu": 7.0,
+          "service_memory_gib": 7.0,
+          "steady": {
+            "rows_per_second": {
+              "median": 197.80403022504203,
+              "min": 197.7881176399445,
+              "max": 197.87566412853735,
+              "values": [
+                197.87566412853735,
+                197.80403022504203,
+                197.7881176399445
+              ]
+            },
+            "accepted_rows": {
+              "median": 12000,
+              "min": 12000,
+              "max": 12000,
+              "values": [
+                12000,
+                12000,
+                12000
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.0040779230000111966,
+              "min": 0.0038672630000178287,
+              "max": 0.004347543999983827,
+              "values": [
+                0.0040779230000111966,
+                0.0038672630000178287,
+                0.004347543999983827
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.13851733100000274,
+              "min": 0.1342073669999877,
+              "max": 0.14097562399996377,
+              "values": [
+                0.1342073669999877,
+                0.14097562399996377,
+                0.13851733100000274
+              ]
+            },
+            "query_attempts": {
+              "median": 232,
+              "min": 232,
+              "max": 232,
+              "values": [
+                232,
+                232,
+                232
+              ]
+            },
+            "cpu_seconds": {
+              "median": 41.66405,
+              "min": 40.742693,
+              "max": 41.931543,
+              "values": [
+                40.742693,
+                41.931543,
+                41.66405
+              ]
+            },
+            "rss_kib": {
+              "median": 558652,
+              "min": 539204,
+              "max": 561856,
+              "values": [
+                558652,
+                561856,
+                539204
+              ]
+            },
+            "cpu_seconds_per_million_rows": {
+              "median": 3472.0041666666666,
+              "min": 3395.2244166666665,
+              "max": 3494.29525,
+              "values": [
+                3395.2244166666665,
+                3494.29525,
+                3472.0041666666666
+              ]
+            },
+            "generator_cpu_seconds": {
+              "median": 2.9127453279999997,
+              "min": 2.854330266,
+              "max": 2.9339153389999986,
+              "values": [
+                2.854330266,
+                2.9127453279999997,
+                2.9339153389999986
+              ]
+            },
+            "s3_requests": {
+              "median": 9244.0,
+              "min": 9225.0,
+              "max": 9300.0,
+              "values": [
+                9244.0,
+                9225.0,
+                9300.0
+              ]
+            },
+            "s3_read_bytes": {
+              "median": 26369036.0,
+              "min": 26171147.0,
+              "max": 26456140.0,
+              "values": [
+                26171147.0,
+                26369036.0,
+                26456140.0
+              ]
+            },
+            "s3_write_bytes": {
+              "median": 1187636.0,
+              "min": 1187594.0,
+              "max": 1188043.0,
+              "values": [
+                1187594.0,
+                1187636.0,
+                1188043.0
+              ]
+            },
+            "duration_seconds": {
+              "median": 60.66610466099996,
+              "min": 60.644142638000005,
+              "max": 60.670985411999936,
+              "values": [
+                60.644142638000005,
+                60.66610466099996,
+                60.670985411999936
+              ]
+            },
+            "query_attempts_per_second": {
+              "median": 3.8242112510174793,
+              "min": 3.8239036077055935,
+              "max": 3.8255961731517223,
+              "values": [
+                3.8255961731517223,
+                3.8242112510174793,
+                3.8239036077055935
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.6867211685630442,
+              "min": 0.6718322863133426,
+              "max": 0.6911856832462208,
+              "values": [
+                0.6718322863133426,
+                0.6911856832462208,
+                0.6867211685630442
+              ]
+            },
+            "driver_average_cpu_cores": {
+              "median": 0.04801273040813016,
+              "min": 0.04706687475224455,
+              "max": 0.04835779935131412,
+              "values": [
+                0.04706687475224455,
+                0.04801273040813016,
+                0.04835779935131412
+              ]
+            }
+          }
+        }
+      },
+      "steady_krabka_divided_by_native": {
+        "average_cpu_cores": 0.8172588865785652,
+        "rss_kib": 0.8810207427879968,
+        "query_p99_seconds": 1.0494461086606606,
+        "ingest_p99_seconds": 6.1794982396490985
+      },
+      "harness_sha256": {
+        "compare-grafana.py": "5dc63ccb85653c2076ccae0e0388a29970f56b20a210ce024f13ed35365fc2fb",
+        "deployment-envelope.py": "184a1a12717fe93a25080df5e7b00d95e84f4f75a29e8be13c63170bcc5b2923",
+        "fuzz-corpus.py": "5e2def627007234cdf5ae081ed2f8b894bb9dd678daf4cc5578be7a903a33eeb"
+      },
+      "docker_image_id": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "oci_config_digest": "sha256:894c385ee87004feb760111cb6346c1b830d61a724e86a85be3bb90fa3af03b3",
+      "reused_for_qualified_revision": true
+    },
+    "profiles": {
+      "run_id": 37268169814,
+      "source_commit": "50f03683f5b7dc2a19bb55b00172f99bad6b24f5",
+      "harness_commit": "a1b2743de6a66d23ac5702fd3dd3cc926c5d09d2",
+      "image_manifest_digest": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "image_config_digest": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "deployment_target": "all",
+      "native_product": "pyroscope",
+      "host": {
+        "cpu_count": 16,
+        "cpu_models": [
+          "AMD EPYC 7B12"
+        ],
+        "kernel": "7.0.0-1011-gcp"
+      },
+      "images": {
+        "krabka": {
+          "bootstrap": "localhost/krabka-o11y:sha-50f03683f5b7",
+          "broker": "ghcr.io/krabka-io/krabka-broker@sha256:54ae711e5a7c8bdb03414402722f5c41dd50980ab315ab84d0803cca775fb463",
+          "broker-format": "ghcr.io/krabka-io/krabka-broker@sha256:54ae711e5a7c8bdb03414402722f5c41dd50980ab315ab84d0803cca775fb463",
+          "broker-permissions": "localhost/krabka-o11y:sha-50f03683f5b7",
+          "minio": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-buckets": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-permissions": "localhost/krabka-o11y:sha-50f03683f5b7",
+          "profiles-all": "localhost/krabka-o11y:sha-50f03683f5b7"
+        },
+        "pyroscope": {
+          "minio": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-buckets": "cgr.dev/chainguard/minio@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba",
+          "minio-permissions": "localhost/krabka-o11y:sha-50f03683f5b7",
+          "pyroscope": "mirror.gcr.io/grafana/pyroscope@sha256:718b585ea168a616ca737018dbd1676992db9e5f1084ec4e9cd18f669326f334"
+        }
+      },
+      "checks": [
+        {
+          "backend": "krabka",
+          "repetition": 1,
+          "deployment_target": "all",
+          "objectives_met": true,
+          "duration_seconds": 60.634384116999996,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 1200,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.62559628486633,
+            "coverage_fraction": 0.999855068501781,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.19339906518868902,
+            "external_cpu_cores_peak_window": 0.8845038754944224,
+            "cpu_seconds_by_role": {
+              "broker": 1.262151,
+              "profiles-all": 3.752171,
+              "minio": 3.482082
+            },
+            "throttled_seconds_by_role": {
+              "broker": 0.0,
+              "profiles-all": 0.0,
+              "minio": 0.0
+            }
+          },
+          "immutable_seed": {
+            "expected": 1000,
+            "immediate": 1000,
+            "after_20_second_handoff": 1000
+          }
+        },
+        {
+          "backend": "pyroscope",
+          "repetition": 1,
+          "deployment_target": "native",
+          "objectives_met": true,
+          "duration_seconds": 60.95175084099998,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 1200,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.94306397438049,
+            "coverage_fraction": 0.9998574796211819,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.03558637243627413,
+            "external_cpu_cores_peak_window": 0.046381668880463155,
+            "cpu_seconds_by_role": {
+              "pyroscope": 15.882358,
+              "minio": 4.198522
+            },
+            "throttled_seconds_by_role": {
+              "pyroscope": 0.0,
+              "minio": 0.0
+            }
+          },
+          "immutable_seed": {
+            "expected": 1000,
+            "immediate": 1000,
+            "after_20_second_handoff": 1000
+          }
+        },
+        {
+          "backend": "pyroscope",
+          "repetition": 2,
+          "deployment_target": "native",
+          "objectives_met": true,
+          "duration_seconds": 60.90844710099998,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 1200,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.8999400138855,
+            "coverage_fraction": 0.9998603299292728,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.02637423218534823,
+            "external_cpu_cores_peak_window": 0.03275907218710316,
+            "cpu_seconds_by_role": {
+              "pyroscope": 15.371079,
+              "minio": 4.095571
+            },
+            "throttled_seconds_by_role": {
+              "pyroscope": 0.0,
+              "minio": 0.0
+            }
+          },
+          "immutable_seed": {
+            "expected": 1000,
+            "immediate": 1000,
+            "after_20_second_handoff": 1000
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 2,
+          "deployment_target": "all",
+          "objectives_met": true,
+          "duration_seconds": 60.57827340100005,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 1200,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.570209980010986,
+            "coverage_fraction": 0.9998668925253831,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.1886800740293207,
+            "external_cpu_cores_peak_window": 0.7386071803318078,
+            "cpu_seconds_by_role": {
+              "broker": 1.225133,
+              "profiles-all": 3.538403,
+              "minio": 3.162974
+            },
+            "throttled_seconds_by_role": {
+              "broker": 0.0,
+              "profiles-all": 0.0,
+              "minio": 0.0
+            }
+          },
+          "immutable_seed": {
+            "expected": 1000,
+            "immediate": 1000,
+            "after_20_second_handoff": 1000
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 3,
+          "deployment_target": "all",
+          "objectives_met": true,
+          "duration_seconds": 60.592777802,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 1200,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.58509564399719,
+            "coverage_fraction": 0.9998732166063106,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.04718464273454107,
+            "external_cpu_cores_peak_window": 0.06417058085184434,
+            "cpu_seconds_by_role": {
+              "broker": 1.232677,
+              "profiles-all": 3.589772,
+              "minio": 3.33281
+            },
+            "throttled_seconds_by_role": {
+              "broker": 0.0,
+              "profiles-all": 0.0,
+              "minio": 0.0
+            }
+          },
+          "immutable_seed": {
+            "expected": 1000,
+            "immediate": 1000,
+            "after_20_second_handoff": 1000
+          }
+        },
+        {
+          "backend": "pyroscope",
+          "repetition": 3,
+          "deployment_target": "native",
+          "objectives_met": true,
+          "duration_seconds": 60.898345103,
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "minio_cpu": 2,
+          "minio_memory_gib": 2,
+          "ingest_errors": 0,
+          "query_errors": 0,
+          "empty_queries": 0,
+          "query_attempts": 240,
+          "accepted_rows": 1200,
+          "telemetry_scrape_errors": 0,
+          "resources": {
+            "sample_count": 61,
+            "sampled_seconds": 60.89042854309082,
+            "coverage_fraction": 0.9998700036939299,
+            "host_activity_qualified": true,
+            "external_cpu_cores_mean": 0.03039463298719034,
+            "external_cpu_cores_peak_window": 0.03741536290765576,
+            "cpu_seconds_by_role": {
+              "pyroscope": 15.464542,
+              "minio": 4.193605
+            },
+            "throttled_seconds_by_role": {
+              "pyroscope": 0.0,
+              "minio": 0.0
+            }
+          },
+          "immutable_seed": {
+            "expected": 1000,
+            "immediate": 1000,
+            "after_20_second_handoff": 1000
+          }
+        }
+      ],
+      "telemetry_coverage": [
+        {
+          "repetition": 1,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.62559628486633,
+          "coverage_fraction": 0.999855068501781,
+          "valid": true
+        },
+        {
+          "repetition": 1,
+          "backend": "pyroscope",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.94306397438049,
+          "coverage_fraction": 0.9998574796211819,
+          "valid": true
+        },
+        {
+          "repetition": 2,
+          "backend": "pyroscope",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.8999400138855,
+          "coverage_fraction": 0.9998603299292728,
+          "valid": true
+        },
+        {
+          "repetition": 2,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.570209980010986,
+          "coverage_fraction": 0.9998668925253831,
+          "valid": true
+        },
+        {
+          "repetition": 3,
+          "backend": "krabka",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.58509564399719,
+          "coverage_fraction": 0.9998732166063106,
+          "valid": true
+        },
+        {
+          "repetition": 3,
+          "backend": "pyroscope",
+          "phase": "steady",
+          "level": 2,
+          "sample_count": 61,
+          "sampled_seconds": 60.89042854309082,
+          "coverage_fraction": 0.9998700036939299,
+          "valid": true
+        }
+      ],
+      "backends": {
+        "krabka": {
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "steady": {
+            "rows_per_second": {
+              "median": 19.80434044336537,
+              "min": 19.79075103136996,
+              "max": 19.809082244001196,
+              "values": [
+                19.79075103136996,
+                19.809082244001196,
+                19.80434044336537
+              ]
+            },
+            "accepted_rows": {
+              "median": 1200,
+              "min": 1200,
+              "max": 1200,
+              "values": [
+                1200,
+                1200,
+                1200
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.018162689000064347,
+              "min": 0.017169614000010824,
+              "max": 0.01911802799997986,
+              "values": [
+                0.017169614000010824,
+                0.01911802799997986,
+                0.018162689000064347
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.021505781000087154,
+              "min": 0.02035308899996835,
+              "max": 0.022995868999998947,
+              "values": [
+                0.022995868999998947,
+                0.02035308899996835,
+                0.021505781000087154
+              ]
+            },
+            "query_attempts": {
+              "median": 240,
+              "min": 240,
+              "max": 240,
+              "values": [
+                240,
+                240,
+                240
+              ]
+            },
+            "cpu_seconds": {
+              "median": 8.155259,
+              "min": 7.92651,
+              "max": 8.496404,
+              "values": [
+                8.496404,
+                7.92651,
+                8.155259
+              ]
+            },
+            "rss_kib": {
+              "median": 368812,
+              "min": 366852,
+              "max": 371304,
+              "values": [
+                371304,
+                366852,
+                368812
+              ]
+            },
+            "cpu_seconds_per_million_rows": {
+              "median": 6796.049166666666,
+              "min": 6605.425,
+              "max": 7080.336666666667,
+              "values": [
+                7080.336666666667,
+                6605.425,
+                6796.049166666666
+              ]
+            },
+            "generator_cpu_seconds": {
+              "median": 0.6960549070000006,
+              "min": 0.6750982969999999,
+              "max": 0.738662352,
+              "values": [
+                0.738662352,
+                0.6750982969999999,
+                0.6960549070000006
+              ]
+            },
+            "s3_requests": {
+              "median": 2336.0,
+              "min": 2217.0,
+              "max": 2339.0,
+              "values": [
+                2336.0,
+                2217.0,
+                2339.0
+              ]
+            },
+            "s3_read_bytes": {
+              "median": 4225672.0,
+              "min": 3990786.0,
+              "max": 4238608.0,
+              "values": [
+                4225672.0,
+                3990786.0,
+                4238608.0
+              ]
+            },
+            "s3_write_bytes": {
+              "median": 538222.0,
+              "min": 524199.0,
+              "max": 538322.0,
+              "values": [
+                538322.0,
+                524199.0,
+                538222.0
+              ]
+            },
+            "duration_seconds": {
+              "median": 60.592777802,
+              "min": 60.57827340100005,
+              "max": 60.634384116999996,
+              "values": [
+                60.634384116999996,
+                60.57827340100005,
+                60.592777802
+              ]
+            },
+            "query_attempts_per_second": {
+              "median": 3.960868088673074,
+              "min": 3.958150206273992,
+              "max": 3.9618164488002394,
+              "values": [
+                3.958150206273992,
+                3.9618164488002394,
+                3.960868088673074
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.13459127136651616,
+              "min": 0.1308474070815816,
+              "max": 0.14012518018827988,
+              "values": [
+                0.14012518018827988,
+                0.1308474070815816,
+                0.13459127136651616
+              ]
+            },
+            "driver_average_cpu_cores": {
+              "median": 0.011487423621252527,
+              "min": 0.011144231406715121,
+              "max": 0.0121822355872318,
+              "values": [
+                0.0121822355872318,
+                0.011144231406715121,
+                0.011487423621252527
+              ]
+            }
+          }
+        },
+        "pyroscope": {
+          "service_cpu": 6.0,
+          "service_memory_gib": 6.0,
+          "steady": {
+            "rows_per_second": {
+              "median": 19.701700783967265,
+              "min": 19.687703526849383,
+              "max": 19.704968960492906,
+              "values": [
+                19.687703526849383,
+                19.701700783967265,
+                19.704968960492906
+              ]
+            },
+            "accepted_rows": {
+              "median": 1200,
+              "min": 1200,
+              "max": 1200,
+              "values": [
+                1200,
+                1200,
+                1200
+              ]
+            },
+            "ingest_p99_seconds": {
+              "median": 0.3582459279999739,
+              "min": 0.35269954900002176,
+              "max": 0.3596605979999481,
+              "values": [
+                0.3596605979999481,
+                0.35269954900002176,
+                0.3582459279999739
+              ]
+            },
+            "query_p99_seconds": {
+              "median": 0.02367218100005175,
+              "min": 0.022506991000000198,
+              "max": 0.02407246100000293,
+              "values": [
+                0.02407246100000293,
+                0.022506991000000198,
+                0.02367218100005175
+              ]
+            },
+            "query_attempts": {
+              "median": 240,
+              "min": 240,
+              "max": 240,
+              "values": [
+                240,
+                240,
+                240
+              ]
+            },
+            "cpu_seconds": {
+              "median": 19.658147,
+              "min": 19.46665,
+              "max": 20.08088,
+              "values": [
+                20.08088,
+                19.46665,
+                19.658147
+              ]
+            },
+            "rss_kib": {
+              "median": 415408,
+              "min": 413820,
+              "max": 415892,
+              "values": [
+                415408,
+                415892,
+                413820
+              ]
+            },
+            "cpu_seconds_per_million_rows": {
+              "median": 16381.789166666667,
+              "min": 16222.208333333334,
+              "max": 16734.066666666666,
+              "values": [
+                16734.066666666666,
+                16222.208333333334,
+                16381.789166666667
+              ]
+            },
+            "generator_cpu_seconds": {
+              "median": 0.8371608419999998,
+              "min": 0.8211107719999999,
+              "max": 0.8603774279999998,
+              "values": [
+                0.8603774279999998,
+                0.8371608419999998,
+                0.8211107719999999
+              ]
+            },
+            "s3_requests": {
+              "median": 5061.0,
+              "min": 4988.0,
+              "max": 5074.0,
+              "values": [
+                5074.0,
+                4988.0,
+                5061.0
+              ]
+            },
+            "s3_read_bytes": {
+              "median": 48174613.0,
+              "min": 47668465.0,
+              "max": 48312060.0,
+              "values": [
+                48312060.0,
+                47668465.0,
+                48174613.0
+              ]
+            },
+            "s3_write_bytes": {
+              "median": 602550.0,
+              "min": 602549.0,
+              "max": 602553.0,
+              "values": [
+                602549.0,
+                602550.0,
+                602553.0
+              ]
+            },
+            "duration_seconds": {
+              "median": 60.90844710099998,
+              "min": 60.898345103,
+              "max": 60.95175084099998,
+              "values": [
+                60.95175084099998,
+                60.90844710099998,
+                60.898345103
+              ]
+            },
+            "query_attempts_per_second": {
+              "median": 3.9403401567934533,
+              "min": 3.937540705369876,
+              "max": 3.9409937920985807,
+              "values": [
+                3.937540705369876,
+                3.9403401567934533,
+                3.9409937920985807
+              ]
+            },
+            "average_cpu_cores": {
+              "median": 0.3228026470465056,
+              "min": 0.31960509463851366,
+              "max": 0.329455343331866,
+              "values": [
+                0.329455343331866,
+                0.31960509463851366,
+                0.3228026470465056
+              ]
+            },
+            "driver_average_cpu_cores": {
+              "median": 0.013744577014281745,
+              "min": 0.013483301896155304,
+              "max": 0.014115713103047664,
+              "values": [
+                0.014115713103047664,
+                0.013744577014281745,
+                0.013483301896155304
+              ]
+            }
+          }
+        }
+      },
+      "steady_krabka_divided_by_native": {
+        "average_cpu_cores": 0.41694599656466214,
+        "rss_kib": 0.8878307591572623,
+        "query_p99_seconds": 0.9084832952248946,
+        "ingest_p99_seconds": 0.0506989405335702
+      },
+      "harness_sha256": {
+        "compare-grafana.py": "5dc63ccb85653c2076ccae0e0388a29970f56b20a210ce024f13ed35365fc2fb",
+        "deployment-envelope.py": "184a1a12717fe93a25080df5e7b00d95e84f4f75a29e8be13c63170bcc5b2923",
+        "fuzz-corpus.py": "5e2def627007234cdf5ae081ed2f8b894bb9dd678daf4cc5578be7a903a33eeb"
+      },
+      "docker_image_id": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "oci_config_digest": "sha256:894c385ee87004feb760111cb6346c1b830d61a724e86a85be3bb90fa3af03b3",
+      "reused_for_qualified_revision": true
+    }
+  },
+  "host_activity_gate": {
+    "wait_seconds": 120,
+    "external_cpu_cores_mean_limit": 2,
+    "external_cpu_cores_window_limit": 4,
+    "window_sample_intervals": 10
+  },
+  "dataset": {
+    "metric_samples_per_request": 1000,
+    "metric_points_per_series": 1,
+    "other_signals": "deployment-envelope dataset; profile units=nanoseconds, unquoted legacy labels, sampleRate=1e9",
+    "seed_concurrency": 64
+  },
+  "image_producers": [
+    {
+      "run_id": 37266494913,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37266494913",
+      "source_commit": "50f03683f5b7dc2a19bb55b00172f99bad6b24f5",
+      "artifact": {
+        "id": 11326539325,
+        "name": "comparison-image-metrics-50f03683f5b7dc2a19bb55b00172f99bad6b24f5",
+        "digest": "sha256:78cd2dee8951b66602c1f24226a5d01e89fc268abeddac2e7fadc61caec785d1",
+        "size_in_bytes": 308228359,
+        "expires_at": "2027-01-03T05:09:08Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-50f03683f5b7",
+      "manifest_digest": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "config_digest": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "docker_image_id": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "oci_config_digest": "sha256:894c385ee87004feb760111cb6346c1b830d61a724e86a85be3bb90fa3af03b3",
+      "identity_note": "The archived config-digest field is Docker inspect Id; this containerd image store reports the OCI manifest identity. oci_config_digest comes from the independently verified archive."
+    },
+    {
+      "run_id": 37282607469,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37282607469",
+      "source_commit": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+      "artifact": {
+        "id": 11334237731,
+        "name": "comparison-image-metrics-5b40aec6a591aac531f0c18698264f0304f37cdb",
+        "digest": "sha256:5b292140d7db41a08e5fe4eee5b00cd657f14e003a1abd1ec19c0793ac88923b",
+        "size_in_bytes": 308301768,
+        "expires_at": "2027-01-03T08:16:27Z"
+      },
+      "archive_digest_verified": true,
+      "all_image_file_checksums_verified": true,
+      "image_tag": "localhost/krabka-o11y:sha-5b40aec6a591",
+      "manifest_digest": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+      "config_digest": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+      "docker_image_id": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+      "oci_config_digest": "sha256:6fb26a50f075528482e962e0793c4e50f21c8b17daa47779dae691a7e4339ff0",
+      "identity_note": "The archived config-digest field is Docker inspect Id; this containerd image store reports the OCI manifest identity. oci_config_digest comes from the independently verified archive."
+    }
+  ],
+  "binary_sha256_by_source": {
+    "50f03683f5b7dc2a19bb55b00172f99bad6b24f5": {
+      "krabka-metrics": {
+        "path": "usr/local/bin/krabka-metrics",
+        "sha256": "fdd746195b79eecabae23080b7fa621fcf7d9da86a2e3c98bc2a9c169642ec47",
+        "size_in_bytes": 72356320
+      },
+      "krabka-metrics-service": {
+        "path": "usr/local/bin/krabka-metrics-service",
+        "sha256": "928467e76da0248a2fa98860ef051fa448cab28b6bea96f2410708a2677e41f1",
+        "size_in_bytes": 236117208
+      },
+      "krabka-o11y-bootstrap": {
+        "path": "usr/local/bin/krabka-o11y-bootstrap",
+        "sha256": "d9d6a232ba6eaa6debabafbb83fbd7ac41133b36c69f7085793b72c2bff6f82e",
+        "size_in_bytes": 26750712
+      },
+      "krabka-o11y-recovery": {
+        "path": "usr/local/bin/krabka-o11y-recovery",
+        "sha256": "517fc17de9b64bf20d02d2a74039544637cf45ea4272326ec28a3fa62edba27e",
+        "size_in_bytes": 36723200
+      },
+      "krabka-observability": {
+        "path": "usr/local/bin/krabka-observability",
+        "sha256": "d88b69ae31502cbede72f4df17b25f155763d0ad319ab5bce62a0485b447c6ea",
+        "size_in_bytes": 222314776
+      },
+      "krabka-profiles": {
+        "path": "usr/local/bin/krabka-profiles",
+        "sha256": "d0042b33b04b3e507ed20ad008918f020770db9298c726084f576acafde17644",
+        "size_in_bytes": 219845552
+      },
+      "krabka-traces": {
+        "path": "usr/local/bin/krabka-traces",
+        "sha256": "84493f603651644e85202cd6c59e0ab80a788401a62b02582b0f2b9cba0ad092",
+        "size_in_bytes": 223565680
+      }
+    },
+    "5b40aec6a591aac531f0c18698264f0304f37cdb": {
+      "krabka-metrics": {
+        "path": "usr/local/bin/krabka-metrics",
+        "sha256": "fdd746195b79eecabae23080b7fa621fcf7d9da86a2e3c98bc2a9c169642ec47",
+        "size_in_bytes": 72356320
+      },
+      "krabka-metrics-service": {
+        "path": "usr/local/bin/krabka-metrics-service",
+        "sha256": "b5a1511e2ed2ef73a6bb40eeb5247f9f519eff4cc4f4a99dd92a0f4edaf31034",
+        "size_in_bytes": 236301056
+      },
+      "krabka-o11y-bootstrap": {
+        "path": "usr/local/bin/krabka-o11y-bootstrap",
+        "sha256": "d9d6a232ba6eaa6debabafbb83fbd7ac41133b36c69f7085793b72c2bff6f82e",
+        "size_in_bytes": 26750712
+      },
+      "krabka-o11y-recovery": {
+        "path": "usr/local/bin/krabka-o11y-recovery",
+        "sha256": "517fc17de9b64bf20d02d2a74039544637cf45ea4272326ec28a3fa62edba27e",
+        "size_in_bytes": 36723200
+      },
+      "krabka-observability": {
+        "path": "usr/local/bin/krabka-observability",
+        "sha256": "d88b69ae31502cbede72f4df17b25f155763d0ad319ab5bce62a0485b447c6ea",
+        "size_in_bytes": 222314776
+      },
+      "krabka-profiles": {
+        "path": "usr/local/bin/krabka-profiles",
+        "sha256": "d0042b33b04b3e507ed20ad008918f020770db9298c726084f576acafde17644",
+        "size_in_bytes": 219845552
+      },
+      "krabka-traces": {
+        "path": "usr/local/bin/krabka-traces",
+        "sha256": "84493f603651644e85202cd6c59e0ab80a788401a62b02582b0f2b9cba0ad092",
+        "size_in_bytes": 223565680
+      }
+    }
+  },
+  "image_equivalence": {
+    "from_source": "50f03683f5b7dc2a19bb55b00172f99bad6b24f5",
+    "to_source": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+    "verified": true,
+    "runtime_config_equal": true,
+    "base_layer_equal": true,
+    "all_filesystem_paths_and_metadata_compared": true,
+    "filesystem_entries_verified": 380,
+    "changed_paths": [
+      "usr/local/bin/krabka-metrics-service"
+    ],
+    "unchanged_application_binaries": [
+      "krabka-metrics",
+      "krabka-o11y-bootstrap",
+      "krabka-o11y-recovery",
+      "krabka-observability",
+      "krabka-profiles",
+      "krabka-traces"
+    ],
+    "scope": "Reuse pooled-service measurements only: their binaries, the base filesystem and runtime configuration are unchanged. Metrics is remeasured on the fused query-service binary."
+  },
+  "source_scope": "Metrics uses the fused instant-scan release image from qualified_revision. Pooled-service measurements retain their actual earlier source image and are reused only after checking all filesystem paths and metadata, unchanged binaries, base layer and runtime configuration. Each harness revision is recorded. Diagnostic profiles do not contribute comparison metrics."
+}

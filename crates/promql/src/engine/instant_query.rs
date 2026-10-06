@@ -123,7 +123,19 @@ impl<S: MetricStore> PromqlEngine<S> {
         // inside that window, so a selector's histogram probe and its float
         // read share one scan. A subquery opens a scope of its own for its
         // grid and restores this one on exit.
-        let cache: RangeScanCache = Arc::new(Mutex::new(RangeScanCacheInner::instant()));
+        let mut inner = RangeScanCacheInner::instant();
+        inner.allow_latest_float_samples = match expr {
+            Expr::VectorSelector(_) => true,
+            Expr::Aggregate(aggregate) => {
+                matches!(aggregate.expr.as_ref(), Expr::VectorSelector(_))
+                    && aggregate
+                        .param
+                        .as_deref()
+                        .is_none_or(|param| matches!(param, Expr::NumberLiteral(_)))
+            }
+            _ => false,
+        };
+        let cache: RangeScanCache = Arc::new(Mutex::new(inner));
         RANGE_SCAN_CACHE
             .scope(cache, async {
                 let Some(planned) = self.plan_instant_expr(tenant, expr, time_ms).await? else {

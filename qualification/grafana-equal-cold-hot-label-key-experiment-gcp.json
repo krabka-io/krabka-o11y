@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "experiment": "Reuse a canonical cold key only for equal hot labels",
+  "status": "main_conformance_merge_local_validation_passed_guard_deferred",
+  "candidate_applied": false,
+  "correctness_qualified": false,
+  "performance_qualified": false,
+  "retained": false,
+  "source_inspected_commit": "e7bd6789f0eeb72e4ffdbd31212ce8e2497cdb2b",
+  "draft_sha256": "dee414f21ec744c0da6afea0e621547bb6648eb15fbfdcfcfbf9b991494563ac",
+  "draft_applies_to_current_source": false,
+  "profile_run": 37390739256,
+  "profile_windows": [
+    {
+      "window": 1,
+      "querier_samples": 197,
+      "fingerprint_self_percent": 7.61,
+      "source_path": "qualification/evidence/profiling/gcp-37390739256/metrics/profiles/metrics-querier.1.cpu.perf.data.top.txt",
+      "source_sha256": "2f57a36934cfe23ef504d8aef22f0f4573ab4b42b963fca3a77e1ad5ff5b06a5"
+    },
+    {
+      "window": 2,
+      "querier_samples": 226,
+      "fingerprint_self_percent": 7.08,
+      "source_path": "qualification/evidence/profiling/gcp-37390739256/metrics/profiles/metrics-querier.2.cpu.perf.data.top.txt",
+      "source_sha256": "ea2940443aa3da32ae9e4add219098e1d6d381ddbbb92cc60d3e846392258a58"
+    },
+    {
+      "window": 3,
+      "querier_samples": 269,
+      "fingerprint_self_percent": 8.18,
+      "source_path": "qualification/evidence/profiling/gcp-37390739256/metrics/profiles/metrics-querier.3.cpu.perf.data.top.txt",
+      "source_sha256": "4526ef66aeb6e00e9ee995ac49cc97f77fb2268e72d901ea515abdbedd25c336"
+    }
+  ],
+  "selection": "Fingerprinting appears in all three query-process windows. The leaf samples include both query and WAL-tail calls; they do not prove that this candidate can avoid all sampled work.",
+  "guard": "The specialized cold matching_series_by_fp reader calculates every key with labels.fingerprint(). Reuse that key only when full cold and hot Labels compare equal; missing or different labels retain the existing canonical hash calculation.",
+  "canonical_hash_implementation_unchanged": true,
+  "prepared_independent_check": "A different hot label set whose row ID equals a canonical cold key still appears under its own canonical key in the complete returned label map. Existing hot-only, sharing, matcher and sample-limit ledgers remain.",
+  "negative_control_to_run": "Remove full label equality while keeping key-presence lookup. The different-hot-label complete-map ledger must fail.",
+  "next_action": "Check final-head CI. Build a fresh matched baseline on the private GCP runner before the equality-guard comparison; regenerate the exact source-scope transition checks for this main merge.",
+  "draft_review": "Use a nonempty metric-name matcher so the cold index accepts the test query and both differing job labels qualify.",
+  "rebase_correctness": "387 ordinary checks and five native wrappers with 37 cases passed before cache removal.",
+  "baseline_source_commit": "e7bd6789f0eeb72e4ffdbd31212ce8e2497cdb2b",
+  "baseline_image_profile_run": 37406626682,
+  "baseline_run_status": "success_image_and_diagnostic_cpu_profiles_verified",
+  "resource_accounting_scope": "application_and_broker_excluding_object_store",
+  "object_store_budget": {
+    "cpu": 2,
+    "memory_gib": 2,
+    "excluded_from_application_totals": true
+  },
+  "qualification_guard_self_tests": {
+    "runtime_source_closure": "passed; future candidate permits only instant_scan.rs and exactly the metrics-service ELF; unexpected files, wrong hash, extra changed ELF and no changed ELF rejected",
+    "raw_artifact_coverage": "passed; missing consumed checksum and stale producer commit/run rejected",
+    "script_sha256": {
+      "verify-equal-cold-hot-label-key-runtime.py": "9c2be938b5404fb3154ab521836a42dcd01ead171a3f7c4cd406418b0d357516",
+      "collect-gcp-equal-cold-hot-label-key-pairs.py": "2e22bbf572d2d8e7989716d4072e29c139a3a2aaf36624301cd086db11568272"
+    }
+  },
+  "correctness_scope": "ordinary+three metrics native wrappers; final-head whole-stack CI separate",
+  "whole_stack_ci_qualified": false,
+  "validation": {
+    "source_commit": "e7bd6789f0eeb72e4ffdbd31212ce8e2497cdb2b",
+    "initial_source_files_sha256": {
+      "crates/promql/src/merged_store/instant_scan.rs": "cdb13a8d7fa57ea5ce0f52b7dddde6e6199ae9c0a03c3c714f96f4cf67754ad5",
+      "crates/promql/src/in_memory/tests/interned_series_labels.rs": "808067c4587e67e8c412e807b03ebbc0e4648e45be3096cc2c04ca3a3311ba3d"
+    },
+    "retries_disabled": true,
+    "correctness_scope": "ordinary+three metrics native wrappers; final-head whole-stack CI separate",
+    "narrow": {
+      "status": "passed",
+      "proof_path": "qualification/evidence/correctness/equal-cold-hot-label-key-e7bd6789f0ee/narrow/provenance.json",
+      "proof_sha256": "da88d2015f106c2b25ec261642f8c8d9a592a489450941350e1566203d14ac9c",
+      "targets_passed": 1,
+      "rust_cases_passed": 6,
+      "ignored_cases": 0,
+      "resumed_from_existing_passed_log": true,
+      "original_validation_log_sha256": "a2cea5884d6a7713a22ffa7e27a084fd080b1197bc1cefad059eb519a9351d85"
+    },
+    "previous_negative_diagnostic": {
+      "files_sha256": {
+        "negative-control/validation.log": "d00a9ad654c880e76a26ec4a8cd586ea24aa82a15a316d21f693ecb0ad08d038",
+        "negative-control/crates/promql/promql_test/test.log": "d6794eac3c292965d742d5e66316d29e83ff49db82ec0d440b0f4e8f34a53cdc",
+        "negative-control/crates/promql/promql_test/test.xml": "1455a41b3d02df696e58894b9a51755514344afd5668c868b3cb9053129ead83"
+      },
+      "qualified": false,
+      "reason": "Complete-map assertion failed, but mutant source hashes were not recorded before execution"
+    },
+    "negative_control": {
+      "status": "expected_failure",
+      "proof_path": "qualification/evidence/correctness/equal-cold-hot-label-key-e7bd6789f0ee/negative-control-recovery/provenance.json",
+      "proof_sha256": "14fe2b25b54a55ce30a084bb8390abd5a1f84766188c945dc8fb49e183cba694",
+      "targets_passed": 0,
+      "rust_cases_passed": 0,
+      "ignored_cases": 0,
+      "source_before_test_path": "qualification/evidence/correctness/equal-cold-hot-label-key-e7bd6789f0ee/negative-control-recovery/source-before-test.json",
+      "source_before_test_sha256": "4f582e59896604d8c8b984050907f5696b7bd81b350840853ca4a445393ec18d",
+      "candidate_guard_restored": true
+    },
+    "restored_narrow": {
+      "status": "passed",
+      "proof_path": "qualification/evidence/correctness/equal-cold-hot-label-key-e7bd6789f0ee/restored-narrow/provenance.json",
+      "proof_sha256": "a4ed202135bc40f7b55b1c482491289a3aea681ac9e0f13c6814e4844f88f187",
+      "targets_passed": 1,
+      "rust_cases_passed": 6,
+      "ignored_cases": 0
+    },
+    "format": {
+      "status": "passed",
+      "log_path": "qualification/evidence/correctness/equal-cold-hot-label-key-e7bd6789f0ee/format/validation.log",
+      "log_sha256": "c33df2c58b4452655b535ab3d22a681e68f5cbb7c320472a95882a93d80a9c9d"
+    },
+    "source_files_sha256": {
+      "crates/promql/src/merged_store/instant_scan.rs": "cdb13a8d7fa57ea5ce0f52b7dddde6e6199ae9c0a03c3c714f96f4cf67754ad5",
+      "crates/promql/src/in_memory/tests/interned_series_labels.rs": "67b01e1408fde757c562429ae9f3c0ce4d7775b2eb3953dac7b370299baab5c7"
+    },
+    "ordinary": {
+      "status": "passed",
+      "proof_path": "qualification/evidence/correctness/equal-cold-hot-label-key-e7bd6789f0ee/ordinary/provenance.json",
+      "proof_sha256": "84a49a40ca86d86537fab4b3dc4c1a3a29e5d204f6da4f608d429adea1d6b95d",
+      "targets_passed": 387,
+      "rust_cases_passed": 5544,
+      "ignored_cases": 78
+    },
+    "native": {
+      "status": "passed",
+      "proof_path": "qualification/evidence/correctness/equal-cold-hot-label-key-e7bd6789f0ee/native/provenance.json",
+      "proof_sha256": "109fad2debfae7543bec60fe29c137d833308498c1e10a1688dc6008004973fa",
+      "targets_passed": 3,
+      "rust_cases_passed": 14,
+      "ignored_cases": 0
+    }
+  },
+  "failed_final_three_source_validation": {
+    "path": "qualification/evidence/correctness/equal-cold-hot-final-three-source-e7bd6789f0ee/validation-record.json",
+    "sha256": "3c0254b941ed4a93f724a0e046c59d525682e0c96308b986a37d0965f91b0ab2",
+    "status": "failed",
+    "phase": "heap-profiling Clippy",
+    "reason": "Additional large_future in metrics block-builder startup discovered after the fixture findings were repaired."
+  },
+  "prior_guard_runtime_patch": {
+    "sha256": "9cf0f1893348ccc5f421c3b1ab842518bd3a1c8512e664d663adb73499b8cf1c",
+    "applied": false,
+    "scope": "Runtime-only patch preserved locally; current source uses the baseline implementation."
+  },
+  "draft_scope_note": "The independent regression test is in the repaired baseline. The next runtime candidate changes only instant_scan.rs.",
+  "baseline_transition_guard_self_test": {
+    "status": "passed",
+    "rejected": [
+      "duplicate transition",
+      "unready source checkpoint",
+      "failed validation",
+      "wrong source blob",
+      "old baseline source",
+      "unexpected changed file",
+      "intervening baseline HEAD"
+    ],
+    "script_sha256": {
+      "transition-equal-cold-hot-label-key-baseline.py": "5dd1b9674d7b1c2ac3ac6673959c6550cd2a7d530a002e023614a277ac32f8fb",
+      "dispatch-equal-cold-hot-label-key-image.py": "6967c29373bf34bb7131cadf72fa3e2914433238347c2b586b83818409cde300"
+    }
+  },
+  "repaired_baseline": {
+    "source_commit": "0f559995a84d654be7b792ab19a27de6dff4a959",
+    "source_tree": "67b8f2b2a0f2c6364944655ada931b7755533021",
+    "ready_for_image": false,
+    "validation_record": {
+      "path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/validation-record.json",
+      "sha256": "930d2b77dde6362ea2b41b9b8d379849659c28661f3a223f2237adde5a4a55f3"
+    },
+    "local_correctness_qualified": true,
+    "correctness_scope": "Final merged code; ordinary and six selected native wrappers. Final pushed-head CI and fresh performance qualification are separate.",
+    "whole_stack_ci_qualified": false,
+    "scope_note": "The equality runtime guard remains excluded. Final-head CI and a fresh GCP baseline are needed before the next candidate comparison."
+  },
+  "previous_common_repair_attempt": {
+    "path": "qualification/evidence/correctness/common-repairs-baseline-e7bd6789f0ee/validation-record.json",
+    "sha256": "032f14e66c37023cea27852d5fcbf693f51845d23224dda6f0794b2a25c66d22",
+    "status": "failed",
+    "phase": "heap-profiling Clippy",
+    "reason": "Function-local constant appeared after statements in the compaction ledger."
+  },
+  "previous_repaired_baseline": {
+    "source_commit": "e7bd6789f0eeb72e4ffdbd31212ce8e2497cdb2b",
+    "source_files_sha256": {
+      "crates/metrics/tests/level_compaction.rs": "df278dd13555936575a952b60c47b77117aaa35966299a27e4f591d91080ba11",
+      "crates/metrics/src/bin/krabka-metrics/run.rs": "4646968dffdb25e5778ed384851df9925c15be118f1b22b12210999ec855be5d",
+      "crates/promql/src/in_memory/tests/interned_series_labels.rs": "67b01e1408fde757c562429ae9f3c0ce4d7775b2eb3953dac7b370299baab5c7",
+      "crates/metrics-service/src/tests/instant_float_scan.rs": "fd1000cdc7123035b13b398e7a9c7044a9eeb84b7faa5c7329cfb5bb0b6385a3"
+    },
+    "ready_for_image": false,
+    "validation_record": {
+      "path": "qualification/evidence/correctness/common-repairs-baseline-recovery-e7bd6789f0ee/validation-record.json",
+      "sha256": "184d0a89d87fe6993414b36dbd851fcf90e4710403327fcd50cd6a4ec629d7c0"
+    },
+    "correctness_scope": "five-package heap-profiling Cargo Clippy+formatter+387 ordinary targets+three fresh metrics native wrappers; final-head whole-stack CI separate",
+    "whole_stack_ci_qualified": false,
+    "scope_note": "These four-source checks precede merging main 0321cbf3; they do not qualify the merged baseline."
+  }
+}

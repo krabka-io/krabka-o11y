@@ -34,7 +34,7 @@ pub(crate) async fn execute_http_metric_instant_query(
     } else if let Some(hot_tail) = &state.hot_tail {
         let records = hot_tail
             .source
-            .records_in_range(plan.time_range.start_ns, plan.time_range.end_ns);
+            .records_shared_in_range(plan.time_range.start_ns, plan.time_range.end_ns);
         let frontier = hot_tail.frontier.snapshot();
         execute_metric_query_with_hot_tail_frontier_and_deletes(
             &state.root,

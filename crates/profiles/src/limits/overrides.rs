@@ -43,7 +43,7 @@ overrides:
                     max_label_name: bytes(1024),
                     max_label_value: bytes(2048),
                     max_label_names_per_series: 40,
-                    max_flamegraph_nodes_default: 2048,
+                    max_flamegraph_nodes_default: 8192,
                     max_flamegraph_nodes_max: 0,
                     max_query_length: secs(2_595_600),
                     max_session_id_cardinality: 0,

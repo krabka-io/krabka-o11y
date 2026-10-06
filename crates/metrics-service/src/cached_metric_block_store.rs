@@ -1,10 +1,11 @@
-use super::{Instant, MetricBlockStore, StdDurationExt, Time};
+use super::{Arc, CompactionIndexManifest, Instant, MetricBlockStore, StdDurationExt, Time};
 
 pub(crate) struct CachedMetricBlockStore {
     pub(crate) cached_at: Instant,
     pub(crate) start_ms: i64,
     pub(crate) end_ms: i64,
     pub(crate) cold: MetricBlockStore,
+    pub(crate) manifests: Vec<Arc<CompactionIndexManifest>>,
 }
 
 impl CachedMetricBlockStore {

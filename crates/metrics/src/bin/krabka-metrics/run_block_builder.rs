@@ -98,6 +98,12 @@ pub(crate) async fn run_block_builder(
                 if !stopping.is_cancelled() =>
             {
                 tracing::warn!(%error, "metrics block-builder loop failed; retrying");
+                // Drop only cancels the coordinator. Await its shutdown before
+                // a replacement joins the group; replay still starts at the
+                // last durable committed cut, without flushing the failed poll.
+                if let Err(error) = consumer.into_inner().close().await {
+                    tracing::warn!(%error, "metrics block-builder consumer close failed before retry");
+                }
                 tokio::time::sleep(config.poll_timeout.to_std()).await;
                 consumer = config
                     .build_consumer(&metrics.wal_consumer, wal_security.clone(), None)
@@ -107,6 +113,9 @@ pub(crate) async fn run_block_builder(
         }
     };
     tasks.shutdown().await;
+    // The loop has drained and committed its final durable buffer. Await the
+    // coordinator's shutdown before process exit can cancel its LeaveGroup attempt.
+    consumer.into_inner().close().await?;
     // The block counter moves inside the flush, so a running block builder
     // reports what it has written rather than only what it wrote before it
     // stopped.

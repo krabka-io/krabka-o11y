@@ -161,7 +161,15 @@ impl WalHead {
     /// the stats.
     #[must_use]
     pub fn prune(&self, now_ms: i64) -> PruneStats {
-        self.update(|store| store.prune(now_ms))
+        let mut guard = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        if !guard.has_expired_samples(now_ms) {
+            return PruneStats::default();
+        }
+        // Preserve update's publish-after-success behavior for an actual prune.
+        let mut next = Arc::clone(&guard);
+        let stats = Arc::make_mut(&mut next).prune(now_ms);
+        *guard = next;
+        stats
     }
 
     /// The lowest WAL offset materialized in the head for `partition`.
@@ -251,6 +259,19 @@ impl MetricStore for WalHead {
     ) -> Result<Vec<Labels>> {
         let store = self.snapshot();
         store.series(tenant, matchers, start_ms, end_ms).await
+    }
+
+    async fn series_shared(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<Vec<Arc<Labels>>> {
+        let store = self.snapshot();
+        store
+            .series_shared(tenant, matchers, start_ms, end_ms)
+            .await
     }
 
     async fn exemplars(

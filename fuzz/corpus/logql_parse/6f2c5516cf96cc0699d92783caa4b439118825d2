@@ -1,0 +1,1 @@
+count_over_time({app="api"} |= "error" [40ns])

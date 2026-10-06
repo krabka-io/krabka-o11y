@@ -1,0 +1,379 @@
+{
+  "schema_version": 1,
+  "base_main": "0321cbf3a121ce489d0bb8b98070670c7415f023",
+  "source_commit": "0f559995a84d654be7b792ab19a27de6dff4a959",
+  "correctness_qualified": false,
+  "performance_qualified_current_branch": false,
+  "resource_accounting_scope": "application_and_broker_excluding_object_store",
+  "validation": {
+    "ordinary": {
+      "status": "passed",
+      "proof_path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/ordinary/provenance.json",
+      "proof_sha256": "cd4ba00c057b0a73347a32d20fa14f29bcf7b5c94009da668b4bb72253c4f47f",
+      "targets_passed": 393,
+      "targets_failed": 0,
+      "rust_cases_passed": 5689,
+      "rust_cases_failed": 0,
+      "ignored_cases": 82
+    },
+    "native": {
+      "status": "passed",
+      "proof_path": "qualification/evidence/correctness/pr331-native-setup-recovery-tree67b8f2b2a0f2/composite-native/provenance.json",
+      "proof_sha256": "634bdf5f961e37a5b80d8d85a19f51b61acac691d461745c80876ffb3748ca7d",
+      "targets_passed": 6,
+      "targets_failed": 0,
+      "rust_cases_passed": 33,
+      "rust_cases_failed": 0,
+      "ignored_cases": 0
+    },
+    "heap_profiling_clippy": {
+      "status": "passed",
+      "log_path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/ordinary/supporting-checks/heap_clippy.log",
+      "log_sha256": "052091d18b01292c14057e15144484761793e9dbd91c77c91081913a2742c60c",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "--features",
+        "heap-profiling",
+        "--all-targets",
+        "--jobs=4",
+        "-p",
+        "krabka-metrics",
+        "-p",
+        "krabka-metrics-service",
+        "-p",
+        "krabka-observability",
+        "-p",
+        "krabka-profiles",
+        "-p",
+        "krabka-traces",
+        "--",
+        "-D",
+        "warnings"
+      ]
+    },
+    "formatter": {
+      "status": "passed_footer_verified",
+      "log_path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/ordinary/supporting-checks/format.log",
+      "log_sha256": "90c8d2f83d24600074e5e29cd47437dd51f83c5e9033794a458f8ad03c93c536"
+    },
+    "review": "No actionable findings. Both conflicts preserve main conformance. The shared Loki guard preserves global timestamp selection and single-stream trimming.",
+    "validation_record": {
+      "path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/validation-record.json",
+      "sha256": "930d2b77dde6362ea2b41b9b8d379849659c28661f3a223f2237adde5a4a55f3"
+    }
+  },
+  "previous_native_attempts": [
+    {
+      "status": "failed",
+      "target": "//crates/profiles:pyroscope_differential_docker_test",
+      "proof_path": "qualification/evidence/correctness/retained-gains-pr-native-pyroscope-failure-c7ed6004/provenance.json",
+      "proof_sha256": "e713f9af0c2f9ee199b441f07f630764385b16c06e18b0a623a0550252da4441",
+      "source_commit": "c7ed6004226c8de0afc4767736a8d2dad5daf47d"
+    },
+    {
+      "status": "failed",
+      "targets_passed": 8,
+      "targets_failed": 1,
+      "proof_path": "qualification/evidence/correctness/retained-gains-pr-native-failure-c7ed6004/provenance.json",
+      "proof_sha256": "b787ab9322671cf5539857dcdc0df9a9e53ee139378d0444fa0cd865076d21b6",
+      "source_commit": "c7ed6004226c8de0afc4767736a8d2dad5daf47d"
+    }
+  ],
+  "previous_validation_scopes": [
+    {
+      "source_commit": "90425e80733aee20239b15ee3527061003e344a3",
+      "source_file_overrides_sha256": {
+        "crates/integration/tests/support/metrics.rs": "9e056f4eed1185527f33a07f7602c862c2c4a595dc88b97fd38e7910f78eeac4",
+        "crates/metrics-service/tests/metrics_deployment.rs": "43821bedb04d4010fa29084d5de798bff08a8f2fb3df710b2b019094a8d88d2f",
+        "crates/metrics/src/bin/krabka-metrics/compactor_loop.rs": "025c0d9e657a95a86add2eda9441c775ea88f2cd240e5e712da68f7018bd9b21",
+        "crates/metrics/src/bin/krabka-metrics/run_block_builder.rs": "1552f53cf2bf00f93bcba83e108b91dfb80e43d0b35abf635ec87e64adbb2606",
+        "crates/metrics/src/bin/krabka-metrics/run_compactor_once.rs": "10fd1338bcbe9576fb2ce633d17ed3c6d5fec430237cd809b688afc4869c2323",
+        "crates/metrics/src/compactor.rs": "34cf2dd62fa2b0b80b98d0458b8ac47b7654c0352186681c55c5402f51cd4e4c",
+        "crates/metrics/src/compactor/compact_metric_blocks_once.rs": "c7911650ac185305387a62ae9f4c1ec0b3fc71d20fe76695d97112d67301b89b",
+        "crates/metrics/src/compactor/compaction_manifest_cache.rs": null,
+        "crates/metrics/src/compactor/consumer.rs": "db8090d863c0833e7b6eb21486a7fb3bf0a5fbdd33b3d6b4c6ea5328dc94e8e0",
+        "crates/metrics/src/compactor/durable_compaction_consumer.rs": "74cac5f864d3bbf2442f8aacde78c560c59ed645a10c01522e374ac589842f74",
+        "crates/metrics/src/compactor/list_compaction_index.rs": "0b9b5c76bb903372d202aded56ea222ff9c753f4b6a4ccce01f68ffad2fc3641",
+        "crates/metrics/src/compactor/list_compaction_manifests.rs": "fc85d491ea330605f83a8cb86f9394966248965cdf1436294dc56e75b9a2a5bf",
+        "crates/metrics/src/compactor/read_compaction_manifests.rs": "10df92637a7f8fc1a32542f6871268ab3480389cf533cf2b467a8e63735a06b7",
+        "crates/metrics/src/lib.rs": "70be2c278a1464a72dcbf7cb07bbe7d45b6cf129e36f60df465cb401a12611b2",
+        "crates/metrics/tests/level_compaction.rs": "04e3019c30ff1079018e2a99066e23989b6363aad39d9f1d2ec5c62868838a68"
+      },
+      "validation": {
+        "ordinary": {
+          "status": "passed",
+          "targets_passed": 387,
+          "rust_cases_passed": 5542,
+          "ignored_cases": 78,
+          "proof_path": "qualification/evidence/correctness/retained-gains-pr-ordinary-90425e80/root-summary-provenance.json",
+          "proof_sha256": "cce74b25b736cf44ec560df13eab8fa31f46d8416e5a2eab94906398316aec3a",
+          "case_count_method": "Last Rust suite summary for each target, excluding nested child-process summaries that may interleave."
+        },
+        "formatter": "passed",
+        "comparison_self_test": "passed",
+        "deployment_envelope_self_test": "passed",
+        "review": "Read-only review found no actionable correctness/regression findings; metrics restart lifecycle requires final native result.",
+        "native": {
+          "status": "failed",
+          "targets_passed": 8,
+          "targets_failed": 1,
+          "proof_path": "qualification/evidence/correctness/retained-gains-pr-native-failure-c7ed6004/provenance.json",
+          "proof_sha256": "b787ab9322671cf5539857dcdc0df9a9e53ee139378d0444fa0cd865076d21b6",
+          "source_commit": "c7ed6004226c8de0afc4767736a8d2dad5daf47d"
+        }
+      },
+      "correctness_qualified": false
+    },
+    {
+      "source_commit": "c7ed6004226c8de0afc4767736a8d2dad5daf47d",
+      "source_file_overrides_sha256": {
+        "crates/observability/src/querier/aggregate/record_matching/append_matching_hot_log_record.rs": "1f2ceac542ce2a2eb3112ba019f5c08c56dfa82d9ee61fe8c9f461943fdd7e51",
+        "crates/observability/src/querier/scan/stream_scans/stream_scan_options.rs": "60b43e214693d6da579140b792902be073035c1e14d7da6f3dd2fa4d488724cf",
+        "crates/observability/src/querier/state/types/dynamic_index_cache.rs": "b6097ae1255864eb2538086c72156a7c3fd79cc713a7827b6c01c43a8cefd461",
+        "crates/observability/src/tests/hot_tail_frontier/shared_snapshots_survive_pruning_and_reach_http_queries.rs": "c62b93c1af518d2737bd09344f41cd32fb8e6398d5b06cd1321b96b90d9f6ca2",
+        "crates/observability/src/tests/shard_index_cache/querier_state_with_request_tenant_index_reuses_shard_indexes_for_moving_ranges.rs": "afce06dffd2f4584c18b269d6f77ecb82debd5cb91cb857be0d6c5d0e9aff4fa",
+        "crates/profiles/src/bin/krabka-profiles/main.rs": "cfce5ed200b4c169e6545a3f808b36d77e3d3a66f6ea9be70afb14c40bb51897",
+        "crates/profiles/src/limits.rs": "c8b6604c106e380a0f355248b68d6a42a5e3a64bc0a3dd5c63dcac0e72bfcd3a",
+        "crates/profiles/src/limits/limits_type.rs": "3e215e05931ea8d63392a8307875b8cd4f6a8856b7634516893ba14a329ef33f",
+        "crates/profiles/src/limits/overrides.rs": "d0b53715fa88e7417753679ff0c44f62808802cf9e7aeb561e87d9c86b60251a",
+        "crates/promql/src/store/metric_store.rs": "a7a78d93b25c488431414fc76d1499615417ac5d208b235164291580cb3424dd",
+        ".bazelrc": "4232669e4ba5294a0345db7d44b9de6720cfe90cdb04e6390629acdc10840b20"
+      },
+      "validation": {
+        "ordinary": {
+          "status": "passed",
+          "targets_passed": 387,
+          "rust_cases_passed": 5542,
+          "ignored_cases": 78,
+          "proof_path": "qualification/evidence/correctness/retained-gains-pr-ordinary-c7ed6004/provenance.json",
+          "proof_sha256": "18c71c5e0bbde1bc81f3d714cc19e60cd7c51303aeacdd5fa31ca1c51a790b24"
+        },
+        "native": {
+          "status": "pending_pyroscope_default_repair"
+        },
+        "comparison_self_test": "passed",
+        "deployment_envelope_self_test": "passed",
+        "formatter": "passed",
+        "review": "Read-only review found no actionable correctness/regression findings; the current Pyroscope default repair requires its native result."
+      },
+      "scope": "Ten code repairs before disabling native third-party C/C++ coverage. All 387 ordinary targets passed."
+    },
+    {
+      "source_commit": "c7ed6004226c8de0afc4767736a8d2dad5daf47d",
+      "source_file_overrides_sha256": {
+        "crates/observability/src/querier/aggregate/record_matching/append_matching_hot_log_record.rs": "1f2ceac542ce2a2eb3112ba019f5c08c56dfa82d9ee61fe8c9f461943fdd7e51",
+        "crates/observability/src/querier/scan/stream_scans/stream_scan_options.rs": "60b43e214693d6da579140b792902be073035c1e14d7da6f3dd2fa4d488724cf",
+        "crates/observability/src/querier/state/types/dynamic_index_cache.rs": "b6097ae1255864eb2538086c72156a7c3fd79cc713a7827b6c01c43a8cefd461",
+        "crates/observability/src/tests/hot_tail_frontier/shared_snapshots_survive_pruning_and_reach_http_queries.rs": "c62b93c1af518d2737bd09344f41cd32fb8e6398d5b06cd1321b96b90d9f6ca2",
+        "crates/observability/src/tests/shard_index_cache/querier_state_with_request_tenant_index_reuses_shard_indexes_for_moving_ranges.rs": "afce06dffd2f4584c18b269d6f77ecb82debd5cb91cb857be0d6c5d0e9aff4fa",
+        "crates/profiles/src/bin/krabka-profiles/main.rs": "cfce5ed200b4c169e6545a3f808b36d77e3d3a66f6ea9be70afb14c40bb51897",
+        "crates/profiles/src/limits.rs": "c8b6604c106e380a0f355248b68d6a42a5e3a64bc0a3dd5c63dcac0e72bfcd3a",
+        "crates/profiles/src/limits/limits_type.rs": "3e215e05931ea8d63392a8307875b8cd4f6a8856b7634516893ba14a329ef33f",
+        "crates/profiles/src/limits/overrides.rs": "d0b53715fa88e7417753679ff0c44f62808802cf9e7aeb561e87d9c86b60251a",
+        "crates/promql/src/store/metric_store.rs": "a7a78d93b25c488431414fc76d1499615417ac5d208b235164291580cb3424dd",
+        ".bazelrc": "4232669e4ba5294a0345db7d44b9de6720cfe90cdb04e6390629acdc10840b20"
+      },
+      "validation": {
+        "ordinary": {
+          "status": "passed",
+          "targets_passed": 387,
+          "rust_cases_passed": 5542,
+          "ignored_cases": 78,
+          "proof_path": "qualification/evidence/correctness/retained-gains-pr-ordinary-coverage-scope-c7ed6004/provenance.json",
+          "proof_sha256": "3103ba4c163b474a03833639f6be676af2b16e438d3741bde4770bcd7ed3b46a"
+        },
+        "native": {
+          "status": "passed",
+          "targets_passed": 2,
+          "rust_cases_passed": 23,
+          "ignored_cases": 0,
+          "proof_path": "qualification/evidence/correctness/retained-gains-pr-native-coverage-scope-c7ed6004/provenance.json",
+          "proof_sha256": "b3293f4b6dd3d848f7ce9389b69131aad1955358e7060d54da7880a5da325c4b"
+        },
+        "comparison_self_test": "passed",
+        "deployment_envelope_self_test": "passed",
+        "formatter": "passed",
+        "review": "Read-only review found no actionable findings. Current ordinary and Pyroscope native results are recorded below; full repaired-head CI remains separate."
+      },
+      "correctness_qualified": false
+    },
+    {
+      "source_commit": "e7bd6789f0eeb72e4ffdbd31212ce8e2497cdb2b",
+      "source_file_overrides_sha256": {
+        "crates/metrics/tests/level_compaction.rs": "df278dd13555936575a952b60c47b77117aaa35966299a27e4f591d91080ba11",
+        "crates/metrics/src/bin/krabka-metrics/run.rs": "4646968dffdb25e5778ed384851df9925c15be118f1b22b12210999ec855be5d",
+        "crates/promql/src/in_memory/tests/interned_series_labels.rs": "67b01e1408fde757c562429ae9f3c0ce4d7775b2eb3953dac7b370299baab5c7",
+        "crates/metrics-service/src/tests/instant_float_scan.rs": "fd1000cdc7123035b13b398e7a9c7044a9eeb84b7faa5c7329cfb5bb0b6385a3"
+      },
+      "validation": {
+        "ordinary": {
+          "status": "passed",
+          "proof_path": "qualification/evidence/correctness/common-repairs-baseline-recovery-e7bd6789f0ee/ordinary/provenance.json",
+          "proof_sha256": "ff9f4e099690975907aba151f1fa22e36cd35ec4601f29e61952c4335995b665",
+          "targets_passed": 387,
+          "rust_cases_passed": 5544,
+          "ignored_cases": 78
+        },
+        "native": {
+          "status": "passed",
+          "proof_path": "qualification/evidence/correctness/common-repairs-baseline-recovery-e7bd6789f0ee/native/provenance.json",
+          "proof_sha256": "78415539da945dcfbbafeb29fb0924c0489e0d328466731f741faac6f53e95eb",
+          "targets_passed": 3,
+          "rust_cases_passed": 14,
+          "ignored_cases": 0
+        },
+        "heap_profiling_clippy": {
+          "status": "passed",
+          "proof_path": "qualification/evidence/correctness/common-repairs-baseline-recovery-e7bd6789f0ee/heap-profiling-clippy/provenance.json",
+          "proof_sha256": "a77080e2e5d3f82b2c43fd18df20f38893ee2e509dd259d040ddf5ae8343cf1a",
+          "command": [
+            "cargo",
+            "clippy",
+            "--locked",
+            "--features",
+            "heap-profiling",
+            "--all-targets",
+            "--jobs=4",
+            "-p",
+            "krabka-metrics",
+            "-p",
+            "krabka-metrics-service",
+            "-p",
+            "krabka-observability",
+            "-p",
+            "krabka-profiles",
+            "-p",
+            "krabka-traces",
+            "--",
+            "-D",
+            "warnings"
+          ]
+        },
+        "formatter": "passed",
+        "review": "No actionable findings. Boxing retains task ownership, cancellation and durable shutdown ordering; fixture changes preserve workloads and assertions.",
+        "validation_record": {
+          "path": "qualification/evidence/correctness/common-repairs-baseline-recovery-e7bd6789f0ee/validation-record.json",
+          "sha256": "184d0a89d87fe6993414b36dbd851fcf90e4710403327fcd50cd6a4ec629d7c0"
+        }
+      },
+      "scope": "Pre-merge common-repairs baseline; preserved historical checks."
+    }
+  ],
+  "pyroscope_default_repair": {
+    "direct_failure": "The captured 2,072-bar block profile exceeds the former 2,048 default; pinned upstream defaults to 8,192.",
+    "pinned_pyroscope_commit": "7aeaa0ff91e83538b3ff0d09bfefb168bddc022d",
+    "source_evidence": "https://github.com/grafana/pyroscope/blob/7aeaa0ff91e83538b3ff0d09bfefb168bddc022d/pkg/validation/limits.go#L196-L198",
+    "captured_replay": "Original production at 2,048 exactly reproduces failed Krabka JSON; at 8,192 it exactly matches native JSON. External diagnostic only; current native validation remains pending.",
+    "diagnostic_path": "qualification/evidence/correctness/pyroscope-default-replay-c7ed6004/diagnostic.json",
+    "diagnostic_sha256": "8bd2eec335586b3bc1a5a8f1ca636256cdeb44bd1658cd5b64ba82ab2edc39c1",
+    "additional_truncation_changes_applied": false,
+    "follow_up": "Threshold ties, hidden-child offsets and negative-sample normalization need a separate compatibility change with complete regression ledgers."
+  },
+  "ci_repairs": {
+    "generated_logql_corpus": "Regenerated 199 seeds across 14 targets; check and self-test passed.",
+    "independent_lockfiles": "Added only the existing PromQL-to-ahash dependency edge in fuzz and benches; locked offline metadata passed. Versions and checksums are unchanged.",
+    "cargo_clippy": "Six minimal lint fixes, without suppressions. Cargo tests passed at preceding head; exact repaired-head CI remains pending.",
+    "coverage": {
+      "status": "targeted_check_passed_full_ci_pending",
+      "fix": "Disable native C/C++ coverage. Explicit first-party Rust instrumentation and the build-path guard remain enabled.",
+      "target": "//crates/blockstore:storage_repair_test",
+      "absolute_native_gcda_paths_before": 72,
+      "absolute_native_gcda_paths_after": 0,
+      "first_party_rust_lines": 9994,
+      "first_party_rust_hit_lines": 3883,
+      "fresh_compile": true,
+      "fixed_proof_path": "qualification/evidence/correctness/pr331-native-coverage-scope-c7ed6004/fixed-native-coverage-proof.json",
+      "fixed_proof_sha256": "5e36fce23be8dd07004b683e23b38f739cecec9b14ec46aba83a854240332f58",
+      "baseline_diagnostic_path": "qualification/evidence/correctness/pr331-native-coverage-scope-c7ed6004/baseline-native-profile-paths.json",
+      "baseline_diagnostic_sha256": "275f8317d907260a5a118cade00aad070034950f45c9d797ba1e9428cd962c34",
+      "ci_absolute_path_collision_origin": "Native instrumentation introduces absolute sandbox paths. The failed CI artifact is unavailable; its exact collision origin remains an inference."
+    },
+    "heap_profiling": {
+      "failing_job": "https://github.com/krabka-io/krabka-o11y/actions/runs/37406466975/job/112085035260",
+      "fix": "Repair eight fixture lints, box the awaited block-builder startup future, and move the fixture constant before statements. No lint suppressions.",
+      "status": "exact_local_five_package_all_targets_lane_passed",
+      "validation_record": {
+        "path": "qualification/evidence/correctness/pr331-merged-main-0321-recovery-tree67b8f2b2a0f2/validation-record.json",
+        "sha256": "930d2b77dde6362ea2b41b9b8d379849659c28661f3a223f2237adde5a4a55f3"
+      }
+    },
+    "query_language_source_binding": {
+      "status": "reviewed_bindings_and_local_checks_passed",
+      "updated_bindings": 20,
+      "source_path": "crates/traces/tests/tempo_differential.rs",
+      "source_sha256": "22accd565b1da756dc120015627ca1a25c69fcfaff9c4fa953b7e63df4773927",
+      "registry_sha256": "a19352327c80b20a7d3093dd2970df6dad8ce917f06d762701d03dc7451f09c5",
+      "review": "Only the seeded Grafana trace failure diagnostics changed. All 20 mapped identities match captured native results. Identities, mappings, reasons and outcomes are unchanged.",
+      "validation_record": {
+        "path": "qualification/evidence/correctness/pr331-query-source-binding-559a0277/validation-record.json",
+        "sha256": "5e0a2bf9da50c43b1f7d860baf403134ea156c246f5fea55eee355af48d4d26f"
+      }
+    }
+  },
+  "qualification_scope": "Local checks qualify the recorded merged code tree. Subsequent validation-record edits change only qualification JSON; final-head CI and fresh performance qualification remain pending.",
+  "remote_ci_checkpoint": {
+    "source_commit": "e7bd6789f0eeb72e4ffdbd31212ce8e2497cdb2b",
+    "run_id": 37406466975,
+    "url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37406466975",
+    "status": "completed",
+    "conclusion": "failure",
+    "jobs_passed": 44,
+    "failed_jobs": [
+      {
+        "name": "cargo",
+        "job_id": 112085035260,
+        "phase": "heap-profiling Clippy",
+        "findings": 8,
+        "source": "crates/metrics-service/src/tests/instant_float_scan.rs"
+      }
+    ],
+    "coverage": "passed",
+    "selected_native_suites": "all passed, including previous Pyroscope",
+    "whole_stack_ci_qualified": false
+  },
+  "local_correctness_qualified": true,
+  "correctness_scope": "five-package heap-profiling Cargo Clippy, formatter, 393 ordinary targets and six native wrappers on the exact merged code tree; final-head whole-stack CI separate",
+  "whole_stack_ci_qualified": false,
+  "delivery_status": "Local merged-source checks passed. Exact pushed-head CI remains pending.",
+  "previous_base_main": "2ac3b9c6cfce1624bc94b32370a43cc2ed300deb",
+  "source_tree": "67b8f2b2a0f2c6364944655ada931b7755533021",
+  "validation_source_snapshot": {
+    "source_commit": "c83e1b89fcd5014c89ecb18ae1cdee40af55a378",
+    "merge_head": "0321cbf3a121ce489d0bb8b98070670c7415f023",
+    "staged_tree": "67b8f2b2a0f2c6364944655ada931b7755533021",
+    "tracked_worktree_matches_staged_tree": true
+  },
+  "merge_resolution": {
+    "base_main": "0321cbf3a121ce489d0bb8b98070670c7415f023",
+    "validated_commit": "0f559995a84d654be7b792ab19a27de6dff4a959",
+    "validated_tree": "67b8f2b2a0f2c6364944655ada931b7755533021",
+    "conflicts": [
+      "crates/metrics-service/tests/metrics_deployment.rs",
+      "crates/traces/tests/tempo_differential.rs"
+    ],
+    "loki_limit_repair": "Preserve typed pretrim for one folded stream; let the final global timestamp limiter select across multiple streams.",
+    "failed_ordinary_attempt": {
+      "status": "failed_diagnostic",
+      "proof_path": "qualification/evidence/correctness/pr331-merged-main-0321-tree030c4a1524e9/failed-ordinary/provenance.json",
+      "proof_sha256": "29bc5e35182ef2f6b0c1c50060e9abfb9dea1fa61b0417a9e93f26806e1b57ee",
+      "targets_passed": 392,
+      "targets_failed": 1,
+      "rust_cases_passed": 5688,
+      "rust_cases_failed": 1,
+      "ignored_cases": 82
+    },
+    "failed_native_setup_attempt": {
+      "status": "failed_setup_diagnostic",
+      "proof_path": "qualification/evidence/correctness/pr331-native-setup-recovery-tree67b8f2b2a0f2/failed-native/provenance.json",
+      "proof_sha256": "09eeaf824960e7b2cc69f65c94cc71d088db3d215eb13b4991f33e62fba7e372",
+      "targets_passed": 4,
+      "targets_failed": 2,
+      "rust_cases_passed": 31,
+      "rust_cases_failed": 2,
+      "ignored_cases": 0
+    },
+    "native_setup_recovery": "Use main tools/build-query-runners.py to supply the pinned upstream Prometheus and Loki runners. No source changes for the setup failures."
+  }
+}

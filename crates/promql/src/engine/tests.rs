@@ -201,6 +201,7 @@ mod scalar_max_of_min_of_require_experimental_feature;
 mod scalar_max_of_min_of_return_larger_and_smaller_scalar;
 mod scalar_pi_function_returns_pi_constant;
 mod set_op_store;
+mod shared_series_labels_follow_snapshots_and_limits;
 mod simple_aggregate_planner_path_matches_interpreter;
 mod smoothed_delta_extrapolates_only_within_the_sample_interval_slack;
 mod sort_instant_result;

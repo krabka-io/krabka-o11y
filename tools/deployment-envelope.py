@@ -385,15 +385,16 @@ class Deployment:
             samples["scrape_errors"].append("minio/rss")
         return samples
 
-    def drain(self, signal, timeout=180):
+    def drain(self, signal, timeout=180, admin_port=None, durable_consumer_index=None):
         started = time.monotonic()
         end_offset = broker_end_offset(signal)
         status = None
+        port = admin_port if admin_port is not None else self.admin_ports[f"{signal}-block-builder"]
         while time.monotonic() - started < timeout:
-            code, body = http(self.admin_ports[f"{signal}-block-builder"], "/status/recovery")
+            code, body = http(port, "/status/recovery")
             if code == 200:
                 status = json.loads(body)
-                if durably_caught_up(status, end_offset):
+                if durably_caught_up(status, end_offset, durable_consumer_index):
                     return {"recovered": True, "seconds": time.monotonic() - started,
                             "broker_end_offset": end_offset, "status": status}
             time.sleep(0.25)
@@ -512,9 +513,11 @@ def telemetry(samples, signal):
             "scrape_errors": sum(len(s["scrape_errors"]) for s in samples)}
 
 
-def durably_caught_up(status, end_offset=0):
+def durably_caught_up(status, end_offset=0, durable_consumer_index=None):
     consumers = status.get("wal_consumers", [])
-    partitions = [p for c in consumers for p in c["partitions"] if p["assigned"]]
+    durable = consumers if durable_consumer_index is None else (
+        [consumers[durable_consumer_index]] if 0 <= durable_consumer_index < len(consumers) else [])
+    partitions = [p for c in durable for p in c["partitions"] if p["assigned"]]
     return bool(consumers and partitions) and status["ready"] and all(c["caught_up"] for c in consumers) and all(
         p["consumed_offset"] is not None and p["committed_offset"] is not None
         and p["committed_offset"] > p["consumed_offset"]
@@ -522,7 +525,7 @@ def durably_caught_up(status, end_offset=0):
         and p["committed_offset"] >= end_offset for p in partitions)
 
 
-def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, interval=0.25, tenant="soak", on_measurement=None):
+def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy=False, cold=False, interval=0.25, tenant="soak", on_measurement=None, check_durability=True):
     records = []
     stop = threading.Event()
     started = time.monotonic()
@@ -591,9 +594,10 @@ def measure(deployment, signal, seconds, warmup, writers, cardinality=100, noisy
     )
     if maintenance_result:
         result["deletion_verification"] = maintenance_result
-    result["catchup"] = deployment.drain(signal)
-    result["ingest"]["durable_rows_per_sec"] = writes["accepted_rows"] / (duration + result["catchup"]["seconds"])
-    result["objectives_met"] &= result["catchup"]["recovered"] and result["catchup"]["seconds"] <= CATCHUP_SECONDS
+    if check_durability:
+        result["catchup"] = deployment.drain(signal)
+        result["ingest"]["durable_rows_per_sec"] = writes["accepted_rows"] / (duration + result["catchup"]["seconds"])
+        result["objectives_met"] &= result["catchup"]["recovered"] and result["catchup"]["seconds"] <= CATCHUP_SECONDS
     return result, records, samples
 
 
@@ -808,6 +812,20 @@ def self_test():
     assert durably_caught_up(status)
     assert not durably_caught_up(status, 120)  # A previous caught-up observation cannot settle new appends.
     assert durably_caught_up(status, 100)
+    # An all node also reports a read-only tail that never commits. Selecting
+    # its writer must still reject a writer that has not published its offsets.
+    reader = {"caught_up": True, "partitions": [
+        {"assigned": True, "consumed_offset": 99, "committed_offset": None}]}
+    status["wal_consumers"].append(reader)
+    assert not durably_caught_up(status, 100)
+    assert durably_caught_up(status, 100, 0)
+    assert not durably_caught_up(status, 100, 1)
+    assert not durably_caught_up(status, 100, 2)
+    status["wal_consumers"][0]["partitions"][0]["committed_offset"] = None
+    assert not durably_caught_up(status, 100, 0)
+    status["wal_consumers"][0]["partitions"][0]["committed_offset"] = 100
+    reader["caught_up"] = False
+    assert not durably_caught_up(status, 100, 0)
     # Three independently measured rates have a median of 200; one outlier
     # must not shift the baseline. Use a model report, not the HTTP generator.
     reports = []

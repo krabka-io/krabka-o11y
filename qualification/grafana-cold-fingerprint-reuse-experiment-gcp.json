@@ -1,0 +1,386 @@
+{
+  "schema_version": 1,
+  "experiment": "Reuse canonical cold-series keys in instant labels and cardinality",
+  "status": "two_matched_comparisons_verified_final_source_pending",
+  "baseline_source_commit": "d4125ea317b203173f80e5feba1991b0b942c469",
+  "source_commit": "1dbd10da44b6b319efea54de61dfdddb40f70c7d",
+  "performance_qualified": false,
+  "retained": false,
+  "scope": {
+    "production_paths": [
+      "crates/promql/src/block_store/store_impl/metric_block_store.rs",
+      "crates/promql/src/merged_store/instant_scan.rs"
+    ],
+    "regression_path": "crates/promql/src/block_store/tests/cold_series_labels.rs",
+    "change": "Preserve the canonical-keyed cold-series map through instant label resolution and cardinality. Avoid hashing the same labels again and avoid the intermediate label vector. Keep canonical hash computation from labels, float/histogram deduplication, ordering, cold-first precedence and owned cold-label lifetime.",
+    "no_cache_or_persistent_memory_field": true,
+    "no_dependency_changes": true,
+    "no_configuration_changes": true,
+    "no_wire_changes": true
+  },
+  "profile_selection": {
+    "run_id": 37365264758,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37365264758",
+    "profile_source_commit": "a2e9e16ebbd2df7fda125f186ee2e4bdb4615908",
+    "source_paths_equal_to_prechange_baseline": true,
+    "diagnostic_only": true,
+    "provenance_path": "qualification/evidence/profiling/gcp-37365264758/provenance.json",
+    "provenance_sha256": "965a0547cbf96c808f0c8be7479253ca3165251f4b9469a9efd2687cf04d052c",
+    "interpretation": "Sampled fingerprint work guides selection. Source inspection identifies repeated canonical hashing in cold label resolution. Sparse flat profiles do not attribute the full hash cost to this path or establish an advantage."
+  },
+  "validation": {
+    "ordinary_scope_targets_passed": 56,
+    "retries_disabled": true,
+    "formatting_check_passed": true,
+    "provenance_path": "qualification/evidence/correctness/cold-canonical-fingerprint-reuse/ordinary-1dbd10da/provenance.json",
+    "provenance_sha256": "eff0fd275c614c9e6593975f0e74b574a631251c47d0e5fee0921e65531c3489",
+    "regression_scope": "Duplicate complete labels stored under different float and histogram index IDs still deduplicate by their canonical label hash. Mixed signals, tenant/matcher isolation, latest samples and retained label ownership match independent expected values. Existing instant engine ledgers cover cold-first precedence, boundaries, limits and complete output.",
+    "native_source_commit": "1dbd10da44b6b319efea54de61dfdddb40f70c7d",
+    "native_status": "passed",
+    "native_wrappers_passed": 3,
+    "native_cases": {
+      "diff_mimir_docker_test": 1,
+      "diff_prometheus_docker_test": 1,
+      "metrics_deployment_docker_test": 12
+    },
+    "native_cases_ignored": 0,
+    "native_provenance_path": "qualification/evidence/correctness/cold-canonical-fingerprint-reuse/native-1dbd10da/provenance.json",
+    "native_provenance_sha256": "fa12bf7a5290aa9e6704d618661206fdc264012488148d23248ed27f2fd6734a",
+    "restored_combined_core_scope": {
+      "source_commit": "92d353cb6f52ab962cf69224549c4114c4d12862",
+      "targets_passed": 22,
+      "provenance_path": "qualification/evidence/correctness/canonical-fingerprint-restoration/core-92d353cb/provenance.json",
+      "provenance_sha256": "3490357fbf95a1eb319eb45767c7602bb618b219b4357884fda8d8340e5717f4",
+      "scope": "Ten core unit suites, their library Clippy targets and both canonical fingerprint golden targets pass with the original fingerprint loop restored. The preceding 56 ordinary checks and three native wrappers remain pinned to their earlier source."
+    },
+    "restored_combined_native_scope": {
+      "source_commit": "7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+      "native_wrappers_passed": 3,
+      "native_cases": {
+        "diff_mimir_docker_test": 1,
+        "diff_prometheus_docker_test": 1,
+        "metrics_deployment_docker_test": 12
+      },
+      "native_cases_ignored": 0,
+      "retries_disabled": true,
+      "provenance_path": "qualification/evidence/correctness/cold-canonical-fingerprint-reuse/restored-native-7fbd49b6/provenance.json",
+      "provenance_sha256": "e232981fe88f28d175e16cbf58c588852c95154497abf86e70d1b8940f0a4f76"
+    },
+    "restored_metadata_combined_scope": {
+      "source_commit": "0c1e117a37b53d8f7098a4a75d3571e0fa9963ce",
+      "targets_passed": 7,
+      "provenance_path": "qualification/evidence/correctness/dense-block-metadata/restored-original-0c1e117a/provenance.json",
+      "provenance_sha256": "12f8d33f5eb5980b709060a0c065237258773083f2f5320ec12c41fcf04743e6",
+      "scope": "The full metadata ledger, blockstore/PromQL/metrics-service unit and library Clippy checks pass with the original metadata and fingerprint implementations restored. Prior native checks remain pinned to their earlier source."
+    }
+  },
+  "next_action": "Compare upstream source for larger memory and query opportunities; qualify reuse on final source before retention.",
+  "correctness_scope_qualified": true,
+  "restored_image_builds": {
+    "baseline_source_commit": "8718820c9d8f287292445ace014e67587dc80713",
+    "candidate_source_commit": "7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+    "baseline_ref": "codex/grafana-cold-fingerprint-baseline",
+    "candidate_ref": "codex/grafana-performance",
+    "base_main": "92989bb29d44c629fa4ac88147a3fce8b1604776",
+    "production_diff_paths": [
+      "crates/promql/src/block_store/store_impl/metric_block_store.rs",
+      "crates/promql/src/merged_store/instant_scan.rs"
+    ],
+    "all_other_tree_entries_equal": true,
+    "regression_equal": true,
+    "fingerprint_source_equal": true,
+    "fingerprint_source_sha256": "21f3cb9e40281627fb7cc71a83bd198e50e36091c604c7311faca524745caecd",
+    "shared_dense_metadata_candidate": true,
+    "performance_qualified": false,
+    "baseline_cpu": 37370655001,
+    "baseline_image_run": 37370655001,
+    "baseline_inputs": {
+      "signal": "metrics",
+      "profiling": "cpu",
+      "deployment_target": "split",
+      "profiles_target": "all"
+    },
+    "baseline_dispatch_live_instances": [
+      {
+        "name": "gcp-runner-3040588ffed24118",
+        "status": "RUNNING"
+      }
+    ],
+    "candidate_cpu": 37371016528,
+    "candidate_image_run": 37371016528,
+    "candidate_inputs": {
+      "signal": "metrics",
+      "profiling": "cpu",
+      "deployment_target": "split",
+      "profiles_target": "all"
+    },
+    "candidate_dispatch_live_instances": [
+      {
+        "name": "gcp-runner-3040588ffed24118",
+        "status": "RUNNING"
+      },
+      {
+        "name": "gcp-runner-6fe9ac82325b445a",
+        "status": "RUNNING"
+      }
+    ],
+    "baseline_verified": {
+      "status": "image_and_cpu_profile_verified",
+      "image_provenance": {
+        "run_id": 37370655001,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37370655001",
+        "source_commit": "8718820c9d8f287292445ace014e67587dc80713",
+        "artifact": {
+          "id": 11370127006,
+          "name": "comparison-image-metrics-8718820c9d8f287292445ace014e67587dc80713",
+          "digest": "sha256:7e663863e786d16e44a696ce6455407df58ae752c9720c9b61797610078797d8",
+          "size_in_bytes": 308374902,
+          "expires_at": "2027-01-03T20:35:10Z"
+        },
+        "archive_digest_verified": true,
+        "all_image_file_checksums_verified": true,
+        "image_tag": "localhost/krabka-o11y:sha-8718820c9d8f",
+        "manifest_digest": "sha256:bceceea04e127f9c78c40e225ef5a15183c8945a4c220451674ae93bf0f39d22",
+        "config_digest": "sha256:bceceea04e127f9c78c40e225ef5a15183c8945a4c220451674ae93bf0f39d22"
+      },
+      "cpu_profile_provenance_path": "qualification/evidence/profiling/gcp-37370655001/provenance.json",
+      "cpu_profile_provenance_sha256": "c63faa513e31e570eea32cc4fe77fccbd304febd8cea5c6cff7db63e84dc54d2",
+      "raw_files_verified": 238,
+      "binary_checksums_path": "qualification/evidence/profiling/gcp-37370655001/cold-fingerprint-reuse-baseline-image.binaries.json",
+      "binary_checksums_sha256": "915d639bb98f84e636fd42d36b77d51b65576569653ad502aa5d70d7ed31c7fe",
+      "runtime_snapshot_path": "qualification/evidence/profiling/gcp-37370655001/cold-fingerprint-reuse-baseline-image.runtime.json",
+      "runtime_snapshot_sha256": "0fb3fbbd088d670a98d23724b044279ac32bbd682c36aa774131518dfac6b760",
+      "diagnostic_only": true,
+      "performance_qualified": false
+    },
+    "candidate_verified": {
+      "status": "image_and_cpu_profile_verified",
+      "image_provenance": {
+        "run_id": 37371016528,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37371016528",
+        "source_commit": "7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+        "artifact": {
+          "id": 11370623488,
+          "name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+          "digest": "sha256:23dbcd9961bbe0b94637404828d35ba6b5a09569594b231b0c50c36eb5d80830",
+          "size_in_bytes": 308374623,
+          "expires_at": "2027-01-03T20:38:45Z"
+        },
+        "archive_digest_verified": true,
+        "all_image_file_checksums_verified": true,
+        "image_tag": "localhost/krabka-o11y:sha-7fbd49b60f16",
+        "manifest_digest": "sha256:78777fbc9fd21daaaf6129c1ef4e65e67f9dc336034817697f3f7d542f776ee7",
+        "config_digest": "sha256:78777fbc9fd21daaaf6129c1ef4e65e67f9dc336034817697f3f7d542f776ee7"
+      },
+      "cpu_profile_provenance_path": "qualification/evidence/profiling/gcp-37371016528/provenance.json",
+      "cpu_profile_provenance_sha256": "3e9f8d995dd8c8c987c6794eec4c32fabd766b193d7ddf310ed0ec51a09d3443",
+      "raw_files_verified": 238,
+      "binary_checksums_path": "qualification/evidence/profiling/gcp-37371016528/cold-fingerprint-reuse-candidate-image.binaries.json",
+      "binary_checksums_sha256": "40352d3ac7599fe8166d3a84b17552308f11e89fa3aa51ad351f1e9b55340f19",
+      "runtime_snapshot_path": "qualification/evidence/profiling/gcp-37371016528/cold-fingerprint-reuse-candidate-image.runtime.json",
+      "runtime_snapshot_sha256": "2ac3e9bebc32ed1c276e9c3d809cacd56fd5ae6b06d5f007946f90ee1766caed",
+      "diagnostic_only": true,
+      "performance_qualified": false
+    }
+  },
+  "image_runtime_control": {
+    "verified": true,
+    "proof_path": "qualification/evidence/profiling/cold-fingerprint-reuse-image-pair.json",
+    "proof_sha256": "94a8ea422214f9d2122455425cbc5295e632c601855b936f2a9b105fa75f8c34",
+    "runtime_config_equal": true,
+    "architecture_os_equal": true,
+    "base_layers_equal": true,
+    "filesystem_paths_checked": 380,
+    "all_non_application_binary_paths_equal": true,
+    "changed_application_binary_paths": [
+      "usr/local/bin/krabka-metrics-service"
+    ]
+  },
+  "gcp_comparison": {
+    "run_id": 37374650578,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37374650578",
+    "harness_head_sha": "eedb57d0984b1084daff674e055fd7c67a433097",
+    "inputs": {
+      "signal": "metrics",
+      "profiling": "none",
+      "phases": "steady",
+      "phase_seconds": "60",
+      "repetitions": "3",
+      "deployment_target": "all",
+      "profiles_target": "all",
+      "image_artifact_run": "37371016528",
+      "image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+      "baseline_image_artifact_run": "37370655001",
+      "baseline_image_artifact_name": "comparison-image-metrics-8718820c9d8f287292445ace014e67587dc80713"
+    },
+    "status": "success_verified",
+    "live_instances_at_dispatch": [
+      {
+        "name": "gcp-runner-8a38ed2c76424626",
+        "status": "RUNNING"
+      }
+    ],
+    "image_runtime_control_verified": true,
+    "performance_qualified": false,
+    "limitations": "Both immutable source images contain equal subsequently rejected dense metadata. The original fingerprint function and engine fixes are present in both. This control isolates cold fingerprint reuse and does not qualify final HEAD.",
+    "measurement_qualified": true,
+    "verified_raw_files": 725,
+    "proof_path": "qualification/evidence/performance/gcp-37374650578/metrics/verified-revision-pairs.json",
+    "proof_sha256": "a513a4d1331e82cb15966412358ffc4368ca2ba52228e155f6b51b7e96b8319f",
+    "candidate_divided_by_baseline": {
+      "query_attempts": 1.0,
+      "average_cpu_cores": 0.9918372112696975,
+      "rss_kib": 0.9552109171433266,
+      "query_p99_seconds": 0.954747961555937,
+      "ingest_p99_seconds": 0.9431191696138411
+    },
+    "pair_directions": {
+      "query_attempts": {
+        "candidate_lower_pairs": 0,
+        "ranges_overlap": true
+      },
+      "average_cpu_cores": {
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      },
+      "rss_kib": {
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": true
+      },
+      "query_p99_seconds": {
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      },
+      "ingest_p99_seconds": {
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      }
+    },
+    "role_cpu": {
+      "broker": {
+        "candidate_divided_by_baseline": 0.9894627455712278,
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      },
+      "metrics-block-builder": {
+        "candidate_divided_by_baseline": 1.01280971184656,
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      },
+      "metrics-compactor": {
+        "candidate_divided_by_baseline": 0.9651729346584763,
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      },
+      "metrics-distributor": {
+        "candidate_divided_by_baseline": 1.0300531444025949,
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      },
+      "metrics-querier": {
+        "candidate_divided_by_baseline": 0.9842670647895767,
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      },
+      "minio": {
+        "candidate_divided_by_baseline": 0.9829321122587861,
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      }
+    }
+  },
+  "decision": "Median query p99 is 4.5% and 5.6% lower in the two matched runs, with lower p99 in five of six pairs. All ranges overlap. Aggregate CPU is lower in only two of six pairs; the initial RSS median gain does not repeat. Do not claim CPU or RSS improvement. Keep this as an unqualified query candidate pending a control on final source with original metadata restored.",
+  "gcp_confirmation": {
+    "run_id": 37377663184,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37377663184",
+    "harness_head_sha": "dcefcf19fec609249ed5e6ace49742f2bb879821",
+    "inputs": {
+      "signal": "metrics",
+      "profiling": "none",
+      "phases": "steady",
+      "phase_seconds": "60",
+      "repetitions": "3",
+      "deployment_target": "all",
+      "profiles_target": "all",
+      "image_artifact_run": "37371016528",
+      "image_artifact_name": "comparison-image-metrics-7fbd49b60f16a028fff90d2ac0088f5d0eb8a1f6",
+      "baseline_image_artifact_run": "37370655001",
+      "baseline_image_artifact_name": "comparison-image-metrics-8718820c9d8f287292445ace014e67587dc80713"
+    },
+    "status": "success_verified",
+    "live_instances_at_dispatch": [
+      {
+        "name": "gcp-runner-1e7bb8c674dc406c",
+        "status": "RUNNING"
+      }
+    ],
+    "image_runtime_control_verified": true,
+    "performance_qualified": false,
+    "scope": "Both immutable source images contain equal subsequently rejected dense metadata. The original fingerprint function and engine fixes are present in both. This control isolates cold fingerprint reuse and does not qualify final HEAD.",
+    "measurement_qualified": true,
+    "verified_raw_files": 725,
+    "proof_path": "qualification/evidence/performance/gcp-37377663184/metrics/verified-revision-pairs.json",
+    "proof_sha256": "2974e6770dcf51836177277cf8d412936e0f11ce6ec4881aa12db09b7235c938",
+    "candidate_divided_by_baseline": {
+      "query_attempts": 1.0,
+      "average_cpu_cores": 0.9862285633690633,
+      "rss_kib": 1.0018962153726103,
+      "query_p99_seconds": 0.9437091909014462,
+      "ingest_p99_seconds": 0.9860180914798411
+    },
+    "pair_directions": {
+      "query_attempts": {
+        "candidate_lower_pairs": 0,
+        "ranges_overlap": true
+      },
+      "average_cpu_cores": {
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      },
+      "rss_kib": {
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      },
+      "query_p99_seconds": {
+        "candidate_lower_pairs": 3,
+        "ranges_overlap": true
+      },
+      "ingest_p99_seconds": {
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      }
+    },
+    "role_cpu": {
+      "broker": {
+        "candidate_divided_by_baseline": 0.9814398013092074,
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      },
+      "metrics-block-builder": {
+        "candidate_divided_by_baseline": 0.9832197756141414,
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      },
+      "metrics-compactor": {
+        "candidate_divided_by_baseline": 0.9633680971018187,
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      },
+      "metrics-distributor": {
+        "candidate_divided_by_baseline": 1.0005870668399623,
+        "candidate_lower_pairs": 2,
+        "ranges_overlap": true
+      },
+      "metrics-querier": {
+        "candidate_divided_by_baseline": 0.9744876264322467,
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      },
+      "minio": {
+        "candidate_divided_by_baseline": 1.0151090610651854,
+        "candidate_lower_pairs": 1,
+        "ranges_overlap": true
+      }
+    }
+  }
+}

@@ -1,0 +1,292 @@
+name: Grafana performance comparison
+on:
+  workflow_dispatch:
+    inputs:
+      image_artifact_run:
+        description: Preserved image run (empty builds this commit)
+        type: string
+        default: ''
+      image_artifact_name:
+        description: Exact image artifact name (empty selects deployment-image-*)
+        type: string
+        default: ''
+      baseline_image_artifact_run:
+        description: Optional preserved baseline image for alternating revision pairs on this VM
+        type: string
+        default: ''
+      baseline_image_artifact_name:
+        description: Exact baseline image artifact name (requires steady comparison and one layout)
+        type: string
+        default: ''
+      phases:
+        description: Phases to measure
+        type: choice
+        options: [all, steady]
+        default: all
+      phase_seconds:
+        description: Measured seconds (60 for comparison)
+        type: number
+        default: 60
+      repetitions:
+        description: Independent paired repetitions
+        type: number
+        default: 3
+      max_writers:
+        description: Highest writer ramp level
+        type: number
+        default: 256
+      max_cardinality:
+        description: Highest cardinality ramp level (up to 20000)
+        type: number
+        default: 20000
+      signal:
+        description: Signal to measure
+        type: choice
+        options: [all, metrics, logs, traces, profiles]
+        default: all
+      profiling:
+        description: Diagnostic profiles instead of a qualified comparison
+        type: choice
+        options: [none, cpu, allocations]
+        default: none
+      profiles_target:
+        description: Profiles layout (both compares split and all on the same VM)
+        type: choice
+        options: [split, all, both]
+        default: split
+      deployment_target:
+        description: Layout for logs, traces and profiles (metrics always uses split)
+        type: choice
+        options: [split, all, both]
+        default: split
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        signal: ${{ fromJSON(inputs.signal == 'all' && '["metrics","logs","traces","profiles"]' || format('["{0}"]', inputs.signal)) }}
+    runs-on: gcp-ubuntu-24-04-16core
+    timeout-minutes: 300
+    concurrency:
+      group: grafana-comparison-${{ inputs.profiling || 'none' }}-${{ matrix.signal }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate revision comparison inputs
+        env:
+          BASELINE_RUN: ${{ inputs.baseline_image_artifact_run }}
+          BASELINE_NAME: ${{ inputs.baseline_image_artifact_name }}
+          PROFILING: ${{ inputs.profiling }}
+          PHASES: ${{ inputs.phases }}
+          DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
+          PROFILES_TARGET: ${{ inputs.profiles_target }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${BASELINE_RUN}" || -n "${BASELINE_NAME}" ]]; then
+            [[ "${BASELINE_RUN}" =~ ^[1-9][0-9]*$ && -n "${BASELINE_NAME}" ]]
+            [[ "${PROFILING}" == none && "${PHASES}" == steady ]]
+            [[ "${DEPLOYMENT_TARGET}" != both && "${PROFILES_TARGET}" != both ]]
+          fi
+      - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
+        if: inputs.image_artifact_run == ''
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: false
+      - uses: ./.github/actions/remote-cache
+        if: inputs.image_artifact_run == ''
+        with:
+          api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
+          client-cert: ${{ secrets.BUILDBUDDY_CLIENT_CERT }}
+          client-key: ${{ secrets.BUILDBUDDY_CLIENT_KEY }}
+          upload: 'true'
+      - name: Build and preserve this commit's image
+        if: inputs.image_artifact_run == ''
+        run: |
+          set -euo pipefail
+          bazel run -c opt --bes_backend= //bazel/images/krabka:load
+          manifest=$(bazel cquery -c opt //bazel/images/krabka:image_manifest_blob --output=files)
+          image="localhost/krabka-o11y:sha-${GITHUB_SHA::12}"
+          identity=$(docker image ls --filter reference=krabka-o11y:dev --format '{{.ID}}' | head -1)
+          docker tag "${identity}" "${image}"
+          mkdir -p qualification/image
+          docker save -o qualification/image/image.tar "${image}"
+          echo "${image}" > qualification/image/tag
+          echo "sha256:$(sha256sum "${manifest}" | cut -d ' ' -f 1)" > qualification/image/manifest-digest
+          echo "${GITHUB_SHA}" > qualification/image/commit
+          docker inspect --format '{{.Id}}' "${image}" > qualification/image/config-digest
+          (cd qualification/image && sha256sum image.tar tag manifest-digest commit config-digest > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: inputs.image_artifact_run == ''
+        with:
+          name: comparison-image-${{ matrix.signal }}-${{ github.sha }}
+          path: qualification/image
+          if-no-files-found: error
+      - name: Download the requested Krabka image
+        if: inputs.image_artifact_run != '' && inputs.image_artifact_name == ''
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.image_artifact_run }}
+          pattern: deployment-image-*
+          merge-multiple: true
+          path: qualification/image
+      - name: Download the named Krabka image
+        if: inputs.image_artifact_run != '' && inputs.image_artifact_name != ''
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.image_artifact_run }}
+          name: ${{ inputs.image_artifact_name }}
+          path: qualification/image
+      - name: Load the exact image
+        run: |
+          set -euo pipefail
+          cd qualification/image
+          sha256sum -c SHA256SUMS
+          docker load -i image.tar
+          [[ "$(docker inspect --format '{{.Id}}' "$(cat tag)")" == "$(cat config-digest)" ]]
+      - name: Download the baseline image
+        if: inputs.baseline_image_artifact_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.baseline_image_artifact_run }}
+          name: ${{ inputs.baseline_image_artifact_name }}
+          path: qualification/baseline-image
+      - name: Load the exact baseline image
+        if: inputs.baseline_image_artifact_run != ''
+        run: |
+          set -euo pipefail
+          cd qualification/baseline-image
+          sha256sum -c SHA256SUMS
+          docker load -i image.tar
+          [[ "$(docker inspect --format '{{.Id}}' "$(cat tag)")" == "$(cat config-digest)" ]]
+      - name: Compare both backends on this host
+        if: inputs.profiling == 'none' || inputs.profiling == ''
+        env:
+          PHASE_SECONDS: ${{ inputs.phase_seconds }}
+          REPETITIONS: ${{ inputs.repetitions }}
+          MAX_WRITERS: ${{ inputs.max_writers }}
+          MAX_CARDINALITY: ${{ inputs.max_cardinality }}
+          SIGNAL: ${{ matrix.signal }}
+          PHASES: ${{ inputs.phases }}
+          PROFILES_TARGET: ${{ inputs.profiles_target }}
+          DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
+          KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
+        run: |
+          set -euo pipefail
+          mkdir -p qualification/evidence/comparison
+          for value in "${PHASE_SECONDS}" "${REPETITIONS}" "${MAX_WRITERS}" "${MAX_CARDINALITY}"; do
+            [[ "${value}" =~ ^[1-9][0-9]*$ ]]
+          done
+          python3 tools/compare-grafana.py --self-test
+          for field in instance/machine-type instance/zone instance/image; do
+            curl -fsS -H 'Metadata-Flavor: Google' \
+              "http://metadata.google.internal/computeMetadata/v1/${field}"
+            echo
+          done > qualification/evidence/comparison/gce.txt
+          phases=(steady burst high_cardinality)
+          if [[ "${PHASES}" == steady ]]; then phases=(steady); fi
+          targets=(split)
+          if [[ "${SIGNAL}" != metrics ]]; then
+            targets=("${DEPLOYMENT_TARGET}")
+            if [[ "${SIGNAL}" == profiles && "${DEPLOYMENT_TARGET}" == split ]]; then
+              targets=("${PROFILES_TARGET}")
+            fi
+            if [[ "${targets[0]}" == both ]]; then targets=(split all); fi
+          fi
+          for target in "${targets[@]}"; do
+            output=qualification/evidence/comparison
+            if [[ "${#targets[@]}" -gt 1 ]]; then
+              output="${output}/${target}"
+            fi
+            python3 -u tools/compare-grafana.py --phases "${phases[@]}" --signal "${SIGNAL}" \
+              --image "$(cat qualification/image/tag)" \
+              --image-digest "$(cat qualification/image/manifest-digest)" \
+              --image-commit "$(cat qualification/image/commit)" \
+              --deployment-target "${target}" --profiles-target "${target}" \
+              --host-wait-seconds 120 --output "${output}" \
+              --seconds "${PHASE_SECONDS}" --repetitions "${REPETITIONS}" \
+              --max-writers "${MAX_WRITERS}" --max-cardinality "${MAX_CARDINALITY}"
+          done
+      - name: Compare revisions on this host
+        if: inputs.baseline_image_artifact_run != ''
+        env:
+          SIGNAL: ${{ matrix.signal }}
+          DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
+          PROFILES_TARGET: ${{ inputs.profiles_target }}
+          PHASE_SECONDS: ${{ inputs.phase_seconds }}
+          REPETITIONS: ${{ inputs.repetitions }}
+          BASELINE_RUN: ${{ inputs.baseline_image_artifact_run }}
+          BASELINE_NAME: ${{ inputs.baseline_image_artifact_name }}
+          KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
+        run: |
+          set -euo pipefail
+          root=qualification/evidence/comparison/revisions
+          mkdir -p "${root}/baseline-image"
+          cp qualification/baseline-image/{tag,commit,manifest-digest,config-digest} "${root}/baseline-image/"
+          cp qualification/baseline-image/SHA256SUMS "${root}/baseline-image/IMAGE-SHA256SUMS"
+          BASELINE_REFERENCE="${root}/baseline-image/reference.json" python3 - <<'PY'
+          import json, os, pathlib
+          pathlib.Path(os.environ['BASELINE_REFERENCE']).write_text(json.dumps({
+              'run_id': int(os.environ['BASELINE_RUN']),
+              'artifact_name': os.environ['BASELINE_NAME'],
+          }, indent=2) + '\n')
+          PY
+          target="${DEPLOYMENT_TARGET}"
+          if [[ "${SIGNAL}" == metrics ]]; then target=split; fi
+          if [[ "${SIGNAL}" == profiles && "${target}" == split ]]; then target="${PROFILES_TARGET}"; fi
+          for ((pair=1; pair<=REPETITIONS; pair++)); do
+            revisions=(baseline candidate)
+            if (( pair % 2 == 0 )); then revisions=(candidate baseline); fi
+            for revision in "${revisions[@]}"; do
+              image_dir=qualification/image
+              if [[ "${revision}" == baseline ]]; then image_dir=qualification/baseline-image; fi
+              python3 -u tools/compare-grafana.py --phases steady --backends krabka --signal "${SIGNAL}" \
+                --image "$(cat "${image_dir}/tag")" \
+                --image-digest "$(cat "${image_dir}/manifest-digest")" \
+                --image-commit "$(cat "${image_dir}/commit")" \
+                --deployment-target "${target}" --profiles-target "${target}" \
+                --host-wait-seconds 120 --seconds "${PHASE_SECONDS}" --repetitions 1 \
+                --output "${root}/${pair}-${revision}"
+            done
+          done
+      - name: Install profiling tools
+        if: inputs.profiling == 'cpu' || inputs.profiling == 'allocations'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y golang-go heaptrack binutils "linux-tools-$(uname -r)"
+      - name: Profile the measured Krabka image
+        if: inputs.profiling == 'cpu' || inputs.profiling == 'allocations'
+        env:
+          SIGNAL: ${{ matrix.signal }}
+          DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
+          PROFILE_MODE: ${{ inputs.profiling }}
+        run: |
+          set -euo pipefail
+          target="${DEPLOYMENT_TARGET}"
+          if [[ "${SIGNAL}" == metrics ]]; then target=split; fi
+          [[ "${target}" != both ]]
+          python3 -u tools/profile-grafana.py --signal "${SIGNAL}" --mode "${PROFILE_MODE}" \
+            --image "$(cat qualification/image/tag)" \
+            --image-digest "$(cat qualification/image/manifest-digest)" \
+            --image-commit "$(cat qualification/image/commit)" \
+            --deployment-target "${target}" \
+            --output qualification/evidence/comparison/profiles
+      - name: Hash evidence
+        if: always()
+        run: |
+          mkdir -p qualification/evidence/comparison
+          cd qualification/evidence/comparison
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: grafana-comparison-${{ matrix.signal }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: qualification/evidence/comparison
+          if-no-files-found: error

@@ -10,7 +10,7 @@ pub(crate) async fn execute_stream_query_with_deletes(
     delete_filters: &[ActiveLogDeleteFilter],
     encoding: LokiStreamEncoding,
 ) -> Result<Value, QueryError> {
-    execute_stream_query_with_hot_tail_frontier_and_deletes(
+    execute_stream_query_with_hot_tail_frontier_and_deletes::<crate::WalLogRecord>(
         root,
         plan,
         label_index,

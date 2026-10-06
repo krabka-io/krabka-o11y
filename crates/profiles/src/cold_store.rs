@@ -10,7 +10,7 @@ use arrow::{
     datatypes::{Int64Type, UInt64Type},
     record_batch::RecordBatch,
 };
-use datafusion::{catalog::MemTable, prelude::SessionContext};
+use datafusion::catalog::MemTable;
 use krabka_blockstore::{LabelMatcher, ProfileIndex, SeriesFingerprint};
 use krabka_pprof::{
     ChainedResolver, DebuginfodConfig, DebuginfodResolver, FileSystemResolver, Frame,
@@ -28,6 +28,7 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+    mod parallel_reads;
     use std::sync::Arc;
 
     use assert2::{assert, check};

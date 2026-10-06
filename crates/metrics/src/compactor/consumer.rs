@@ -7,7 +7,7 @@ use krabka_observability::{
 
 use super::{
     CompactionConsumerCommit, CompactionConsumerCommitError, CompactionConsumerPoll,
-    CompactionConsumerPollError, Consumer, ConsumerRecord, Time, async_trait,
+    CompactionConsumerPollError, Consumer, ConsumerError, ConsumerRecord, Time, async_trait,
 };
 
 /// The WAL consumer the metrics compactor drives.
@@ -58,6 +58,14 @@ impl WalAssignmentConsumer {
             rebalance,
             metrics: metrics.clone(),
         }
+    }
+
+    /// Closes the WAL consumer and awaits its coordinator's shutdown.
+    ///
+    /// # Errors
+    /// Returns any error from the consumer's rebalance listener on close.
+    pub async fn close(self) -> Result<(), ConsumerError> {
+        self.consumer.close().await
     }
 }
 

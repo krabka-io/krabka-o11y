@@ -14,10 +14,12 @@ pub(crate) const MIMIR_TENANT_DELETION_PREFIX: &str = "mimir-tenant-deletions";
 
 pub struct RefreshingMetricBlockStore {
     pub(crate) store: Arc<dyn ObjectStore>,
-    pub(crate) base: Url,
+    // Index snapshots change with the window; block caches belong to the service.
+    pub(crate) blocks: BlockStore,
     pub(crate) manifest_prefix: String,
     pub(crate) hot_store: WalHead,
-    pub(crate) manifest_cache: Arc<tokio::sync::RwLock<BTreeMap<String, CompactionIndexManifest>>>,
+    pub(crate) manifest_cache:
+        Arc<tokio::sync::RwLock<BTreeMap<String, Arc<CompactionIndexManifest>>>>,
     pub(crate) cold_cache: Arc<tokio::sync::RwLock<Option<CachedMetricBlockStore>>>,
     pub(crate) cold_refresh: tokio::sync::Mutex<()>,
     pub(crate) cold_cache_ttl: Time,
@@ -33,8 +35,8 @@ impl RefreshingMetricBlockStore {
         hot_store: WalHead,
     ) -> Self {
         Self {
+            blocks: BlockStore::new(Arc::clone(&store), base),
             store,
-            base,
             manifest_prefix: manifest_prefix.into(),
             hot_store,
             manifest_cache: Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
@@ -74,10 +76,10 @@ impl RefreshingMetricBlockStore {
         ));
         match self.store.head(&marker).await {
             Ok(_) => {
-                let float = BlockStore::new(self.store.clone(), self.base.clone());
+                let float = self.blocks.empty_like();
                 let cold = MetricBlockStore::from_compaction_manifests(
                     float,
-                    Some(BlockStore::new(self.store.clone(), self.base.clone())),
+                    Some(self.blocks.empty_like()),
                     &[],
                 );
                 Ok(MergedMetricStore::new(cold, WalHead::new()))
@@ -139,17 +141,31 @@ impl RefreshingMetricBlockStore {
             &self.manifest_cache,
         )
         .await?;
-        let cold = MetricBlockStore::from_compaction_manifests(
-            BlockStore::new(self.store.clone(), self.base.clone()),
-            Some(BlockStore::new(self.store.clone(), self.base.clone())),
-            &manifests,
-        );
+        let previous = self.cold_cache.read().await;
+        let cold = if let Some(previous) = previous.as_ref()
+            && previous.manifests.len() == manifests.len()
+            && previous
+                .manifests
+                .iter()
+                .zip(&manifests)
+                .all(|(old, new)| Arc::ptr_eq(old, new))
+        {
+            previous.cold.clone()
+        } else {
+            MetricBlockStore::from_compaction_manifest_refs(
+                self.blocks.empty_like(),
+                Some(self.blocks.empty_like()),
+                manifests.iter().map(AsRef::as_ref),
+            )
+        };
+        drop(previous);
         let merged = MergedMetricStore::new(cold.clone(), self.hot_store.clone());
         *self.cold_cache.write().await = Some(CachedMetricBlockStore {
             cached_at: Instant::now(),
             start_ms,
             end_ms,
             cold,
+            manifests,
         });
         tracing::Span::current().record("cold_refreshed", true);
         Ok(merged)
@@ -158,6 +174,42 @@ impl RefreshingMetricBlockStore {
 
 #[async_trait::async_trait]
 impl MetricStore for RefreshingMetricBlockStore {
+    async fn try_latest_float_scan(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        label_start_ms: i64,
+        sample_start_ms: i64,
+        end_ms: i64,
+        max_samples: usize,
+    ) -> Result<Option<krabka_promql::LatestFloatScan>, krabka_promql::PromqlError> {
+        self.current_store_for_tenant(tenant, label_start_ms, end_ms)
+            .await?
+            .try_latest_float_scan(
+                tenant,
+                matchers,
+                label_start_ms,
+                sample_start_ms,
+                end_ms,
+                max_samples,
+            )
+            .await
+    }
+
+    async fn try_latest_float_samples(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+        max_samples: usize,
+    ) -> Result<Option<Vec<krabka_metrics::FloatSampleRow>>, krabka_promql::PromqlError> {
+        self.current_store_for_tenant(tenant, start_ms, end_ms)
+            .await?
+            .try_latest_float_samples(tenant, matchers, start_ms, end_ms, max_samples)
+            .await
+    }
+
     #[tracing::instrument(
         level = "debug",
         name = "metrics.store.scan",
@@ -253,6 +305,19 @@ impl MetricStore for RefreshingMetricBlockStore {
         self.current_store_for_tenant(tenant, start_ms, end_ms)
             .await?
             .series(tenant, matchers, start_ms, end_ms)
+            .await
+    }
+
+    async fn series_shared(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<Vec<Arc<Labels>>, krabka_promql::PromqlError> {
+        self.current_store_for_tenant(tenant, start_ms, end_ms)
+            .await?
+            .series_shared(tenant, matchers, start_ms, end_ms)
             .await
     }
 

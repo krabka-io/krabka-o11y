@@ -1,0 +1,1999 @@
+{
+  "schema_version": 1,
+  "source_commit": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+  "measurement_qualified": true,
+  "retention_decision": "retained_after_same_vm_revision_comparison",
+  "image_producer": {
+    "run_id": 37282607469,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37282607469",
+    "source_commit": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+    "artifact": {
+      "id": 11334237731,
+      "name": "comparison-image-metrics-5b40aec6a591aac531f0c18698264f0304f37cdb",
+      "digest": "sha256:5b292140d7db41a08e5fe4eee5b00cd657f14e003a1abd1ec19c0793ac88923b",
+      "size_in_bytes": 308301768,
+      "expires_at": "2027-01-03T08:16:27Z"
+    },
+    "archive_digest_verified": true,
+    "all_image_file_checksums_verified": true,
+    "image_tag": "localhost/krabka-o11y:sha-5b40aec6a591",
+    "manifest_digest": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+    "config_digest": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+    "docker_image_id": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+    "oci_config_digest": "sha256:6fb26a50f075528482e962e0793c4e50f21c8b17daa47779dae691a7e4339ff0",
+    "identity_note": "The archived config-digest field is Docker inspect Id; this containerd store reports OCI manifest identity. oci_config_digest comes from the independently verified image archive."
+  },
+  "provenance": {
+    "run_id": 37282607469,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37282607469",
+    "head_sha": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+    "jobs": [
+      {
+        "id": 111673938997,
+        "name": "compare (metrics)",
+        "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37282607469/job/111673938997",
+        "conclusion": "success",
+        "runner_name": "gcp-runner-e4bcde5bd14a4339",
+        "runner_group_name": "default",
+        "labels": [
+          "gcp-ubuntu-24-04-16core"
+        ],
+        "started_at": "2026-10-05T08:17:32Z",
+        "completed_at": "2026-10-05T09:01:46Z"
+      }
+    ],
+    "artifacts": [
+      {
+        "id": 11335455162,
+        "name": "grafana-comparison-metrics-5b40aec6a591aac531f0c18698264f0304f37cdb-1",
+        "digest": "sha256:e97c5eb291ba4410a5b4588fd7d2b3fef986900da4c3ccd0a8afc02803d7d7d9",
+        "size_in_bytes": 6024143,
+        "expires_at": "2027-01-03T08:16:27Z",
+        "signal": "metrics",
+        "verified_raw_files": 239,
+        "reports": [
+          "qualification/evidence/performance/gcp-37282607469/metrics/comparison-report.json"
+        ]
+      }
+    ]
+  },
+  "host": {
+    "cpu_count": 16,
+    "kernel": "7.0.0-1011-gcp",
+    "cpu_models": [
+      "Intel(R) Xeon(R) CPU @ 2.20GHz"
+    ]
+  },
+  "scope": "API-accepted single-node steady load; matched aggregate budgets; CPU and RSS include broker and MinIO; durability contracts differ.",
+  "summary": {
+    "host": {
+      "cpu_count": 16,
+      "kernel": "7.0.0-1011-gcp",
+      "lscpu": {
+        "lscpu": [
+          {
+            "field": "Architecture:",
+            "data": "x86_64"
+          },
+          {
+            "field": "CPU op-mode(s):",
+            "data": "32-bit, 64-bit"
+          },
+          {
+            "field": "Address sizes:",
+            "data": "46 bits physical, 48 bits virtual"
+          },
+          {
+            "field": "Byte Order:",
+            "data": "Little Endian"
+          },
+          {
+            "field": "CPU(s):",
+            "data": "16"
+          },
+          {
+            "field": "On-line CPU(s) list:",
+            "data": "0-15"
+          },
+          {
+            "field": "Vendor ID:",
+            "data": "GenuineIntel"
+          },
+          {
+            "field": "Model name:",
+            "data": "Intel(R) Xeon(R) CPU @ 2.20GHz"
+          },
+          {
+            "field": "CPU family:",
+            "data": "6"
+          },
+          {
+            "field": "Model:",
+            "data": "79"
+          },
+          {
+            "field": "Thread(s) per core:",
+            "data": "2"
+          },
+          {
+            "field": "Core(s) per socket:",
+            "data": "8"
+          },
+          {
+            "field": "Socket(s):",
+            "data": "1"
+          },
+          {
+            "field": "Stepping:",
+            "data": "0"
+          },
+          {
+            "field": "BogoMIPS:",
+            "data": "4399.99"
+          },
+          {
+            "field": "Flags:",
+            "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch pti ssbd ibrs ibpb stibp fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm rdseed adx smap xsaveopt arat md_clear arch_capabilities"
+          },
+          {
+            "field": "Hypervisor vendor:",
+            "data": "KVM"
+          },
+          {
+            "field": "Virtualization type:",
+            "data": "full"
+          },
+          {
+            "field": "L1d cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L1i cache:",
+            "data": "256 KiB (8 instances)"
+          },
+          {
+            "field": "L2 cache:",
+            "data": "2 MiB (8 instances)"
+          },
+          {
+            "field": "L3 cache:",
+            "data": "55 MiB (1 instance)"
+          },
+          {
+            "field": "NUMA node(s):",
+            "data": "1"
+          },
+          {
+            "field": "NUMA node0 CPU(s):",
+            "data": "0-15"
+          },
+          {
+            "field": "Vulnerability Gather data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Ghostwrite:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Indirect target selection:",
+            "data": "Mitigation; Aligned branch/return thunks"
+          },
+          {
+            "field": "Vulnerability Itlb multihit:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability L1tf:",
+            "data": "Mitigation; PTE Inversion"
+          },
+          {
+            "field": "Vulnerability Mds:",
+            "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+          },
+          {
+            "field": "Vulnerability Meltdown:",
+            "data": "Mitigation; PTI"
+          },
+          {
+            "field": "Vulnerability Mmio stale data:",
+            "data": "Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown"
+          },
+          {
+            "field": "Vulnerability Old microcode:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Reg file data sampling:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Retbleed:",
+            "data": "Mitigation; IBRS"
+          },
+          {
+            "field": "Vulnerability Spec rstack overflow:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Spec store bypass:",
+            "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+          },
+          {
+            "field": "Vulnerability Spectre v1:",
+            "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+          },
+          {
+            "field": "Vulnerability Spectre v2:",
+            "data": "Mitigation; IBRS; IBPB conditional; STIBP conditional; RSB filling; PBRSB-eIBRS Not affected; BHI SW loop, KVM SW loop"
+          },
+          {
+            "field": "Vulnerability Srbds:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsa:",
+            "data": "Not affected"
+          },
+          {
+            "field": "Vulnerability Tsx async abort:",
+            "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+          },
+          {
+            "field": "Vulnerability Vmscape:",
+            "data": "Not affected"
+          }
+        ]
+      }
+    },
+    "harness_commit": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+    "resource_coverage": [
+      {
+        "repetition": 1,
+        "backend": "krabka",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 60,
+        "sampled_seconds": 60.284302711486816,
+        "coverage_fraction": 0.9998257522712706,
+        "valid": true
+      },
+      {
+        "repetition": 1,
+        "backend": "mimir",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 60,
+        "sampled_seconds": 60.43296527862549,
+        "coverage_fraction": 0.9998225033631378,
+        "valid": true
+      },
+      {
+        "repetition": 2,
+        "backend": "mimir",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 60,
+        "sampled_seconds": 60.5294291973114,
+        "coverage_fraction": 0.999831096150782,
+        "valid": true
+      },
+      {
+        "repetition": 2,
+        "backend": "krabka",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 60,
+        "sampled_seconds": 60.34963822364807,
+        "coverage_fraction": 0.9998127244388271,
+        "valid": true
+      },
+      {
+        "repetition": 3,
+        "backend": "krabka",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 60,
+        "sampled_seconds": 60.389121770858765,
+        "coverage_fraction": 0.9998128999494129,
+        "valid": true
+      },
+      {
+        "repetition": 3,
+        "backend": "mimir",
+        "phase": "steady",
+        "level": 2,
+        "sample_count": 60,
+        "sampled_seconds": 60.50281071662903,
+        "coverage_fraction": 0.9998215160173692,
+        "valid": true
+      }
+    ],
+    "seed_value_mismatches": [],
+    "correctness_disqualified": false,
+    "host_activity_disqualified": false,
+    "host_activity_failures": [],
+    "backends": {
+      "krabka": {
+        "steady_objectives_met": true,
+        "steady": {
+          "rows_per_second": {
+            "median": 1988.040532870103,
+            "min": 1986.741063219529,
+            "max": 1990.2210836999723,
+            "values": [
+              1990.2210836999723,
+              1988.040532870103,
+              1986.741063219529
+            ]
+          },
+          "accepted_rows": {
+            "median": 120000,
+            "min": 120000,
+            "max": 120000,
+            "values": [
+              120000,
+              120000,
+              120000
+            ]
+          },
+          "ingest_p99_seconds": {
+            "median": 0.050515895999978966,
+            "min": 0.041067771000143694,
+            "max": 0.05701443299994935,
+            "values": [
+              0.041067771000143694,
+              0.050515895999978966,
+              0.05701443299994935
+            ]
+          },
+          "query_p99_seconds": {
+            "median": 0.03514379199987161,
+            "min": 0.03444506100004219,
+            "max": 0.03669633000026806,
+            "values": [
+              0.03444506100004219,
+              0.03514379199987161,
+              0.03669633000026806
+            ]
+          },
+          "query_attempts": {
+            "median": 240,
+            "min": 240,
+            "max": 240,
+            "values": [
+              240,
+              240,
+              240
+            ]
+          },
+          "cpu_seconds": {
+            "median": 15.277284,
+            "min": 14.308795,
+            "max": 15.46498,
+            "values": [
+              14.308795,
+              15.46498,
+              15.277284
+            ]
+          },
+          "rss_kib": {
+            "median": 489924,
+            "min": 487188,
+            "max": 495108,
+            "values": [
+              487188,
+              489924,
+              495108
+            ]
+          },
+          "cpu_seconds_per_million_rows": {
+            "median": 127.3107,
+            "min": 119.23995833333333,
+            "max": 128.87483333333333,
+            "values": [
+              119.23995833333333,
+              128.87483333333333,
+              127.3107
+            ]
+          },
+          "generator_cpu_seconds": {
+            "median": 1.2386139720000005,
+            "min": 1.185523925,
+            "max": 1.2484820259999996,
+            "values": [
+              1.185523925,
+              1.2386139720000005,
+              1.2484820259999996
+            ]
+          },
+          "s3_requests": {
+            "median": 1181.0,
+            "min": 1178.0,
+            "max": 1203.0,
+            "values": [
+              1203.0,
+              1181.0,
+              1178.0
+            ]
+          },
+          "s3_read_bytes": {
+            "median": 21876471.0,
+            "min": 21797022.0,
+            "max": 22856800.0,
+            "values": [
+              22856800.0,
+              21876471.0,
+              21797022.0
+            ]
+          },
+          "s3_write_bytes": {
+            "median": 4052799.0,
+            "min": 4052765.0,
+            "max": 4054838.0,
+            "values": [
+              4054838.0,
+              4052765.0,
+              4052799.0
+            ]
+          },
+          "duration_seconds": {
+            "median": 60.360942353000155,
+            "min": 60.29480894499966,
+            "max": 60.40042269300011,
+            "values": [
+              60.29480894499966,
+              60.360942353000155,
+              60.40042269300011
+            ]
+          },
+          "query_attempts_per_second": {
+            "median": 3.976081065740206,
+            "min": 3.9734821264390576,
+            "max": 3.9804421673999446,
+            "values": [
+              3.9804421673999446,
+              3.976081065740206,
+              3.9734821264390576
+            ]
+          },
+          "average_cpu_cores": {
+            "median": 0.2529333954772225,
+            "min": 0.2373138790945062,
+            "max": 0.25620839233354575,
+            "values": [
+              0.2373138790945062,
+              0.25620839233354575,
+              0.2529333954772225
+            ]
+          },
+          "driver_average_cpu_cores": {
+            "median": 0.020520123174293633,
+            "min": 0.019662122589714538,
+            "max": 0.02067008756454759,
+            "values": [
+              0.019662122589714538,
+              0.020520123174293633,
+              0.02067008756454759
+            ]
+          }
+        },
+        "service_cpu": 6.0,
+        "service_memory_gib": 6.0,
+        "burst": {
+          "passing_levels": [],
+          "highest_consistently_passing_tested_level": null,
+          "per_repetition": [
+            {
+              "repetition": 1,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 2,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 3,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            }
+          ],
+          "failed_points": []
+        },
+        "high_cardinality": {
+          "passing_levels": [],
+          "highest_consistently_passing_tested_level": null,
+          "per_repetition": [
+            {
+              "repetition": 1,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 2,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 3,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            }
+          ],
+          "failed_points": []
+        }
+      },
+      "mimir": {
+        "steady_objectives_met": true,
+        "steady": {
+          "rows_per_second": {
+            "median": 1983.0249289411695,
+            "min": 1982.1718646476697,
+            "max": 1985.3187718063498,
+            "values": [
+              1985.3187718063498,
+              1982.1718646476697,
+              1983.0249289411695
+            ]
+          },
+          "accepted_rows": {
+            "median": 120000,
+            "min": 120000,
+            "max": 120000,
+            "values": [
+              120000,
+              120000,
+              120000
+            ]
+          },
+          "ingest_p99_seconds": {
+            "median": 0.012412526999924012,
+            "min": 0.01180831700003182,
+            "max": 0.01501609799970538,
+            "values": [
+              0.01180831700003182,
+              0.01501609799970538,
+              0.012412526999924012
+            ]
+          },
+          "query_p99_seconds": {
+            "median": 0.028848941999967792,
+            "min": 0.027542902000277536,
+            "max": 0.03224191900017104,
+            "values": [
+              0.027542902000277536,
+              0.03224191900017104,
+              0.028848941999967792
+            ]
+          },
+          "query_attempts": {
+            "median": 240,
+            "min": 240,
+            "max": 240,
+            "values": [
+              240,
+              240,
+              240
+            ]
+          },
+          "cpu_seconds": {
+            "median": 22.847923,
+            "min": 22.318165,
+            "max": 23.568016,
+            "values": [
+              22.318165,
+              23.568016,
+              22.847923
+            ]
+          },
+          "rss_kib": {
+            "median": 310476,
+            "min": 305232,
+            "max": 311196,
+            "values": [
+              310476,
+              305232,
+              311196
+            ]
+          },
+          "cpu_seconds_per_million_rows": {
+            "median": 190.39935833333334,
+            "min": 185.98470833333334,
+            "max": 196.40013333333334,
+            "values": [
+              185.98470833333334,
+              196.40013333333334,
+              190.39935833333334
+            ]
+          },
+          "generator_cpu_seconds": {
+            "median": 1.180554872,
+            "min": 1.165873692,
+            "max": 1.2083835169999997,
+            "values": [
+              1.165873692,
+              1.2083835169999997,
+              1.180554872
+            ]
+          },
+          "s3_requests": {
+            "median": 30.0,
+            "min": 25.0,
+            "max": 32.0,
+            "values": [
+              32.0,
+              25.0,
+              30.0
+            ]
+          },
+          "s3_read_bytes": {
+            "median": 9052.0,
+            "min": 7557.0,
+            "max": 9650.0,
+            "values": [
+              9650.0,
+              7557.0,
+              9052.0
+            ]
+          },
+          "s3_write_bytes": {
+            "median": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "values": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "duration_seconds": {
+            "median": 60.51361142699989,
+            "min": 60.44369383100002,
+            "max": 60.539654577999954,
+            "values": [
+              60.44369383100002,
+              60.539654577999954,
+              60.51361142699989
+            ]
+          },
+          "query_attempts_per_second": {
+            "median": 3.9660498578823393,
+            "min": 3.964343729295339,
+            "max": 3.9706375436126997,
+            "values": [
+              3.9706375436126997,
+              3.964343729295339,
+              3.9660498578823393
+            ]
+          },
+          "average_cpu_cores": {
+            "median": 0.37756667402940264,
+            "min": 0.36923893272309555,
+            "max": 0.38929881850638426,
+            "values": [
+              0.36923893272309555,
+              0.38929881850638426,
+              0.37756667402940264
+            ]
+          },
+          "driver_average_cpu_cores": {
+            "median": 0.019508914509657933,
+            "min": 0.019288591052356453,
+            "max": 0.01996019840917832,
+            "values": [
+              0.019288591052356453,
+              0.01996019840917832,
+              0.019508914509657933
+            ]
+          }
+        },
+        "service_cpu": 6.0,
+        "service_memory_gib": 6.0,
+        "burst": {
+          "passing_levels": [],
+          "highest_consistently_passing_tested_level": null,
+          "per_repetition": [
+            {
+              "repetition": 1,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 2,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 3,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            }
+          ],
+          "failed_points": []
+        },
+        "high_cardinality": {
+          "passing_levels": [],
+          "highest_consistently_passing_tested_level": null,
+          "per_repetition": [
+            {
+              "repetition": 1,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 2,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            },
+            {
+              "repetition": 3,
+              "passing_levels": [],
+              "highest_passing_tested_level": null,
+              "failed_levels": []
+            }
+          ],
+          "failed_points": []
+        }
+      }
+    },
+    "deployment_target": "split",
+    "highest_common_burst_writers": null,
+    "steady_krabka_divided_by_native": {
+      "average_cpu_cores": 0.6699039212807366,
+      "rss_kib": 1.5779770417037067,
+      "query_p99_seconds": 1.2182003762880054,
+      "ingest_p99_seconds": 4.069751147392325
+    }
+  },
+  "entries": [
+    {
+      "backend": "krabka",
+      "repetition": 1,
+      "objectives_met": true,
+      "duration_seconds": 60.29480894499966,
+      "ingest": {
+        "attempts": 120,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 120000,
+        "accepted_rows_per_sec": 1990.2210836999723,
+        "latency_seconds": {
+          "count": 120,
+          "p50": 0.03017175800005134,
+          "p95": 0.037232018999930006,
+          "p99": 0.041067771000143694
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 120
+        }
+      },
+      "query": {
+        "attempts": 240,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 240,
+          "p50": 0.013317591000031825,
+          "p95": 0.022515238000323734,
+          "p99": 0.03444506100004219
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 240
+        }
+      },
+      "resources": {
+        "cpu_seconds_by_role": {
+          "broker": 2.571779,
+          "metrics-block-builder": 1.829035,
+          "metrics-compactor": 0.565491,
+          "metrics-distributor": 2.037481,
+          "metrics-querier": 3.829464,
+          "minio": 3.475545
+        },
+        "cpu_seconds_total": 14.308795,
+        "load_generator_cpu_seconds": 1.185523925,
+        "throttled_seconds_by_role": {
+          "broker": 0.0,
+          "metrics-block-builder": 0.0,
+          "metrics-compactor": 0.0,
+          "metrics-distributor": 0.0,
+          "metrics-querier": 0.0,
+          "minio": 0.0
+        },
+        "rss_kib_simultaneous_peak": 487188,
+        "s3_requests": 1203.0,
+        "s3_read_bytes": 22856800.0,
+        "s3_write_bytes": 4054838.0,
+        "external_cpu_cores_mean": 0.09265564705509631,
+        "external_cpu_cores_peak_window": 0.10238676438011665,
+        "host_activity_qualified": true,
+        "sample_count": 60,
+        "sampled_seconds": 60.284302711486816,
+        "coverage_fraction": 0.9998257522712706,
+        "cpu_seconds_per_million_accepted_rows": 119.23995833333333
+      },
+      "service_cpu": 6.0,
+      "service_memory_gib": 6.0,
+      "deployment_target": "split"
+    },
+    {
+      "backend": "mimir",
+      "repetition": 1,
+      "objectives_met": true,
+      "duration_seconds": 60.44369383100002,
+      "ingest": {
+        "attempts": 120,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 120000,
+        "accepted_rows_per_sec": 1985.3187718063498,
+        "latency_seconds": {
+          "count": 120,
+          "p50": 0.008992785999907937,
+          "p95": 0.010994722999839723,
+          "p99": 0.01180831700003182
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 120
+        }
+      },
+      "query": {
+        "attempts": 240,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 240,
+          "p50": 0.015689359000134573,
+          "p95": 0.024485861999892222,
+          "p99": 0.027542902000277536
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 240
+        }
+      },
+      "resources": {
+        "cpu_seconds_by_role": {
+          "mimir": 21.355174,
+          "minio": 0.962991
+        },
+        "cpu_seconds_total": 22.318165,
+        "load_generator_cpu_seconds": 1.165873692,
+        "throttled_seconds_by_role": {
+          "mimir": 0.0,
+          "minio": 0.0
+        },
+        "rss_kib_simultaneous_peak": 310476,
+        "s3_requests": 32.0,
+        "s3_read_bytes": 9650.0,
+        "s3_write_bytes": 0.0,
+        "external_cpu_cores_mean": 0.03749545132450164,
+        "external_cpu_cores_peak_window": 0.047026739383040486,
+        "host_activity_qualified": true,
+        "sample_count": 60,
+        "sampled_seconds": 60.43296527862549,
+        "coverage_fraction": 0.9998225033631378,
+        "cpu_seconds_per_million_accepted_rows": 185.98470833333334
+      },
+      "service_cpu": 6.0,
+      "service_memory_gib": 6.0,
+      "deployment_target": "native"
+    },
+    {
+      "backend": "mimir",
+      "repetition": 2,
+      "objectives_met": true,
+      "duration_seconds": 60.539654577999954,
+      "ingest": {
+        "attempts": 120,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 120000,
+        "accepted_rows_per_sec": 1982.1718646476697,
+        "latency_seconds": {
+          "count": 120,
+          "p50": 0.009720035999635002,
+          "p95": 0.013663662999988446,
+          "p99": 0.01501609799970538
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 120
+        }
+      },
+      "query": {
+        "attempts": 240,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 240,
+          "p50": 0.016533553000044776,
+          "p95": 0.027200809000078152,
+          "p99": 0.03224191900017104
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 240
+        }
+      },
+      "resources": {
+        "cpu_seconds_by_role": {
+          "mimir": 22.677041,
+          "minio": 0.890975
+        },
+        "cpu_seconds_total": 23.568016,
+        "load_generator_cpu_seconds": 1.2083835169999997,
+        "throttled_seconds_by_role": {
+          "mimir": 0.0,
+          "minio": 0.0
+        },
+        "rss_kib_simultaneous_peak": 305232,
+        "s3_requests": 25.0,
+        "s3_read_bytes": 7557.0,
+        "s3_write_bytes": 0.0,
+        "external_cpu_cores_mean": 0.042022542038322924,
+        "external_cpu_cores_peak_window": 0.050050679103091175,
+        "host_activity_qualified": true,
+        "sample_count": 60,
+        "sampled_seconds": 60.5294291973114,
+        "coverage_fraction": 0.999831096150782,
+        "cpu_seconds_per_million_accepted_rows": 196.40013333333334
+      },
+      "service_cpu": 6.0,
+      "service_memory_gib": 6.0,
+      "deployment_target": "native"
+    },
+    {
+      "backend": "krabka",
+      "repetition": 2,
+      "objectives_met": true,
+      "duration_seconds": 60.360942353000155,
+      "ingest": {
+        "attempts": 120,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 120000,
+        "accepted_rows_per_sec": 1988.040532870103,
+        "latency_seconds": {
+          "count": 120,
+          "p50": 0.033937660999981745,
+          "p95": 0.04509529000006296,
+          "p99": 0.050515895999978966
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 120
+        }
+      },
+      "query": {
+        "attempts": 240,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 240,
+          "p50": 0.014007411999955366,
+          "p95": 0.021244436999950267,
+          "p99": 0.03514379199987161
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 240
+        }
+      },
+      "resources": {
+        "cpu_seconds_by_role": {
+          "broker": 2.808941,
+          "metrics-block-builder": 2.008095,
+          "metrics-compactor": 0.620291,
+          "metrics-distributor": 2.215053,
+          "metrics-querier": 4.111841,
+          "minio": 3.700759
+        },
+        "cpu_seconds_total": 15.46498,
+        "load_generator_cpu_seconds": 1.2386139720000005,
+        "throttled_seconds_by_role": {
+          "broker": 0.0,
+          "metrics-block-builder": 0.0,
+          "metrics-compactor": 0.0,
+          "metrics-distributor": 0.0,
+          "metrics-querier": 0.0,
+          "minio": 0.0
+        },
+        "rss_kib_simultaneous_peak": 489924,
+        "s3_requests": 1181.0,
+        "s3_read_bytes": 21876471.0,
+        "s3_write_bytes": 4052765.0,
+        "external_cpu_cores_mean": 0.299196591056392,
+        "external_cpu_cores_peak_window": 1.106751994888872,
+        "host_activity_qualified": true,
+        "sample_count": 60,
+        "sampled_seconds": 60.34963822364807,
+        "coverage_fraction": 0.9998127244388271,
+        "cpu_seconds_per_million_accepted_rows": 128.87483333333333
+      },
+      "service_cpu": 6.0,
+      "service_memory_gib": 6.0,
+      "deployment_target": "split"
+    },
+    {
+      "backend": "krabka",
+      "repetition": 3,
+      "objectives_met": true,
+      "duration_seconds": 60.40042269300011,
+      "ingest": {
+        "attempts": 120,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 120000,
+        "accepted_rows_per_sec": 1986.741063219529,
+        "latency_seconds": {
+          "count": 120,
+          "p50": 0.03314381100017272,
+          "p95": 0.04022482500022306,
+          "p99": 0.05701443299994935
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 120
+        }
+      },
+      "query": {
+        "attempts": 240,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 240,
+          "p50": 0.013999753000007331,
+          "p95": 0.021201581999775954,
+          "p99": 0.03669633000026806
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 240
+        }
+      },
+      "resources": {
+        "cpu_seconds_by_role": {
+          "broker": 2.771458,
+          "metrics-block-builder": 1.950888,
+          "metrics-compactor": 0.62175,
+          "metrics-distributor": 2.170394,
+          "metrics-querier": 4.058911,
+          "minio": 3.703883
+        },
+        "cpu_seconds_total": 15.277284,
+        "load_generator_cpu_seconds": 1.2484820259999996,
+        "throttled_seconds_by_role": {
+          "broker": 0.0,
+          "metrics-block-builder": 0.0,
+          "metrics-compactor": 0.0,
+          "metrics-distributor": 0.0,
+          "metrics-querier": 0.0,
+          "minio": 0.0
+        },
+        "rss_kib_simultaneous_peak": 495108,
+        "s3_requests": 1178.0,
+        "s3_read_bytes": 21797022.0,
+        "s3_write_bytes": 4052799.0,
+        "external_cpu_cores_mean": 0.10356557258331422,
+        "external_cpu_cores_peak_window": 0.11867718243289234,
+        "host_activity_qualified": true,
+        "sample_count": 60,
+        "sampled_seconds": 60.389121770858765,
+        "coverage_fraction": 0.9998128999494129,
+        "cpu_seconds_per_million_accepted_rows": 127.3107
+      },
+      "service_cpu": 6.0,
+      "service_memory_gib": 6.0,
+      "deployment_target": "split"
+    },
+    {
+      "backend": "mimir",
+      "repetition": 3,
+      "objectives_met": true,
+      "duration_seconds": 60.51361142699989,
+      "ingest": {
+        "attempts": 120,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 120000,
+        "accepted_rows_per_sec": 1983.0249289411695,
+        "latency_seconds": {
+          "count": 120,
+          "p50": 0.00888753099980022,
+          "p95": 0.011378670999874885,
+          "p99": 0.012412526999924012
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 120
+        }
+      },
+      "query": {
+        "attempts": 240,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 240,
+          "p50": 0.01572371900010694,
+          "p95": 0.02295093699967765,
+          "p99": 0.028848941999967792
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 240
+        }
+      },
+      "resources": {
+        "cpu_seconds_by_role": {
+          "mimir": 21.854692,
+          "minio": 0.993231
+        },
+        "cpu_seconds_total": 22.847923,
+        "load_generator_cpu_seconds": 1.180554872,
+        "throttled_seconds_by_role": {
+          "mimir": 0.0,
+          "minio": 0.0
+        },
+        "rss_kib_simultaneous_peak": 311196,
+        "s3_requests": 30.0,
+        "s3_read_bytes": 9052.0,
+        "s3_write_bytes": 0.0,
+        "external_cpu_cores_mean": 0.03407316294199705,
+        "external_cpu_cores_peak_window": 0.04079025946026654,
+        "host_activity_qualified": true,
+        "sample_count": 60,
+        "sampled_seconds": 60.50281071662903,
+        "coverage_fraction": 0.9998215160173692,
+        "cpu_seconds_per_million_accepted_rows": 190.39935833333334
+      },
+      "service_cpu": 6.0,
+      "service_memory_gib": 6.0,
+      "deployment_target": "native"
+    }
+  ],
+  "limitations": [
+    "The prior retained comparison used AMD EPYC 7B12; this comparison used Intel model 79. Cross-run absolute changes and native-normalized ratios do not isolate the source change.",
+    "Ingest p99 is also recorded: Krabka median 50.52ms versus Mimir 12.41ms.",
+    "Diagnostic profiles are excluded from comparison metrics."
+  ],
+  "functional_validation": {
+    "scoped_targets_passed": 35,
+    "real_oracles": [
+      "Mimir",
+      "Prometheus"
+    ],
+    "production_forwarding_negative_control": "Removing only the new wrapper forwarding fails the one-manifest-list regression; other 64 service cases pass."
+  },
+  "profiling_record": "grafana-profiling-gcp.json#fused_instant_scan_captures",
+  "retained_in_branch": true,
+  "rebase_equivalent_commit": "3218e97b",
+  "same_vm_revision_comparison": {
+    "measurement_qualified": true,
+    "provenance": {
+      "run_id": 37289143258,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37289143258",
+      "head_sha": "114a027b253ce80476da684f03f4df01d41659ba",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111695159087,
+          "name": "compare (metrics)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37289143258/job/111695159087",
+          "runner_name": "gcp-runner-2bcf8f3cb5b14fd4",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T09:19:41Z",
+          "completed_at": "2026-10-05T09:42:41Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11337310630,
+          "name": "grafana-comparison-metrics-114a027b253ce80476da684f03f4df01d41659ba-1",
+          "digest": "sha256:7b2043e1bfcb80ea627d547605369cc4b08c9d6c9f7af1fa8ad950f605ce030e",
+          "size_in_bytes": 9221626,
+          "expires_at": "2027-01-03T09:18:16Z",
+          "signal": "metrics",
+          "verified_raw_files": 725
+        }
+      ]
+    },
+    "pairing": "Three fresh baseline/candidate deployment pairs on one VM, alternating first revision; native comparison also retained separately.",
+    "image_producers": {
+      "baseline": {
+        "run_id": 37270733261,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37270733261",
+        "source_commit": "7184a4c9a4a11c95a3605be42d5074560dc5d77e",
+        "artifact": {
+          "id": 11329045977,
+          "name": "comparison-image-metrics-7184a4c9a4a11c95a3605be42d5074560dc5d77e",
+          "digest": "sha256:b60986d9c6c0a4ec310d7e0d84073d2387eabbd64932fd8bb81d299bb4272f16",
+          "size_in_bytes": 308238245,
+          "expires_at": "2027-01-03T06:06:09Z"
+        },
+        "archive_digest_verified": true,
+        "all_image_file_checksums_verified": true,
+        "image_tag": "localhost/krabka-o11y:sha-7184a4c9a4a1",
+        "manifest_digest": "sha256:78db229c542f67769f4249c33769bb20ff00ed02551190323ef4bb83429edc69",
+        "config_digest": "sha256:78db229c542f67769f4249c33769bb20ff00ed02551190323ef4bb83429edc69"
+      },
+      "candidate": {
+        "run_id": 37282607469,
+        "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37282607469",
+        "source_commit": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+        "artifact": {
+          "id": 11334237731,
+          "name": "comparison-image-metrics-5b40aec6a591aac531f0c18698264f0304f37cdb",
+          "digest": "sha256:5b292140d7db41a08e5fe4eee5b00cd657f14e003a1abd1ec19c0793ac88923b",
+          "size_in_bytes": 308301768,
+          "expires_at": "2027-01-03T08:16:27Z"
+        },
+        "archive_digest_verified": true,
+        "all_image_file_checksums_verified": true,
+        "image_tag": "localhost/krabka-o11y:sha-5b40aec6a591",
+        "manifest_digest": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+        "config_digest": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12"
+      }
+    },
+    "summary": {
+      "baseline": {
+        "average_cpu_cores": {
+          "median": 0.2213922067896224,
+          "min": 0.21708456035562476,
+          "max": 0.2487357016692172,
+          "values": [
+            0.2487357016692172,
+            0.21708456035562476,
+            0.2213922067896224
+          ]
+        },
+        "rss_kib": {
+          "median": 516556,
+          "min": 507276,
+          "max": 519468,
+          "values": [
+            519468,
+            507276,
+            516556
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.03436923799995384,
+          "min": 0.032715499000005366,
+          "max": 0.03918005900004573,
+          "values": [
+            0.03918005900004573,
+            0.032715499000005366,
+            0.03436923799995384
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.03270057800000359,
+          "min": 0.02923453900007189,
+          "max": 0.03925145000005159,
+          "values": [
+            0.03925145000005159,
+            0.02923453900007189,
+            0.03270057800000359
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.03700398093271862,
+            "min": 0.035973102999607036,
+            "max": 0.04330896869206951,
+            "values": [
+              0.04330896869206951,
+              0.035973102999607036,
+              0.03700398093271862
+            ]
+          },
+          "metrics-block-builder": {
+            "median": 0.023588101415111033,
+            "min": 0.02288791218516603,
+            "max": 0.026979758588850534,
+            "values": [
+              0.026979758588850534,
+              0.02288791218516603,
+              0.023588101415111033
+            ]
+          },
+          "metrics-compactor": {
+            "median": 0.00699379225135738,
+            "min": 0.0067198703267531265,
+            "max": 0.007825738287276328,
+            "values": [
+              0.007825738287276328,
+              0.0067198703267531265,
+              0.00699379225135738
+            ]
+          },
+          "metrics-distributor": {
+            "median": 0.02590285482386741,
+            "min": 0.024904517374576832,
+            "max": 0.02997821903425411,
+            "values": [
+              0.02997821903425411,
+              0.024904517374576832,
+              0.02590285482386741
+            ]
+          },
+          "metrics-querier": {
+            "median": 0.0684068359079256,
+            "min": 0.06788565086211502,
+            "max": 0.07650067925606165,
+            "values": [
+              0.07650067925606165,
+              0.06788565086211502,
+              0.0684068359079256
+            ]
+          },
+          "minio": {
+            "median": 0.05949664145864238,
+            "min": 0.05871350660740672,
+            "max": 0.0641423378107051,
+            "values": [
+              0.0641423378107051,
+              0.05871350660740672,
+              0.05949664145864238
+            ]
+          }
+        }
+      },
+      "candidate": {
+        "average_cpu_cores": {
+          "median": 0.18367790379738916,
+          "min": 0.1826408608604202,
+          "max": 0.19476689258738328,
+          "values": [
+            0.19476689258738328,
+            0.18367790379738916,
+            0.1826408608604202
+          ]
+        },
+        "rss_kib": {
+          "median": 494336,
+          "min": 493948,
+          "max": 519992,
+          "values": [
+            494336,
+            519992,
+            493948
+          ]
+        },
+        "query_p99_seconds": {
+          "median": 0.024098872000195115,
+          "min": 0.024019618000011178,
+          "max": 0.026349946999971507,
+          "values": [
+            0.026349946999971507,
+            0.024098872000195115,
+            0.024019618000011178
+          ]
+        },
+        "ingest_p99_seconds": {
+          "median": 0.030058412000016688,
+          "min": 0.029998347999935504,
+          "max": 0.040060057000005145,
+          "values": [
+            0.040060057000005145,
+            0.030058412000016688,
+            0.029998347999935504
+          ]
+        },
+        "average_cpu_cores_by_role": {
+          "broker": {
+            "median": 0.03591590326829314,
+            "min": 0.03573911520786009,
+            "max": 0.03893599854990034,
+            "values": [
+              0.03893599854990034,
+              0.03591590326829314,
+              0.03573911520786009
+            ]
+          },
+          "metrics-block-builder": {
+            "median": 0.022913194900465752,
+            "min": 0.022900928863668554,
+            "max": 0.024441049065634633,
+            "values": [
+              0.024441049065634633,
+              0.022900928863668554,
+              0.022913194900465752
+            ]
+          },
+          "metrics-compactor": {
+            "median": 0.006798069482488112,
+            "min": 0.006779543644992029,
+            "max": 0.0071638417529491846,
+            "values": [
+              0.0071638417529491846,
+              0.006798069482488112,
+              0.006779543644992029
+            ]
+          },
+          "metrics-distributor": {
+            "median": 0.025029165439735643,
+            "min": 0.024964965792427248,
+            "max": 0.026585514952089735,
+            "values": [
+              0.026585514952089735,
+              0.024964965792427248,
+              0.025029165439735643
+            ]
+          },
+          "metrics-querier": {
+            "median": 0.04667229829963301,
+            "min": 0.046610816727370136,
+            "max": 0.048775081820489966,
+            "values": [
+              0.048775081820489966,
+              0.04667229829963301,
+              0.046610816727370136
+            ]
+          },
+          "minio": {
+            "median": 0.04642573809087909,
+            "min": 0.04556902493999655,
+            "max": 0.048865406446319384,
+            "values": [
+              0.048865406446319384,
+              0.04642573809087909,
+              0.04556902493999655
+            ]
+          }
+        }
+      }
+    },
+    "candidate_divided_by_baseline": {
+      "average_cpu_cores": 0.829649365083247,
+      "rss_kib": 0.9569843347091119,
+      "query_p99_seconds": 0.7011756268855155,
+      "ingest_p99_seconds": 0.9192012447001209
+    },
+    "scope": "Single-node API-accepted steady load; matched aggregate budgets; CPU and RSS include broker and MinIO.",
+    "host": {
+      "cpu_count": 16,
+      "kernel": "7.0.0-1011-gcp",
+      "cpu_models": [
+        "AMD EPYC 7B12"
+      ]
+    },
+    "pairs": [
+      {
+        "pair": 1,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "source_commit": "7184a4c9a4a11c95a3605be42d5074560dc5d77e",
+          "image_manifest_digest": "sha256:78db229c542f67769f4249c33769bb20ff00ed02551190323ef4bb83429edc69",
+          "report": "revisions/1-baseline/comparison-report.json",
+          "entry": {
+            "backend": "krabka",
+            "repetition": 1,
+            "objectives_met": true,
+            "duration_seconds": 60.29360843399991,
+            "ingest": {
+              "attempts": 120,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 120000,
+              "accepted_rows_per_sec": 1990.260711155767,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.030278101999897444,
+                "p95": 0.037813588999938474,
+                "p99": 0.03925145000005159
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 120
+              }
+            },
+            "query": {
+              "attempts": 240,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 0,
+              "accepted_rows_per_sec": 0.0,
+              "latency_seconds": {
+                "count": 240,
+                "p50": 0.020706105000044772,
+                "p95": 0.028463301999977375,
+                "p99": 0.03918005900004573
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 240
+              }
+            },
+            "resources": {
+              "cpu_seconds_by_role": {
+                "broker": 2.611254,
+                "metrics-block-builder": 1.626707,
+                "metrics-compactor": 0.471842,
+                "metrics-distributor": 1.807495,
+                "metrics-querier": 4.612502,
+                "minio": 3.867373
+              },
+              "cpu_seconds_total": 14.997173,
+              "load_generator_cpu_seconds": 1.125416575,
+              "throttled_seconds_by_role": {
+                "broker": 0.0,
+                "metrics-block-builder": 0.0,
+                "metrics-compactor": 0.0,
+                "metrics-distributor": 0.0,
+                "metrics-querier": 0.0,
+                "minio": 0.0
+              },
+              "rss_kib_simultaneous_peak": 519468,
+              "s3_requests": 1603.0,
+              "s3_read_bytes": 22632551.0,
+              "s3_write_bytes": 4154751.0,
+              "external_cpu_cores_mean": 0.09650271958531143,
+              "external_cpu_cores_peak_window": 0.12824006053130213,
+              "host_activity_qualified": true,
+              "sample_count": 60,
+              "sampled_seconds": 60.282346963882446,
+              "coverage_fraction": 0.999813222820628,
+              "cpu_seconds_per_million_accepted_rows": 124.97644166666667
+            },
+            "service_cpu": 6.0,
+            "service_memory_gib": 6.0,
+            "deployment_target": "split"
+          },
+          "deployment_started_at": "2026-10-05T09:31:48.883447887Z"
+        },
+        "candidate": {
+          "source_commit": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+          "image_manifest_digest": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+          "report": "revisions/1-candidate/comparison-report.json",
+          "entry": {
+            "backend": "krabka",
+            "repetition": 1,
+            "objectives_met": true,
+            "duration_seconds": 60.149709452000025,
+            "ingest": {
+              "attempts": 120,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 120000,
+              "accepted_rows_per_sec": 1995.0221055641343,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.026607877000060398,
+                "p95": 0.03128100700007508,
+                "p99": 0.040060057000005145
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 120
+              }
+            },
+            "query": {
+              "attempts": 240,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 0,
+              "accepted_rows_per_sec": 0.0,
+              "latency_seconds": {
+                "count": 240,
+                "p50": 0.010687819000054333,
+                "p95": 0.016458168999974987,
+                "p99": 0.026349946999971507
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 240
+              }
+            },
+            "resources": {
+              "cpu_seconds_by_role": {
+                "broker": 2.341989,
+                "metrics-block-builder": 1.470122,
+                "metrics-compactor": 0.430903,
+                "metrics-distributor": 1.599111,
+                "metrics-querier": 2.933807,
+                "minio": 2.93924
+              },
+              "cpu_seconds_total": 11.715172,
+              "load_generator_cpu_seconds": 1.0263436760000002,
+              "throttled_seconds_by_role": {
+                "broker": 0.0,
+                "metrics-block-builder": 0.0,
+                "metrics-compactor": 0.0,
+                "metrics-distributor": 0.0,
+                "metrics-querier": 0.0,
+                "minio": 0.0
+              },
+              "rss_kib_simultaneous_peak": 494336,
+              "s3_requests": 1194.0,
+              "s3_read_bytes": 22773777.0,
+              "s3_write_bytes": 4050013.0,
+              "external_cpu_cores_mean": 0.08278196684853366,
+              "external_cpu_cores_peak_window": 0.09608523899807836,
+              "host_activity_qualified": true,
+              "sample_count": 60,
+              "sampled_seconds": 60.13972020149231,
+              "coverage_fraction": 0.999833926870159,
+              "cpu_seconds_per_million_accepted_rows": 97.62643333333334
+            },
+            "service_cpu": 6.0,
+            "service_memory_gib": 6.0,
+            "deployment_target": "split"
+          },
+          "deployment_started_at": "2026-10-05T09:33:37.104461174Z"
+        }
+      },
+      {
+        "pair": 2,
+        "order": [
+          "candidate",
+          "baseline"
+        ],
+        "baseline": {
+          "source_commit": "7184a4c9a4a11c95a3605be42d5074560dc5d77e",
+          "image_manifest_digest": "sha256:78db229c542f67769f4249c33769bb20ff00ed02551190323ef4bb83429edc69",
+          "report": "revisions/2-baseline/comparison-report.json",
+          "entry": {
+            "backend": "krabka",
+            "repetition": 1,
+            "objectives_met": true,
+            "duration_seconds": 60.084641573,
+            "ingest": {
+              "attempts": 120,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 120000,
+              "accepted_rows_per_sec": 1997.1825887353539,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.023949399000002813,
+                "p95": 0.02797822200000155,
+                "p99": 0.02923453900007189
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 120
+              }
+            },
+            "query": {
+              "attempts": 240,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 0,
+              "accepted_rows_per_sec": 0.0,
+              "latency_seconds": {
+                "count": 240,
+                "p50": 0.018427542000154062,
+                "p95": 0.025814158999992287,
+                "p99": 0.032715499000005366
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 240
+              }
+            },
+            "resources": {
+              "cpu_seconds_by_role": {
+                "broker": 2.161431,
+                "metrics-block-builder": 1.375212,
+                "metrics-compactor": 0.403761,
+                "metrics-distributor": 1.496379,
+                "metrics-querier": 4.078885,
+                "minio": 3.52778
+              },
+              "cpu_seconds_total": 13.043448,
+              "load_generator_cpu_seconds": 0.964272016,
+              "throttled_seconds_by_role": {
+                "broker": 0.0,
+                "metrics-block-builder": 0.0,
+                "metrics-compactor": 0.0,
+                "metrics-distributor": 0.0,
+                "metrics-querier": 0.0,
+                "minio": 0.0
+              },
+              "rss_kib_simultaneous_peak": 507276,
+              "s3_requests": 1606.0,
+              "s3_read_bytes": 23062434.0,
+              "s3_write_bytes": 4051225.0,
+              "external_cpu_cores_mean": 0.19762339665981335,
+              "external_cpu_cores_peak_window": 0.7393809998494659,
+              "host_activity_qualified": true,
+              "sample_count": 60,
+              "sampled_seconds": 60.07527542114258,
+              "coverage_fraction": 0.9998441173715575,
+              "cpu_seconds_per_million_accepted_rows": 108.6954
+            },
+            "service_cpu": 6.0,
+            "service_memory_gib": 6.0,
+            "deployment_target": "split"
+          },
+          "deployment_started_at": "2026-10-05T09:37:13.1813264Z"
+        },
+        "candidate": {
+          "source_commit": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+          "image_manifest_digest": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+          "report": "revisions/2-candidate/comparison-report.json",
+          "entry": {
+            "backend": "krabka",
+            "repetition": 1,
+            "objectives_met": true,
+            "duration_seconds": 60.094855025000015,
+            "ingest": {
+              "attempts": 120,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 120000,
+              "accepted_rows_per_sec": 1996.8431565410865,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.024274577999904068,
+                "p95": 0.028075101000013092,
+                "p99": 0.030058412000016688
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 120
+              }
+            },
+            "query": {
+              "attempts": 240,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 0,
+              "accepted_rows_per_sec": 0.0,
+              "latency_seconds": {
+                "count": 240,
+                "p50": 0.010046939999938331,
+                "p95": 0.015216201000157525,
+                "p99": 0.024098872000195115
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 240
+              }
+            },
+            "resources": {
+              "cpu_seconds_by_role": {
+                "broker": 2.158361,
+                "metrics-block-builder": 1.376228,
+                "metrics-compactor": 0.408529,
+                "metrics-distributor": 1.500266,
+                "metrics-querier": 2.804765,
+                "minio": 2.789948
+              },
+              "cpu_seconds_total": 11.038097,
+              "load_generator_cpu_seconds": 0.9825643190000001,
+              "throttled_seconds_by_role": {
+                "broker": 0.0,
+                "metrics-block-builder": 0.0,
+                "metrics-compactor": 0.0,
+                "metrics-distributor": 0.0,
+                "metrics-querier": 0.0,
+                "minio": 0.0
+              },
+              "rss_kib_simultaneous_peak": 519992,
+              "s3_requests": 1185.0,
+              "s3_read_bytes": 21945112.0,
+              "s3_write_bytes": 4050603.0,
+              "external_cpu_cores_mean": 0.08054280587471106,
+              "external_cpu_cores_peak_window": 0.08813925781275908,
+              "host_activity_qualified": true,
+              "sample_count": 60,
+              "sampled_seconds": 60.08405876159668,
+              "coverage_fraction": 0.9998203462942237,
+              "cpu_seconds_per_million_accepted_rows": 91.98414166666667
+            },
+            "service_cpu": 6.0,
+            "service_memory_gib": 6.0,
+            "deployment_target": "split"
+          },
+          "deployment_started_at": "2026-10-05T09:35:25.187620549Z"
+        }
+      },
+      {
+        "pair": 3,
+        "order": [
+          "baseline",
+          "candidate"
+        ],
+        "baseline": {
+          "source_commit": "7184a4c9a4a11c95a3605be42d5074560dc5d77e",
+          "image_manifest_digest": "sha256:78db229c542f67769f4249c33769bb20ff00ed02551190323ef4bb83429edc69",
+          "report": "revisions/3-baseline/comparison-report.json",
+          "entry": {
+            "backend": "krabka",
+            "repetition": 1,
+            "objectives_met": true,
+            "duration_seconds": 60.14290743599986,
+            "ingest": {
+              "attempts": 120,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 120000,
+              "accepted_rows_per_sec": 1995.2477376936945,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.026223567999977604,
+                "p95": 0.029631828999981735,
+                "p99": 0.03270057800000359
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 120
+              }
+            },
+            "query": {
+              "attempts": 240,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 0,
+              "accepted_rows_per_sec": 0.0,
+              "latency_seconds": {
+                "count": 240,
+                "p50": 0.018716039000082674,
+                "p95": 0.025734549000162588,
+                "p99": 0.03436923799995384
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 240
+              }
+            },
+            "resources": {
+              "cpu_seconds_by_role": {
+                "broker": 2.225527,
+                "metrics-block-builder": 1.418657,
+                "metrics-compactor": 0.420627,
+                "metrics-distributor": 1.557873,
+                "metrics-querier": 4.114186,
+                "minio": 3.578301
+              },
+              "cpu_seconds_total": 13.315171,
+              "load_generator_cpu_seconds": 1.0002173810000001,
+              "throttled_seconds_by_role": {
+                "broker": 0.0,
+                "metrics-block-builder": 0.0,
+                "metrics-compactor": 0.0,
+                "metrics-distributor": 0.0,
+                "metrics-querier": 0.0,
+                "minio": 0.0
+              },
+              "rss_kib_simultaneous_peak": 516556,
+              "s3_requests": 1601.0,
+              "s3_read_bytes": 23028241.0,
+              "s3_write_bytes": 4051279.0,
+              "external_cpu_cores_mean": 0.0890461351674933,
+              "external_cpu_cores_peak_window": 0.10247077131247961,
+              "host_activity_qualified": true,
+              "sample_count": 60,
+              "sampled_seconds": 60.1330041885376,
+              "coverage_fraction": 0.9998353380658759,
+              "cpu_seconds_per_million_accepted_rows": 110.95975833333334
+            },
+            "service_cpu": 6.0,
+            "service_memory_gib": 6.0,
+            "deployment_target": "split"
+          },
+          "deployment_started_at": "2026-10-05T09:39:01.197916799Z"
+        },
+        "candidate": {
+          "source_commit": "5b40aec6a591aac531f0c18698264f0304f37cdb",
+          "image_manifest_digest": "sha256:f79c09c582b3f1a5f4bcfb806fa7936fe58017b9fa8fe0d939a8706595c1ba12",
+          "report": "revisions/3-candidate/comparison-report.json",
+          "entry": {
+            "backend": "krabka",
+            "repetition": 1,
+            "objectives_met": true,
+            "duration_seconds": 60.08590272899983,
+            "ingest": {
+              "attempts": 120,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 120000,
+              "accepted_rows_per_sec": 1997.1406694383118,
+              "latency_seconds": {
+                "count": 120,
+                "p50": 0.024983788000099594,
+                "p95": 0.028347317999987354,
+                "p99": 0.029998347999935504
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 120
+              }
+            },
+            "query": {
+              "attempts": 240,
+              "errors": 0,
+              "error_rate": 0.0,
+              "accepted_rows": 0,
+              "accepted_rows_per_sec": 0.0,
+              "latency_seconds": {
+                "count": 240,
+                "p50": 0.010273398999970595,
+                "p95": 0.01551366900002904,
+                "p99": 0.024019618000011178
+              },
+              "empty_queries": 0,
+              "status_counts": {
+                "200": 240
+              }
+            },
+            "resources": {
+              "cpu_seconds_by_role": {
+                "broker": 2.147417,
+                "metrics-block-builder": 1.37676,
+                "metrics-compactor": 0.407355,
+                "metrics-distributor": 1.5039,
+                "metrics-querier": 2.800653,
+                "minio": 2.738056
+              },
+              "cpu_seconds_total": 10.974141,
+              "load_generator_cpu_seconds": 0.981485428,
+              "throttled_seconds_by_role": {
+                "broker": 0.0,
+                "metrics-block-builder": 0.0,
+                "metrics-compactor": 0.0,
+                "metrics-distributor": 0.0,
+                "metrics-querier": 0.0,
+                "minio": 0.0
+              },
+              "rss_kib_simultaneous_peak": 493948,
+              "s3_requests": 1179.0,
+              "s3_read_bytes": 21032419.0,
+              "s3_write_bytes": 4052604.0,
+              "external_cpu_cores_mean": 0.08563037442801952,
+              "external_cpu_cores_peak_window": 0.09444012775242787,
+              "host_activity_qualified": true,
+              "sample_count": 60,
+              "sampled_seconds": 60.07650446891785,
+              "coverage_fraction": 0.9998435862714027,
+              "cpu_seconds_per_million_accepted_rows": 91.451175
+            },
+            "service_cpu": 6.0,
+            "service_memory_gib": 6.0,
+            "deployment_target": "split"
+          },
+          "deployment_started_at": "2026-10-05T09:40:49.102243863Z"
+        }
+      }
+    ],
+    "interpretation": "CPU and query p99 improve in each of the three paired deployments. RSS and ingest p99 vary and do not establish a consistent improvement. All entries pass the matched-workload, resource-coverage, host-activity and error gates."
+  }
+}

@@ -26,7 +26,8 @@ impl MetricStore for InMemoryMetricStore {
                 }
             }
         }
-        float_rows.sort_by_key(|(fp, ts, _, _)| (*fp, *ts));
+        // A scan has no row-order contract. The engine's FloatWindow orders
+        // the merged rows once; sorting each hot scan here repeats that work.
         let float_table = if float_rows.is_empty() {
             None
         } else {
@@ -123,6 +124,16 @@ impl MetricStore for InMemoryMetricStore {
         end_ms: i64,
     ) -> Result<Vec<Labels>> {
         self.matched_series(tenant, matchers, start_ms, end_ms)
+    }
+
+    async fn series_shared(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<Vec<Arc<Labels>>> {
+        self.matched_series_shared(tenant, matchers, start_ms, end_ms)
     }
 
     async fn exemplars(

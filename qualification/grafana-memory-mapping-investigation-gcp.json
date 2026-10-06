@@ -1,0 +1,2131 @@
+{
+  "schema_version": 1,
+  "investigation": "Identify file-backed Mimir querier RSS by process mapping",
+  "status": "capture_verified_executable_code_identified",
+  "diagnostic_only": true,
+  "performance_qualified": false,
+  "baseline_image_run": 37351427961,
+  "baseline_image_source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
+  "selection": {
+    "capture_run": 37351427961,
+    "role": "metrics-querier",
+    "start_rss_kib": 89932,
+    "start_pss_kib": 87981,
+    "start_anonymous_kib": 9580,
+    "start_private_clean_kib": 77680,
+    "end_rss_kib": 111568,
+    "end_anonymous_kib": 30644,
+    "end_private_clean_kib": 78252,
+    "limitation": "Rollups do not identify the mapped file or region. File-backed RSS is not heap allocation."
+  },
+  "ruled_out_hypothesis": {
+    "hypothesis": "An always-running CPU profiler causes the startup file-backed RSS.",
+    "pinned_telemetry_revision": "ffdd381433675bdb34d36d4aab1170e53bb4f5a9",
+    "routes_source_sha256": "32fd2513b09c3957f7daf505b923c6b8917a729ca221cd9937ef52fe996c22cf",
+    "finding": "The router stores profiling configuration only. ProfilerGuardBuilder runs inside the CPU-profile request handler. The preserved diagnostic capture uses perf, not this endpoint. No startup guard is created."
+  },
+  "harness_change": "Preserve full /proc/PID/smaps for every workload role at both existing memory snapshots, alongside smaps_rollup. Run on an exact preserved release image; identify file-backed and anonymous regions offline.",
+  "validation": {
+    "python_compile": "passed",
+    "diff_check": "passed",
+    "live_capture": "passed",
+    "memory_region_parser_independent_ledger": "passed"
+  },
+  "next_action": "Investigate the code footprint and initialization paths of the verified executable before selecting a memory optimization. Preserve functionality and qualify any change with native/caller tests and exact-image comparisons.",
+  "capture": {
+    "run_id": 37361260446,
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37361260446",
+    "harness_head_sha": "50052277c012e961abb5dddb44b05c253fb0296f",
+    "image_source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
+    "image_identity": "sha256:c767f120a298261107be9334861dc73721b37fa78a9b449d361562cfda2c2499",
+    "provenance": {
+      "run_id": 37361260446,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37361260446",
+      "head_sha": "50052277c012e961abb5dddb44b05c253fb0296f",
+      "run_conclusion": "success",
+      "jobs": [
+        {
+          "id": 111936155178,
+          "name": "compare (metrics)",
+          "conclusion": "success",
+          "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37361260446/job/111936155178",
+          "runner_name": "gcp-runner-03f3bb9ea8714994",
+          "runner_group_name": "default",
+          "labels": [
+            "gcp-ubuntu-24-04-16core"
+          ],
+          "started_at": "2026-10-05T19:10:06Z",
+          "completed_at": "2026-10-05T19:15:32Z"
+        }
+      ],
+      "artifacts": [
+        {
+          "id": 11367645623,
+          "name": "grafana-comparison-metrics-50052277c012e961abb5dddb44b05c253fb0296f-1",
+          "digest": "sha256:549d9bf72d13f2b4895b0b906369ab479083e9be47561ffa961f9c4c6021fd59",
+          "size_in_bytes": 4761725,
+          "expires_at": "2027-01-03T19:08:41Z",
+          "signal": "metrics",
+          "verified_raw_files": 238,
+          "diagnostic_only": true
+        }
+      ]
+    },
+    "workload": {
+      "signal": "metrics",
+      "writers": 2,
+      "cardinality": 1000,
+      "warmup_seconds": 15,
+      "duration_seconds": 180.76439163999999,
+      "write_interval_seconds": 1,
+      "ingest": {
+        "attempts": 360,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 360000,
+        "accepted_rows_per_sec": 1991.5426746046057,
+        "latency_seconds": {
+          "count": 360,
+          "p50": 0.021817203000011887,
+          "p95": 0.0248649339999929,
+          "p99": 0.02609231599998907
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 360
+        }
+      },
+      "query": {
+        "attempts": 720,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 0,
+        "accepted_rows_per_sec": 0.0,
+        "latency_seconds": {
+          "count": 720,
+          "p50": 0.009883101000013994,
+          "p95": 0.01466640199998892,
+          "p99": 0.019358987000032357
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "200": 720
+        }
+      },
+      "telemetry": {
+        "wal_lag_records_max": 5905.0,
+        "wal_lag_records_last": [
+          0.0,
+          5905.0
+        ],
+        "rss_kib_peak_by_role": {
+          "metrics-compactor": 33892,
+          "metrics-distributor": 25196,
+          "metrics-block-builder": 42448,
+          "broker": 36520,
+          "metrics-querier": 112616,
+          "minio": 298072
+        },
+        "object_requests": 4531.0,
+        "object_bytes": 118996270.0,
+        "maintenance": {
+          "krabka_metrics_compaction_runs_total{status=\"ok\"}": 162.0,
+          "krabka_metrics_compaction_blocks_total": 67.0,
+          "krabka_metrics_compaction_deletion_sweeps_total": 180.0,
+          "krabka_metrics_compaction_deleted_blocks_total": 134.0,
+          "krabka_metrics_compaction_deleted_sidecars_total": 134.0,
+          "krabka_metrics_compaction_deletion_failures_total": 0.0,
+          "krabka_metrics_compaction_orphan_sweeps_total": 90.0,
+          "krabka_metrics_compaction_orphans_deleted_total": 0.0,
+          "krabka_metrics_compaction_orphan_failures_total": 0.0
+        },
+        "cpu_seconds_by_role": {},
+        "expected_restart_gaps": 0,
+        "scrape_errors": 0
+      },
+      "tenant": "soak",
+      "tenants": {
+        "soak": {
+          "attempts": 360,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 360000,
+          "accepted_rows_per_sec": 1991.5426746046057,
+          "latency_seconds": {
+            "count": 360,
+            "p50": 0.021817203000011887,
+            "p95": 0.0248649339999929,
+            "p99": 0.02609231599998907
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "200": 360
+          }
+        }
+      },
+      "objectives_met": true
+    },
+    "mapping_summary": {
+      "diagnostic_only": true,
+      "performance_qualified": false,
+      "run_id": 37361260446,
+      "snapshots": {
+        "start": {
+          "broker": {
+            "mapping_count": 79,
+            "totals_kib": {
+              "Rss": 35496,
+              "Pss": 35484,
+              "Anonymous": 4560,
+              "Private_Clean": 30920,
+              "Private_Dirty": 4560,
+              "Shared_Clean": 16,
+              "Shared_Dirty": 0,
+              "Swap": 0
+            },
+            "largest_rss_regions": [
+              {
+                "mapping": "00d9c000-03918000 r-xp 00b9b000 00:2e 1063383                            /usr/bin/krabka-broker",
+                "path": "/usr/bin/krabka-broker",
+                "Rss": 25508,
+                "Pss": 25506,
+                "Anonymous": 0,
+                "Private_Clean": 25504,
+                "Private_Dirty": 0,
+                "Shared_Clean": 4,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "00200000-00d9c000 r--p 00000000 00:2e 1063383                            /usr/bin/krabka-broker",
+                "path": "/usr/bin/krabka-broker",
+                "Rss": 1600,
+                "Pss": 1600,
+                "Anonymous": 0,
+                "Private_Clean": 1600,
+                "Private_Dirty": 0,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da392e8000-73da3946c000 r-xp 00024000 00:2e 1063503                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 1424,
+                "Pss": 1424,
+                "Anonymous": 0,
+                "Private_Clean": 1424,
+                "Private_Dirty": 0,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "03918000-03a74000 r--p 03716000 00:2e 1063383                            /usr/bin/krabka-broker",
+                "path": "/usr/bin/krabka-broker",
+                "Rss": 1072,
+                "Pss": 1070,
+                "Anonymous": 44,
+                "Private_Clean": 1024,
+                "Private_Dirty": 44,
+                "Shared_Clean": 4,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da2c000000-73da2c807000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 960,
+                "Pss": 960,
+                "Anonymous": 960,
+                "Private_Clean": 0,
+                "Private_Dirty": 960,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da24000000-73da24809000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 924,
+                "Pss": 924,
+                "Anonymous": 924,
+                "Private_Clean": 0,
+                "Private_Dirty": 924,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da20000000-73da20449000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 552,
+                "Pss": 552,
+                "Anonymous": 552,
+                "Private_Clean": 0,
+                "Private_Dirty": 552,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da34000000-73da3408b000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 532,
+                "Pss": 532,
+                "Anonymous": 532,
+                "Private_Clean": 0,
+                "Private_Dirty": 532,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da14000000-73da14116000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 424,
+                "Pss": 424,
+                "Anonymous": 424,
+                "Private_Clean": 0,
+                "Private_Dirty": 424,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da394e7000-73da39578000 r-xp 00010000 00:2e 1063508                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 400,
+                "Pss": 400,
+                "Anonymous": 0,
+                "Private_Clean": 400,
+                "Private_Dirty": 0,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da1c000000-73da1c427000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 392,
+                "Pss": 392,
+                "Anonymous": 392,
+                "Private_Clean": 0,
+                "Private_Dirty": 392,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da333fa000-73da34000000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 272,
+                "Pss": 272,
+                "Anonymous": 272,
+                "Private_Clean": 0,
+                "Private_Dirty": 272,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            ],
+            "rollup_rss_kib": 35496,
+            "mapping_minus_rollup_rss_kib": 0
+          },
+          "metrics-block-builder": {
+            "mapping_count": 58,
+            "totals_kib": {
+              "Rss": 38132,
+              "Pss": 22644,
+              "Anonymous": 11940,
+              "Private_Clean": 380,
+              "Private_Dirty": 11940,
+              "Shared_Clean": 25812,
+              "Shared_Dirty": 0,
+              "Swap": 0
+            },
+            "largest_rss_regions": [
+              {
+                "mapping": "010c5000-030dc000 r-xp 00ec4000 00:46 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 20892,
+                "Pss": 8893,
+                "Anonymous": 0,
+                "Private_Clean": 256,
+                "Private_Dirty": 0,
+                "Shared_Clean": 20636,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "0d0d9000-0d980000 rw-p 00000000 00:00 0                                  [heap]",
+                "path": "[heap]",
+                "Rss": 8680,
+                "Pss": 8680,
+                "Anonymous": 8680,
+                "Private_Clean": 0,
+                "Private_Dirty": 8680,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b0000000-7a18b0299000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 2528,
+                "Pss": 2528,
+                "Anonymous": 2528,
+                "Private_Clean": 0,
+                "Private_Dirty": 2528,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "00200000-010c5000 r--p 00000000 00:46 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 1536,
+                "Pss": 586,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1536,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b789b000-7a18b7a1f000 r-xp 00024000 00:46 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 1444,
+                "Pss": 413,
+                "Anonymous": 0,
+                "Private_Clean": 8,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1436,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "030dc000-03301000 r--p 02eda000 00:46 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 1044,
+                "Pss": 427,
+                "Anonymous": 48,
+                "Private_Clean": 8,
+                "Private_Dirty": 48,
+                "Shared_Clean": 988,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b7a9a000-7a18b7b2b000 r-xp 00010000 00:46 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 400,
+                "Pss": 138,
+                "Anonymous": 0,
+                "Private_Clean": 32,
+                "Private_Dirty": 0,
+                "Shared_Clean": 368,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7fff9fbf6000-7fff9fc53000 rw-p 00000000 00:00 0                          [stack]",
+                "path": "[stack]",
+                "Rss": 372,
+                "Pss": 372,
+                "Anonymous": 372,
+                "Private_Clean": 0,
+                "Private_Dirty": 372,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b7b2b000-7a18b7ba0000 r--p 000a1000 00:46 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 220,
+                "Pss": 100,
+                "Anonymous": 0,
+                "Private_Clean": 52,
+                "Private_Dirty": 0,
+                "Shared_Clean": 168,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b7a1f000-7a18b7a72000 r--p 001a8000 00:46 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 216,
+                "Pss": 74,
+                "Anonymous": 0,
+                "Private_Clean": 24,
+                "Private_Dirty": 0,
+                "Shared_Clean": 192,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b7bb8000-7a18b7be4000 r-xp 00001000 00:46 1048878                    /usr/lib/ld-linux-x86-64.so.2",
+                "path": "/usr/lib/ld-linux-x86-64.so.2",
+                "Rss": 176,
+                "Pss": 44,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 176,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b7877000-7a18b789b000 r--p 00000000 00:46 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 144,
+                "Pss": 36,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 144,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            ],
+            "rollup_rss_kib": 38132,
+            "mapping_minus_rollup_rss_kib": 0
+          },
+          "metrics-compactor": {
+            "mapping_count": 62,
+            "totals_kib": {
+              "Rss": 29208,
+              "Pss": 15836,
+              "Anonymous": 6156,
+              "Private_Clean": 1416,
+              "Private_Dirty": 6156,
+              "Shared_Clean": 21636,
+              "Shared_Dirty": 0,
+              "Swap": 0
+            },
+            "largest_rss_regions": [
+              {
+                "mapping": "010c5000-030dc000 r-xp 00ec4000 00:30 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 18076,
+                "Pss": 7997,
+                "Anonymous": 0,
+                "Private_Clean": 1280,
+                "Private_Dirty": 0,
+                "Shared_Clean": 16796,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0b4000000-70e0b455a000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 5228,
+                "Pss": 5228,
+                "Anonymous": 5228,
+                "Private_Clean": 0,
+                "Private_Dirty": 5228,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "00200000-010c5000 r--p 00000000 00:30 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 1472,
+                "Pss": 586,
+                "Anonymous": 0,
+                "Private_Clean": 64,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1408,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0ba812000-70e0ba996000 r-xp 00024000 00:30 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 1264,
+                "Pss": 340,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1264,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "030dc000-03301000 r--p 02eda000 00:30 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 1036,
+                "Pss": 419,
+                "Anonymous": 48,
+                "Private_Clean": 0,
+                "Private_Dirty": 48,
+                "Shared_Clean": 988,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0baa11000-70e0baaa2000 r-xp 00010000 00:30 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 352,
+                "Pss": 122,
+                "Anonymous": 0,
+                "Private_Clean": 32,
+                "Private_Dirty": 0,
+                "Shared_Clean": 320,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "0a030000-0a099000 rw-p 00000000 00:00 0                                  [heap]",
+                "path": "[heap]",
+                "Rss": 336,
+                "Pss": 336,
+                "Anonymous": 336,
+                "Private_Clean": 0,
+                "Private_Dirty": 336,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0ba996000-70e0ba9e9000 r--p 001a8000 00:30 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 220,
+                "Pss": 69,
+                "Anonymous": 0,
+                "Private_Clean": 16,
+                "Private_Dirty": 0,
+                "Shared_Clean": 204,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0baaa2000-70e0bab17000 r--p 000a1000 00:30 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 188,
+                "Pss": 67,
+                "Anonymous": 0,
+                "Private_Clean": 16,
+                "Private_Dirty": 0,
+                "Shared_Clean": 172,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7ffe3ceed000-7ffe3cf1a000 rw-p 00000000 00:00 0                          [stack]",
+                "path": "[stack]",
+                "Rss": 180,
+                "Pss": 180,
+                "Anonymous": 180,
+                "Private_Clean": 0,
+                "Private_Dirty": 180,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0bab2f000-70e0bab5b000 r-xp 00001000 00:30 1048878                    /usr/lib/ld-linux-x86-64.so.2",
+                "path": "/usr/lib/ld-linux-x86-64.so.2",
+                "Rss": 172,
+                "Pss": 43,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 172,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0ba7ee000-70e0ba812000 r--p 00000000 00:30 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 144,
+                "Pss": 36,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 144,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            ],
+            "rollup_rss_kib": 29208,
+            "mapping_minus_rollup_rss_kib": 0
+          },
+          "metrics-distributor": {
+            "mapping_count": 57,
+            "totals_kib": {
+              "Rss": 24728,
+              "Pss": 12869,
+              "Anonymous": 5204,
+              "Private_Clean": 968,
+              "Private_Dirty": 5204,
+              "Shared_Clean": 18556,
+              "Shared_Dirty": 0,
+              "Swap": 0
+            },
+            "largest_rss_regions": [
+              {
+                "mapping": "010c5000-030dc000 r-xp 00ec4000 00:3d 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 15004,
+                "Pss": 6301,
+                "Anonymous": 0,
+                "Private_Clean": 960,
+                "Private_Dirty": 0,
+                "Shared_Clean": 14044,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "791704000000-791704441000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 4144,
+                "Pss": 4144,
+                "Anonymous": 4144,
+                "Private_Clean": 0,
+                "Private_Dirty": 4144,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "79170a2b0000-79170a434000 r-xp 00024000 00:3d 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 1408,
+                "Pss": 396,
+                "Anonymous": 0,
+                "Private_Clean": 8,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1400,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "00200000-010c5000 r--p 00000000 00:3d 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 1216,
+                "Pss": 426,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1216,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "030dc000-03301000 r--p 02eda000 00:3d 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 780,
+                "Pss": 291,
+                "Anonymous": 48,
+                "Private_Clean": 0,
+                "Private_Dirty": 48,
+                "Shared_Clean": 732,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7ffd6358e000-7ffd635ee000 rw-p 00000000 00:00 0                          [stack]",
+                "path": "[stack]",
+                "Rss": 384,
+                "Pss": 384,
+                "Anonymous": 384,
+                "Private_Clean": 0,
+                "Private_Dirty": 384,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "2b542000-2b5ab000 rw-p 00000000 00:00 0                                  [heap]",
+                "path": "[heap]",
+                "Rss": 340,
+                "Pss": 340,
+                "Anonymous": 340,
+                "Private_Clean": 0,
+                "Private_Dirty": 340,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "79170a4af000-79170a540000 r-xp 00010000 00:3d 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 328,
+                "Pss": 86,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 328,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "79170a434000-79170a487000 r--p 001a8000 00:3d 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 204,
+                "Pss": 53,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 204,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "79170a5cd000-79170a5f9000 r-xp 00001000 00:3d 1048878                    /usr/lib/ld-linux-x86-64.so.2",
+                "path": "/usr/lib/ld-linux-x86-64.so.2",
+                "Rss": 176,
+                "Pss": 44,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 176,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "79170a540000-79170a5b5000 r--p 000a1000 00:3d 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 164,
+                "Pss": 45,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 164,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "79170a28c000-79170a2b0000 r--p 00000000 00:3d 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 144,
+                "Pss": 36,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 144,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            ],
+            "rollup_rss_kib": 24728,
+            "mapping_minus_rollup_rss_kib": 0
+          },
+          "metrics-querier": {
+            "mapping_count": 57,
+            "totals_kib": {
+              "Rss": 90548,
+              "Pss": 88671,
+              "Anonymous": 10400,
+              "Private_Clean": 77572,
+              "Private_Dirty": 10400,
+              "Shared_Clean": 2576,
+              "Shared_Dirty": 0,
+              "Swap": 0
+            },
+            "largest_rss_regions": [
+              {
+                "mapping": "022ae000-09c05000 r-xp 020ad000 00:34 1048961                            /usr/local/bin/krabka-metrics-service",
+                "path": "/usr/local/bin/krabka-metrics-service",
+                "Rss": 69200,
+                "Pss": 69198,
+                "Anonymous": 0,
+                "Private_Clean": 69196,
+                "Private_Dirty": 0,
+                "Shared_Clean": 4,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2f8000000-7dc2f88e4000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 9096,
+                "Pss": 9096,
+                "Anonymous": 9096,
+                "Private_Clean": 0,
+                "Private_Dirty": 9096,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "00200000-022ae000 r--p 00000000 00:34 1048961                            /usr/local/bin/krabka-metrics-service",
+                "path": "/usr/local/bin/krabka-metrics-service",
+                "Rss": 4928,
+                "Pss": 4928,
+                "Anonymous": 0,
+                "Private_Clean": 4928,
+                "Private_Dirty": 0,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "09c05000-0a0b9000 r--p 09a03000 00:34 1048961                            /usr/local/bin/krabka-metrics-service",
+                "path": "/usr/local/bin/krabka-metrics-service",
+                "Rss": 3496,
+                "Pss": 3494,
+                "Anonymous": 68,
+                "Private_Clean": 3424,
+                "Private_Dirty": 68,
+                "Shared_Clean": 4,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2fe04e000-7dc2fe1d2000 r-xp 00024000 00:34 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 1416,
+                "Pss": 401,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1416,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "2c753000-2c7ec000 rw-p 00000000 00:00 0                                  [heap]",
+                "path": "[heap]",
+                "Rss": 468,
+                "Pss": 468,
+                "Anonymous": 468,
+                "Private_Clean": 0,
+                "Private_Dirty": 468,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2fe24d000-7dc2fe2de000 r-xp 00010000 00:34 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 320,
+                "Pss": 84,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 320,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7fff7b266000-7fff7b2aa000 rw-p 00000000 00:00 0                          [stack]",
+                "path": "[stack]",
+                "Rss": 272,
+                "Pss": 272,
+                "Anonymous": 272,
+                "Private_Clean": 0,
+                "Private_Dirty": 272,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2fde1d000-7dc2fe020000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 256,
+                "Pss": 256,
+                "Anonymous": 256,
+                "Private_Clean": 0,
+                "Private_Dirty": 256,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2fe1d2000-7dc2fe225000 r--p 001a8000 00:34 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 204,
+                "Pss": 53,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 204,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2fe36b000-7dc2fe397000 r-xp 00001000 00:34 1048878                    /usr/lib/ld-linux-x86-64.so.2",
+                "path": "/usr/lib/ld-linux-x86-64.so.2",
+                "Rss": 176,
+                "Pss": 44,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 176,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2fe2de000-7dc2fe353000 r--p 000a1000 00:34 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 148,
+                "Pss": 41,
+                "Anonymous": 0,
+                "Private_Clean": 4,
+                "Private_Dirty": 0,
+                "Shared_Clean": 144,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            ],
+            "rollup_rss_kib": 90548,
+            "mapping_minus_rollup_rss_kib": 0
+          },
+          "minio": {
+            "mapping_count": 43,
+            "totals_kib": {
+              "Rss": 164132,
+              "Pss": 164124,
+              "Anonymous": 103744,
+              "Private_Clean": 60380,
+              "Private_Dirty": 103744,
+              "Shared_Clean": 8,
+              "Shared_Dirty": 0,
+              "Swap": 0
+            },
+            "largest_rss_regions": [
+              {
+                "mapping": "10529b000000-1052ab800000 rw-p 00000000 00:00 0                          [anon: Go: heap]",
+                "path": "[anon: Go: heap]",
+                "Rss": 97680,
+                "Pss": 97680,
+                "Anonymous": 97680,
+                "Private_Clean": 0,
+                "Private_Dirty": 97680,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "00400000-02c4f000 r-xp 00000000 00:2b 1063378                            /usr/bin/minio",
+                "path": "/usr/bin/minio",
+                "Rss": 30012,
+                "Pss": 30012,
+                "Anonymous": 0,
+                "Private_Clean": 30012,
+                "Private_Dirty": 0,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "02c4f000-06b58000 r--p 0284f000 00:2b 1063378                            /usr/bin/minio",
+                "path": "/usr/bin/minio",
+                "Rss": 29348,
+                "Pss": 29348,
+                "Anonymous": 0,
+                "Private_Clean": 29348,
+                "Private_Dirty": 0,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7403c1df8000-7403c20c0000 rw-p 00000000 00:00 0                          [anon: Go: immortal metadata]",
+                "path": "[anon: Go: immortal metadata]",
+                "Rss": 2752,
+                "Pss": 2752,
+                "Anonymous": 2752,
+                "Private_Clean": 0,
+                "Private_Dirty": 2752,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "06b58000-06d0a000 rw-p 06758000 00:2b 1063378                            /usr/bin/minio",
+                "path": "/usr/bin/minio",
+                "Rss": 1544,
+                "Pss": 1544,
+                "Anonymous": 524,
+                "Private_Clean": 1020,
+                "Private_Dirty": 524,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7403c21a0000-7403c2300000 rw-p 00000000 00:00 0                          [anon: Go: profiler hash buckets]",
+                "path": "[anon: Go: profiler hash buckets]",
+                "Rss": 880,
+                "Pss": 880,
+                "Anonymous": 880,
+                "Private_Clean": 0,
+                "Private_Dirty": 880,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7403c20d0000-7403c2190000 rw-p 00000000 00:00 0                          [anon: Go: immortal metadata]",
+                "path": "[anon: Go: immortal metadata]",
+                "Rss": 764,
+                "Pss": 764,
+                "Anonymous": 764,
+                "Private_Clean": 0,
+                "Private_Dirty": 764,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "06d0a000-08d9b000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 360,
+                "Pss": 360,
+                "Anonymous": 360,
+                "Private_Clean": 0,
+                "Private_Dirty": 360,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "740408c0d000-740408c4d000 rw-p 00000000 00:00 0                          [anon: Go: immortal metadata]",
+                "path": "[anon: Go: immortal metadata]",
+                "Rss": 236,
+                "Pss": 236,
+                "Anonymous": 236,
+                "Private_Clean": 0,
+                "Private_Dirty": 236,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7403c1da8000-7403c1de8000 rw-p 00000000 00:00 0                          [anon: Go: immortal metadata]",
+                "path": "[anon: Go: immortal metadata]",
+                "Rss": 140,
+                "Pss": 140,
+                "Anonymous": 140,
+                "Private_Clean": 0,
+                "Private_Dirty": 140,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "740408d9f000-740408ddf000 rw-p 00000000 00:00 0                          [anon: Go: immortal metadata]",
+                "path": "[anon: Go: immortal metadata]",
+                "Rss": 68,
+                "Pss": 68,
+                "Anonymous": 68,
+                "Private_Clean": 0,
+                "Private_Dirty": 68,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7403c20c0000-7403c20d0000 rw-p 00000000 00:00 0                          [anon: Go: gc bits]",
+                "path": "[anon: Go: gc bits]",
+                "Rss": 64,
+                "Pss": 64,
+                "Anonymous": 64,
+                "Private_Clean": 0,
+                "Private_Dirty": 64,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            ],
+            "rollup_rss_kib": 164132,
+            "mapping_minus_rollup_rss_kib": 0
+          }
+        },
+        "end": {
+          "broker": {
+            "mapping_count": 79,
+            "totals_kib": {
+              "Rss": 36460,
+              "Pss": 36448,
+              "Anonymous": 5396,
+              "Private_Clean": 31048,
+              "Private_Dirty": 5396,
+              "Shared_Clean": 16,
+              "Shared_Dirty": 0,
+              "Swap": 0
+            },
+            "largest_rss_regions": [
+              {
+                "mapping": "00d9c000-03918000 r-xp 00b9b000 00:2e 1063383                            /usr/bin/krabka-broker",
+                "path": "/usr/bin/krabka-broker",
+                "Rss": 25636,
+                "Pss": 25634,
+                "Anonymous": 0,
+                "Private_Clean": 25632,
+                "Private_Dirty": 0,
+                "Shared_Clean": 4,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "00200000-00d9c000 r--p 00000000 00:2e 1063383                            /usr/bin/krabka-broker",
+                "path": "/usr/bin/krabka-broker",
+                "Rss": 1600,
+                "Pss": 1600,
+                "Anonymous": 0,
+                "Private_Clean": 1600,
+                "Private_Dirty": 0,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da392e8000-73da3946c000 r-xp 00024000 00:2e 1063503                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 1424,
+                "Pss": 1424,
+                "Anonymous": 0,
+                "Private_Clean": 1424,
+                "Private_Dirty": 0,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da2c000000-73da2c807000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 1272,
+                "Pss": 1272,
+                "Anonymous": 1272,
+                "Private_Clean": 0,
+                "Private_Dirty": 1272,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "03918000-03a74000 r--p 03716000 00:2e 1063383                            /usr/bin/krabka-broker",
+                "path": "/usr/bin/krabka-broker",
+                "Rss": 1072,
+                "Pss": 1070,
+                "Anonymous": 44,
+                "Private_Clean": 1024,
+                "Private_Dirty": 44,
+                "Shared_Clean": 4,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da24000000-73da24809000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 928,
+                "Pss": 928,
+                "Anonymous": 928,
+                "Private_Clean": 0,
+                "Private_Dirty": 928,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da20000000-73da20449000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 700,
+                "Pss": 700,
+                "Anonymous": 700,
+                "Private_Clean": 0,
+                "Private_Dirty": 700,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da1c000000-73da1c427000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 620,
+                "Pss": 620,
+                "Anonymous": 620,
+                "Private_Clean": 0,
+                "Private_Dirty": 620,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da14000000-73da1412f000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 568,
+                "Pss": 568,
+                "Anonymous": 568,
+                "Private_Clean": 0,
+                "Private_Dirty": 568,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da34000000-73da3408b000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 532,
+                "Pss": 532,
+                "Anonymous": 532,
+                "Private_Clean": 0,
+                "Private_Dirty": 532,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da394e7000-73da39578000 r-xp 00010000 00:2e 1063508                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 400,
+                "Pss": 400,
+                "Anonymous": 0,
+                "Private_Clean": 400,
+                "Private_Dirty": 0,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "73da333fa000-73da34000000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 272,
+                "Pss": 272,
+                "Anonymous": 272,
+                "Private_Clean": 0,
+                "Private_Dirty": 272,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            ],
+            "rollup_rss_kib": 36460,
+            "mapping_minus_rollup_rss_kib": 0
+          },
+          "metrics-block-builder": {
+            "mapping_count": 57,
+            "totals_kib": {
+              "Rss": 42108,
+              "Pss": 26620,
+              "Anonymous": 15916,
+              "Private_Clean": 380,
+              "Private_Dirty": 15916,
+              "Shared_Clean": 25812,
+              "Shared_Dirty": 0,
+              "Swap": 0
+            },
+            "largest_rss_regions": [
+              {
+                "mapping": "010c5000-030dc000 r-xp 00ec4000 00:46 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 20892,
+                "Pss": 8893,
+                "Anonymous": 0,
+                "Private_Clean": 256,
+                "Private_Dirty": 0,
+                "Shared_Clean": 20636,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "0d0d9000-0d985000 rw-p 00000000 00:00 0                                  [heap]",
+                "path": "[heap]",
+                "Rss": 8772,
+                "Pss": 8772,
+                "Anonymous": 8772,
+                "Private_Clean": 0,
+                "Private_Dirty": 8772,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b0000000-7a18b064f000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 6412,
+                "Pss": 6412,
+                "Anonymous": 6412,
+                "Private_Clean": 0,
+                "Private_Dirty": 6412,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "00200000-010c5000 r--p 00000000 00:46 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 1536,
+                "Pss": 586,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1536,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b789b000-7a18b7a1f000 r-xp 00024000 00:46 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 1444,
+                "Pss": 413,
+                "Anonymous": 0,
+                "Private_Clean": 8,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1436,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "030dc000-03301000 r--p 02eda000 00:46 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 1044,
+                "Pss": 427,
+                "Anonymous": 48,
+                "Private_Clean": 8,
+                "Private_Dirty": 48,
+                "Shared_Clean": 988,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b7a9a000-7a18b7b2b000 r-xp 00010000 00:46 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 400,
+                "Pss": 138,
+                "Anonymous": 0,
+                "Private_Clean": 32,
+                "Private_Dirty": 0,
+                "Shared_Clean": 368,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7fff9fbf6000-7fff9fc53000 rw-p 00000000 00:00 0                          [stack]",
+                "path": "[stack]",
+                "Rss": 372,
+                "Pss": 372,
+                "Anonymous": 372,
+                "Private_Clean": 0,
+                "Private_Dirty": 372,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b7b2b000-7a18b7ba0000 r--p 000a1000 00:46 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 220,
+                "Pss": 100,
+                "Anonymous": 0,
+                "Private_Clean": 52,
+                "Private_Dirty": 0,
+                "Shared_Clean": 168,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b7a1f000-7a18b7a72000 r--p 001a8000 00:46 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 216,
+                "Pss": 74,
+                "Anonymous": 0,
+                "Private_Clean": 24,
+                "Private_Dirty": 0,
+                "Shared_Clean": 192,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b7bb8000-7a18b7be4000 r-xp 00001000 00:46 1048878                    /usr/lib/ld-linux-x86-64.so.2",
+                "path": "/usr/lib/ld-linux-x86-64.so.2",
+                "Rss": 176,
+                "Pss": 44,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 176,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7a18b7877000-7a18b789b000 r--p 00000000 00:46 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 144,
+                "Pss": 36,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 144,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            ],
+            "rollup_rss_kib": 42108,
+            "mapping_minus_rollup_rss_kib": 0
+          },
+          "metrics-compactor": {
+            "mapping_count": 62,
+            "totals_kib": {
+              "Rss": 33808,
+              "Pss": 20436,
+              "Anonymous": 10756,
+              "Private_Clean": 1416,
+              "Private_Dirty": 10756,
+              "Shared_Clean": 21636,
+              "Shared_Dirty": 0,
+              "Swap": 0
+            },
+            "largest_rss_regions": [
+              {
+                "mapping": "010c5000-030dc000 r-xp 00ec4000 00:30 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 18076,
+                "Pss": 7997,
+                "Anonymous": 0,
+                "Private_Clean": 1280,
+                "Private_Dirty": 0,
+                "Shared_Clean": 16796,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0b4000000-70e0b4ae3000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 9828,
+                "Pss": 9828,
+                "Anonymous": 9828,
+                "Private_Clean": 0,
+                "Private_Dirty": 9828,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "00200000-010c5000 r--p 00000000 00:30 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 1472,
+                "Pss": 586,
+                "Anonymous": 0,
+                "Private_Clean": 64,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1408,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0ba812000-70e0ba996000 r-xp 00024000 00:30 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 1264,
+                "Pss": 340,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1264,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "030dc000-03301000 r--p 02eda000 00:30 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 1036,
+                "Pss": 419,
+                "Anonymous": 48,
+                "Private_Clean": 0,
+                "Private_Dirty": 48,
+                "Shared_Clean": 988,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0baa11000-70e0baaa2000 r-xp 00010000 00:30 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 352,
+                "Pss": 122,
+                "Anonymous": 0,
+                "Private_Clean": 32,
+                "Private_Dirty": 0,
+                "Shared_Clean": 320,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "0a030000-0a099000 rw-p 00000000 00:00 0                                  [heap]",
+                "path": "[heap]",
+                "Rss": 336,
+                "Pss": 336,
+                "Anonymous": 336,
+                "Private_Clean": 0,
+                "Private_Dirty": 336,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0ba996000-70e0ba9e9000 r--p 001a8000 00:30 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 220,
+                "Pss": 69,
+                "Anonymous": 0,
+                "Private_Clean": 16,
+                "Private_Dirty": 0,
+                "Shared_Clean": 204,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0baaa2000-70e0bab17000 r--p 000a1000 00:30 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 188,
+                "Pss": 67,
+                "Anonymous": 0,
+                "Private_Clean": 16,
+                "Private_Dirty": 0,
+                "Shared_Clean": 172,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7ffe3ceed000-7ffe3cf1a000 rw-p 00000000 00:00 0                          [stack]",
+                "path": "[stack]",
+                "Rss": 180,
+                "Pss": 180,
+                "Anonymous": 180,
+                "Private_Clean": 0,
+                "Private_Dirty": 180,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0bab2f000-70e0bab5b000 r-xp 00001000 00:30 1048878                    /usr/lib/ld-linux-x86-64.so.2",
+                "path": "/usr/lib/ld-linux-x86-64.so.2",
+                "Rss": 172,
+                "Pss": 43,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 172,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "70e0ba7ee000-70e0ba812000 r--p 00000000 00:30 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 144,
+                "Pss": 36,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 144,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            ],
+            "rollup_rss_kib": 33808,
+            "mapping_minus_rollup_rss_kib": 0
+          },
+          "metrics-distributor": {
+            "mapping_count": 57,
+            "totals_kib": {
+              "Rss": 24504,
+              "Pss": 12645,
+              "Anonymous": 4980,
+              "Private_Clean": 968,
+              "Private_Dirty": 4980,
+              "Shared_Clean": 18556,
+              "Shared_Dirty": 0,
+              "Swap": 0
+            },
+            "largest_rss_regions": [
+              {
+                "mapping": "010c5000-030dc000 r-xp 00ec4000 00:3d 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 15004,
+                "Pss": 6301,
+                "Anonymous": 0,
+                "Private_Clean": 960,
+                "Private_Dirty": 0,
+                "Shared_Clean": 14044,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "791704000000-7917044c3000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 3920,
+                "Pss": 3920,
+                "Anonymous": 3920,
+                "Private_Clean": 0,
+                "Private_Dirty": 3920,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "79170a2b0000-79170a434000 r-xp 00024000 00:3d 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 1408,
+                "Pss": 396,
+                "Anonymous": 0,
+                "Private_Clean": 8,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1400,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "00200000-010c5000 r--p 00000000 00:3d 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 1216,
+                "Pss": 426,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1216,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "030dc000-03301000 r--p 02eda000 00:3d 1048960                            /usr/local/bin/krabka-metrics",
+                "path": "/usr/local/bin/krabka-metrics",
+                "Rss": 780,
+                "Pss": 291,
+                "Anonymous": 48,
+                "Private_Clean": 0,
+                "Private_Dirty": 48,
+                "Shared_Clean": 732,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7ffd6358e000-7ffd635ee000 rw-p 00000000 00:00 0                          [stack]",
+                "path": "[stack]",
+                "Rss": 384,
+                "Pss": 384,
+                "Anonymous": 384,
+                "Private_Clean": 0,
+                "Private_Dirty": 384,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "2b542000-2b5ab000 rw-p 00000000 00:00 0                                  [heap]",
+                "path": "[heap]",
+                "Rss": 340,
+                "Pss": 340,
+                "Anonymous": 340,
+                "Private_Clean": 0,
+                "Private_Dirty": 340,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "79170a4af000-79170a540000 r-xp 00010000 00:3d 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 328,
+                "Pss": 86,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 328,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "79170a434000-79170a487000 r--p 001a8000 00:3d 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 204,
+                "Pss": 53,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 204,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "79170a5cd000-79170a5f9000 r-xp 00001000 00:3d 1048878                    /usr/lib/ld-linux-x86-64.so.2",
+                "path": "/usr/lib/ld-linux-x86-64.so.2",
+                "Rss": 176,
+                "Pss": 44,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 176,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "79170a540000-79170a5b5000 r--p 000a1000 00:3d 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 164,
+                "Pss": 45,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 164,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "79170a28c000-79170a2b0000 r--p 00000000 00:3d 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 144,
+                "Pss": 36,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 144,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            ],
+            "rollup_rss_kib": 24504,
+            "mapping_minus_rollup_rss_kib": 0
+          },
+          "metrics-querier": {
+            "mapping_count": 57,
+            "totals_kib": {
+              "Rss": 111452,
+              "Pss": 109575,
+              "Anonymous": 30732,
+              "Private_Clean": 78144,
+              "Private_Dirty": 30732,
+              "Shared_Clean": 2576,
+              "Shared_Dirty": 0,
+              "Swap": 0
+            },
+            "largest_rss_regions": [
+              {
+                "mapping": "022ae000-09c05000 r-xp 020ad000 00:34 1048961                            /usr/local/bin/krabka-metrics-service",
+                "path": "/usr/local/bin/krabka-metrics-service",
+                "Rss": 69772,
+                "Pss": 69770,
+                "Anonymous": 0,
+                "Private_Clean": 69768,
+                "Private_Dirty": 0,
+                "Shared_Clean": 4,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2f8000000-7dc2f9cbe000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 29404,
+                "Pss": 29404,
+                "Anonymous": 29404,
+                "Private_Clean": 0,
+                "Private_Dirty": 29404,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "00200000-022ae000 r--p 00000000 00:34 1048961                            /usr/local/bin/krabka-metrics-service",
+                "path": "/usr/local/bin/krabka-metrics-service",
+                "Rss": 4928,
+                "Pss": 4928,
+                "Anonymous": 0,
+                "Private_Clean": 4928,
+                "Private_Dirty": 0,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "09c05000-0a0b9000 r--p 09a03000 00:34 1048961                            /usr/local/bin/krabka-metrics-service",
+                "path": "/usr/local/bin/krabka-metrics-service",
+                "Rss": 3496,
+                "Pss": 3494,
+                "Anonymous": 68,
+                "Private_Clean": 3424,
+                "Private_Dirty": 68,
+                "Shared_Clean": 4,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2fe04e000-7dc2fe1d2000 r-xp 00024000 00:34 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 1416,
+                "Pss": 401,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 1416,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "2c753000-2c7ec000 rw-p 00000000 00:00 0                                  [heap]",
+                "path": "[heap]",
+                "Rss": 468,
+                "Pss": 468,
+                "Anonymous": 468,
+                "Private_Clean": 0,
+                "Private_Dirty": 468,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2fe24d000-7dc2fe2de000 r-xp 00010000 00:34 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 320,
+                "Pss": 84,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 320,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7fff7b266000-7fff7b2aa000 rw-p 00000000 00:00 0                          [stack]",
+                "path": "[stack]",
+                "Rss": 272,
+                "Pss": 272,
+                "Anonymous": 272,
+                "Private_Clean": 0,
+                "Private_Dirty": 272,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2fde1d000-7dc2fe020000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 256,
+                "Pss": 256,
+                "Anonymous": 256,
+                "Private_Clean": 0,
+                "Private_Dirty": 256,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2fe1d2000-7dc2fe225000 r--p 001a8000 00:34 1048881                    /usr/lib/libc.so.6",
+                "path": "/usr/lib/libc.so.6",
+                "Rss": 204,
+                "Pss": 53,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 204,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2fe36b000-7dc2fe397000 r-xp 00001000 00:34 1048878                    /usr/lib/ld-linux-x86-64.so.2",
+                "path": "/usr/lib/ld-linux-x86-64.so.2",
+                "Rss": 176,
+                "Pss": 44,
+                "Anonymous": 0,
+                "Private_Clean": 0,
+                "Private_Dirty": 0,
+                "Shared_Clean": 176,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7dc2fe2de000-7dc2fe353000 r--p 000a1000 00:34 1048888                    /usr/lib/libm.so.6",
+                "path": "/usr/lib/libm.so.6",
+                "Rss": 148,
+                "Pss": 41,
+                "Anonymous": 0,
+                "Private_Clean": 4,
+                "Private_Dirty": 0,
+                "Shared_Clean": 144,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            ],
+            "rollup_rss_kib": 111452,
+            "mapping_minus_rollup_rss_kib": 0
+          },
+          "minio": {
+            "mapping_count": 53,
+            "totals_kib": {
+              "Rss": 298044,
+              "Pss": 298036,
+              "Anonymous": 234544,
+              "Private_Clean": 63492,
+              "Private_Dirty": 234544,
+              "Shared_Clean": 8,
+              "Shared_Dirty": 0,
+              "Swap": 0
+            },
+            "largest_rss_regions": [
+              {
+                "mapping": "10529b000000-1052b3000000 rw-p 00000000 00:00 0                          [anon: Go: heap]",
+                "path": "[anon: Go: heap]",
+                "Rss": 225340,
+                "Pss": 225340,
+                "Anonymous": 225340,
+                "Private_Clean": 0,
+                "Private_Dirty": 225340,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "02c4f000-06b58000 r--p 0284f000 00:2b 1063378                            /usr/bin/minio",
+                "path": "/usr/bin/minio",
+                "Rss": 32420,
+                "Pss": 32420,
+                "Anonymous": 0,
+                "Private_Clean": 32420,
+                "Private_Dirty": 0,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "00400000-02c4f000 r-xp 00000000 00:2b 1063378                            /usr/bin/minio",
+                "path": "/usr/bin/minio",
+                "Rss": 30076,
+                "Pss": 30076,
+                "Anonymous": 0,
+                "Private_Clean": 30076,
+                "Private_Dirty": 0,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7403c1df8000-7403c20c0000 rw-p 00000000 00:00 0                          [anon: Go: immortal metadata]",
+                "path": "[anon: Go: immortal metadata]",
+                "Rss": 2772,
+                "Pss": 2772,
+                "Anonymous": 2772,
+                "Private_Clean": 0,
+                "Private_Dirty": 2772,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "06b58000-06d0a000 rw-p 06758000 00:2b 1063378                            /usr/bin/minio",
+                "path": "/usr/bin/minio",
+                "Rss": 1544,
+                "Pss": 1544,
+                "Anonymous": 548,
+                "Private_Clean": 996,
+                "Private_Dirty": 548,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7403c21a0000-7403c2300000 rw-p 00000000 00:00 0                          [anon: Go: profiler hash buckets]",
+                "path": "[anon: Go: profiler hash buckets]",
+                "Rss": 1348,
+                "Pss": 1348,
+                "Anonymous": 1348,
+                "Private_Clean": 0,
+                "Private_Dirty": 1348,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7403c20d0000-7403c2190000 rw-p 00000000 00:00 0                          [anon: Go: immortal metadata]",
+                "path": "[anon: Go: immortal metadata]",
+                "Rss": 764,
+                "Pss": 764,
+                "Anonymous": 764,
+                "Private_Clean": 0,
+                "Private_Dirty": 764,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7403c1ca6000-7403c1d38000 rw-p 00000000 00:00 0                          [anon: Go: immortal metadata]",
+                "path": "[anon: Go: immortal metadata]",
+                "Rss": 568,
+                "Pss": 568,
+                "Anonymous": 568,
+                "Private_Clean": 0,
+                "Private_Dirty": 568,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7403c1bec000-7403c1c7e000 rw-p 00000000 00:00 0                          [anon: Go: immortal metadata]",
+                "path": "[anon: Go: immortal metadata]",
+                "Rss": 560,
+                "Pss": 560,
+                "Anonymous": 560,
+                "Private_Clean": 0,
+                "Private_Dirty": 560,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "06d0a000-08d9b000 rw-p 00000000 00:00 0 ",
+                "path": "",
+                "Rss": 380,
+                "Pss": 380,
+                "Anonymous": 380,
+                "Private_Clean": 0,
+                "Private_Dirty": 380,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7403c1b8c000-7403c1bec000 rw-p 00000000 00:00 0                          [anon: Go: gc bits]",
+                "path": "[anon: Go: gc bits]",
+                "Rss": 340,
+                "Pss": 340,
+                "Anonymous": 340,
+                "Private_Clean": 0,
+                "Private_Dirty": 340,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              },
+              {
+                "mapping": "7403c1da8000-7403c1de8000 rw-p 00000000 00:00 0                          [anon: Go: immortal metadata]",
+                "path": "[anon: Go: immortal metadata]",
+                "Rss": 256,
+                "Pss": 256,
+                "Anonymous": 256,
+                "Private_Clean": 0,
+                "Private_Dirty": 256,
+                "Shared_Clean": 0,
+                "Shared_Dirty": 0,
+                "Swap": 0
+              }
+            ],
+            "rollup_rss_kib": 298044,
+            "mapping_minus_rollup_rss_kib": 0
+          }
+        }
+      },
+      "limitations": [
+        "Rollup and mapping files are read sequentially during live load; their totals can differ.",
+        "These snapshots identify regions; they do not establish a normalized performance or memory gain."
+      ]
+    },
+    "mapping_summary_sha256": "48ca245ccd949d34dd7ca9b29af4544b55ab4ccf69a8a7b1546b18a8a9c91b17"
+  },
+  "finding": "The executable code mapping is the largest resident region: 69200 KiB at start and 69772 KiB at end. It is not anonymous heap memory. Anonymous memory rises from 10400 to 30732 KiB; the large code mapping already exists after warmup.",
+  "static_code_analysis": {
+    "binary_path": "usr/local/bin/krabka-metrics-service",
+    "source_commit": "63bf9c519032bb6d4736b1ad9c064f879b90082c",
+    "binary_sha256": "2847a667a6a666f5be183ab2565ccc23ec56e7cbd884cbe2ab26a025769f4dbb",
+    "binary_size_in_bytes": 236267608,
+    "text_section_bytes": 127229696,
+    "defined_text_symbol_bytes": 125101672,
+    "sqlparser_text_symbol_bytes": 21840938,
+    "summary_path": "qualification/evidence/profiling/gcp-37361260446/code-symbol-summary.json",
+    "summary_sha256": "3a487f91e6b61a7d64bc78d956d9b2e2d0770a2690743f4c4da86a292b50bf92",
+    "method": "Defined demangled text symbols de-duplicated by address, grouped by the first recognized Rust crate. Generic ownership/inlining prevent complete attribution. Symbol sizes do not identify resident pages.",
+    "limitation": "Static symbol sizes do not identify resident pages or establish a performance gain. Core/alloc symbols can own code specialized for another crate."
+  }
+}

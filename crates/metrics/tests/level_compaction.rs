@@ -23,13 +23,13 @@ use krabka_blockstore::{
 };
 use krabka_metrics::{
     BucketSpan, ClockReadingPayload, ClockReadingRow, CompactionIndexManifest,
-    CompactionManifestError, CompactionObjectPlan, CompactionRetentionError,
-    CompactionRetentionPhase, CompactionRetentionStats, CompactionSeriesLabels,
-    DeferredBlockDeletions, ExemplarRow, FloatRow, MetadataRow, MetricBlockKind,
-    MetricCompactionPass, NativeHistogram, NativeHistogramRow, ObjectStoreCompactionIndexSink,
-    ResetHint, TenantCompactionRows, compact_metric_blocks_once, decode_float_samples,
-    decode_native_histograms, enforce_compaction_retention, list_compaction_manifests,
-    plan_metric_compactions,
+    CompactionIndexSink as _, CompactionManifestError, CompactionObjectPlan,
+    CompactionRetentionError, CompactionRetentionPhase, CompactionRetentionStats,
+    CompactionSeriesLabels, DeferredBlockDeletions, ExemplarRow, FloatRow, MetadataRow,
+    MetricBlockKind, MetricCompactionPass, NativeHistogram, NativeHistogramRow,
+    ObjectStoreCompactionIndexSink, ResetHint, TenantCompactionRows, compact_metric_blocks_once,
+    decode_float_samples, decode_native_histograms, enforce_compaction_retention,
+    list_compaction_manifests, plan_metric_compactions,
     wire::{ClockSourceKind, ClockSyncState, DecodedClockReading, UnixNanos},
     write_compacted_tenant_blocks,
 };
@@ -946,4 +946,176 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
             LifecycleStep::OrphanReconciliation,
         ])
         .await;
+}
+
+#[tokio::test]
+async fn manifest_listing_follows_publication_replacement_and_removal() {
+    const IMPORT: &str = "metrics/tenant-a/uploaded/01M3MJXM7R4M5X4Q4CKHW5Q8N1-0123456789abcdef";
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let sink = ObjectStoreCompactionIndexSink::new(store.clone());
+    let mut first = manifest(
+        "tenant-a",
+        MetricBlockKind::Float,
+        "metrics/a.parquet",
+        BlockLevel(0),
+        (10, 20),
+        2,
+    );
+    first.series = vec![CompactionSeriesLabels {
+        fingerprint: 7,
+        labels: Labels::from_pairs([("__name__", "温度"), ("region", "north")]),
+    }];
+    let second = manifest(
+        "tenant-b",
+        MetricBlockKind::Float,
+        "metrics/b.parquet",
+        BlockLevel(1),
+        (30, 40),
+        3,
+    );
+    sink.write_manifest(&first).await.unwrap();
+    sink.write_manifest(&second).await.unwrap();
+    assert!(
+        list_compaction_manifests(&store).await.unwrap() == vec![first.clone(), second.clone()]
+    );
+
+    // Reading the same key again must expose every changed field.
+    first.row_count = 19;
+    first.min_ts = -5;
+    first.fingerprints = vec![7, 99];
+    first.series.push(CompactionSeriesLabels {
+        fingerprint: 99,
+        labels: Labels::from_pairs([("__name__", "温度"), ("region", "south")]),
+    });
+    sink.write_manifest(&first).await.unwrap();
+    assert!(
+        list_compaction_manifests(&store).await.unwrap() == vec![first.clone(), second.clone()]
+    );
+
+    store
+        .delete(&Path::from(first.index_key.clone()))
+        .await
+        .unwrap();
+    let third = manifest(
+        "tenant-c",
+        MetricBlockKind::Float,
+        "metrics/c.parquet",
+        BlockLevel(0),
+        (50, 60),
+        4,
+    );
+    sink.write_manifest(&third).await.unwrap();
+    assert!(
+        list_compaction_manifests(&store).await.unwrap() == vec![second.clone(), third.clone()]
+    );
+
+    // An import disappears again when its publication marker is removed.
+    let imported = manifest(
+        "tenant-a",
+        MetricBlockKind::Float,
+        &format!("{IMPORT}/float.parquet"),
+        BlockLevel(0),
+        (70, 80),
+        5,
+    );
+    sink.write_manifest(&imported).await.unwrap();
+    assert!(
+        list_compaction_manifests(&store).await.unwrap() == vec![second.clone(), third.clone()]
+    );
+    let marker = Path::from(format!("{IMPORT}/_published"));
+    store
+        .put(&marker, bytes::Bytes::new().into())
+        .await
+        .unwrap();
+    assert!(
+        list_compaction_manifests(&store).await.unwrap()
+            == vec![second.clone(), third.clone(), imported]
+    );
+    store.delete(&marker).await.unwrap();
+    assert!(
+        list_compaction_manifests(&store).await.unwrap() == vec![second.clone(), third.clone()]
+    );
+
+    // Neither valid-but-misplaced contents nor malformed bytes can bypass checks.
+    let mut misplaced = second.clone();
+    misplaced.index_key = third.index_key.clone();
+    store
+        .put(
+            &Path::from(second.index_key.clone()),
+            misplaced.encode().unwrap().into(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(list_compaction_manifests(&store).await, Err(CompactionManifestError::KeyMismatch { listed, manifest })
+        if listed == second.index_key && manifest == third.index_key)
+    );
+    store
+        .put(
+            &Path::from(second.index_key.clone()),
+            bytes::Bytes::from_static(b"broken").into(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        list_compaction_manifests(&store).await,
+        Err(CompactionManifestError::Index(_))
+    ));
+    store.delete(&Path::from(second.index_key)).await.unwrap();
+    assert!(list_compaction_manifests(&store).await.unwrap() == vec![third]);
+}
+
+#[tokio::test]
+async fn compaction_keeps_complete_samples_tenants_and_deferred_deletion() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let first = write_float_block(
+        &store,
+        "tenant-a",
+        1,
+        &[(7, NOW_MS, 1.0), (7, NOW_MS + 1_000, 2.0)],
+    )
+    .await;
+    let second = write_float_block(&store, "tenant-a", 3, &[(7, NOW_MS + 2_000, 3.0)]).await;
+    let untouched = write_float_block(&store, "tenant-b", 5, &[(9, NOW_MS, 90.0)]).await;
+    let mut deferred = DeferredBlockDeletions::new();
+    let writer = BlockWriter::new(store.clone());
+    let sink = ObjectStoreCompactionIndexSink::new(store.clone());
+    let pass = compact_metric_blocks_once(
+        &store,
+        &writer,
+        &sink,
+        policy(2, 100, 1),
+        DEFAULT_BLOCK_READ_MAX,
+        &mut deferred,
+    )
+    .await
+    .unwrap();
+    assert!(pass.outputs.len() == 1);
+    let merged = &pass.outputs[0];
+    assert!(merged.tenant == "tenant-a" && merged.level == BlockLevel(1) && merged.row_count == 3);
+    assert!(
+        samples_in(&store, &merged.block_key).await
+            == vec![
+                (7, NOW_MS, 1.0),
+                (7, NOW_MS + 1_000, 2.0),
+                (7, NOW_MS + 2_000, 3.0)
+            ]
+    );
+    assert!(exists(&store, &first.block_key).await && exists(&store, &second.block_key).await);
+    let next = compact_metric_blocks_once(
+        &store,
+        &writer,
+        &sink,
+        policy(2, 100, 1),
+        DEFAULT_BLOCK_READ_MAX,
+        &mut deferred,
+    )
+    .await
+    .unwrap();
+    assert!(next.outputs.is_empty());
+    assert!(!exists(&store, &first.block_key).await && !exists(&store, &second.block_key).await);
+    assert!(samples_in(&store, &untouched.block_key).await == vec![(9, NOW_MS, 90.0)]);
+    let mut live = list_compaction_manifests(&store).await.unwrap();
+    live.sort_by(|left, right| left.tenant.cmp(&right.tenant));
+    assert!(live == vec![merged.clone(), untouched]);
 }

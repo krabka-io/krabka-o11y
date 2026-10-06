@@ -8,5 +8,11 @@ pub(crate) async fn load_compaction_manifests_filtered(
     manifest_prefix: &str,
     time_range: Option<(i64, i64)>,
 ) -> Result<Vec<CompactionIndexManifest>, MetricsServiceError> {
-    load_compaction_manifests_filtered_with_cache(store, manifest_prefix, time_range, None).await
+    Ok(
+        load_compaction_manifests_filtered_with_cache(store, manifest_prefix, time_range, None)
+            .await?
+            .into_iter()
+            .map(Arc::unwrap_or_clone)
+            .collect(),
+    )
 }
