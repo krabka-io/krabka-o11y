@@ -1,4 +1,4 @@
-use krabka_metrics::{CompactionManifestCache, DeferredBlockDeletions};
+use krabka_metrics::DeferredBlockDeletions;
 use krabka_observability::CancellationToken;
 use krabka_units::Time;
 
@@ -33,7 +33,6 @@ pub(crate) async fn compactor_loop(
     shutdown: CancellationToken,
 ) {
     let mut deferred = DeferredBlockDeletions::new();
-    let mut manifests = CompactionManifestCache::new(store.clone());
     let mut tick = tokio::time::interval(interval.to_std());
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -50,7 +49,6 @@ pub(crate) async fn compactor_loop(
             policy,
             &mut deferred,
             &metrics,
-            &mut manifests,
         )
         .await;
         metrics

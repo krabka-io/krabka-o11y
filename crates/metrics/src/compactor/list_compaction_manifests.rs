@@ -16,5 +16,5 @@ pub async fn list_compaction_manifests(
     store: &Arc<dyn ObjectStore>,
 ) -> Result<Vec<CompactionIndexManifest>, CompactionManifestError> {
     let listing = list_compaction_index_objects(store).await?;
-    read_compaction_manifests(store, listing.live, None).await
+    read_compaction_manifests(store, listing.live).await
 }

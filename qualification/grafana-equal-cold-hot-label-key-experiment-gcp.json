@@ -38,6 +38,7 @@
   "canonical_hash_implementation_unchanged": true,
   "prepared_independent_check": "A different hot label set whose row ID equals a canonical cold key still appears under its own canonical key in the complete returned label map. Existing hot-only, sharing, matcher and sample-limit ledgers remain.",
   "negative_control_to_run": "Remove full label equality while keeping key-presence lookup. The different-hot-label complete-map ledger must fail.",
-  "next_action": "Finish rebase correctness and the manifest-cache control first. Then apply the two-file candidate, validate and run separate exact-image GCP controls.",
-  "draft_review": "Use a nonempty metric-name matcher so the cold index accepts the test query and both differing job labels qualify."
+  "next_action": "Finish final native validation and PR checkpoint, publish the fixed baseline with MinIO excluded, then validate and measure the separate equality-guard candidate on GCP.",
+  "draft_review": "Use a nonempty metric-name matcher so the cold index accepts the test query and both differing job labels qualify.",
+  "rebase_correctness": "387 ordinary checks and five native wrappers with 37 cases passed before cache removal."
 }

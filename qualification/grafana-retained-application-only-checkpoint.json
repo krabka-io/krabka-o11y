@@ -1,0 +1,1920 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-10-06T01:29:41.111197+00:00",
+  "purpose": "Historical supporting evidence for retained gains; no new performance qualification.",
+  "resource_accounting_scope": "application_and_broker_excluding_object_store",
+  "accounting": {
+    "cpu": "Sum sampled cgroup CPU deltas for every measured role except minio; broker included.",
+    "peak_rss": "Maximum per-sample sum of RSS for every measured role except minio; never subtract separately timed role peaks.",
+    "object_store": "MinIO per-role CPU and independent role RSS peak preserved and reported separately; its 2 CPU / 2 GiB budget is excluded from application budget."
+  },
+  "accounting_helper": {
+    "path": "tools/compare-grafana.py",
+    "sha256": "7f29fca659a2bedd15ae8fa4665b3cba3db80240c16b7bd70e9474ffc8953f74",
+    "function": "cost"
+  },
+  "current_checkout_head_at_rederivation": "90425e80733aee20239b15ee3527061003e344a3",
+  "qualifies_current_checkout": false,
+  "limitations": [
+    "Selected signals use different historical application images and hosts. They are not a combined final-image qualification.",
+    "The final retained branch has later upstream correctness fixes, MinIO accounting changes and consumer lifecycle cleanup; these images do not qualify that revision.",
+    "Single-node, 60-second steady phases, three repetitions, API-accepted workload with different publication/durability contracts. No confidence intervals or production soak claim.",
+    "Later isolated retained hasher and Loki source-label controls contain shared rejected experiments and are intentionally not used for this native comparison table."
+  ],
+  "signals": {
+    "metrics": {
+      "native_product": "mimir",
+      "run_id": 37293323368,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37293323368",
+      "historical": true,
+      "qualifies_current_checkout": false,
+      "selection_reason": "Live-label cache-hit exact-image checkpoint. Later randomized-hasher native images still include rejected cold-label sharing; ordered-scan, dense-metadata, cold-fingerprint, global-CGU and manifest-cache candidate images are excluded. This metrics deployment does not execute the concurrent later-reverted Loki decimal-formatting experiment in this image.",
+      "retention_record": {
+        "path": "qualification/grafana-live-label-hit-experiment-gcp.json",
+        "sha256": "d5290e2f369d0fa2e55d5bd1312763222fb4d2342d2851bd1e1010e810c26623"
+      },
+      "source_commit": "8541b68fba52f15a1a5adf5fb1fdce9fc1d968a2",
+      "image_manifest_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700",
+      "image_config_digest": "sha256:78f96e920c8d38f8eb1a4458fd95fa8a77d8779ab9b332cc33bb4d6e80e78700",
+      "harness_commit": "ade83dfae7fe10bf6dd71c9231454f4d6534ad5b",
+      "host": {
+        "cpu_count": 16,
+        "kernel": "7.0.0-1011-gcp",
+        "lscpu": {
+          "lscpu": [
+            {
+              "field": "Architecture:",
+              "data": "x86_64"
+            },
+            {
+              "field": "CPU op-mode(s):",
+              "data": "32-bit, 64-bit"
+            },
+            {
+              "field": "Address sizes:",
+              "data": "46 bits physical, 48 bits virtual"
+            },
+            {
+              "field": "Byte Order:",
+              "data": "Little Endian"
+            },
+            {
+              "field": "CPU(s):",
+              "data": "16"
+            },
+            {
+              "field": "On-line CPU(s) list:",
+              "data": "0-15"
+            },
+            {
+              "field": "Vendor ID:",
+              "data": "GenuineIntel"
+            },
+            {
+              "field": "Model name:",
+              "data": "Intel(R) Xeon(R) CPU @ 2.20GHz"
+            },
+            {
+              "field": "CPU family:",
+              "data": "6"
+            },
+            {
+              "field": "Model:",
+              "data": "79"
+            },
+            {
+              "field": "Thread(s) per core:",
+              "data": "2"
+            },
+            {
+              "field": "Core(s) per socket:",
+              "data": "8"
+            },
+            {
+              "field": "Socket(s):",
+              "data": "1"
+            },
+            {
+              "field": "Stepping:",
+              "data": "0"
+            },
+            {
+              "field": "BogoMIPS:",
+              "data": "4399.99"
+            },
+            {
+              "field": "Flags:",
+              "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch pti ssbd ibrs ibpb stibp fsgsbase tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm rdseed adx smap xsaveopt arat md_clear arch_capabilities"
+            },
+            {
+              "field": "Hypervisor vendor:",
+              "data": "KVM"
+            },
+            {
+              "field": "Virtualization type:",
+              "data": "full"
+            },
+            {
+              "field": "L1d cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L1i cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L2 cache:",
+              "data": "2 MiB (8 instances)"
+            },
+            {
+              "field": "L3 cache:",
+              "data": "55 MiB (1 instance)"
+            },
+            {
+              "field": "NUMA node(s):",
+              "data": "1"
+            },
+            {
+              "field": "NUMA node0 CPU(s):",
+              "data": "0-15"
+            },
+            {
+              "field": "Vulnerability Gather data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Ghostwrite:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Indirect target selection:",
+              "data": "Mitigation; Aligned branch/return thunks"
+            },
+            {
+              "field": "Vulnerability Itlb multihit:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability L1tf:",
+              "data": "Mitigation; PTE Inversion"
+            },
+            {
+              "field": "Vulnerability Mds:",
+              "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+            },
+            {
+              "field": "Vulnerability Meltdown:",
+              "data": "Mitigation; PTI"
+            },
+            {
+              "field": "Vulnerability Mmio stale data:",
+              "data": "Vulnerable: Clear CPU buffers attempted, no microcode; SMT Host state unknown"
+            },
+            {
+              "field": "Vulnerability Old microcode:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Reg file data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Retbleed:",
+              "data": "Mitigation; IBRS"
+            },
+            {
+              "field": "Vulnerability Spec rstack overflow:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Spec store bypass:",
+              "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+            },
+            {
+              "field": "Vulnerability Spectre v1:",
+              "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+            },
+            {
+              "field": "Vulnerability Spectre v2:",
+              "data": "Mitigation; IBRS; IBPB conditional; STIBP conditional; RSB filling; PBRSB-eIBRS Not affected; BHI SW loop, KVM SW loop"
+            },
+            {
+              "field": "Vulnerability Srbds:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsa:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsx async abort:",
+              "data": "Mitigation; Clear CPU buffers; SMT Host state unknown"
+            },
+            {
+              "field": "Vulnerability Vmscape:",
+              "data": "Not affected"
+            }
+          ]
+        }
+      },
+      "deployment_target": "split",
+      "seed": 267,
+      "dataset": {
+        "metric_samples_per_request": 1000,
+        "metric_points_per_series": 1,
+        "other_signals": "deployment-envelope dataset; profile units=nanoseconds, unquoted legacy labels, sampleRate=1e9",
+        "seed_concurrency": 64
+      },
+      "phase_seconds": 60,
+      "query_interval_seconds": 0.25,
+      "write_interval_seconds": 1,
+      "provenance": {
+        "path": "qualification/evidence/performance/gcp-37293323368/provenance.json",
+        "sha256": "d8ef0926defb52cec30a14b9421128a2842d5b13292ab27766f6dc94a14eb2e2",
+        "jobs": [
+          {
+            "id": 111708642033,
+            "name": "compare (metrics)",
+            "conclusion": "success",
+            "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37293323368/job/111708642033",
+            "runner_name": "gcp-runner-fd288df6970a4842",
+            "runner_group_name": "default",
+            "labels": [
+              "gcp-ubuntu-24-04-16core"
+            ],
+            "started_at": "2026-10-05T10:19:55Z",
+            "completed_at": "2026-10-05T10:43:44Z"
+          }
+        ]
+      },
+      "archive": {
+        "path": "qualification/evidence/performance/gcp-37293323368/metrics.zip",
+        "sha256": "fe483470fc2d113e5b2eae891d886b39ea2353f2d6b2a372a7ab5402c3c87f03",
+        "artifact": {
+          "id": 11340302999,
+          "name": "grafana-comparison-metrics-ade83dfae7fe10bf6dd71c9231454f4d6534ad5b-1",
+          "digest": "sha256:fe483470fc2d113e5b2eae891d886b39ea2353f2d6b2a372a7ab5402c3c87f03",
+          "size_in_bytes": 9236725,
+          "expires_at": "2027-01-03T09:56:29Z",
+          "signal": "metrics",
+          "verified_raw_files": 725
+        },
+        "raw_checksum_entries_verified": 725
+      },
+      "original_report": {
+        "member": "comparison-report.json",
+        "sha256": "6847de965f9387158c182ecfc9bd2766c555b32443da9b1b1eeb875262e47786",
+        "preserved_unmodified": true
+      },
+      "ratio_definition": "Ratio of three-repetition medians; each backend CPU core count is sampled CPU seconds divided by entry duration.",
+      "krabka_divided_by_native": {
+        "average_cpu_cores": 0.5140543341972763,
+        "peak_rss_kib": 1.343754371240733,
+        "query_p99_ms": 1.0876163570088975
+      },
+      "backends": {
+        "krabka": {
+          "average_cpu_cores": {
+            "median": 0.16819105361656253,
+            "min": 0.16571180987592277,
+            "max": 0.1684383265013415,
+            "values": [
+              0.16819105361656253,
+              0.16571180987592277,
+              0.1684383265013415
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 230556,
+            "min": 230396,
+            "max": 232732,
+            "values": [
+              230556,
+              232732,
+              230396
+            ]
+          },
+          "query_p99_ms": {
+            "median": 28.519933999973546,
+            "min": 27.72944700006974,
+            "max": 30.580391999990297,
+            "values": [
+              30.580391999990297,
+              27.72944700006974,
+              28.519933999973546
+            ]
+          },
+          "object_store_cpu_cores": {
+            "median": 0.053035901975928695,
+            "min": 0.05273794169127692,
+            "max": 0.053847590850335615,
+            "values": [
+              0.05273794169127692,
+              0.053847590850335615,
+              0.053035901975928695
+            ]
+          },
+          "object_store_peak_rss_kib": {
+            "median": 279180,
+            "min": 254364,
+            "max": 279456,
+            "values": [
+              254364,
+              279456,
+              279180
+            ]
+          },
+          "accepted_rows": {
+            "median": 120000,
+            "min": 120000,
+            "max": 120000,
+            "values": [
+              120000,
+              120000,
+              120000
+            ]
+          },
+          "query_attempts": {
+            "median": 240,
+            "min": 240,
+            "max": 240,
+            "values": [
+              240,
+              240,
+              240
+            ]
+          }
+        },
+        "mimir": {
+          "average_cpu_cores": {
+            "median": 0.3271853623784769,
+            "min": 0.32264407516999255,
+            "max": 0.34310209446892376,
+            "values": [
+              0.3271853623784769,
+              0.32264407516999255,
+              0.34310209446892376
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 171576,
+            "min": 165440,
+            "max": 178184,
+            "values": [
+              165440,
+              178184,
+              171576
+            ]
+          },
+          "query_p99_ms": {
+            "median": 26.22242099999994,
+            "min": 23.85892000000922,
+            "max": 33.98069599995779,
+            "values": [
+              26.22242099999994,
+              23.85892000000922,
+              33.98069599995779
+            ]
+          },
+          "object_store_cpu_cores": {
+            "median": 0.013518519144061483,
+            "min": 0.013441793520364063,
+            "max": 0.014906470361951061,
+            "values": [
+              0.013518519144061483,
+              0.013441793520364063,
+              0.014906470361951061
+            ]
+          },
+          "object_store_peak_rss_kib": {
+            "median": 135668,
+            "min": 134628,
+            "max": 138512,
+            "values": [
+              138512,
+              134628,
+              135668
+            ]
+          },
+          "accepted_rows": {
+            "median": 120000,
+            "min": 120000,
+            "max": 120000,
+            "values": [
+              120000,
+              120000,
+              120000
+            ]
+          },
+          "query_attempts": {
+            "median": 240,
+            "min": 240,
+            "max": 240,
+            "values": [
+              240,
+              240,
+              240
+            ]
+          }
+        }
+      },
+      "telemetry_inputs": [
+        {
+          "backend": "krabka",
+          "repetition": 1,
+          "raw_sample_count": 60,
+          "raw_sample_span_seconds": 60.21638631820679,
+          "raw_artifact_sha256": {
+            "1-krabka-steady/2.telemetry.jsonl": "b46c57949ec054bfaa49bbb2735146941612fe63d073e3f84aab8653d96ad20f",
+            "1-krabka-steady/2.operations.jsonl": "7030108ba5944c00e470a5086d829bef986f20b0b122aadd302d4e28c54e7a1f",
+            "1-krabka-steady/compose.json": "6447bfa9024352490797ae7ed7fdc4515e4195a76a388ce651498f8045b9d365",
+            "1-krabka-steady/containers.json": "acf3ae61cb5fc360d558d4933d921fc1e497b61df1d5cd9618a55f394a6154ce"
+          }
+        },
+        {
+          "backend": "mimir",
+          "repetition": 1,
+          "raw_sample_count": 60,
+          "raw_sample_span_seconds": 60.3608934879303,
+          "raw_artifact_sha256": {
+            "1-mimir-steady/2.telemetry.jsonl": "8c4129ab801797bc124323a9fc2498755a94023ddf5681e502f064fc4bce0bb9",
+            "1-mimir-steady/2.operations.jsonl": "fb3760ca72cde3aea817e88baadbd19f99b55c197f098b76e2be97e2ab48c615",
+            "1-mimir-steady/compose.json": "9c4a589a5637608d0c6d02c1188a03c60f05ff7fd14f79d0e0eaefe901566bc7",
+            "1-mimir-steady/containers.json": "8820acdc2feba5178d91d5650e6002cc6c7701f0a056a15717e203797bd9a7db"
+          }
+        },
+        {
+          "backend": "mimir",
+          "repetition": 2,
+          "raw_sample_count": 60,
+          "raw_sample_span_seconds": 60.40715146064758,
+          "raw_artifact_sha256": {
+            "2-mimir-steady/2.telemetry.jsonl": "de83a4fa6c7a9336d98070ef3eb241e75fe5fca6fa3f16a3d5d766e3772ea2e7",
+            "2-mimir-steady/2.operations.jsonl": "369a78c8b733edf74d46794bf266585ad265ca0c1107a96d0b5ea14adc15f9eb",
+            "2-mimir-steady/compose.json": "9c4a589a5637608d0c6d02c1188a03c60f05ff7fd14f79d0e0eaefe901566bc7",
+            "2-mimir-steady/containers.json": "844246dce2a876f52c9bb3821bf18d7d63337a0856a019db953bd2b7ec753e64"
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 2,
+          "raw_sample_count": 60,
+          "raw_sample_span_seconds": 60.16723442077637,
+          "raw_artifact_sha256": {
+            "2-krabka-steady/2.telemetry.jsonl": "f7cce50adb9a472c7cf7d1f9d944d8189597a822c045d7892c5cb8dd82640470",
+            "2-krabka-steady/2.operations.jsonl": "3c56501a94af3322e1a216d0646ea5328a079252f9b65bf7cb40154e471522be",
+            "2-krabka-steady/compose.json": "90f824312758278017cd8ce8ca2e30aa6cf7ba5c6b74827b51667f88b32e6d1e",
+            "2-krabka-steady/containers.json": "c8988becebc070a7f13b9be0230d034c6b9e049e5adcfb429ab20d08f867b1db"
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 3,
+          "raw_sample_count": 60,
+          "raw_sample_span_seconds": 60.187175989151,
+          "raw_artifact_sha256": {
+            "3-krabka-steady/2.telemetry.jsonl": "b7da994f6ded8448c54afedf82dca3b659ecc0159e265ec4ff48fbf547bf37b5",
+            "3-krabka-steady/2.operations.jsonl": "45f96ebec06f020b95d677acfee10b7820f64939b332f42b6ccdd33db09d468d",
+            "3-krabka-steady/compose.json": "053d6795866982c2d464476dec8a728190ee686a06a3af422e4ec4758be3faf5",
+            "3-krabka-steady/containers.json": "6622ccb7b4c873773b75707ff821e4dbeff1b94679b82226b54bd93135433f64"
+          }
+        },
+        {
+          "backend": "mimir",
+          "repetition": 3,
+          "raw_sample_count": 60,
+          "raw_sample_span_seconds": 60.4966561794281,
+          "raw_artifact_sha256": {
+            "3-mimir-steady/2.telemetry.jsonl": "6e122c5ddc0e2b39298c3659a4baa691f8f979a4dc30598450e9d0f12a3072b9",
+            "3-mimir-steady/2.operations.jsonl": "ef931560c59e6e1098df358c979a4be7104568e27119fc710da07df382077632",
+            "3-mimir-steady/compose.json": "9c4a589a5637608d0c6d02c1188a03c60f05ff7fd14f79d0e0eaefe901566bc7",
+            "3-mimir-steady/containers.json": "ced92897b549d9b0ec38b9ef0590c7ac5e610ced2025f0c53ab1197346128c91"
+          }
+        }
+      ]
+    },
+    "logs": {
+      "native_product": "loki",
+      "run_id": 37286691135,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37286691135",
+      "historical": true,
+      "qualifies_current_checkout": false,
+      "selection_reason": "Shared-records checkpoint. Later native Loki source-label images contain rejected metric-WAL/cold-label code; the isolated retained Loki source-label controls remain separate evidence, not transferable native totals.",
+      "retention_record": {
+        "path": "qualification/grafana-loki-shared-records-experiment-gcp.json",
+        "sha256": "fe1d20e8066af1395835c4b183ad79070ec9f63009d4767562ee944cff24cd58"
+      },
+      "source_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+      "image_manifest_digest": "sha256:8a6116ca8531f9ad4d49de010d1e4f83227c7084b012bef49918bf4e9a78680b",
+      "image_config_digest": "sha256:8a6116ca8531f9ad4d49de010d1e4f83227c7084b012bef49918bf4e9a78680b",
+      "harness_commit": "84351e6940b96e6b920ca53639447266a5a6dc4d",
+      "host": {
+        "cpu_count": 16,
+        "kernel": "7.0.0-1011-gcp",
+        "lscpu": {
+          "lscpu": [
+            {
+              "field": "Architecture:",
+              "data": "x86_64"
+            },
+            {
+              "field": "CPU op-mode(s):",
+              "data": "32-bit, 64-bit"
+            },
+            {
+              "field": "Address sizes:",
+              "data": "48 bits physical, 48 bits virtual"
+            },
+            {
+              "field": "Byte Order:",
+              "data": "Little Endian"
+            },
+            {
+              "field": "CPU(s):",
+              "data": "16"
+            },
+            {
+              "field": "On-line CPU(s) list:",
+              "data": "0-15"
+            },
+            {
+              "field": "Vendor ID:",
+              "data": "AuthenticAMD"
+            },
+            {
+              "field": "Model name:",
+              "data": "AMD EPYC 7B12"
+            },
+            {
+              "field": "CPU family:",
+              "data": "23"
+            },
+            {
+              "field": "Model:",
+              "data": "49"
+            },
+            {
+              "field": "Thread(s) per core:",
+              "data": "2"
+            },
+            {
+              "field": "Core(s) per socket:",
+              "data": "8"
+            },
+            {
+              "field": "Socket(s):",
+              "data": "1"
+            },
+            {
+              "field": "Stepping:",
+              "data": "0"
+            },
+            {
+              "field": "BogoMIPS:",
+              "data": "4499.99"
+            },
+            {
+              "field": "Flags:",
+              "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+            },
+            {
+              "field": "Hypervisor vendor:",
+              "data": "KVM"
+            },
+            {
+              "field": "Virtualization type:",
+              "data": "full"
+            },
+            {
+              "field": "L1d cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L1i cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L2 cache:",
+              "data": "4 MiB (8 instances)"
+            },
+            {
+              "field": "L3 cache:",
+              "data": "32 MiB (2 instances)"
+            },
+            {
+              "field": "NUMA node(s):",
+              "data": "1"
+            },
+            {
+              "field": "NUMA node0 CPU(s):",
+              "data": "0-15"
+            },
+            {
+              "field": "Vulnerability Gather data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Ghostwrite:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Indirect target selection:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Itlb multihit:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability L1tf:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Mds:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Meltdown:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Mmio stale data:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Old microcode:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Reg file data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Retbleed:",
+              "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+            },
+            {
+              "field": "Vulnerability Spec rstack overflow:",
+              "data": "Mitigation; Safe RET"
+            },
+            {
+              "field": "Vulnerability Spec store bypass:",
+              "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+            },
+            {
+              "field": "Vulnerability Spectre v1:",
+              "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+            },
+            {
+              "field": "Vulnerability Spectre v2:",
+              "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+            },
+            {
+              "field": "Vulnerability Srbds:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsa:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsx async abort:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Vmscape:",
+              "data": "Not affected"
+            }
+          ]
+        }
+      },
+      "deployment_target": "all",
+      "seed": 267,
+      "dataset": {
+        "metric_samples_per_request": 1000,
+        "metric_points_per_series": 1,
+        "other_signals": "deployment-envelope dataset; profile units=nanoseconds, unquoted legacy labels, sampleRate=1e9",
+        "seed_concurrency": 64
+      },
+      "phase_seconds": 60,
+      "query_interval_seconds": 0.25,
+      "write_interval_seconds": 1,
+      "provenance": {
+        "path": "qualification/evidence/performance/gcp-37286691135/provenance.json",
+        "sha256": "d68f634982417f64c3088d7e6603e0d2581fd850f9ac8132db1e8c17463ab471",
+        "jobs": [
+          {
+            "id": 111687157659,
+            "name": "compare (logs)",
+            "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37286691135/job/111687157659",
+            "conclusion": "success",
+            "runner_name": "gcp-runner-62aaed6bce2a401b",
+            "runner_group_name": "default",
+            "labels": [
+              "gcp-ubuntu-24-04-16core"
+            ],
+            "started_at": "2026-10-05T08:56:26Z",
+            "completed_at": "2026-10-05T09:26:21Z"
+          }
+        ]
+      },
+      "archive": {
+        "path": "qualification/evidence/performance/gcp-37286691135/logs.zip",
+        "sha256": "946421880c23fbec65d6f89277cd375e1f072c16513330cbbf315990925d3906",
+        "artifact": {
+          "id": 11335703903,
+          "name": "grafana-comparison-logs-84351e6940b96e6b920ca53639447266a5a6dc4d-1",
+          "digest": "sha256:946421880c23fbec65d6f89277cd375e1f072c16513330cbbf315990925d3906",
+          "size_in_bytes": 4843804,
+          "expires_at": "2027-01-03T08:55:36Z",
+          "signal": "logs",
+          "verified_raw_files": 239,
+          "reports": [
+            "qualification/evidence/performance/gcp-37286691135/logs/comparison-report.json"
+          ]
+        },
+        "raw_checksum_entries_verified": 239
+      },
+      "original_report": {
+        "member": "comparison-report.json",
+        "sha256": "84865fdcfcb30da837b00c4c048130531059235551c279b3e54d6ecf530123b1",
+        "preserved_unmodified": true
+      },
+      "ratio_definition": "Ratio of three-repetition medians; each backend CPU core count is sampled CPU seconds divided by entry duration.",
+      "krabka_divided_by_native": {
+        "average_cpu_cores": 0.8542872484983102,
+        "peak_rss_kib": 0.8550707243891985,
+        "query_p99_ms": 0.6963487678484507
+      },
+      "backends": {
+        "krabka": {
+          "average_cpu_cores": {
+            "median": 0.2668945484314926,
+            "min": 0.2616840525971369,
+            "max": 0.2694519638605649,
+            "values": [
+              0.2668945484314926,
+              0.2694519638605649,
+              0.2616840525971369
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 199488,
+            "min": 198180,
+            "max": 200376,
+            "values": [
+              200376,
+              199488,
+              198180
+            ]
+          },
+          "query_p99_ms": {
+            "median": 54.43626900000709,
+            "min": 53.84324800002105,
+            "max": 57.714916999884736,
+            "values": [
+              57.714916999884736,
+              54.43626900000709,
+              53.84324800002105
+            ]
+          },
+          "object_store_cpu_cores": {
+            "median": 0.020047400113139734,
+            "min": 0.019537296529830998,
+            "max": 0.02055577400943343,
+            "values": [
+              0.02055577400943343,
+              0.020047400113139734,
+              0.019537296529830998
+            ]
+          },
+          "object_store_peak_rss_kib": {
+            "median": 179052,
+            "min": 178468,
+            "max": 181912,
+            "values": [
+              179052,
+              181912,
+              178468
+            ]
+          },
+          "accepted_rows": {
+            "median": 120000,
+            "min": 120000,
+            "max": 120000,
+            "values": [
+              120000,
+              120000,
+              120000
+            ]
+          },
+          "query_attempts": {
+            "median": 240,
+            "min": 240,
+            "max": 240,
+            "values": [
+              240,
+              240,
+              240
+            ]
+          }
+        },
+        "loki": {
+          "average_cpu_cores": {
+            "median": 0.3124178066577105,
+            "min": 0.29177727772890594,
+            "max": 0.33474003398272134,
+            "values": [
+              0.33474003398272134,
+              0.3124178066577105,
+              0.29177727772890594
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 233300,
+            "min": 228244,
+            "max": 238160,
+            "values": [
+              238160,
+              233300,
+              228244
+            ]
+          },
+          "query_p99_ms": {
+            "median": 78.17385700013801,
+            "min": 77.93595099997219,
+            "max": 85.85775399978957,
+            "values": [
+              85.85775399978957,
+              77.93595099997219,
+              78.17385700013801
+            ]
+          },
+          "object_store_cpu_cores": {
+            "median": 0.018342880996756215,
+            "min": 0.017363493493378693,
+            "max": 0.018727563587133077,
+            "values": [
+              0.018342880996756215,
+              0.018727563587133077,
+              0.017363493493378693
+            ]
+          },
+          "object_store_peak_rss_kib": {
+            "median": 152660,
+            "min": 151392,
+            "max": 156440,
+            "values": [
+              156440,
+              151392,
+              152660
+            ]
+          },
+          "accepted_rows": {
+            "median": 120000,
+            "min": 120000,
+            "max": 120000,
+            "values": [
+              120000,
+              120000,
+              120000
+            ]
+          },
+          "query_attempts": {
+            "median": 239,
+            "min": 239,
+            "max": 239,
+            "values": [
+              239,
+              239,
+              239
+            ]
+          }
+        }
+      },
+      "telemetry_inputs": [
+        {
+          "backend": "krabka",
+          "repetition": 1,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.59575891494751,
+          "raw_artifact_sha256": {
+            "1-krabka-steady/2.telemetry.jsonl": "b06aa3e6770d3e92ae6f046aaef7f25b5d79b2242c908f28660ec06cc2bcdef2",
+            "1-krabka-steady/2.operations.jsonl": "46dbf4f73a48290bebcb2b2fe910410b0fb30e9b5af10314851ffccf7801e926",
+            "1-krabka-steady/compose.json": "e11f55c2584714184ffccf62ecf2fc224665390f11efb47e1b3676ca964b5bb6",
+            "1-krabka-steady/containers.json": "c83155433f4e7824ee1f09cdaaad5f2095d98de82593de223860ecc8fea662e8"
+          }
+        },
+        {
+          "backend": "loki",
+          "repetition": 1,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.73259472846985,
+          "raw_artifact_sha256": {
+            "1-loki-steady/2.telemetry.jsonl": "2e453baffb75a91aff82c683bd97b2cbcc6abcd477e8cc570d6f608419e8a3b7",
+            "1-loki-steady/2.operations.jsonl": "0d6a031b91a7037d83c2b2dd67301b48bc55e52ec1a60c6cb7a76869e69faa82",
+            "1-loki-steady/compose.json": "31796b4d84daf4d2b870fac95c3594e13febac00f00defba442d12f99a1897a6",
+            "1-loki-steady/containers.json": "3134d956a1e9e9c644307aa389098acb363a935ad13c28d7b7ea34eded3a5cfb"
+          }
+        },
+        {
+          "backend": "loki",
+          "repetition": 2,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.76908898353577,
+          "raw_artifact_sha256": {
+            "2-loki-steady/2.telemetry.jsonl": "dafa42c612b7da619265f2ed10fe8370a6ee73730aa5b2b621687a0faf96b0a1",
+            "2-loki-steady/2.operations.jsonl": "fb8b81b8e061ac33adffdb638734356489134bd7b625cfb1c0737fed5d9ead53",
+            "2-loki-steady/compose.json": "31796b4d84daf4d2b870fac95c3594e13febac00f00defba442d12f99a1897a6",
+            "2-loki-steady/containers.json": "57f6454830328dbbd21eff56f8948aaf11d5de997cbb9cafe88d7d25ad01fa01"
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 2,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.573310136795044,
+          "raw_artifact_sha256": {
+            "2-krabka-steady/2.telemetry.jsonl": "d9ce71e8f7841881301e932f81ab8f6e876cecc5da3912602df800ed6553dcd1",
+            "2-krabka-steady/2.operations.jsonl": "32d1892eef2c140aeeb444f8074e2885ba669d76051bfbc90d109446ba012154",
+            "2-krabka-steady/compose.json": "f441899473732699a59a93f1234942550d944d42a1cfe35d64cddeb491c6dfbe",
+            "2-krabka-steady/containers.json": "d7de1b4b5e2e5c42fe0171ad62f48ee3921cdc0a59caa21a4ae15c8c21fe141a"
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 3,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.57157754898071,
+          "raw_artifact_sha256": {
+            "3-krabka-steady/2.telemetry.jsonl": "56da01ad05f0ec51a34535fb518108b265b147a0929e62eb4083891a38f8fa74",
+            "3-krabka-steady/2.operations.jsonl": "cd3869f5c92043eda5d09a602ae6519afc6e8dbbe23276859c61a42836d86527",
+            "3-krabka-steady/compose.json": "e43700d67905e28ae15a105ebcb07cf63cd04a9bf98aeaf74bb9570fa9efa760",
+            "3-krabka-steady/containers.json": "7054c8c7480a000839a14f379f2d3afb59a1382ea079c346830e8a62f2ca79e3"
+          }
+        },
+        {
+          "backend": "loki",
+          "repetition": 3,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.73405122756958,
+          "raw_artifact_sha256": {
+            "3-loki-steady/2.telemetry.jsonl": "a1b92f89263de1a8febe4b8f1572b616abf9727b2a08ef4d99d554cbb5d03b6e",
+            "3-loki-steady/2.operations.jsonl": "8ea7c48eb682126312156f4b4c0de5e3ba118f1bf86a161463bf28d494ccf773",
+            "3-loki-steady/compose.json": "31796b4d84daf4d2b870fac95c3594e13febac00f00defba442d12f99a1897a6",
+            "3-loki-steady/containers.json": "798d645015aea1f0d7be8ea5807b6ad7071738ddd1fb93c237fbc50d8e26887b"
+          }
+        }
+      ]
+    },
+    "traces": {
+      "native_product": "tempo",
+      "run_id": 37298567310,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37298567310",
+      "historical": true,
+      "qualifies_current_checkout": false,
+      "selection_reason": "Borrowed-selection checkpoint before the rejected shared fingerprint/index/cold-label experiments.",
+      "retention_record": {
+        "path": "qualification/grafana-tempo-borrowed-selection-experiment-gcp.json",
+        "sha256": "5e309a6eac9359128243bb03db66450fbba59eaf696c7a2a5fc98d6316548e63"
+      },
+      "source_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+      "image_manifest_digest": "sha256:92b07517d101d4ff7b24ef7de2477ffb3fd62cb8c1b336611a9bdb7491cf7c9d",
+      "image_config_digest": "sha256:92b07517d101d4ff7b24ef7de2477ffb3fd62cb8c1b336611a9bdb7491cf7c9d",
+      "harness_commit": "ca99cacd35074c404e0e57500eb10d4767d95bc5",
+      "host": {
+        "cpu_count": 16,
+        "kernel": "7.0.0-1011-gcp",
+        "lscpu": {
+          "lscpu": [
+            {
+              "field": "Architecture:",
+              "data": "x86_64"
+            },
+            {
+              "field": "CPU op-mode(s):",
+              "data": "32-bit, 64-bit"
+            },
+            {
+              "field": "Address sizes:",
+              "data": "48 bits physical, 48 bits virtual"
+            },
+            {
+              "field": "Byte Order:",
+              "data": "Little Endian"
+            },
+            {
+              "field": "CPU(s):",
+              "data": "16"
+            },
+            {
+              "field": "On-line CPU(s) list:",
+              "data": "0-15"
+            },
+            {
+              "field": "Vendor ID:",
+              "data": "AuthenticAMD"
+            },
+            {
+              "field": "Model name:",
+              "data": "AMD EPYC 7B12"
+            },
+            {
+              "field": "CPU family:",
+              "data": "23"
+            },
+            {
+              "field": "Model:",
+              "data": "49"
+            },
+            {
+              "field": "Thread(s) per core:",
+              "data": "2"
+            },
+            {
+              "field": "Core(s) per socket:",
+              "data": "8"
+            },
+            {
+              "field": "Socket(s):",
+              "data": "1"
+            },
+            {
+              "field": "Stepping:",
+              "data": "0"
+            },
+            {
+              "field": "BogoMIPS:",
+              "data": "4499.99"
+            },
+            {
+              "field": "Flags:",
+              "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+            },
+            {
+              "field": "Hypervisor vendor:",
+              "data": "KVM"
+            },
+            {
+              "field": "Virtualization type:",
+              "data": "full"
+            },
+            {
+              "field": "L1d cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L1i cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L2 cache:",
+              "data": "4 MiB (8 instances)"
+            },
+            {
+              "field": "L3 cache:",
+              "data": "32 MiB (2 instances)"
+            },
+            {
+              "field": "NUMA node(s):",
+              "data": "1"
+            },
+            {
+              "field": "NUMA node0 CPU(s):",
+              "data": "0-15"
+            },
+            {
+              "field": "Vulnerability Gather data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Ghostwrite:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Indirect target selection:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Itlb multihit:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability L1tf:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Mds:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Meltdown:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Mmio stale data:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Old microcode:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Reg file data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Retbleed:",
+              "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+            },
+            {
+              "field": "Vulnerability Spec rstack overflow:",
+              "data": "Mitigation; Safe RET"
+            },
+            {
+              "field": "Vulnerability Spec store bypass:",
+              "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+            },
+            {
+              "field": "Vulnerability Spectre v1:",
+              "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+            },
+            {
+              "field": "Vulnerability Spectre v2:",
+              "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+            },
+            {
+              "field": "Vulnerability Srbds:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsa:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsx async abort:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Vmscape:",
+              "data": "Not affected"
+            }
+          ]
+        }
+      },
+      "deployment_target": "all",
+      "seed": 267,
+      "dataset": {
+        "metric_samples_per_request": 1000,
+        "metric_points_per_series": 1,
+        "other_signals": "deployment-envelope dataset; profile units=nanoseconds, unquoted legacy labels, sampleRate=1e9",
+        "seed_concurrency": 64
+      },
+      "phase_seconds": 60,
+      "query_interval_seconds": 0.25,
+      "write_interval_seconds": 1,
+      "provenance": {
+        "path": "qualification/evidence/performance/gcp-37298567310/provenance.json",
+        "sha256": "edda8800e9734e4bd6695a2db3c26905aae61dc7ad854ae3a08f4f056a819ad3",
+        "jobs": [
+          {
+            "id": 111725570549,
+            "name": "compare (traces)",
+            "conclusion": "success",
+            "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37298567310/job/111725570549",
+            "runner_name": "gcp-runner-7539f401a1b44fbe",
+            "runner_group_name": "default",
+            "labels": [
+              "gcp-ubuntu-24-04-16core"
+            ],
+            "started_at": "2026-10-05T10:46:14Z",
+            "completed_at": "2026-10-05T11:18:28Z"
+          }
+        ]
+      },
+      "archive": {
+        "path": "qualification/evidence/performance/gcp-37298567310/traces.zip",
+        "sha256": "466f55733d0e9eb0b70855254d5626b74ad196ebb832e5efff7623a5efaef446",
+        "artifact": {
+          "id": 11341699541,
+          "name": "grafana-comparison-traces-ca99cacd35074c404e0e57500eb10d4767d95bc5-1",
+          "digest": "sha256:466f55733d0e9eb0b70855254d5626b74ad196ebb832e5efff7623a5efaef446",
+          "size_in_bytes": 5883591,
+          "expires_at": "2027-01-03T10:45:10Z",
+          "signal": "traces",
+          "verified_raw_files": 725
+        },
+        "raw_checksum_entries_verified": 725
+      },
+      "original_report": {
+        "member": "comparison-report.json",
+        "sha256": "12e9be2380d66201c1f58f86458ce5cc7bd5a7e966e09fcb777b679f49bcdc8c",
+        "preserved_unmodified": true
+      },
+      "ratio_definition": "Ratio of three-repetition medians; each backend CPU core count is sampled CPU seconds divided by entry duration.",
+      "krabka_divided_by_native": {
+        "average_cpu_cores": 0.7616060712394004,
+        "peak_rss_kib": 0.9796571157784284,
+        "query_p99_ms": 0.9001185757711139
+      },
+      "backends": {
+        "krabka": {
+          "average_cpu_cores": {
+            "median": 0.32263267097323756,
+            "min": 0.32186433664350234,
+            "max": 0.32389706013785674,
+            "values": [
+              0.32186433664350234,
+              0.32263267097323756,
+              0.32389706013785674
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 231540,
+            "min": 231080,
+            "max": 231944,
+            "values": [
+              231944,
+              231080,
+              231540
+            ]
+          },
+          "query_p99_ms": {
+            "median": 98.01379199996063,
+            "min": 92.87453199999618,
+            "max": 99.14456000001337,
+            "values": [
+              98.01379199996063,
+              92.87453199999618,
+              99.14456000001337
+            ]
+          },
+          "object_store_cpu_cores": {
+            "median": 0.07988254129512164,
+            "min": 0.0796781250300189,
+            "max": 0.08059500630114302,
+            "values": [
+              0.0796781250300189,
+              0.08059500630114302,
+              0.07988254129512164
+            ]
+          },
+          "object_store_peak_rss_kib": {
+            "median": 292900,
+            "min": 266348,
+            "max": 298156,
+            "values": [
+              266348,
+              292900,
+              298156
+            ]
+          },
+          "accepted_rows": {
+            "median": 12000,
+            "min": 12000,
+            "max": 12000,
+            "values": [
+              12000,
+              12000,
+              12000
+            ]
+          },
+          "query_attempts": {
+            "median": 235,
+            "min": 235,
+            "max": 236,
+            "values": [
+              236,
+              235,
+              235
+            ]
+          }
+        },
+        "tempo": {
+          "average_cpu_cores": {
+            "median": 0.42362145360553777,
+            "min": 0.41852601449562743,
+            "max": 0.4306367110722229,
+            "values": [
+              0.41852601449562743,
+              0.4306367110722229,
+              0.42362145360553777
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 236348,
+            "min": 236036,
+            "max": 241484,
+            "values": [
+              236036,
+              236348,
+              241484
+            ]
+          },
+          "query_p99_ms": {
+            "median": 108.88986700001624,
+            "min": 105.95213399994918,
+            "max": 112.84704900003817,
+            "values": [
+              105.95213399994918,
+              112.84704900003817,
+              108.88986700001624
+            ]
+          },
+          "object_store_cpu_cores": {
+            "median": 0.16029161585681895,
+            "min": 0.15814119869423335,
+            "max": 0.16312494523283083,
+            "values": [
+              0.15814119869423335,
+              0.16312494523283083,
+              0.16029161585681895
+            ]
+          },
+          "object_store_peak_rss_kib": {
+            "median": 313968,
+            "min": 311900,
+            "max": 316468,
+            "values": [
+              311900,
+              313968,
+              316468
+            ]
+          },
+          "accepted_rows": {
+            "median": 12000,
+            "min": 12000,
+            "max": 12000,
+            "values": [
+              12000,
+              12000,
+              12000
+            ]
+          },
+          "query_attempts": {
+            "median": 232,
+            "min": 232,
+            "max": 232,
+            "values": [
+              232,
+              232,
+              232
+            ]
+          }
+        }
+      },
+      "telemetry_inputs": [
+        {
+          "backend": "krabka",
+          "repetition": 1,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.5873384475708,
+          "raw_artifact_sha256": {
+            "1-krabka-steady/2.telemetry.jsonl": "5b3c8788e5ae1cccd05d3b9ce8de78be6b5fe4862218f51ee87676feb1ad03c6",
+            "1-krabka-steady/2.operations.jsonl": "183acee159de7fdb572dade562cc14ab918f8c9cea6f175aada75eb48e4d7c3b",
+            "1-krabka-steady/compose.json": "fd6fb8a132adde2a69056a05c43b0a548137c69ab3a5a16ec30554d89ccdf111",
+            "1-krabka-steady/containers.json": "80ba684042187d8b81b9798f7f424e1ad806673c2d1aae1aef0ec746ab60d74a"
+          }
+        },
+        {
+          "backend": "tempo",
+          "repetition": 1,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.564213514328,
+          "raw_artifact_sha256": {
+            "1-tempo-steady/2.telemetry.jsonl": "bd0cdb988f407ddac3ff948755fe089884a82347b7e6f7232c55a93c8a1c90f3",
+            "1-tempo-steady/2.operations.jsonl": "ce4a896d49f77b9f0bc8caef35cb7ad76612a3f18c71b54afe901ed923245965",
+            "1-tempo-steady/compose.json": "09a3ef3da631d7021df6697c35a2682ed0df9bb4214b9d1144adb159c41c80ca",
+            "1-tempo-steady/containers.json": "9c4cbcf8c25cf6d9986ee27e0493ce490d73f4a717c63066a4859adea690d3db"
+          }
+        },
+        {
+          "backend": "tempo",
+          "repetition": 2,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.60326409339905,
+          "raw_artifact_sha256": {
+            "2-tempo-steady/2.telemetry.jsonl": "2b55dbc7dfcebef8d19dc2899fcdcc4dfec0747dc800b1de79db07e59141cb92",
+            "2-tempo-steady/2.operations.jsonl": "4bea0e7334c692657b1dfa7ad2a4c2ecdd911efa490d56168393ec9bcfcc2fed",
+            "2-tempo-steady/compose.json": "09a3ef3da631d7021df6697c35a2682ed0df9bb4214b9d1144adb159c41c80ca",
+            "2-tempo-steady/containers.json": "0a3fda5982443166052c37845f20761bc5f1ae4d20c6f584fd85a96d506e1fdb"
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 2,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.61407828330994,
+          "raw_artifact_sha256": {
+            "2-krabka-steady/2.telemetry.jsonl": "4987ca734eb107cc60f431cb39ab8de311e293ca9b932a693362e5f51f6a8e5e",
+            "2-krabka-steady/2.operations.jsonl": "282289be3046de9857ab04802c18aac818df6296f7b97fecc5219f3190f662e6",
+            "2-krabka-steady/compose.json": "b3379e28c45fee2cfa2ca4ef14d9e7f4c46217b59dc51f772ffaac2ba31dd9b5",
+            "2-krabka-steady/containers.json": "501628827d8cf7f0da939546010b032797138ab977fa9bb88f661eae3e070f60"
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 3,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.63716530799866,
+          "raw_artifact_sha256": {
+            "3-krabka-steady/2.telemetry.jsonl": "d307b739b8c8c9f28769dd15583c00a296b229f4faea5dfb6f78623ef32a91f1",
+            "3-krabka-steady/2.operations.jsonl": "410b500d7d00ec8c09262043f72f196854da42f725dfacd6b413ba1a0c26c3ed",
+            "3-krabka-steady/compose.json": "e515d7eb99a37e0476a614288837e0d2c6efc571d9b27812be5c9693bc037712",
+            "3-krabka-steady/containers.json": "d4f3e1b4e40d3052ea2ea4cc2cbd1701a1c1fb36b59463ef783bb08c4a319770"
+          }
+        },
+        {
+          "backend": "tempo",
+          "repetition": 3,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.575745582580566,
+          "raw_artifact_sha256": {
+            "3-tempo-steady/2.telemetry.jsonl": "97088975f64fbffb346e61a94cc659b6e97ae702eb668af39d3d5117adedb7d6",
+            "3-tempo-steady/2.operations.jsonl": "4c77ba736461c64808a9f021b365dc8a982f489543dfeb610449e51786baec81",
+            "3-tempo-steady/compose.json": "09a3ef3da631d7021df6697c35a2682ed0df9bb4214b9d1144adb159c41c80ca",
+            "3-tempo-steady/containers.json": "29a66119d15f343e4224ebf62ae1373eac0cc1d956450fe7b140aaa2996332ac"
+          }
+        }
+      ]
+    },
+    "profiles": {
+      "native_product": "pyroscope",
+      "run_id": 37268169814,
+      "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37268169814",
+      "historical": true,
+      "qualifies_current_checkout": false,
+      "selection_reason": "Qualified pooled-profiles checkpoint before later rejected borrowed fingerprint/direct-table/index/cold-label/global-CGU experiments. No newer clean exact-image native Pyroscope report was found in the recorded evidence.",
+      "retention_record": {
+        "path": "qualification/grafana-performance-gcp.json",
+        "sha256": "156322b8b866345d00c6092872cd7de20e096db28a66916dad7101a6baa12054"
+      },
+      "source_commit": "50f03683f5b7dc2a19bb55b00172f99bad6b24f5",
+      "image_manifest_digest": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "image_config_digest": "sha256:15582ac93f400b0cff6cd9afd9c06be7912dccd0fc37fb453eca469a994b78db",
+      "harness_commit": "a1b2743de6a66d23ac5702fd3dd3cc926c5d09d2",
+      "host": {
+        "cpu_count": 16,
+        "kernel": "7.0.0-1011-gcp",
+        "lscpu": {
+          "lscpu": [
+            {
+              "field": "Architecture:",
+              "data": "x86_64"
+            },
+            {
+              "field": "CPU op-mode(s):",
+              "data": "32-bit, 64-bit"
+            },
+            {
+              "field": "Address sizes:",
+              "data": "48 bits physical, 48 bits virtual"
+            },
+            {
+              "field": "Byte Order:",
+              "data": "Little Endian"
+            },
+            {
+              "field": "CPU(s):",
+              "data": "16"
+            },
+            {
+              "field": "On-line CPU(s) list:",
+              "data": "0-15"
+            },
+            {
+              "field": "Vendor ID:",
+              "data": "AuthenticAMD"
+            },
+            {
+              "field": "Model name:",
+              "data": "AMD EPYC 7B12"
+            },
+            {
+              "field": "CPU family:",
+              "data": "23"
+            },
+            {
+              "field": "Model:",
+              "data": "49"
+            },
+            {
+              "field": "Thread(s) per core:",
+              "data": "2"
+            },
+            {
+              "field": "Core(s) per socket:",
+              "data": "8"
+            },
+            {
+              "field": "Socket(s):",
+              "data": "1"
+            },
+            {
+              "field": "Stepping:",
+              "data": "0"
+            },
+            {
+              "field": "BogoMIPS:",
+              "data": "4499.99"
+            },
+            {
+              "field": "Flags:",
+              "data": "fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good nopl xtopology nonstop_tsc cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext ssbd ibrs ibpb stibp vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 clzero xsaveerptr arat umip rdpid"
+            },
+            {
+              "field": "Hypervisor vendor:",
+              "data": "KVM"
+            },
+            {
+              "field": "Virtualization type:",
+              "data": "full"
+            },
+            {
+              "field": "L1d cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L1i cache:",
+              "data": "256 KiB (8 instances)"
+            },
+            {
+              "field": "L2 cache:",
+              "data": "4 MiB (8 instances)"
+            },
+            {
+              "field": "L3 cache:",
+              "data": "32 MiB (2 instances)"
+            },
+            {
+              "field": "NUMA node(s):",
+              "data": "1"
+            },
+            {
+              "field": "NUMA node0 CPU(s):",
+              "data": "0-15"
+            },
+            {
+              "field": "Vulnerability Gather data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Ghostwrite:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Indirect target selection:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Itlb multihit:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability L1tf:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Mds:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Meltdown:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Mmio stale data:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Old microcode:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Reg file data sampling:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Retbleed:",
+              "data": "Mitigation; untrained return thunk; SMT enabled with STIBP protection"
+            },
+            {
+              "field": "Vulnerability Spec rstack overflow:",
+              "data": "Mitigation; Safe RET"
+            },
+            {
+              "field": "Vulnerability Spec store bypass:",
+              "data": "Mitigation; Speculative Store Bypass disabled via prctl"
+            },
+            {
+              "field": "Vulnerability Spectre v1:",
+              "data": "Mitigation; usercopy/swapgs barriers and __user pointer sanitization"
+            },
+            {
+              "field": "Vulnerability Spectre v2:",
+              "data": "Mitigation; Retpolines; IBPB conditional; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected"
+            },
+            {
+              "field": "Vulnerability Srbds:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsa:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Tsx async abort:",
+              "data": "Not affected"
+            },
+            {
+              "field": "Vulnerability Vmscape:",
+              "data": "Not affected"
+            }
+          ]
+        }
+      },
+      "deployment_target": "all",
+      "seed": 267,
+      "dataset": {
+        "metric_samples_per_request": 1000,
+        "metric_points_per_series": 1,
+        "other_signals": "deployment-envelope dataset; profile units=nanoseconds, unquoted legacy labels, sampleRate=1e9",
+        "seed_concurrency": 64
+      },
+      "phase_seconds": 60,
+      "query_interval_seconds": 0.25,
+      "write_interval_seconds": 1,
+      "provenance": {
+        "path": "qualification/evidence/performance/gcp-37268169814/provenance.json",
+        "sha256": "0ba2ba1a6e68879a04320c3d4d57eff9476bfbabc68924d0bdca0e3cbd99ebc3",
+        "jobs": [
+          {
+            "id": 111629306032,
+            "name": "compare (profiles)",
+            "html_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37268169814/job/111629306032",
+            "conclusion": "success",
+            "runner_name": "gcp-runner-78bf4d0a65a14104",
+            "runner_group_name": "default",
+            "labels": [
+              "gcp-ubuntu-24-04-16core"
+            ],
+            "started_at": "2026-10-05T05:32:38Z",
+            "completed_at": "2026-10-05T05:48:07Z"
+          }
+        ]
+      },
+      "archive": {
+        "path": "qualification/evidence/performance/gcp-37268169814/profiles.zip",
+        "sha256": "6eb1802ab4e5d4831f416277a96b2d2176cd34ea01afe9fed50bc7e1d2b4f2cd",
+        "artifact": {
+          "id": 11327502011,
+          "name": "grafana-comparison-profiles-a1b2743de6a66d23ac5702fd3dd3cc926c5d09d2-1",
+          "digest": "sha256:6eb1802ab4e5d4831f416277a96b2d2176cd34ea01afe9fed50bc7e1d2b4f2cd",
+          "size_in_bytes": 5970972,
+          "expires_at": "2027-01-03T05:31:30Z",
+          "signal": "profiles",
+          "verified_raw_files": 245,
+          "reports": [
+            "qualification/evidence/performance/gcp-37268169814/profiles/comparison-report.json"
+          ]
+        },
+        "raw_checksum_entries_verified": 245
+      },
+      "original_report": {
+        "member": "comparison-report.json",
+        "sha256": "51378899836415132a8c99d865931935b8c1ac518fce5a04631e932f5c3dd67a",
+        "preserved_unmodified": true
+      },
+      "ratio_definition": "Ratio of three-repetition medians; each backend CPU core count is sampled CPU seconds divided by entry duration.",
+      "krabka_divided_by_native": {
+        "average_cpu_cores": 0.31341170304085186,
+        "peak_rss_kib": 0.9541342121030557,
+        "query_p99_ms": 0.9084832952248946
+      },
+      "backends": {
+        "krabka": {
+          "average_cpu_cores": {
+            "median": 0.07958785147230574,
+            "min": 0.07863439699688374,
+            "max": 0.08269766524426757,
+            "values": [
+              0.08269766524426757,
+              0.07863439699688374,
+              0.07958785147230574
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 127396,
+            "min": 127276,
+            "max": 127848,
+            "values": [
+              127276,
+              127396,
+              127848
+            ]
+          },
+          "query_p99_ms": {
+            "median": 21.505781000087154,
+            "min": 20.35308899996835,
+            "max": 22.995868999998947,
+            "values": [
+              22.995868999998947,
+              20.35308899996835,
+              21.505781000087154
+            ]
+          },
+          "object_store_cpu_cores": {
+            "median": 0.05500341989421045,
+            "min": 0.05221301008469787,
+            "max": 0.05742751494401231,
+            "values": [
+              0.05742751494401231,
+              0.05221301008469787,
+              0.05500341989421045
+            ]
+          },
+          "object_store_peak_rss_kib": {
+            "median": 240964,
+            "min": 239580,
+            "max": 244740,
+            "values": [
+              244740,
+              239580,
+              240964
+            ]
+          },
+          "accepted_rows": {
+            "median": 1200,
+            "min": 1200,
+            "max": 1200,
+            "values": [
+              1200,
+              1200,
+              1200
+            ]
+          },
+          "query_attempts": {
+            "median": 240,
+            "min": 240,
+            "max": 240,
+            "values": [
+              240,
+              240,
+              240
+            ]
+          }
+        },
+        "pyroscope": {
+          "average_cpu_cores": {
+            "median": 0.2539402667485324,
+            "min": 0.25236366598726895,
+            "max": 0.2605726296760704,
+            "values": [
+              0.2605726296760704,
+              0.25236366598726895,
+              0.2539402667485324
+            ]
+          },
+          "peak_rss_kib": {
+            "median": 133520,
+            "min": 133252,
+            "max": 135804,
+            "values": [
+              133252,
+              133520,
+              135804
+            ]
+          },
+          "query_p99_ms": {
+            "median": 23.67218100005175,
+            "min": 22.5069910000002,
+            "max": 24.07246100000293,
+            "values": [
+              24.07246100000293,
+              22.5069910000002,
+              23.67218100005175
+            ]
+          },
+          "object_store_cpu_cores": {
+            "median": 0.0688623802979732,
+            "min": 0.06724142865124466,
+            "max": 0.0688827136557956,
+            "values": [
+              0.0688827136557956,
+              0.06724142865124466,
+              0.0688623802979732
+            ]
+          },
+          "object_store_peak_rss_kib": {
+            "median": 283152,
+            "min": 279816,
+            "max": 286164,
+            "values": [
+              286164,
+              283152,
+              279816
+            ]
+          },
+          "accepted_rows": {
+            "median": 1200,
+            "min": 1200,
+            "max": 1200,
+            "values": [
+              1200,
+              1200,
+              1200
+            ]
+          },
+          "query_attempts": {
+            "median": 240,
+            "min": 240,
+            "max": 240,
+            "values": [
+              240,
+              240,
+              240
+            ]
+          }
+        }
+      },
+      "telemetry_inputs": [
+        {
+          "backend": "krabka",
+          "repetition": 1,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.62559628486633,
+          "raw_artifact_sha256": {
+            "1-krabka-steady/2.telemetry.jsonl": "ed253d3f7cd0ecb85be0ec88c669f8a56f80f07e2e063535a8f3a06069bf7171",
+            "1-krabka-steady/2.operations.jsonl": "945b5a01bc1e2191575730e8659ecd67a911367316851296efa5a57579d28f71",
+            "1-krabka-steady/compose.json": "e0fce926a6689d97a4ae7cf6e46d059f0ca0c19493b37f612efdce63202781e9",
+            "1-krabka-steady/containers.json": "ac2b84fd4d8c996b7332a61da1e85d713bf8391f79efa3032a02b2635a13e35c"
+          }
+        },
+        {
+          "backend": "pyroscope",
+          "repetition": 1,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.94306397438049,
+          "raw_artifact_sha256": {
+            "1-pyroscope-steady/2.telemetry.jsonl": "894d494be01df50bf8e37d4a2df1db3b7e481f150f2c0dc960eabae1c8d2e10e",
+            "1-pyroscope-steady/2.operations.jsonl": "5c04c1b88e4ed3b0668fcf89a5aa396054e21bb6b8d9779edee279126240d825",
+            "1-pyroscope-steady/compose.json": "64eb82885fef22a7198a4deff88b953fcd962085a109fb4095c08fa31f079a61",
+            "1-pyroscope-steady/containers.json": "d5d8a0bcfca8aa49fb557739055c979594579af2c590a7a7a86d0d042868eff3"
+          }
+        },
+        {
+          "backend": "pyroscope",
+          "repetition": 2,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.8999400138855,
+          "raw_artifact_sha256": {
+            "2-pyroscope-steady/2.telemetry.jsonl": "f789842d256ee6d61fc66994bd1fe807ee7b49eec5de5f98c3b5718d0cc25f4c",
+            "2-pyroscope-steady/2.operations.jsonl": "d250672b4f185c230ddae07b0f97bfdde465455c6fcd14ea894ebaa87bb39371",
+            "2-pyroscope-steady/compose.json": "64eb82885fef22a7198a4deff88b953fcd962085a109fb4095c08fa31f079a61",
+            "2-pyroscope-steady/containers.json": "f4e83dec652399f682b4e7e3e256371db8391bb97d0cfa7e86a98e37ba309f49"
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 2,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.570209980010986,
+          "raw_artifact_sha256": {
+            "2-krabka-steady/2.telemetry.jsonl": "8fa9c656d3756cc726d7f7ccf5febd5cf14d3ce87c53e8a04f7a6f69b417c2a9",
+            "2-krabka-steady/2.operations.jsonl": "4e1430f8db420eec78fabbc471f2b0df2818d4ab45f8fe38f10e5cbe316d65b8",
+            "2-krabka-steady/compose.json": "e1612303fb0b377a412a4ea1cdafe8d11dc0fe8f19a492d9c11d658716ee0731",
+            "2-krabka-steady/containers.json": "41da75088913f957e8c76487e1ec0571b426f04456870cf9a13342043379baa1"
+          }
+        },
+        {
+          "backend": "krabka",
+          "repetition": 3,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.58509564399719,
+          "raw_artifact_sha256": {
+            "3-krabka-steady/2.telemetry.jsonl": "f2ba3a5fd5b29f6a1c89a0d576eaec10cfdacbd756d44f82e2750b2cf08bedc5",
+            "3-krabka-steady/2.operations.jsonl": "101ebd0bd0bea176eae69d6d08c80d62ee6a5a380ba05ae43612fa907a1e8441",
+            "3-krabka-steady/compose.json": "fad59a5c81e533cd7ce9b2e0726d664c0b9af4b46f729991f82405d269fce48c",
+            "3-krabka-steady/containers.json": "731888ba0f24fe6e173f5c12315963bb2927935444da95852ace7ff5f04fabb4"
+          }
+        },
+        {
+          "backend": "pyroscope",
+          "repetition": 3,
+          "raw_sample_count": 61,
+          "raw_sample_span_seconds": 60.89042854309082,
+          "raw_artifact_sha256": {
+            "3-pyroscope-steady/2.telemetry.jsonl": "cf795beef3c94d985c6afc48b68ee7b8b567c26c2ff66e34a5d0cc970a3f4abb",
+            "3-pyroscope-steady/2.operations.jsonl": "f501c5f0fa98d491e08a89a1b7627c5f65be294c273fc79d14db0f75525978bc",
+            "3-pyroscope-steady/compose.json": "64eb82885fef22a7198a4deff88b953fcd962085a109fb4095c08fa31f079a61",
+            "3-pyroscope-steady/containers.json": "5f9de9e3be0b0101c0a5d0c8f1c4a0ba5b519bdd48ecfd13c71b17f1ba2a6eb9"
+          }
+        }
+      ]
+    }
+  },
+  "complete_derived_evidence": {
+    "path": "qualification/evidence/performance/retained-gains-application-only-evidence.json",
+    "sha256": "09b2239157ad0dfa2af24d535bac6e3acaad8a2f13da882e69b3f842e6a49dbf"
+  }
+}

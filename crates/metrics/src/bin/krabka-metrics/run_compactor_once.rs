@@ -1,6 +1,5 @@
 use krabka_metrics::{
-    CompactionManifestCache, DeferredBlockDeletions, MetricCompactionError, MetricCompactionPass,
-    compact_metric_blocks_once,
+    DeferredBlockDeletions, MetricCompactionError, MetricCompactionPass, compact_metric_blocks_once,
 };
 
 use super::{
@@ -10,8 +9,8 @@ use super::{
 
 /// Runs one compaction pass and reports what it did.
 ///
-/// The manifests are listed inside each pass. Unchanged contents can be reused
-/// from the bounded cache, but the listing is not carried across ticks: the block builder publishes new blocks into the same prefix, and a
+/// The manifests are reloaded inside the pass, so nothing is carried across
+/// ticks: the block builder publishes new blocks into the same prefix, and a
 /// stale set would plan against blocks a previous pass replaced.
 ///
 /// A pass that planned nothing publishes nothing. Counting its zero output
@@ -28,7 +27,6 @@ pub(crate) async fn run_compactor_once(
     policy: CompactionPolicy,
     deferred: &mut DeferredBlockDeletions,
     metrics: &ServiceMetrics,
-    manifests: &mut CompactionManifestCache,
 ) -> Result<MetricCompactionPass, MetricCompactionError> {
     let pass = compact_metric_blocks_once(
         store,
@@ -37,7 +35,6 @@ pub(crate) async fn run_compactor_once(
         policy,
         DEFAULT_BLOCK_READ_MAX,
         deferred,
-        Some(manifests),
     )
     .await?;
     metrics.compaction.record_output(pass.outputs.len() as u64);

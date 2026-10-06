@@ -347,7 +347,40 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
     let reopened_url = base_url(&reopened, DATA_PORT).await?;
     // The restarted writer must also consume records after its committed cut.
     push(&deployment.client, &write, version, "tenant-c", 31.0).await?;
-    wait_samples(&deployment.client, &reopened_url, "tenant-c", &expected(31)).await?;
+    let restart_result =
+        wait_samples(&deployment.client, &reopened_url, "tenant-c", &expected(31)).await;
+    // The original log consumer ends at stop and start does not reattach it.
+    // Read a finite snapshot after the query wait, preserving its timing and
+    // result even if diagnostics fail. This includes both writer lifetimes.
+    let diagnostics = async {
+        for (name, contents) in [
+            ("stdout", builder.stdout_to_vec().await?),
+            ("stderr", builder.stderr_to_vec().await?),
+        ] {
+            eprintln!(
+                "[block-builder restart {name}] {}",
+                String::from_utf8_lossy(&contents)
+            );
+        }
+        let admin = base_url(&builder, ADMIN_PORT).await?;
+        for path in ["/ready", "/status/recovery"] {
+            let response = deployment
+                .client
+                .get(format!("{admin}{path}"))
+                .send()
+                .await?;
+            let status = response.status();
+            let body = response.text().await?;
+            eprintln!("[block-builder restart {path}] {status} {body}");
+        }
+        TestResult::Ok(())
+    };
+    match tokio::time::timeout(Duration::from_secs(5), diagnostics).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => eprintln!("block-builder restart diagnostics failed: {error}"),
+        Err(error) => eprintln!("block-builder restart diagnostics timed out: {error}"),
+    }
+    restart_result?;
     for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
         wait_samples(&deployment.client, &reopened_url, tenant, &expected(value)).await?;
     }

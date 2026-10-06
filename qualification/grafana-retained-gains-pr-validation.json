@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "base_main": "2ac3b9c6cfce1624bc94b32370a43cc2ed300deb",
+  "source_commit": "90425e80733aee20239b15ee3527061003e344a3",
+  "source_file_overrides_sha256": {
+    "crates/integration/tests/support/metrics.rs": "9e056f4eed1185527f33a07f7602c862c2c4a595dc88b97fd38e7910f78eeac4",
+    "crates/metrics-service/tests/metrics_deployment.rs": "43821bedb04d4010fa29084d5de798bff08a8f2fb3df710b2b019094a8d88d2f",
+    "crates/metrics/src/bin/krabka-metrics/compactor_loop.rs": "025c0d9e657a95a86add2eda9441c775ea88f2cd240e5e712da68f7018bd9b21",
+    "crates/metrics/src/bin/krabka-metrics/run_block_builder.rs": "1552f53cf2bf00f93bcba83e108b91dfb80e43d0b35abf635ec87e64adbb2606",
+    "crates/metrics/src/bin/krabka-metrics/run_compactor_once.rs": "10fd1338bcbe9576fb2ce633d17ed3c6d5fec430237cd809b688afc4869c2323",
+    "crates/metrics/src/compactor.rs": "34cf2dd62fa2b0b80b98d0458b8ac47b7654c0352186681c55c5402f51cd4e4c",
+    "crates/metrics/src/compactor/compact_metric_blocks_once.rs": "c7911650ac185305387a62ae9f4c1ec0b3fc71d20fe76695d97112d67301b89b",
+    "crates/metrics/src/compactor/compaction_manifest_cache.rs": null,
+    "crates/metrics/src/compactor/consumer.rs": "db8090d863c0833e7b6eb21486a7fb3bf0a5fbdd33b3d6b4c6ea5328dc94e8e0",
+    "crates/metrics/src/compactor/durable_compaction_consumer.rs": "74cac5f864d3bbf2442f8aacde78c560c59ed645a10c01522e374ac589842f74",
+    "crates/metrics/src/compactor/list_compaction_index.rs": "0b9b5c76bb903372d202aded56ea222ff9c753f4b6a4ccce01f68ffad2fc3641",
+    "crates/metrics/src/compactor/list_compaction_manifests.rs": "fc85d491ea330605f83a8cb86f9394966248965cdf1436294dc56e75b9a2a5bf",
+    "crates/metrics/src/compactor/read_compaction_manifests.rs": "10df92637a7f8fc1a32542f6871268ab3480389cf533cf2b467a8e63735a06b7",
+    "crates/metrics/src/lib.rs": "70be2c278a1464a72dcbf7cb07bbe7d45b6cf129e36f60df465cb401a12611b2",
+    "crates/metrics/tests/level_compaction.rs": "04e3019c30ff1079018e2a99066e23989b6363aad39d9f1d2ec5c62868838a68"
+  },
+  "correctness_qualified": false,
+  "performance_qualified_current_branch": false,
+  "resource_accounting_scope": "application_and_broker_excluding_object_store",
+  "validation": {
+    "ordinary": {
+      "status": "passed",
+      "targets_passed": 387,
+      "rust_cases_passed": 5542,
+      "ignored_cases": 78,
+      "proof_path": "qualification/evidence/correctness/retained-gains-pr-ordinary-90425e80/root-summary-provenance.json",
+      "proof_sha256": "cce74b25b736cf44ec560df13eab8fa31f46d8416e5a2eab94906398316aec3a",
+      "case_count_method": "Last Rust suite summary for each target, excluding nested child-process summaries that may interleave."
+    },
+    "formatter": "passed",
+    "comparison_self_test": "passed",
+    "deployment_envelope_self_test": "passed",
+    "review": "Read-only review found no actionable correctness/regression findings; metrics restart lifecycle requires final native result."
+  }
+}

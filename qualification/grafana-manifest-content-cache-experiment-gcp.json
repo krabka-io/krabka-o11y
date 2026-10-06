@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Bounded compactor manifest contents with fresh object identity",
-  "status": "same_vm_control_verified_candidate_rejected_pending_source_removal",
+  "status": "rejected_production_cache_removed_native_close_check_running",
   "baseline_source_commit": "670cd7d1e4c9c21f3229ededf76f15b4dee53109",
   "base_main": "92989bb29d44c629fa4ac88147a3fce8b1604776",
   "performance_qualified": false,
@@ -10,7 +10,7 @@
   "source_comparison": "docs/grafana-upstream-source-comparison.md",
   "selection": "Repeated manifest GETs in the existing two-second compactor passes contribute to object traffic. Cache verified raw contents, preserving fresh listings, key validation and decode on every use. This does not change publication timing or reduce durability. Actual gain requires matched measurements.",
   "candidate_draft_sha256": "c430713efdea69a844f39e3588167ed3243d7c64b835e8595dc0d9f17c308414",
-  "candidate_applied": true,
+  "candidate_applied": false,
   "baseline_capture": {
     "run_id": 37385206080,
     "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37385206080",
@@ -81,7 +81,7 @@
       }
     }
   },
-  "next_action": "Remove the rejected production cache after the pinned rebase native checks finish; retain independent reader/compaction ledgers and all original experiment evidence.",
+  "next_action": "Finish restoration correctness, commit/push the restored baseline, then measure the separate equal-label key candidate on GCP.",
   "candidate_design": {
     "contents_byte_budget": 1048576,
     "entry_limit": 128,
@@ -701,6 +701,124 @@
       }
     }
   },
-  "retention_decision": "Reject: no consistent aggregate CPU, RSS or query benefit. Ingest p99 increases in all three pairs with disjoint ranges; compactor CPU and MinIO CPU have no consistent reduction. Avoided object reads alone do not justify production cache complexity.",
-  "source_removal_status": "Wait for pinned rebase native checks, then remove production cache and preserve original-source evidence."
+  "retention_decision": "Reject: after excluding MinIO, candidate/baseline median application CPU and RSS ratios are 0.968280 and 1.004972. Neither improves consistently. Query p99 is 1.068998 and ingest p99 1.081894; ingest is higher in all three pairs with disjoint ranges. Avoided object reads alone do not justify production cache complexity.",
+  "source_removal_status": "Production cache and API plumbing removed; publication and compaction ledgers retained. All387 ordinary targets pass after explicit-close repair; final nine native wrappers are running.",
+  "restoration": {
+    "parent_commit": "7a8de487de51e704dfe84eae08690b78350e45ca",
+    "patch_sha256": "235f4585f9c98bffd37a25240ce897a99517bc656052a04b13427c618ed4918d",
+    "validation": "failed_native_metrics",
+    "source_files_sha256": {
+      "crates/integration/tests/support/metrics.rs": "9e056f4eed1185527f33a07f7602c862c2c4a595dc88b97fd38e7910f78eeac4",
+      "crates/metrics/src/bin/krabka-metrics/compactor_loop.rs": "025c0d9e657a95a86add2eda9441c775ea88f2cd240e5e712da68f7018bd9b21",
+      "crates/metrics/src/bin/krabka-metrics/run_compactor_once.rs": "10fd1338bcbe9576fb2ce633d17ed3c6d5fec430237cd809b688afc4869c2323",
+      "crates/metrics/src/compactor.rs": "34cf2dd62fa2b0b80b98d0458b8ac47b7654c0352186681c55c5402f51cd4e4c",
+      "crates/metrics/src/compactor/compact_metric_blocks_once.rs": "c7911650ac185305387a62ae9f4c1ec0b3fc71d20fe76695d97112d67301b89b",
+      "crates/metrics/src/compactor/compaction_manifest_cache.rs": null,
+      "crates/metrics/src/compactor/list_compaction_index.rs": "0b9b5c76bb903372d202aded56ea222ff9c753f4b6a4ccce01f68ffad2fc3641",
+      "crates/metrics/src/compactor/list_compaction_manifests.rs": "fc85d491ea330605f83a8cb86f9394966248965cdf1436294dc56e75b9a2a5bf",
+      "crates/metrics/src/compactor/read_compaction_manifests.rs": "10df92637a7f8fc1a32542f6871268ab3480389cf533cf2b467a8e63735a06b7",
+      "crates/metrics/src/lib.rs": "70be2c278a1464a72dcbf7cb07bbe7d45b6cf129e36f60df465cb401a12611b2",
+      "crates/metrics/tests/level_compaction.rs": "04e3019c30ff1079018e2a99066e23989b6363aad39d9f1d2ec5c62868838a68"
+    },
+    "production_matches_pre_cache_source_files": [
+      "crates/integration/tests/support/metrics.rs",
+      "crates/metrics/src/bin/krabka-metrics/compactor_loop.rs",
+      "crates/metrics/src/bin/krabka-metrics/run_compactor_once.rs",
+      "crates/metrics/src/compactor.rs",
+      "crates/metrics/src/compactor/compact_metric_blocks_once.rs",
+      "crates/metrics/src/compactor/list_compaction_index.rs",
+      "crates/metrics/src/compactor/list_compaction_manifests.rs",
+      "crates/metrics/src/compactor/read_compaction_manifests.rs",
+      "crates/metrics/src/lib.rs"
+    ],
+    "cache_module_removed": true,
+    "formatter": "passed",
+    "full_ordinary_scope": {
+      "status": "passed",
+      "targets_passed": 387,
+      "rust_cases_passed": 5571,
+      "ignored_cases": 78,
+      "proof_path": "qualification/evidence/correctness/manifest-cache-restoration-ordinary-7a8de487/provenance.json",
+      "proof_sha256": "9ca023029265333bc9161f3a76fa4675301b09cfe3496ec0c727cd3b3e401bdf"
+    },
+    "native_metrics_scope": {
+      "status": "failed",
+      "proof_path": "qualification/evidence/correctness/manifest-cache-restoration-native-metrics-failure-7a8de487/provenance.json",
+      "proof_sha256": "d8f3d28e0bdcb4c4eadf100e930baa8e0a8551d18e47e8d4c0905069d052c9f4",
+      "wrappers_passed": 2,
+      "wrappers_failed": 1
+    },
+    "post_restoration_lifecycle_validation": {
+      "status": "ordinary_passed_native_pending",
+      "record": "qualification/grafana-retained-gains-pr-validation.json",
+      "consumer_close_repair": "Await underlying coordinator shutdown after durable flush and before replacing failed consumer; restart query timeout unchanged.",
+      "diagnostics": "Bounded post-wait restart logs and recovery status preserve original query result."
+    }
+  },
+  "minio_live_heap_diagnostic": {
+    "proof_path": "qualification/evidence/profiling/manifest-cache-minio-live-heap-diagnostic.json",
+    "proof_sha256": "e7aba6403b1e17812ec8e9173ed2d2776c8ae2da8cc633d66e6048fe5f098d4a",
+    "captures": [
+      {
+        "run_id": 37385206080,
+        "source_path": "qualification/evidence/profiling/gcp-37385206080/metrics/profiles/minio-profile-127.0.0.1_9000-mem.pprof.inuse_space.cum.txt",
+        "source_sha256": "0d613315278513093822ff17ec7c4c53d30a5d5cf0c9bffa097f8866971479d8",
+        "sampled_live_heap_mb": 190.86,
+        "bootstrap_cumulative_mb": 157.57,
+        "bootstrap_cumulative_percent": 82.56
+      },
+      {
+        "run_id": 37390739256,
+        "source_path": "qualification/evidence/profiling/gcp-37390739256/metrics/profiles/minio-profile-127.0.0.1_9000-mem.pprof.inuse_space.cum.txt",
+        "source_sha256": "1f577ec0ff69d6dc58889f68525a3e6a32eecf4e81f8c1d1a3cdb4c62f4243f9",
+        "sampled_live_heap_mb": 189.09,
+        "bootstrap_cumulative_mb": 156.46,
+        "bootstrap_cumulative_percent": 82.74
+      }
+    ],
+    "rss_or_native_gap_attribution_qualified": false
+  },
+  "historical_resource_accounting_scope": "legacy_full_stack_including_object_store",
+  "application_only_rederivation": {
+    "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/37392223425",
+    "source_scope": "Original cache candidate image, not current rebased/restored source.",
+    "verified_checksum_entries": 725,
+    "distinct_verified_raw_files": 485,
+    "native_summary_path": "qualification/evidence/performance/gcp-37392223425/metrics/application-only-summary.json",
+    "native_summary_sha256": "40e08e5dc8884899451f9bb96fdf7d6e2cd20cd440d4c7453918ed86c5c737ff",
+    "revision_pairs_path": "qualification/evidence/performance/gcp-37392223425/metrics/application-only-revision-pairs.json",
+    "revision_pairs_sha256": "818508afaa478ee5ea0abfbccfe35acf7927703f2646f490f1deffc3fe172f46",
+    "native_krabka_divided_by_mimir": {
+      "average_cpu_cores": 0.45944804024440605,
+      "rss_kib": 1.4064246147891923,
+      "query_p99_seconds": 1.0649976411953932,
+      "ingest_p99_seconds": 2.745098876418148
+    },
+    "candidate_divided_by_baseline": {
+      "average_cpu_cores": 0.9682796784659169,
+      "rss_kib": 1.0049718606497946,
+      "query_p99_seconds": 1.0689976617982215,
+      "ingest_p99_seconds": 1.0818940732049622,
+      "object_store_average_cpu_cores": 0.9979661820458925,
+      "object_store_rss_kib": 1.0038888635707668
+    },
+    "native_medians": {
+      "krabka": {
+        "average_cpu_cores": 0.1668110019100346,
+        "rss_kib": 232572,
+        "query_p99_seconds": 0.028083221000002823,
+        "ingest_p99_seconds": 0.042304317999992236,
+        "object_store_average_cpu_cores": 0.055423089663227475,
+        "object_store_rss_kib": 264744
+      },
+      "mimir": {
+        "average_cpu_cores": 0.3630682629994428,
+        "rss_kib": 165364,
+        "query_p99_seconds": 0.026369279999983064,
+        "ingest_p99_seconds": 0.0154108539999811,
+        "object_store_average_cpu_cores": 0.013109489005339744,
+        "object_store_rss_kib": 136640
+      }
+    }
+  }
 }

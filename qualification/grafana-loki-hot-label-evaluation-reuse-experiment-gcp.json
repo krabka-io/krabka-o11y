@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "experiment": "Reuse evaluated hot log labels within a query",
+  "status": "external_draft_prepared_not_applied",
+  "candidate_applied": false,
+  "correctness_qualified": false,
+  "performance_qualified": false,
+  "retained": false,
+  "source_inspected_commit": "7a8de487de51e704dfe84eae08690b78350e45ca",
+  "draft_sha256": "c694a5f1fd3a05bb06a04b0c20c488aef484ac958a287ed88daf285b4de2ac8c",
+  "profile_runs": [
+    37330880469,
+    37371662781,
+    37333046600
+  ],
+  "selection": "Saved CPU reports attribute hot matching and assembly; the allocation capture records 2024592 string-clone calls through evaluator, matcher and hot appender. Cold collector attribution is absent from these reports. These diagnostics do not qualify CPU or RSS savings.",
+  "guard": "Reuse only with empty pipeline and empty structured metadata. Standard HashMap compares complete label values and caches matcher misses. Preserve per-record admission, deletion, frontier, timestamps, lines and metadata. Tail retains its original path; distinct uses the pipeline fallback.",
+  "prepared_check": "Complete folded and categorized responses for independent equal labels, different label sets, rejected labels, metadata and pipeline fallbacks, known and unknown levels, tenant/window/deletion/frontier boundaries.",
+  "draft_validation": {
+    "formatting": "passed",
+    "patch_applicability": "passed",
+    "compile_and_tests": "not_run"
+  },
+  "negative_control_to_run": "Remove the per-record metadata guard: the complete-response ledger must reject reuse of metadata-free labels for the metadata-bearing row.",
+  "scope_limit": "Per-row hashing and cache entries can regress predominantly unique labels. No retained memory advantage is assumed.",
+  "next_action": "Measure the separate metrics candidate first, then apply and validate this draft and run fixed-source GCP comparisons."
+}

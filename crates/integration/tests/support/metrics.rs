@@ -182,7 +182,6 @@ impl Signal for MetricsSignal {
             ),
             DEFAULT_BLOCK_READ_MAX,
             &mut deferred,
-            None,
         )
         .await
         .map_err(err)?;

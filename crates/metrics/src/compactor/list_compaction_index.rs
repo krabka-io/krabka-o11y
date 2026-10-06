@@ -27,8 +27,8 @@ pub async fn list_compaction_index(
 ) -> Result<CompactionIndex, CompactionManifestError> {
     let listing = list_compaction_index_objects(store).await?;
     Ok(CompactionIndex {
-        live: read_compaction_manifests(store, listing.live, None).await?,
-        pending: read_compaction_manifests(store, listing.pending, None).await?,
+        live: read_compaction_manifests(store, listing.live).await?,
+        pending: read_compaction_manifests(store, listing.pending).await?,
         markers: listing
             .markers
             .into_iter()

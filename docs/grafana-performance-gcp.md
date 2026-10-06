@@ -26,6 +26,26 @@ historical scope until re-derived from raw telemetry. See the
 Acknowledgements have different durability contracts. Writer and cardinality
 ramps are outside this qualification.
 
+## Historical checkpoint with object storage excluded
+
+The accounting correction re-derives the following retained-image measurements
+from verified raw telemetry. MinIO is excluded on both sides; Krabka's broker
+remains included. Each row uses its own historical source image and host. These
+rows do not qualify the final rebased branch or a combined four-signal image.
+
+| Upstream | Measured Krabka source | CPU | Peak RSS | Query p99 |
+| --- | --- | ---: | ---: | ---: |
+| Mimir | `8541b68f` | 0.514× | 1.344× | 28.52 / 26.22ms |
+| Loki | `84351e69` | 0.854× | 0.855× | 54.44 / 78.17ms |
+| Tempo | `ca99cacd` | 0.762× | 0.980× | 98.01 / 108.89ms |
+| Pyroscope | `50f03683` | 0.313× | 0.954× | 21.51 / 23.67ms |
+
+All four archive digests and 1,934 checksum entries were verified. The
+[checkpoint record](../qualification/grafana-retained-application-only-checkpoint.json)
+pins each image, source, original report, raw telemetry and accounting helper.
+It preserves per-repetition distributions and separately measured MinIO costs.
+Later candidate images containing rejected changes are excluded from this table.
+
 ## Verified measurement checkpoint
 
 All four comparisons below passed three paired 60-second repetitions on
