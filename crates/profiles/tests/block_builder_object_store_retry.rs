@@ -22,7 +22,6 @@ use std::{
 
 use assert2::{assert, check};
 use async_trait::async_trait;
-use futures::stream::BoxStream;
 use krabka_blockstore::{ObjectStoreRetryPolicy, ProfileIndex};
 use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
 use krabka_client_admin::{AdminClient, CreateTopicSpec};
@@ -35,10 +34,7 @@ use krabka_profiles::{
     metrics::ServiceMetrics,
 };
 use krabka_units::{Time, hours, millis};
-use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
-};
+use object_store::{ObjectStore, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path};
 use tokio_util::sync::CancellationToken;
 
 /// Long enough that no ordinary flush can fire during the test: the only way a
@@ -71,7 +67,7 @@ fn permanent_failure() -> object_store::Error {
 /// The block write is retried by the `BlockWriter` under its own policy and
 /// has its own coverage in `krabka-blockstore`; leaving it alone here keeps
 /// this test's schedule entirely injected, so nothing sleeps.
-#[derive(Debug)]
+#[derive(Debug, krabka_domain_macros::TypeNameDisplay)]
 struct FlakyIndexStore {
     inner: InMemory,
     remaining_failures: AtomicUsize,
@@ -94,12 +90,7 @@ impl FlakyIndexStore {
     }
 }
 
-impl std::fmt::Display for FlakyIndexStore {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("FlakyIndexStore")
-    }
-}
-
+#[krabka_domain_macros::delegate_object_store(self.inner)]
 #[async_trait]
 impl ObjectStore for FlakyIndexStore {
     async fn put_opts(
@@ -121,46 +112,6 @@ impl ObjectStore for FlakyIndexStore {
             }
         }
         self.inner.put_opts(location, payload, options).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        options: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, options).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
     }
 }
 

@@ -73,6 +73,7 @@ prost-build = { workspace = true }
 protoc-bin-vendored = { workspace = true, optional = true }
 
 [dev-dependencies]
+krabka-domain-macros.workspace = true
 assert2 = { workspace = true }
 krabka-broker = { version = "0.7.0" }
 krabka-client-admin = { version = "0.5.0" }

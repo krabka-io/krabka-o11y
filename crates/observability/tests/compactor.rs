@@ -58,7 +58,7 @@ use tower::ServiceExt as _;
 
 use self::lifecycle_store::{LifecycleStep, LifecycleStore};
 
-#[derive(Clone)]
+#[derive(Clone, krabka_domain_macros::TypeNameDisplay)]
 struct RecordingObjectStore {
     inner: Arc<object_store::memory::InMemory>,
     get_paths: Arc<std::sync::Mutex<Vec<String>>>,
@@ -100,12 +100,6 @@ impl RecordingObjectStore {
 }
 
 impl fmt::Debug for RecordingObjectStore {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("RecordingObjectStore")
-    }
-}
-
-impl fmt::Display for RecordingObjectStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("RecordingObjectStore")
     }
@@ -2056,7 +2050,7 @@ async fn get_ready(addr: std::net::SocketAddr) -> String {
     response
 }
 
-#[derive(Debug)]
+#[derive(Debug, krabka_domain_macros::TypeNameDisplay)]
 struct FailingPutObjectStore<S> {
     inner: Arc<S>,
     failed_puts_remaining: std::sync::Mutex<usize>,
@@ -2097,12 +2091,6 @@ impl<S> FailingPutObjectStore<S> {
 
     fn failed_put_count(&self) -> usize {
         self.failed_puts.load(std::sync::atomic::Ordering::SeqCst)
-    }
-}
-
-impl<S> fmt::Display for FailingPutObjectStore<S> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FailingPutObjectStore")
     }
 }
 

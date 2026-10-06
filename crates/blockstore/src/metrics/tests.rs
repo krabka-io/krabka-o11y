@@ -14,7 +14,7 @@ use prometheus_client::registry::Registry;
 use super::{MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation};
 
 /// An in-memory store whose `put_opts` and `list` fail on demand.
-#[derive(Debug)]
+#[derive(Debug, krabka_domain_macros::TypeNameDisplay)]
 struct BreakableStore {
     inner: Arc<InMemory>,
     failing_puts: AtomicUsize,
@@ -35,12 +35,6 @@ fn transient() -> ObjectStoreError {
     ObjectStoreError::Generic {
         store: "test",
         source: "503 from the backend".into(),
-    }
-}
-
-impl std::fmt::Display for BreakableStore {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("BreakableStore")
     }
 }
 

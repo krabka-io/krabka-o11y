@@ -88,17 +88,11 @@ mod tests {
         .unwrap()
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, krabka_domain_macros::TypeNameDisplay)]
     struct AbortStore {
         inner: InMemory,
         aborted: Arc<AtomicBool>,
         fail_parts: bool,
-    }
-
-    impl std::fmt::Display for AbortStore {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("AbortStore")
-        }
     }
 
     #[krabka_domain_macros::delegate_object_store(self.inner)]
@@ -182,7 +176,7 @@ mod tests {
     /// A store whose first `failures` puts fail with `error`, counting every
     /// attempt. Every other operation delegates to an in-memory store, so what
     /// a retried write actually left behind can be read back.
-    #[derive(Debug)]
+    #[derive(Debug, krabka_domain_macros::TypeNameDisplay)]
     struct FlakyPutStore {
         inner: InMemory,
         remaining_failures: std::sync::atomic::AtomicUsize,
@@ -202,12 +196,6 @@ mod tests {
 
         fn attempts(&self) -> usize {
             self.attempts.load(Ordering::SeqCst)
-        }
-    }
-
-    impl std::fmt::Display for FlakyPutStore {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("FlakyPutStore")
         }
     }
 

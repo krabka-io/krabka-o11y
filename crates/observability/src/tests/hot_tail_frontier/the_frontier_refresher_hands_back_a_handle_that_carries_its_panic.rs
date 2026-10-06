@@ -10,14 +10,8 @@ use crate::compactor::runtime::spawn_compaction_frontier_refresher;
 /// A refresh that returns an error is not the case under test: the loop logs
 /// that and carries on. What ends the task without a word is a panic, and a
 /// store that panics on `get` is the shortest way to one.
-#[derive(Debug)]
+#[derive(Debug, krabka_domain_macros::TypeNameDisplay)]
 struct PanicOnGetStore(object_store::memory::InMemory);
-
-impl std::fmt::Display for PanicOnGetStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("PanicOnGetStore")
-    }
-}
 
 #[krabka_domain_macros::delegate_object_store(self.0)]
 #[async_trait::async_trait]

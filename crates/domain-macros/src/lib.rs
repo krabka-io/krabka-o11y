@@ -3,6 +3,7 @@
 //! [`EnumName`] keeps each variant's spelling next to its declaration. It
 //! generates a constant accessor and a display implementation from that name.
 //! [`delegate_object_store`] adds required forwarding methods to store wrappers.
+//! [`TypeNameDisplay`] writes struct names for diagnostics without formatting fields.
 
 use std::collections::HashSet;
 
@@ -244,6 +245,16 @@ mod tests {
 }
 
 mod delegate_object_store;
+mod type_name_display;
+
+/// Derive `Display` that writes the struct name without formatting its fields.
+///
+/// Generic parameters keep their declared bounds. Fields need no display bounds.
+/// A raw identifier uses its unescaped name.
+#[moxy::derive(TypeNameDisplay)]
+pub fn type_name_display(tokens: type_name_display::Input) -> Result<TokenStream, ParseError> {
+    self::type_name_display::expand(tokens.0)
+}
 
 /// Add missing required `ObjectStore` methods that forward to an inner store.
 ///

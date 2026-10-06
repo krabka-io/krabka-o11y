@@ -43,7 +43,9 @@ use crate::{
     ids::UnixNano,
     limits::{LimitError, Limits, OverridesProvider, QueryEnforcer, overrides_api_response},
     metrics::ServiceMetrics,
+    query_param::query_param,
     readiness::tempo_readiness_routes,
+    scope_param::scope_param,
 };
 
 #[cfg(test)]
@@ -4186,7 +4188,6 @@ mod parse_step_to_ns;
 mod q_filter_limit;
 mod query_instant;
 mod query_instant_inner;
-mod query_param;
 mod query_range;
 mod query_range_inner;
 mod request_tenant;
@@ -4199,7 +4200,6 @@ mod router_with_config;
 mod router_with_config_and_metrics;
 mod router_with_state;
 mod scan_options_param;
-mod scope_param;
 mod scope_spans_json;
 mod scoped_attribute_tag;
 mod scoped_tags_from_traces;
@@ -4319,7 +4319,6 @@ use parse_step_to_ns::parse_step_to_ns;
 use q_filter_limit::q_filter_limit;
 use query_instant::query_instant;
 use query_instant_inner::query_instant_inner;
-use query_param::query_param;
 use query_range::query_range;
 use query_range_inner::query_range_inner;
 use request_tenant::request_tenant;
@@ -4332,7 +4331,6 @@ pub use router_with_config::router_with_config;
 pub use router_with_config_and_metrics::router_with_config_and_metrics;
 use router_with_state::router_with_state;
 use scan_options_param::scan_options_param;
-use scope_param::scope_param;
 use scope_spans_json::scope_spans_json;
 use scoped_attribute_tag::scoped_attribute_tag;
 use scoped_tags_from_traces::scoped_tags_from_traces;

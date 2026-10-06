@@ -6,7 +6,7 @@ use std::{
 
 use assert2::{assert, check};
 use async_trait::async_trait;
-use futures::{TryStreamExt as _, stream::BoxStream};
+use futures::TryStreamExt as _;
 use krabka_blockstore::BlockLevel;
 use krabka_metrics::{
     CompactionIndex, CompactionIndexListing, CompactionIndexManifest, CompactionSeriesLabels,
@@ -18,9 +18,8 @@ use krabka_metrics::{
 };
 use krabka_units::{Time, secs};
 use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    ObjectStoreExt as _, PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory,
-    path::Path,
+    MultipartUpload, ObjectStore, ObjectStoreExt as _, PutMultipartOptions, PutOptions, PutPayload,
+    PutResult, memory::InMemory, path::Path,
 };
 use tsdb_fixture::{FIXTURE_MAX_TIME, FIXTURE_MIN_TIME, FIXTURE_ULID, fixture_files};
 
@@ -312,7 +311,7 @@ async fn other_content_under_an_imported_ulid_conflicts_and_writes_nothing() {
 }
 
 /// A store that refuses the writes whose key ends with a chosen suffix.
-#[derive(Debug)]
+#[derive(Debug, krabka_domain_macros::TypeNameDisplay)]
 struct RefusingStore {
     inner: InMemory,
     refused: Mutex<Option<String>>,
@@ -343,12 +342,7 @@ impl RefusingStore {
     }
 }
 
-impl std::fmt::Display for RefusingStore {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("RefusingStore")
-    }
-}
-
+#[krabka_domain_macros::delegate_object_store(self.inner)]
 #[async_trait]
 impl ObjectStore for RefusingStore {
     async fn put_opts(
@@ -368,38 +362,6 @@ impl ObjectStore for RefusingStore {
     ) -> object_store::Result<Box<dyn MultipartUpload>> {
         self.check(location)?;
         self.inner.put_multipart_opts(location, options).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 }
 

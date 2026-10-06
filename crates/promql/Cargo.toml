@@ -55,6 +55,7 @@ snap = { workspace = true }
 time = { version = "0.3", default-features = false, features = ["parsing", "formatting"] }
 
 [dev-dependencies]
+krabka-domain-macros.workspace = true
 axum = { workspace = true, features = ["json", "query"] }
 datatest-stable = { workspace = true }
 krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "ffdd381433675bdb34d36d4aab1170e53bb4f5a9", version = "0.7.0" }

@@ -12,7 +12,6 @@ use arrow::{
 };
 use assert2::check;
 use bytes::Bytes;
-use futures::stream::BoxStream;
 use krabka_blockstore::{
     BlockLevel, BlockWriter, ObjectStoreRetryPolicy, PromotedSpanAttr, SCOL_START_NANO,
     SCOL_TRACE_ID, ShardedTraceBloom, TraceBlockStats, TraceIndex, read_block,
@@ -31,9 +30,7 @@ use krabka_traces::{
 };
 use krabka_units::{hours, millis, minutes};
 use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory,
-    path::Path,
+    ObjectStore, ObjectStoreExt, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
 };
 use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -753,6 +750,7 @@ type EventLog = Arc<StdMutex<Vec<String>>>;
 /// into a shared event log. Its first `remaining_failures` puts fail with
 /// `error`, and it counts every attempt so a test can tell a retry from a
 /// single try. Everything else delegates to an inner [`InMemory`] store.
+#[derive(krabka_domain_macros::TypeNameDisplay)]
 struct RecordingObjectStore {
     inner: Arc<InMemory>,
     events: EventLog,
@@ -808,12 +806,7 @@ impl std::fmt::Debug for RecordingObjectStore {
     }
 }
 
-impl std::fmt::Display for RecordingObjectStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RecordingObjectStore")
-    }
-}
-
+#[krabka_domain_macros::delegate_object_store(self.inner)]
 #[async_trait::async_trait]
 impl ObjectStore for RecordingObjectStore {
     async fn put_opts(
@@ -837,46 +830,6 @@ impl ObjectStore for RecordingObjectStore {
             .expect("events lock")
             .push(format!("put:{location}"));
         self.inner.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 }
 
@@ -1281,6 +1234,7 @@ async fn run_drains_remaining_buffer_exactly_once_on_shutdown() {
 /// manifest, which is the conditional create that decides the race. Gating the
 /// payloads would release the writers before either had reached the write that
 /// contends.
+#[derive(krabka_domain_macros::TypeNameDisplay)]
 struct IndexSnapshotBarrierStore {
     inner: Arc<InMemory>,
     snapshot_prefix: String,
@@ -1316,12 +1270,7 @@ impl std::fmt::Debug for IndexSnapshotBarrierStore {
     }
 }
 
-impl std::fmt::Display for IndexSnapshotBarrierStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("IndexSnapshotBarrierStore")
-    }
-}
-
+#[krabka_domain_macros::delegate_object_store(self.inner)]
 #[async_trait::async_trait]
 impl ObjectStore for IndexSnapshotBarrierStore {
     async fn put_opts(
@@ -1336,46 +1285,6 @@ impl ObjectStore for IndexSnapshotBarrierStore {
             self.gate.wait().await;
         }
         self.inner.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 }
 
@@ -1684,6 +1593,7 @@ async fn retention_still_prunes_when_four_builders_write_at_once() {
 /// This store hands the test a signal when it is holding a put and waits for
 /// one back, so that interleaving is a fact of the test rather than a hope
 /// about the scheduler, and no sleep is involved.
+#[derive(krabka_domain_macros::TypeNameDisplay)]
 struct SnapshotHandoffStore {
     inner: Arc<InMemory>,
     snapshot_prefix: String,
@@ -1733,12 +1643,7 @@ impl std::fmt::Debug for SnapshotHandoffStore {
     }
 }
 
-impl std::fmt::Display for SnapshotHandoffStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("SnapshotHandoffStore")
-    }
-}
-
+#[krabka_domain_macros::delegate_object_store(self.inner)]
 #[async_trait::async_trait]
 impl ObjectStore for SnapshotHandoffStore {
     async fn put_opts(
@@ -1758,46 +1663,6 @@ impl ObjectStore for SnapshotHandoffStore {
             }
         }
         self.inner.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 }
 

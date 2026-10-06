@@ -59,7 +59,7 @@ mod tests {
     /// fail with `error`, and which counts every attempt at it. Everything
     /// else delegates to an in-memory store, so what a retry actually wrote
     /// can be read back.
-    #[derive(Debug)]
+    #[derive(Debug, krabka_domain_macros::TypeNameDisplay)]
     struct FlakyObjectStore {
         inner: Arc<InMemory>,
         flaky: FlakyOperation,
@@ -118,12 +118,6 @@ mod tests {
                 .await;
             keys.sort();
             keys
-        }
-    }
-
-    impl std::fmt::Display for FlakyObjectStore {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("FlakyObjectStore")
         }
     }
 

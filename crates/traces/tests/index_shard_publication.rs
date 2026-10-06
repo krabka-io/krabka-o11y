@@ -12,11 +12,10 @@ use std::{
 };
 
 use assert2::check;
-use futures::stream::BoxStream;
 use krabka_blockstore::{BlockLevel, ShardedTraceBloom, TraceBlockStats, TraceIndex};
 use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
+    GetOptions, GetResult, ObjectStore, PutOptions, PutPayload, PutResult, memory::InMemory,
+    path::Path,
 };
 
 const INDEX_KEY: &str = "index/traces.json";
@@ -34,6 +33,7 @@ const TRACES_PER_BLOCK: usize = 2_000;
 
 /// Object store that records every put, so a test can say what a flush wrote
 /// rather than what it hoped a flush wrote.
+#[derive(krabka_domain_macros::TypeNameDisplay)]
 struct RecordingStore {
     inner: Arc<InMemory>,
     puts: std::sync::Mutex<Vec<(String, usize)>>,
@@ -80,12 +80,7 @@ impl std::fmt::Debug for RecordingStore {
     }
 }
 
-impl std::fmt::Display for RecordingStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RecordingStore")
-    }
-}
-
+#[krabka_domain_macros::delegate_object_store(self.inner)]
 #[async_trait::async_trait]
 impl ObjectStore for RecordingStore {
     async fn put_opts(
@@ -101,14 +96,6 @@ impl ObjectStore for RecordingStore {
         self.inner.put_opts(location, payload, opts).await
     }
 
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
     async fn get_opts(
         &self,
         location: &Path,
@@ -119,30 +106,6 @@ impl ObjectStore for RecordingStore {
             .expect("reads lock")
             .insert(location.to_string());
         self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 }
 

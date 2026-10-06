@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Clone)]
+#[derive(Clone, krabka_domain_macros::TypeNameDisplay)]
 pub(crate) struct RecordingObjectStore {
     pub(crate) inner: Arc<object_store::memory::InMemory>,
     pub(crate) put_paths: Arc<Mutex<Vec<String>>>,
@@ -91,12 +91,6 @@ impl RecordingObjectStore {
 }
 
 impl std::fmt::Debug for RecordingObjectStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RecordingObjectStore")
-    }
-}
-
-impl std::fmt::Display for RecordingObjectStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("RecordingObjectStore")
     }
