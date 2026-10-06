@@ -324,6 +324,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         // `anchored`/`smoothed` modifiers attach to a matrix selector, never a
         // subquery), matching `eval_range_arg`'s subquery arm.
         let range = RangeEval {
+            enable_type_and_unit_labels: self.opts.enable_type_and_unit_labels,
             series,
             end_ms,
             range,

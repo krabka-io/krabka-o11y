@@ -55,8 +55,9 @@ use aggregation::{
 use aggregation::{apply_limit_ratio_aggregate, apply_limitk_aggregate};
 #[cfg(test)]
 pub(crate) use annotations::ANNOTATIONS;
+pub(crate) use annotations::emit_warning;
 #[cfg(test)]
-use annotations::{emit_warning, invalid_quantile_warning, is_valid_quantile};
+use annotations::{invalid_quantile_warning, is_valid_quantile};
 #[cfg(test)]
 use binary::{InstantValue, combine_instant_binary};
 pub(crate) use histogram::add_compatible_native_histogram;

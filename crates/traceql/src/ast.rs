@@ -52,3 +52,9 @@ pub use spanset_expr::SpansetExpr;
 pub use structural_op::StructuralOp;
 pub use value::Value;
 pub use with_binding::WithBinding;
+
+mod field_comparison_column;
+pub(crate) use field_comparison_column::field_comparison_column;
+
+mod scalar_expr;
+pub use scalar_expr::{ArithmeticOp, ScalarExpr};

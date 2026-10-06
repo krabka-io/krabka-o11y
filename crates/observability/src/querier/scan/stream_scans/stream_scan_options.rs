@@ -58,12 +58,15 @@ impl StreamScanOptions {
                 .is_some_and(|limit| count_stream_map_lines(streams, self.end_exclusive) >= limit)
     }
 
-    /// Spend the folded response's limit before allocating its JSON tree.
+    /// Spend a single folded stream's limit before allocating its JSON tree.
     /// Values must already be sorted and distinct stages already applied.
     pub(crate) fn trim_before_encoding(self, streams: &mut BTreeMap<Labels, Vec<LokiStreamEntry>>) {
         // Intervals select rows later, and categorized labels regroup streams.
-        // Those paths still need every row until their response transforms run.
-        if !self.allow_limit_short_circuit || self.encoding != LokiStreamEncoding::Folded {
+        // Multiple streams need the response's global timestamp ordering.
+        if !self.allow_limit_short_circuit
+            || self.encoding != LokiStreamEncoding::Folded
+            || streams.len() > 1
+        {
             return;
         }
         let Some(mut remaining) = self.limit else {
@@ -133,24 +136,28 @@ mod tests {
                 (None, None),
             ] {
                 let options = StreamScanOptions::from_stream_options(direction, limit, None, end);
-                let full = streams();
-                let expected = apply_loki_stream_options(
-                    loki_streams_response(full.clone(), options.encoding),
-                    direction,
-                    limit,
-                    None,
-                    end,
-                );
-                let mut bounded = full;
-                options.trim_before_encoding(&mut bounded);
-                let actual = apply_loki_stream_options(
-                    loki_streams_response(bounded, options.encoding),
-                    direction,
-                    limit,
-                    None,
-                    end,
-                );
-                assert2::check!(actual == expected);
+                for full in [
+                    streams(),
+                    streams().into_iter().take(1).collect::<BTreeMap<_, _>>(),
+                ] {
+                    let expected = apply_loki_stream_options(
+                        loki_streams_response(full.clone(), options.encoding),
+                        direction,
+                        limit,
+                        None,
+                        end,
+                    );
+                    let mut bounded = full;
+                    options.trim_before_encoding(&mut bounded);
+                    let actual = apply_loki_stream_options(
+                        loki_streams_response(bounded, options.encoding),
+                        direction,
+                        limit,
+                        None,
+                        end,
+                    );
+                    assert2::check!(actual == expected);
+                }
             }
         }
     }

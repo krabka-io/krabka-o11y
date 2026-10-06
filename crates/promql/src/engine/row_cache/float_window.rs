@@ -30,8 +30,18 @@ impl FloatWindow {
     /// sorted one.
     pub(crate) fn new(mut rows: Vec<FloatRow>) -> Self {
         if !rows.is_sorted_by_key(|row| (row.fp, row.ts_ms)) {
-            rows.sort_unstable_by_key(|row| (row.fp, row.ts_ms));
+            rows.sort_by_key(|row| (row.fp, row.ts_ms));
         }
+        // Replayed WAL records and overlapping blocks name one sample at a
+        // series/timestamp. Retain the last row, as the matrix evaluator does.
+        rows.dedup_by(|later, earlier| {
+            if (later.fp, later.ts_ms) == (earlier.fp, earlier.ts_ms) {
+                *earlier = *later;
+                true
+            } else {
+                false
+            }
+        });
         let mut spans = Vec::new();
         let mut start = 0;
         while start < rows.len() {

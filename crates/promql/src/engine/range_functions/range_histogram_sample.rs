@@ -4,7 +4,7 @@ use super::{
     extrapolated_histogram_counts, histogram_reset_indices, mismatched_custom_buckets_info,
     mixed_exponential_custom_warning, native_histogram_not_counter_warning,
     native_histogram_not_gauge_warning, native_histograms_are_range_compatible,
-    reconcile_native_histogram_layouts,
+    reconcile_native_histogram_layouts, start_timestamp_reset,
 };
 
 pub(crate) fn range_histogram_sample(
@@ -16,7 +16,8 @@ pub(crate) fn range_histogram_sample(
     kind: RangeFn,
     metric: &str,
 ) -> Option<NativeHistogram> {
-    if !matches!(kind, RangeFn::Rate | RangeFn::Increase | RangeFn::Delta) || histograms.len() < 2 {
+    if !matches!(kind, RangeFn::Rate | RangeFn::Increase | RangeFn::Delta) || histograms.is_empty()
+    {
         return None;
     }
     // `histogramRate` says so when it is handed the sample kind the function
@@ -75,21 +76,45 @@ pub(crate) fn range_histogram_sample(
     let resets = if mixed_pair {
         vec![1]
     } else {
-        histogram_reset_indices(&histograms)
+        let mut indices = histogram_reset_indices(&histograms);
+        for index in 1..histograms.len() {
+            if start_timestamp_reset(
+                histograms[index - 1].start_timestamp_ms.unwrap_or(0),
+                timestamps[index - 1],
+                histograms[index].start_timestamp_ms.unwrap_or(0),
+                timestamps[index],
+            ) && !indices.contains(&index)
+            {
+                indices.push(index);
+            }
+        }
+        indices.sort_unstable();
+        indices
     };
-    let duration_to_zero = if resets.is_empty() || mixed_pair {
-        let count_delta = if mixed_pair {
-            last.count
-        } else {
-            last.count - first.count
-        };
-        let sampled_interval = (timestamps.last()? - timestamps.first()?).to_f64()? / 1000.0;
-        (count_delta > 0.0 && first.count >= 0.0)
-            .then(|| sampled_interval * (first.count / count_delta))
+    let mut count_delta = if mixed_pair {
+        last.count
     } else {
-        None
+        last.count - first.count
     };
+    if !mixed_pair {
+        for &index in &resets {
+            count_delta += histograms[index - 1].count;
+        }
+    }
+    let sampled_interval = (timestamps.last()? - timestamps.first()?).to_f64()? / 1000.0;
+    let duration_to_zero = (count_delta > 0.0 && first.count >= 0.0)
+        .then(|| sampled_interval * (first.count / count_delta));
+    let start_timestamp_ms = first.start_timestamp_ms.filter(|start| {
+        matches!(kind, RangeFn::Rate | RangeFn::Increase)
+            && *start != 0
+            && *start > range_start_ms
+            && *start < timestamps[0]
+    });
+    if histograms.len() < 2 && start_timestamp_ms.is_none() {
+        return None;
+    }
     let extrapolation = HistogramExtrapolation {
+        start_timestamp_ms,
         timestamps,
         reset_indices: &resets,
         range_start_ms,
@@ -140,6 +165,6 @@ pub(crate) fn range_histogram_sample(
     {
         out.reset_hint = ResetHint::Gauge;
     }
-    out.start_timestamp_ms = first.start_timestamp_ms.or(last.start_timestamp_ms);
+    out.start_timestamp_ms = None;
     Some(out)
 }

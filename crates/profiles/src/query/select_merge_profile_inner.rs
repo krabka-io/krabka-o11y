@@ -1,7 +1,7 @@
 use super::{
     Arc, ConnectError, ConnectRequest, ConnectResponse, Extension, HeaderMap, Message, Principal,
-    ProfileError, ProfileStore, QuerierState, SampleSelector, authorize_tenant, connect_error,
-    merge_profile_id_selector, parse_trace_selectors, pb, stack_trace_call_sites,
+    ProfileError, ProfileStore, QuerierState, SampleSelector, apply_go_pgo, authorize_tenant,
+    connect_error, merge_profile_id_selector, parse_trace_selectors, pb, stack_trace_call_sites,
     tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
 };
 
@@ -42,7 +42,8 @@ where
         )
         .await
         .map_err(connect_error)?;
-    let profile = pb::google::v1::Profile::decode(profile.as_slice())
+    let mut profile = pb::google::v1::Profile::decode(profile.as_slice())
         .map_err(|err| connect_error(ProfileError::Decode(err.to_string())))?;
+    apply_go_pgo(&mut profile, req.stack_trace_selector.as_ref());
     Ok(ConnectResponse::new(profile))
 }

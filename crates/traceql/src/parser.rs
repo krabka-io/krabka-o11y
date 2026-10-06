@@ -2,8 +2,8 @@
 
 use crate::{
     ast::{
-        Aggregate, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query, QueryHints, Scope,
-        SpansetExpr, StructuralOp, Value, WithBinding,
+        Aggregate, ArithmeticOp, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query,
+        QueryHints, ScalarExpr, Scope, SpansetExpr, StructuralOp, Value, WithBinding,
     },
     error::{Result, TraceqlError},
     lexer::{Token, lex},
@@ -28,6 +28,70 @@ mod tests {
 
     use super::*;
     use crate::ast::*;
+
+    #[test]
+    fn scalar_field_arithmetic_has_real_ast_precedence_and_rejects_dynamic_regex() {
+        let query =
+            parse("{ (span.amount + span.tax) * 2 >= span.total && -duration < 0ns }").unwrap();
+        let SpansetExpr::Selector(expr) = query.root else {
+            panic!("selector")
+        };
+        let FieldExpr::And(lhs, rhs) = *expr else {
+            panic!("composed predicate")
+        };
+        let FieldExpr::ExpressionComparison { lhs, .. } = *lhs else {
+            panic!("arithmetic predicate")
+        };
+        let ScalarExpr::Binary {
+            op: ArithmeticOp::Mul,
+            lhs,
+            ..
+        } = lhs
+        else {
+            panic!("multiplication")
+        };
+        assert!(matches!(
+            *lhs,
+            ScalarExpr::Binary {
+                op: ArithmeticOp::Add,
+                ..
+            }
+        ));
+        assert!(matches!(
+            *rhs,
+            FieldExpr::ExpressionComparison {
+                lhs: ScalarExpr::Negate(_),
+                ..
+            }
+        ));
+        for query in [
+            "{ .foo =~ .bar }",
+            "{ .foo !~ .bar }",
+            "{ (name + 1) > 0 }",
+            "{ -(true) > 0 }",
+        ] {
+            assert!(parse(query).is_err(), "{query}");
+        }
+        assert!(parse("{ .foo =~ \"bar.*\" }").is_ok());
+    }
+
+    #[test]
+    fn regex_operand_types_are_validated_before_attribute_discovery() {
+        for operand in ["1", "1.5", "true", "nil"] {
+            for operator in ["=~", "!~"] {
+                for selector in [
+                    format!(".missing {operator} {operand}"),
+                    format!("(.missing {operator} {operand}) || name = \"known\""),
+                ] {
+                    assert!(matches!(
+                        parse(&format!("{{ {selector} }}")),
+                        Err(TraceqlError::Plan(message)) if message == "regex comparison requires string value"
+                    ));
+                }
+            }
+        }
+        assert!(parse(r#"{ .missing =~ "known.*" }"#).is_ok());
+    }
 
     #[test]
     fn bare_dot_is_both_scope() {
@@ -1225,3 +1289,6 @@ use value_mul::value_mul;
 use value_neg::value_neg;
 use value_pow::value_pow;
 use value_sub::value_sub;
+
+mod scalar_type;
+use scalar_type::validate_scalar_comparison;

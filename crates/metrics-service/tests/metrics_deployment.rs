@@ -262,9 +262,13 @@ fn write_body(version: RemoteWrite, value: f64) -> TestResult<Vec<u8>> {
 }
 
 async fn range(client: &Client, base: &str, tenant: &str) -> TestResult<Value> {
+    range_query(client, base, tenant, METRIC).await
+}
+
+async fn range_query(client: &Client, base: &str, tenant: &str, query: &str) -> TestResult<Value> {
     let mut url = url::Url::parse(&format!("{base}/api/v1/query_range"))?;
     url.query_pairs_mut().extend_pairs([
-        ("query", METRIC.to_string()),
+        ("query", query.to_string()),
         ("start", (START_MS / 1000).to_string()),
         ("end", (START_MS / 1000 + 2).to_string()),
         ("step", "1".to_string()),
@@ -297,15 +301,27 @@ fn expected(value: i32) -> Value {
 }
 
 async fn wait_samples(client: &Client, base: &str, tenant: &str, expected: &Value) -> TestResult {
+    wait_range_query(client, base, tenant, METRIC, expected)
+        .await
+        .map(|_| ())
+}
+
+async fn wait_range_query(
+    client: &Client,
+    base: &str,
+    tenant: &str,
+    query: &str,
+    expected: &Value,
+) -> TestResult<Value> {
     let deadline = tokio::time::Instant::now() + QUERY_TIMEOUT;
     loop {
-        let actual = range(client, base, tenant).await?;
+        let actual = range_query(client, base, tenant, query).await?;
         if actual == *expected {
-            return Ok(());
+            return Ok(actual);
         }
         if tokio::time::Instant::now() >= deadline {
             return Err(format!(
-                "{base} tenant {tenant}: expected {expected}, last result {actual}"
+                "{base} tenant {tenant} query {query}: expected {expected}, last result {actual}"
             )
             .into());
         }
@@ -313,7 +329,57 @@ async fn wait_samples(client: &Client, base: &str, tenant: &str, expected: &Valu
     }
 }
 
+async fn check_compound_queries(
+    client: &Client,
+    base: &str,
+    tenant: &str,
+    value: Option<i32>,
+    phase: &str,
+    evidence: &mut Vec<Value>,
+    filename: &str,
+) -> TestResult {
+    let compound =
+        format!(r#"(sum(sum_over_time({METRIC}{{site=~"off.*",missing!="x"}}[2s])) + 2) * 3"#);
+    // A two-second range excludes its left boundary. The fixture has exactly
+    // v, v+1, v+2 at the three evaluation timestamps, hence these literal sums.
+    let expected_compound = value.map_or_else(
+        || json!([]),
+        |v| {
+            json!([{"metric":{}, "values":[
+                [1_700_000_000, ((v+2)*3).to_string()],
+                [1_700_000_001, ((2*v+3)*3).to_string()],
+                [1_700_000_002, ((2*v+5)*3).to_string()],
+            ]}])
+        },
+    );
+    for (query, expected) in [
+        (compound, expected_compound),
+        (format!(r#"sum({METRIC}{{site="missing"}})"#), json!([])),
+    ] {
+        let result = wait_range_query(client, base, tenant, &query, &expected).await;
+        evidence.push(json!({"phase":phase, "tenant":tenant, "query":query,
+            "expected":expected, "actual":result.as_ref().ok(),
+            "status":if result.is_ok() {"matched"} else {"mismatch"},
+            "error":result.as_ref().err().map(ToString::to_string)}));
+        if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+            let output = std::path::PathBuf::from(output);
+            std::fs::create_dir_all(&output)?;
+            std::fs::write(
+                output.join(filename),
+                serde_json::to_vec_pretty(&json!({"cases":evidence}))?,
+            )?;
+        }
+        result?;
+    }
+    Ok(())
+}
+
 async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
+    let mut evidence = Vec::new();
+    let filename = match version {
+        RemoteWrite::V1 => "metrics-v1-query-transitions.json",
+        RemoteWrite::V2 => "metrics-v2-query-transitions.json",
+    };
     let deployment = Deployment::start().await?;
     let write = base_url(&deployment.distributor, DATA_PORT).await?;
     let hot = base_url(&deployment.hot, DATA_PORT).await?;
@@ -326,8 +392,38 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
     for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
         wait_samples(&deployment.client, &hot, tenant, &expected(value)).await?;
         assert!(range(&deployment.client, &cold_url, tenant).await? == json!([]));
+        check_compound_queries(
+            &deployment.client,
+            &hot,
+            tenant,
+            Some(value),
+            "hot-only",
+            &mut evidence,
+            filename,
+        )
+        .await?;
+        check_compound_queries(
+            &deployment.client,
+            &cold_url,
+            tenant,
+            None,
+            "cold-before-publication",
+            &mut evidence,
+            filename,
+        )
+        .await?;
     }
     assert!(range(&deployment.client, &hot, "tenant-empty").await? == json!([]));
+    check_compound_queries(
+        &deployment.client,
+        &hot,
+        "tenant-empty",
+        None,
+        "hot-tenant-negative",
+        &mut evidence,
+        filename,
+    )
+    .await?;
     let builder = deployment.builder().await?;
     for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
         wait_samples(&deployment.client, &cold_url, tenant, &expected(value)).await?;
@@ -335,6 +431,26 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
         tokio::time::sleep(Duration::from_millis(100)).await;
         // The hot and stored copies must not create duplicate query samples.
         assert!(range(&deployment.client, &hot, tenant).await? == expected(value));
+        check_compound_queries(
+            &deployment.client,
+            &hot,
+            tenant,
+            Some(value),
+            "hot-cold-overlap",
+            &mut evidence,
+            filename,
+        )
+        .await?;
+        check_compound_queries(
+            &deployment.client,
+            &cold_url,
+            tenant,
+            Some(value),
+            "persisted",
+            &mut evidence,
+            filename,
+        )
+        .await?;
     }
     // Remove both sources of live state. A new cold querier has no WAL head,
     // no query cache and only S3 blocks to read, even after the writer restarts.
@@ -381,10 +497,40 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
         Err(error) => eprintln!("block-builder restart diagnostics timed out: {error}"),
     }
     restart_result?;
+    check_compound_queries(
+        &deployment.client,
+        &reopened_url,
+        "tenant-c",
+        Some(31),
+        "resumed-ingest",
+        &mut evidence,
+        filename,
+    )
+    .await?;
     for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
         wait_samples(&deployment.client, &reopened_url, tenant, &expected(value)).await?;
+        check_compound_queries(
+            &deployment.client,
+            &reopened_url,
+            tenant,
+            Some(value),
+            "restart",
+            &mut evidence,
+            filename,
+        )
+        .await?;
     }
     assert!(range(&deployment.client, &reopened_url, "tenant-empty").await? == json!([]));
+    check_compound_queries(
+        &deployment.client,
+        &reopened_url,
+        "tenant-empty",
+        None,
+        "restart-tenant-negative",
+        &mut evidence,
+        filename,
+    )
+    .await?;
     // Keep the backing resources alive until every role has been removed.
     reopened.rm().await?;
     builder.rm().await?;

@@ -48,6 +48,7 @@ pub(crate) fn metric_plan_for(
         value,
         quantiles,
         by,
+        exemplar_fields: Vec::new(),
         filter,
         rank,
         compare: None,

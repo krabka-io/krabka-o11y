@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, time::SystemTime};
+use std::time::SystemTime;
 
 use krabka_blockstore::{LabelMatcher, Labels, MatchOp};
 use krabka_units::prelude::*;

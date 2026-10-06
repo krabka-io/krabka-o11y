@@ -16,6 +16,8 @@ pub(crate) async fn frontend_range_execution_uses_cache_and_merges_subquery_resu
             "tenant-a",
             &cached_query,
             unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
+                drop_name: false,
+                start_timestamps_ms: std::collections::BTreeMap::new(),
                 labels: labels(&[("__name__", "up"), ("job", "api")]),
                 samples: vec![(0, SampleValue::Float(1.0))],
             }])),
@@ -63,6 +65,8 @@ pub(crate) async fn frontend_range_execution_uses_cache_and_merges_subquery_resu
             .unwrap()
             .expect("fresh subquery cached")
             == unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
+                drop_name: false,
+                start_timestamps_ms: std::collections::BTreeMap::new(),
                 labels: labels(&[("__name__", "up"), ("job", "api")]),
                 samples: vec![(120_000, SampleValue::Float(120_000.0))],
             }]))
@@ -70,6 +74,8 @@ pub(crate) async fn frontend_range_execution_uses_cache_and_merges_subquery_resu
     assert2::assert!(
         result
             == unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
+                drop_name: false,
+                start_timestamps_ms: std::collections::BTreeMap::new(),
                 labels: labels(&[("__name__", "up"), ("job", "api")]),
                 samples: vec![
                     (0, SampleValue::Float(1.0)),

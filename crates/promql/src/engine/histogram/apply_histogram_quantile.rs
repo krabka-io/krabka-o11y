@@ -1,9 +1,10 @@
 use super::{
     BTreeMap, BTreeSet, ClassicBucket, InstantSample, Labels, Result, SampleValue,
-    classic_bucket_bound, classic_histogram_quantile, emit_info, emit_warning, float_sample_value,
-    histogram_quantile_forced_monotonicity_info, invalid_quantile_warning, is_valid_quantile,
-    labels_key, labels_without_label, labels_without_metric_name, native_histogram_quantile,
-    record_metric_name, warn_mixed_histograms,
+    classic_bucket_bound, classic_histogram_quantile,
+    emit_histogram_quantile_forced_monotonicity_info, emit_warning, float_sample_value,
+    invalid_quantile_warning, is_valid_quantile, labels_key, labels_without_label,
+    labels_without_metric_name, native_histogram_quantile, record_metric_name,
+    warn_mixed_histograms,
 };
 
 /// Prometheus. Both the `__name__` and `le` labels are dropped from every output
@@ -84,11 +85,13 @@ pub(crate) fn apply_histogram_quantile(
                 if mixed_histogram_keys.contains(&key) {
                     return None;
                 }
-                let (value, forced) = classic_histogram_quantile(quantile, &mut buckets);
+                let (value, forced, repairs) = classic_histogram_quantile(quantile, &mut buckets);
                 if forced {
-                    emit_info(histogram_quantile_forced_monotonicity_info(
+                    emit_histogram_quantile_forced_monotonicity_info(
                         metric_names.get(&key).map_or("", String::as_str),
-                    ));
+                        time_ms,
+                        repairs,
+                    );
                 }
                 Some(InstantSample {
                     labels,

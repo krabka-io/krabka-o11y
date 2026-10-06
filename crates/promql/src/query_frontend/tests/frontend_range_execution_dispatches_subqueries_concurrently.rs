@@ -54,6 +54,8 @@ pub(crate) async fn frontend_range_execution_dispatches_subqueries_concurrently(
     let mut sequential = Vec::new();
     for subquery in &planned {
         sequential.push(QueryResult::RangeMatrix(vec![RangeSeries {
+            drop_name: false,
+            start_timestamps_ms: std::collections::BTreeMap::new(),
             labels: labels(&[("__name__", "up"), ("job", "api")]),
             samples: vec![(subquery.start_ms, SampleValue::Float(1.0))],
         }]));

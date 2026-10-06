@@ -769,9 +769,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         time_ms: i64,
         direction: SortDirection,
     ) -> Result<QueryResult> {
-        if call.args.args.len() < 2 {
+        if call.args.args.is_empty() {
             return Err(PromqlError::Plan(format!(
-                "{} expects an instant vector and at least one label name",
+                "{} expects an instant vector",
                 call.func.name
             )));
         }
@@ -1162,7 +1162,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             samples,
             &info_by_key,
             &context,
-        )))
+        )?))
     }
     #[cfg(test)]
     pub(crate) async fn eval_range_function_call(

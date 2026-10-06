@@ -129,11 +129,22 @@ mod tests {
     fn to_flamegraph_truncates_with_synthetic_other() {
         let mut tree = Tree::new();
         for idx in 0..10 {
-            tree.add_stack(&stack(&[&format!("leaf{idx}"), "main"]), 1);
+            tree.add_stack(&stack(&[&format!("leaf{idx}"), "main"]), idx + 1);
         }
         let fg = tree.to_flamegraph(4);
         assert!(fg.names.iter().any(|name| name == "other"));
-        assert!(fg.total == 10);
+        assert!(fg.total == 55);
+    }
+
+    #[test]
+    fn to_flamegraph_keeps_all_tied_cumulative_nodes() {
+        let mut tree = Tree::new();
+        tree.add_stack(&stack(&["hot", "main"]), 100);
+        let fg = tree.to_flamegraph(2);
+        assert!(fg.names.iter().any(|name| name == "hot"));
+        assert!(!fg.names.iter().any(|name| name == "other"));
+        assert!(fg.total == 100);
+        assert!(fg.max_self == 100);
     }
 
     #[test]

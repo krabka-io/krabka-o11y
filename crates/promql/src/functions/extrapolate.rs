@@ -236,3 +236,8 @@ pub use extrapolated_rate::extrapolated_rate;
 pub use instant_delta::instant_delta;
 pub use instant_kind::InstantKind;
 pub use range_kind::RangeKind;
+
+mod extrapolated_rate_with_starts;
+mod start_timestamp_reset;
+pub(crate) use extrapolated_rate_with_starts::extrapolated_rate_with_starts;
+pub(crate) use start_timestamp_reset::start_timestamp_reset;

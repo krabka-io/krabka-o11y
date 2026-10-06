@@ -376,16 +376,24 @@ async fn a_querier_that_is_not_ready_takes_no_jobs_and_is_named_in_the_response(
 #[tokio::test]
 async fn a_querier_that_dies_after_the_probe_fails_the_query_rather_than_shrinking_it() {
     let up = spawn_querier(StatusCode::OK, "ready\n", "hot-up").await;
-    // A socket that was bound and released: it passes nothing, and the probe
-    // is not consulted because the membership is handed in already ready.
+    // Keep ownership of the failed endpoint: releasing an ephemeral port lets
+    // another concurrent test's HTTP server claim it and answer this job.
+    // Closing each accepted connection models a querier that cannot serve its
+    // assigned shard. The membership is handed in already ready, without probes.
     let dead = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let dead_addr = dead.local_addr().unwrap().to_string();
-    drop(dead);
+    let dead_peer = tokio::spawn(async move {
+        loop {
+            let (connection, _) = dead.accept().await.unwrap();
+            drop(connection);
+        }
+    });
 
     let membership = MembershipView::fixed([up.addr.clone(), dead_addr]);
     let frontend = serve_with(membership, cfg()).await;
 
     let (status, _body) = search(frontend).await;
+    dead_peer.abort();
     check!(
         status == StatusCode::BAD_GATEWAY,
         "a lost shard is an error, not a smaller 200"

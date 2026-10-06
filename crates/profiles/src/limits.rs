@@ -25,6 +25,7 @@ mod tests {
         assert!(
             limits
                 == Limits {
+                    max_async_query_concurrency: 5,
                     query_admission: AdmissionLimits::default(),
                     ingestion_rate: per_sec(10_000),
                     ingestion_burst_profiles: 10_000,

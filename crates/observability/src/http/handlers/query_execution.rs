@@ -15,9 +15,11 @@ use crate::{
     validate_query_entries_limit, validate_query_range_limit, validate_query_string_bytes_limit,
 };
 
+mod apply_nested_vector_aggregation;
 mod execute_http_logql_expr;
 mod execute_http_query_for_tenant;
 
+pub(crate) use apply_nested_vector_aggregation::apply_nested_vector_aggregation;
 pub(crate) use execute_http_logql_expr::execute_http_logql_expr;
 pub(crate) use execute_http_query_for_tenant::{
     execute_http_query_for_tenant, execute_http_query_for_tenant_inner,

@@ -1,7 +1,7 @@
 use super::{
-    DurationExprContext, DurationExprParser, Result, is_zero, matching_delimiter,
-    normalize_range_duration_content, offset_operand, seconds_to_duration_literal,
-    starts_offset_keyword,
+    DurationExprContext, DurationExprParser, Result, consume_ident, is_ident_char, is_zero,
+    matching_delimiter, ms_to_seconds, normalize_range_duration_content, offset_operand,
+    seconds_to_duration_literal, skip_ws, starts_offset_keyword,
 };
 
 pub(crate) fn normalize_duration_expressions(
@@ -35,6 +35,33 @@ pub(crate) fn normalize_duration_expressions(
             out.push(ch);
             index += 1;
             continue;
+        }
+
+        if cfg!(feature = "experimental-functions")
+            && matches!(ch, 's' | 'e')
+            && (index == 0 || !is_ident_char(chars[index - 1]))
+            && chars[..index].iter().rev().find(|ch| !ch.is_whitespace()) != Some(&'@')
+        {
+            let word_end = consume_ident(&chars, index);
+            let name = chars[index..word_end].iter().collect::<String>();
+            let boundary_ms = match name.as_str() {
+                "start" => Some(context.start_ms),
+                "end" => Some(context.end_ms),
+                _ => None,
+            };
+            let open = skip_ws(&chars, word_end);
+            let close = skip_ws(&chars, open + 1);
+            if let Some(boundary_ms) = boundary_ms
+                && chars.get(open) == Some(&'(')
+                && chars.get(close) == Some(&')')
+            {
+                // Parentheses preserve precedence for bounds before the Unix epoch.
+                out.push('(');
+                out.push_str(&ms_to_seconds(boundary_ms).to_string());
+                out.push(')');
+                index = close + 1;
+                continue;
+            }
         }
 
         if ch == '[' {

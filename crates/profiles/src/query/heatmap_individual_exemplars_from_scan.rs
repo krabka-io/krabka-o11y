@@ -7,7 +7,7 @@ pub(crate) async fn heatmap_individual_exemplars_from_scan(
     scan: &krabka_pprof::ProfileScan,
     start_ms: i64,
     end_ms: i64,
-    time_buckets: usize,
+    step_ms: i64,
     labels: &[(String, String)],
     profile_id: &str,
 ) -> Result<BTreeMap<i64, Vec<pb::querier::v1::Exemplar>>, ProfileError> {
@@ -35,9 +35,12 @@ pub(crate) async fn heatmap_individual_exemplars_from_scan(
         let totals = batch.column(1).as_primitive::<Int64Type>();
         for row in 0..batch.num_rows() {
             let timestamp = timestamps.value(row);
-            let Some(slot_timestamp) =
-                heatmap_slot_timestamp(start_ms, end_ms, time_buckets, timestamp)
-            else {
+            let Some(slot_timestamp) = heatmap_slot_timestamp(
+                start_ms.saturating_add(step_ms),
+                end_ms,
+                step_ms,
+                timestamp,
+            ) else {
                 continue;
             };
             out.entry(slot_timestamp)

@@ -337,7 +337,11 @@ pub(crate) struct Cli {
         value_parser = parse_positive_usize
     )]
     pub(crate) max_search_traces: usize,
-    #[arg(long, env = "KRABKA_TRACES_TRACEQL_MAX_EXEMPLARS", default_value_t = 0)]
+    #[arg(
+        long,
+        env = "KRABKA_TRACES_TRACEQL_MAX_EXEMPLARS",
+        default_value_t = 100
+    )]
     pub(crate) max_metric_exemplars: usize,
     #[arg(
         long = "traceql-compare-max-values-per-attr",

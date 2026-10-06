@@ -11,6 +11,7 @@ pub(crate) fn metric_plan_with_compare(compare: CompareSpec) -> MetricPlan {
         value: None,
         quantiles: Vec::new(),
         by: Vec::new(),
+        exemplar_fields: Vec::new(),
         filter: None,
         rank: None,
         compare: Some(compare),

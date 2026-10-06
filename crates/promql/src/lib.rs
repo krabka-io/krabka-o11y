@@ -61,7 +61,8 @@ pub use query_frontend::{
 };
 pub use range_array::RangeArray;
 pub use result::{
-    AnnotatedQueryResult, Annotations, InstantSample, QueryResult, RangeSeries, SampleValue,
+    AnnotatedQueryResult, Annotations, HistogramQuantileRepair, InstantSample, QueryResult,
+    RangeSeries, SampleValue,
 };
 pub use ruler::{
     AlertmanagerAlert, AlertmanagerSink, RecordingRuleWalSink, RulerAlertState,

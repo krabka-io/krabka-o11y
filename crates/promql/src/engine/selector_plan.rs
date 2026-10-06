@@ -186,9 +186,12 @@ impl<S: MetricStore> PromqlEngine<S> {
             .labeled_series_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms, true)
             .await?;
 
-        if selector.vs.name.is_some() && matches!(kind, RateUdfKind::Rate | RateUdfKind::Increase) {
+        if matches!(kind, RateUdfKind::Rate | RateUdfKind::Increase) {
             for series in samples.iter().filter(|series| series.samples.len() >= 2) {
-                emit_metric_might_not_be_counter_info(&series.labels);
+                emit_metric_might_not_be_counter_info(
+                    &series.labels,
+                    self.opts.enable_type_and_unit_labels,
+                );
             }
         }
 
@@ -318,6 +321,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             .eval_matrix_selector(tenant, selector, time_ms, time_ms, None)
             .await?;
         let range = RangeEval {
+            enable_type_and_unit_labels: self.opts.enable_type_and_unit_labels,
             series,
             end_ms,
             range,

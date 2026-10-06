@@ -22,12 +22,14 @@ pub(crate) fn apply_outer_range_fn(
                 outer,
                 range.modifier,
                 time_ms,
+                range.enable_type_and_unit_labels,
             )
             .map(|(labels, value)| InstantSample {
                 labels,
                 ts_ms: time_ms,
                 value,
-                drop_name: !matches!(outer, OuterRangeFn::OverTime(kind) if kind.preserves_metric_name()),
+                drop_name: series.drop_name
+                    || !matches!(outer, OuterRangeFn::OverTime(kind) if kind.preserves_metric_name()),
             })
         })
         .collect()

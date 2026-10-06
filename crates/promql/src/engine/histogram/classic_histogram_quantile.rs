@@ -7,16 +7,16 @@ use super::{ClassicBucket, normalized_classic_histogram_buckets};
 pub(crate) fn classic_histogram_quantile(
     quantile: f64,
     buckets: &mut [ClassicBucket],
-) -> (f64, bool) {
-    let (buckets, forced) = normalized_classic_histogram_buckets(buckets);
+) -> (f64, bool, [f64; 3]) {
+    let (buckets, forced, repairs) = normalized_classic_histogram_buckets(buckets);
     if quantile.is_nan() {
-        return (f64::NAN, forced);
+        return (f64::NAN, forced, repairs);
     }
     if quantile < 0.0 {
-        return (f64::NEG_INFINITY, forced);
+        return (f64::NEG_INFINITY, forced, repairs);
     }
     if quantile > 1.0 {
-        return (f64::INFINITY, forced);
+        return (f64::INFINITY, forced, repairs);
     }
 
     if buckets.len() < 2
@@ -24,12 +24,12 @@ pub(crate) fn classic_histogram_quantile(
             bucket.upper_bound.is_infinite() && bucket.upper_bound.is_sign_positive()
         })
     {
-        return (f64::NAN, forced);
+        return (f64::NAN, forced, repairs);
     }
 
     let total = buckets.last().map_or(0.0, |bucket| bucket.count);
     if total <= 0.0 || total.is_nan() {
-        return (f64::NAN, forced);
+        return (f64::NAN, forced, repairs);
     }
     let rank = quantile * total;
     // The fallback is a permanent mutation survivor because it is never
@@ -41,13 +41,13 @@ pub(crate) fn classic_histogram_quantile(
         .unwrap_or(buckets.len() - 1);
 
     if bucket_index == buckets.len() - 1 {
-        return (buckets[bucket_index - 1].upper_bound, forced);
+        return (buckets[bucket_index - 1].upper_bound, forced, repairs);
     }
 
     let bucket = buckets[bucket_index];
     let (lower_bound, previous_count) = if bucket_index == 0 {
         if bucket.upper_bound <= 0.0 {
-            return (bucket.upper_bound, forced);
+            return (bucket.upper_bound, forced, repairs);
         }
         (0.0, 0.0)
     } else {
@@ -57,9 +57,9 @@ pub(crate) fn classic_histogram_quantile(
 
     let bucket_count = bucket.count - previous_count;
     if bucket_count <= 0.0 {
-        return (bucket.upper_bound, forced);
+        return (bucket.upper_bound, forced, repairs);
     }
     let value =
         lower_bound + (bucket.upper_bound - lower_bound) * ((rank - previous_count) / bucket_count);
-    (value, forced)
+    (value, forced, repairs)
 }

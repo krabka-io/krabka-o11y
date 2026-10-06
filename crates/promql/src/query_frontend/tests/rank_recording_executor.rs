@@ -21,20 +21,28 @@ impl RangeQueryExecutor for RankRecordingExecutor {
         let series = match shard.index {
             1 => vec![
                 RangeSeries {
+                    drop_name: false,
+                    start_timestamps_ms: std::collections::BTreeMap::new(),
                     labels: labels(&[("__name__", "up"), ("series", "a")]),
                     samples: vec![(0, SampleValue::Float(10.0))],
                 },
                 RangeSeries {
+                    drop_name: false,
+                    start_timestamps_ms: std::collections::BTreeMap::new(),
                     labels: labels(&[("__name__", "up"), ("series", "b")]),
                     samples: vec![(0, SampleValue::Float(2.0))],
                 },
             ],
             2 => vec![
                 RangeSeries {
+                    drop_name: false,
+                    start_timestamps_ms: std::collections::BTreeMap::new(),
                     labels: labels(&[("__name__", "up"), ("series", "c")]),
                     samples: vec![(0, SampleValue::Float(9.0))],
                 },
                 RangeSeries {
+                    drop_name: false,
+                    start_timestamps_ms: std::collections::BTreeMap::new(),
                     labels: labels(&[("__name__", "up"), ("series", "d")]),
                     samples: vec![(0, SampleValue::Float(8.0))],
                 },

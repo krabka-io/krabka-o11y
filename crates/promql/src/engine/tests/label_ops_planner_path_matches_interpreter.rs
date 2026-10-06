@@ -181,7 +181,7 @@ pub(crate) async fn label_ops_planner_path_matches_interpreter() {
 
     // `sort_by_label` / `sort_by_label_desc` now route through the operator
     // path (differentially checked in the `queries` list above); pin that the
-    // planner claims them and falls back on a missing label-name argument.
+    // planner claims them, including calls with no label-name argument.
     for query in [r#"sort_by_label(g, "l")"#, r#"sort_by_label_desc(g, "l")"#] {
         let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(60_000))
             .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
@@ -191,8 +191,7 @@ pub(crate) async fn label_ops_planner_path_matches_interpreter() {
             .unwrap_or_else(|error| panic!("plan `{query}`: {error}"));
         assert2::assert!(planned.is_some());
     }
-    // `sort_by_label(g)` with no label-name argument falls back so the
-    // interpreter raises the canonical arity error.
+    // An omitted label list sorts by the full labels as the tie breaker.
     let no_label = parse_promql_with_duration_context(
         "sort_by_label(g)",
         DurationExprContext::instant(60_000),
@@ -203,6 +202,6 @@ pub(crate) async fn label_ops_planner_path_matches_interpreter() {
             .plan_instant_expr("t", &no_label, 60_000)
             .await
             .unwrap()
-            .is_none()
+            .is_some()
     );
 }

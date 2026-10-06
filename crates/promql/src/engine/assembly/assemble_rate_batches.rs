@@ -1,7 +1,6 @@
 use super::{
     Array, BTreeMap, Float64Array, InstantSample, Labels, PromqlError, QueryResult, RecordBatch,
-    Result, SampleValue, SeriesFingerprint, labels_from_rate_batch, labels_without_label,
-    labels_without_metric_name, rate_range,
+    Result, SampleValue, SeriesFingerprint, labels_from_rate_batch, rate_range,
 };
 
 /// Assembles rate-family projection output batches into a result.
@@ -43,7 +42,7 @@ pub(crate) fn assemble_rate_batches(
             labels_by_fp.get(&fp).map(|labels| InstantSample {
                 // Rate-family results drop the metric name, matching
                 // `eval_range_function_call`'s `labels_without_metric_name`.
-                labels: labels_without_label(&labels_without_metric_name(labels), "__name__"),
+                labels: labels.clone(),
                 ts_ms: time_ms,
                 value: SampleValue::Float(value),
                 drop_name: true,

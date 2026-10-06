@@ -25,14 +25,7 @@ fn annotation_offset(query: &str, message: &str) -> Option<usize> {
         return None;
     }
     if message.starts_with("PromQL info: metric might not be a counter") {
-        if rate_argument_is_subquery(query) {
-            return ["rate", "increase"]
-                .into_iter()
-                .find_map(|name| find_word(query, name, 0));
-        }
-        return quoted_tail(message)
-            .and_then(|metric| rfind_identifier(query, metric))
-            .or_else(|| last_rate_argument(query));
+        return counter_argument_offset(query, quoted_tail(message));
     }
     if message.starts_with("PromQL info: incompatible sample types encountered") {
         return first_expression_byte(query);
@@ -148,51 +141,85 @@ fn is_identifier_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '.')
 }
 
-fn last_rate_argument(query: &str) -> Option<usize> {
-    ["rate", "increase"]
-        .into_iter()
-        .filter_map(|name| call_argument(query, name, 0))
-        .max()
+fn counter_argument_offset(query: &str, metric: Option<&str>) -> Option<usize> {
+    let mut candidates = Vec::new();
+    for name in ["rate", "increase"] {
+        let mut from = 0;
+        while let Some(start) = find_word(query, name, from) {
+            from = start + name.len();
+            let open = skip_space(query, from);
+            if inside_string(query, start) || !query[open..].starts_with('(') {
+                continue;
+            }
+            let Some(close) = matching_paren(query, open) else {
+                continue;
+            };
+            let argument = &query[open + 1..close];
+            let offset = if rate_argument_is_subquery(argument) {
+                // Prometheus replaces a subquery argument with a materialized
+                // selector whose source range has the default zero offset.
+                0
+            } else {
+                argument_at(query, open, 0)?
+            };
+            candidates.push((
+                start,
+                offset,
+                metric.is_some_and(|metric| rfind_identifier(argument, metric).is_some()),
+            ));
+        }
+    }
+    candidates.sort_by_key(|(start, _, _)| *start);
+    candidates
+        .iter()
+        .rev()
+        .find(|(_, _, matches)| *matches)
+        .or_else(|| candidates.last())
+        .map(|(_, offset, _)| *offset)
 }
 
-fn rate_argument_is_subquery(query: &str) -> bool {
-    ["rate", "increase"].into_iter().any(|name| {
-        let Some(start) = find_word(query, name, 0) else {
-            return false;
-        };
-        let Some(open) = query[start + name.len()..]
-            .find('(')
-            .map(|offset| start + name.len() + offset)
-        else {
-            return false;
-        };
-        let Some(close) = matching_paren(query, open) else {
-            return false;
-        };
-        let argument = &query[open + 1..close];
-        let mut quoted = false;
-        let mut escaped = false;
-        let mut bracket_depth = 0_usize;
-        argument.chars().any(|ch| {
-            if quoted {
-                escaped = ch == '\\' && !escaped;
-                if ch == '"' && !escaped {
-                    quoted = false;
-                }
-                if ch != '\\' {
-                    escaped = false;
-                }
-                return false;
+fn inside_string(query: &str, offset: usize) -> bool {
+    let mut quote = None;
+    let mut escaped = false;
+    for ch in query[..offset].chars() {
+        if let Some(delimiter) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' && delimiter != '`' {
+                escaped = true;
+            } else if ch == delimiter {
+                quote = None;
             }
-            match ch {
-                '"' => quoted = true,
-                '[' => bracket_depth += 1,
-                ']' => bracket_depth = bracket_depth.saturating_sub(1),
-                ':' if bracket_depth > 0 => return true,
-                _ => {}
+        } else if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+        }
+    }
+    quote.is_some()
+}
+
+fn rate_argument_is_subquery(argument: &str) -> bool {
+    let mut quoted = false;
+    let mut escaped = false;
+    let mut bracket_depth = 0_usize;
+    argument.chars().any(|ch| {
+        if quoted {
+            escaped = ch == '\\' && !escaped;
+            if ch == '"' && !escaped {
+                quoted = false;
             }
-            false
-        })
+            if ch != '\\' {
+                escaped = false;
+            }
+            return false;
+        }
+        match ch {
+            '"' => quoted = true,
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            ':' if bracket_depth > 0 => return true,
+            _ => {}
+        }
+        false
     })
 }
 
@@ -292,7 +319,23 @@ fn matching_paren(query: &str, open: usize) -> Option<usize> {
         return None;
     }
     let mut depth = 0_usize;
+    let mut quote = None;
+    let mut escaped = false;
     for (relative, ch) in query[open..].char_indices() {
+        if let Some(delimiter) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' && delimiter != '`' {
+                escaped = true;
+            } else if ch == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+        if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+            continue;
+        }
         match ch {
             '(' => depth += 1,
             ')' => {
@@ -350,6 +393,26 @@ mod tests {
                 0,
             ),
             (
+                "sum by (__name__) (rate(metric_total{env=\"2\"}[5m]) or metric_total{env=\"1\"})",
+                "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric_total\"",
+                24,
+            ),
+            (
+                "label_replace(rate({env=\"1\"}[1m]), \"name\", \"rate(fake[1m])\", \"__name__\", \".*\")",
+                "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric_total\"",
+                19,
+            ),
+            (
+                "sum(rate(foo_total[1m]) + increase(bar_total[1m]))",
+                "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"foo_total\"",
+                9,
+            ),
+            (
+                "sum(rate(sum_over_time(metric_total[30s:10s])[50s:10s]))",
+                "PromQL info: metric might not be a counter, __type__ label is not set to \"counter\" or \"histogram\", got \"\": \"metric_total\"",
+                0,
+            ),
+            (
                 "histogram_count(sum(metric))",
                 "PromQL warning: conflicting counter resets during histogram aggregation",
                 20,
@@ -361,7 +424,7 @@ mod tests {
             ),
         ];
         for (query, message, expected) in cases {
-            assert_eq!(annotation_offset(query, message), Some(expected), "{query}");
+            assert2::assert!(annotation_offset(query, message) == Some(expected));
         }
     }
 }

@@ -29,5 +29,5 @@ pub(crate) fn apply_loki_stream_options(
         }
     }
 
-    apply_loki_stream_limit(value, limit)
+    apply_loki_stream_limit(value, direction, limit)
 }

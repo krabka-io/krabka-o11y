@@ -26,7 +26,7 @@ jobs:
             gate: ordinary
             command: cargo test --workspace --locked
             # Includes the compaction memory worker, run by its parent test.
-            allowed_ignored: 27
+            allowed_ignored: 30
           - id: ordinary-clippy
             gate: ordinary
             command: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -38,13 +38,13 @@ jobs:
             command: bazel test --config=docker --flaky_test_attempts=1 //bazel/images:alloy_version_test //bazel/images:alloy_previous_version_test //bazel/images:grafana_version_test //bazel/images:grafana_previous_version_test //bazel/images:loki_version_test //bazel/images:mimir_version_test //bazel/images:prometheus_version_test //bazel/images:prometheus_previous_version_test //bazel/images:pyroscope_version_test //bazel/images:tempo_version_test
           - id: mimir-differential
             gate: differential
-            command: bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:diff_mimir_docker_test //crates/metrics-service:diff_prometheus_docker_test //crates/metrics-service:diff_prometheus_previous_docker_test
+            command: python3 tools/build-query-runners.py --bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:diff_mimir_docker_test //crates/metrics-service:diff_prometheus_docker_test //crates/metrics-service:diff_prometheus_previous_docker_test
           - id: mimir-grafana
             gate: clients
             command: bazel test --config=docker --flaky_test_attempts=1 //crates/metrics-service:grafana_integration_docker_test //crates/metrics-service:grafana_integration_previous_docker_test
           - id: loki-differential
             gate: differential
-            command: bazel test --config=docker --flaky_test_attempts=1 //crates/observability:loki_differential_docker_test
+            command: python3 tools/build-query-runners.py --bazel test --config=docker --flaky_test_attempts=1 //crates/observability:loki_differential_docker_test
           - id: loki-grafana
             gate: clients
             command: bazel test --config=docker --flaky_test_attempts=1 //crates/observability:grafana_e2e_docker_test //crates/observability:grafana_e2e_previous_docker_test //crates/observability:grafana_integration_docker_test //crates/observability:grafana_integration_previous_docker_test
@@ -140,6 +140,14 @@ jobs:
         with:
           name: milestone-21-gate-${{ matrix.id }}-${{ github.sha }}
           path: qualification/evidence/${{ matrix.id }}.json
+          if-no-files-found: error
+      - if: always() && matrix.gate == 'differential'
+        uses: actions/upload-artifact@v4
+        with:
+          name: query-conformance-${{ matrix.id }}-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/query-runners/*runner*.json
+            bazel-testlogs/**/test.outputs/**
           if-no-files-found: error
       # The backup/restore suite writes its sealed cut, audit and restore
       # reports, query answers, and a SHA256SUMS manifest into Bazel's

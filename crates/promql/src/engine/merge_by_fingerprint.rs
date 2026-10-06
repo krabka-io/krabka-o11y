@@ -29,6 +29,14 @@ pub(super) fn merge_by_fingerprint(series: Vec<LabeledSeries>) -> Vec<LabeledSer
             // Stable, so two branches contributing the same instant keep the
             // branch order a flat concatenation would have given them.
             one.samples.sort_by_key(|sample| sample.ts_ms);
+            one.samples.dedup_by(|later, earlier| {
+                if later.ts_ms == earlier.ts_ms {
+                    *earlier = *later;
+                    true
+                } else {
+                    false
+                }
+            });
             one
         })
         .collect()

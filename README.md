@@ -47,6 +47,8 @@ per signal above them.
 
 The [API compatibility matrix](docs/api_compatibility.md) maps every supported surface to a differential suite.
 
+[Query-language qualification](docs/query_language_conformance_proposal.md) records pinned corpora, upstream runners, storage-transition checks and remaining semantic gaps.
+
 The generated [route inventory](docs/api/routes.json) lists every served HTTP method and path.
 
 ## Build

@@ -6,7 +6,7 @@ use promql_parser::parser::Expr;
 
 use super::{
     AT_MODIFIER_BOUNDS, AtModifierBounds, PromqlEngine,
-    annotations::{ANNOTATION_SOURCE, ANNOTATIONS},
+    annotations::{ANNOTATION_SOURCE, ANNOTATIONS, emit_range_sort_warnings},
     check_resolution_points,
     planner_support::range_expr_routes_through_planner,
     query_stats_step,
@@ -77,9 +77,11 @@ impl<S: MetricStore> PromqlEngine<S> {
             .scope(
                 query.to_owned(),
                 ANNOTATIONS.scope(RefCell::new(Annotations::new()), async move {
-                    let result = self
+                    let mut result = self
                         .eval_range_query(tenant.as_str(), query, start_ms, end_ms, step)
                         .await?;
+                    finalize_metric_names(&mut result)?;
+                    validate_unique_instant_labelsets(&result)?;
                     let annotations = ANNOTATIONS.with(|sink| sink.borrow().clone());
                     Ok((result, annotations))
                 }),
@@ -113,6 +115,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             query,
             DurationExprContext::range(start_ms, end_ms, step),
         )?;
+        emit_range_sort_warnings(&expr);
         let mut expr = &expr;
         while let Expr::Paren(paren) = expr {
             expr = &paren.expr;
@@ -284,8 +287,10 @@ impl<S: MetricStore> PromqlEngine<S> {
                     else {
                         return Ok::<Option<QueryResult>, PromqlError>(None);
                     };
-                    let mut result = self.assemble_planned_instant(planned, step_time_ms).await?;
-                    finalize_metric_names(&mut result);
+                    let result = self.assemble_planned_instant(planned, step_time_ms).await?;
+                    // A subquery consumes this matrix before the public query
+                    // boundary. Keep its origin name and pending-removal flag
+                    // for range functions and their annotations.
                     validate_unique_instant_labelsets(&result)?;
                     Ok(Some(result))
                 })
@@ -303,6 +308,8 @@ impl<S: MetricStore> PromqlEngine<S> {
                             by_fp
                                 .entry(fp)
                                 .or_insert_with(|| RangeSeries {
+                                    drop_name: sample.drop_name,
+                                    start_timestamps_ms: std::collections::BTreeMap::new(),
                                     labels: sample.labels.clone(),
                                     samples: Vec::new(),
                                 })
@@ -315,6 +322,8 @@ impl<S: MetricStore> PromqlEngine<S> {
                         by_fp
                             .entry(labels.fingerprint())
                             .or_insert_with(|| RangeSeries {
+                                drop_name: false,
+                                start_timestamps_ms: std::collections::BTreeMap::new(),
                                 labels,
                                 samples: Vec::new(),
                             })
@@ -357,6 +366,7 @@ impl<S: MetricStore> PromqlEngine<S> {
             query,
             DurationExprContext::range(start_ms, end_ms, step),
         )?;
+        emit_range_sort_warnings(&expr);
         let mut expr = &expr;
         while let Expr::Paren(paren) = expr {
             expr = &paren.expr;
@@ -365,6 +375,9 @@ impl<S: MetricStore> PromqlEngine<S> {
             .eval_range_via_planner_scoped(tenant, expr, start_ms, end_ms, step)
             .await?
             .expect("forced planner range driver returned None");
-        Ok(QueryResult::RangeMatrix(series))
+        let mut result = QueryResult::RangeMatrix(series);
+        finalize_metric_names(&mut result)?;
+        validate_unique_instant_labelsets(&result)?;
+        Ok(result)
     }
 }

@@ -825,6 +825,9 @@ mod tests {
 
     #[tokio::test]
     async fn metrics_routes_return_traceql_metrics_json() {
+        // The two selected fixture spans occupy one second-long bucket. Tempo's
+        // frontend attaches that bucket's value to the exemplar, with the
+        // canonical trace:id and the selector's projected .svc attribute.
         let (status, body) = get_json(
             "/api/metrics/query_range?q=%7B%20.svc%20%21%3D%20nil%20%7D%20%7C%20rate()&start=0&end=1&step=1",
         )
@@ -833,18 +836,17 @@ mod tests {
         assert2::assert!(
             body == json!({
                 "series": [{
-                    "labels": [],
+                    "labels": [{"key": "__name__", "value": {"stringValue": "rate"}}],
                     "promLabels": "{}",
                     "samples": [
-                        {"timestampMs": "0", "value": 2.0},
-                        {"timestampMs": "1000", "value": 0.0}
+                        {"timestampMs": "1000", "value": 2.0}
                     ],
                     "exemplars": [{
                         "labels": [
-                            {"key": "trace_id", "value": {"stringValue": "09090909090909090909090909090909"}},
-                            {"key": "span_id", "value": {"stringValue": "0101010101010101"}}
+                            {"key": "trace:id", "value": {"stringValue": "9090909090909090909090909090909"}},
+                            {"key": ".svc", "value": {"stringValue": "a"}}
                         ],
-                        "value": 1.0,
+                        "value": 2.0,
                         "timestampMs": "0"
                     }]
                 }]
@@ -859,18 +861,17 @@ mod tests {
         assert2::assert!(
             body == json!({
                 "series": [{
-                    "labels": [],
+                    "labels": [{"key": "__name__", "value": {"stringValue": "count_over_time"}}],
                     "promLabels": "{}",
                     "samples": [
-                        {"timestampMs": "0", "value": 2.0},
-                        {"timestampMs": "1000", "value": 0.0}
+                        {"timestampMs": "1000", "value": 2.0}
                     ],
                     "exemplars": [{
                         "labels": [
-                            {"key": "trace_id", "value": {"stringValue": "09090909090909090909090909090909"}},
-                            {"key": "span_id", "value": {"stringValue": "0101010101010101"}}
+                            {"key": "trace:id", "value": {"stringValue": "9090909090909090909090909090909"}},
+                            {"key": ".svc", "value": {"stringValue": "a"}}
                         ],
-                        "value": 1.0,
+                        "value": 2.0,
                         "timestampMs": "0"
                     }]
                 }]
@@ -901,11 +902,10 @@ mod tests {
         assert2::assert!(
             body == json!({
                 "series": [{
-                    "labels": [],
+                    "labels": [{"key": "__name__", "value": {"stringValue": "count_over_time"}}],
                     "promLabels": "{}",
                     "samples": [
-                        {"timestampMs": "0", "value": 1.0},
-                        {"timestampMs": "1000", "value": 0.0}
+                        {"timestampMs": "1000", "value": 1.0}
                     ],
                     "exemplars": []
                 }]
@@ -1007,8 +1007,7 @@ mod tests {
         assert2::assert!(
             body["series"][0]["samples"]
                 == json!([
-                    {"timestampMs": "0", "value": 2.0},
-                    {"timestampMs": "500", "value": 0.0},
+                    {"timestampMs": "500", "value": 2.0},
                     {"timestampMs": "1000", "value": 0.0}
                 ])
         );
@@ -4387,3 +4386,10 @@ use typed_traceql_value::typed_traceql_value;
 use typed_value_parts::typed_value_parts;
 pub(crate) use wants_json::wants_json;
 use wants_protobuf::wants_protobuf;
+
+mod tempo_metric_bounds;
+use tempo_metric_bounds::tempo_metric_bounds;
+mod metrics_operation_name;
+use metrics_operation_name::metrics_operation_name;
+mod metric_value_json;
+use metric_value_json::metric_value_json;

@@ -11,6 +11,10 @@ pub struct Annotations {
     pub warnings: Vec<String>,
     /// `PromQL info:`-class annotations, in first-seen order.
     pub infos: Vec<String>,
+    /// Structured classic-histogram repairs; HTTP responses render their
+    /// merged details while engine consumers retain the base info messages.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub histogram_quantile_repairs: BTreeMap<String, HistogramQuantileRepair>,
 }
 
 impl Annotations {
@@ -44,6 +48,36 @@ impl Annotations {
         for info in &other.infos {
             self.info(info.clone());
         }
+        for (message, repair) in &other.histogram_quantile_repairs {
+            self.histogram_quantile_repairs
+                .entry(message.clone())
+                .and_modify(|existing| existing.merge(repair))
+                .or_insert_with(|| repair.clone());
+        }
+    }
+
+    pub(crate) fn histogram_quantile_repair(
+        &mut self,
+        message: String,
+        repair: HistogramQuantileRepair,
+    ) {
+        self.info(message.clone());
+        self.histogram_quantile_repairs
+            .entry(message)
+            .and_modify(|existing| existing.merge(&repair))
+            .or_insert(repair);
+    }
+
+    pub(crate) fn http_infos(&self) -> Vec<String> {
+        self.infos
+            .iter()
+            .map(|message| {
+                self.histogram_quantile_repairs
+                    .get(message)
+                    .and_then(|repair| repair.render(message))
+                    .unwrap_or_else(|| message.clone())
+            })
+            .collect()
     }
 
     /// Returns `true` when the set has no annotations.
@@ -52,3 +86,6 @@ impl Annotations {
         self.warnings.is_empty() && self.infos.is_empty()
     }
 }
+use std::collections::BTreeMap;
+
+use super::HistogramQuantileRepair;

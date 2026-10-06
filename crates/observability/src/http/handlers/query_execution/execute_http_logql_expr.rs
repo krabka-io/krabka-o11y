@@ -3,11 +3,11 @@ use super::{
     ScalarVectorExpressionResult, TimeRange, Value, add_loki_query_stats, apply_label_join_fields,
     apply_label_replace_to_loki_result, apply_metric_binary_arithmetic_to_loki_result,
     apply_metric_binary_comparison_to_loki_result, apply_metric_binary_set_to_loki_result,
-    apply_metric_selection, apply_scalar_arithmetic_to_loki_result,
-    apply_scalar_comparison_to_loki_result, execute_http_metric_query, execute_http_stream_query,
-    loki_instant_scalar_or_vector_response, loki_range_vector_response, merge_loki_query_stats,
-    resolved_range_step, retain_metric_binary_on_labels, scalar_vector_expression_result,
-    sort_loki_vector_result,
+    apply_metric_selection, apply_nested_vector_aggregation,
+    apply_scalar_arithmetic_to_loki_result, apply_scalar_comparison_to_loki_result,
+    execute_http_metric_query, execute_http_stream_query, loki_instant_scalar_or_vector_response,
+    loki_range_vector_response, merge_loki_query_stats, resolved_range_step,
+    retain_metric_binary_on_labels, scalar_vector_expression_result, sort_loki_vector_result,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -80,6 +80,24 @@ pub(crate) async fn execute_http_logql_expr(
             ))
             .await?;
             sort_loki_vector_result(&mut value, *descending);
+            Ok(value)
+        }
+        LogqlExpr::Aggregation {
+            expr, aggregation, ..
+        } => {
+            let mut value = Box::pin(execute_http_logql_expr(
+                state,
+                tenant,
+                time_range,
+                step,
+                kind,
+                expr,
+                stream_options,
+                encoding,
+                full_query,
+            ))
+            .await?;
+            apply_nested_vector_aggregation(&mut value, aggregation)?;
             Ok(value)
         }
         LogqlExpr::Selection {
@@ -346,7 +364,8 @@ pub(crate) async fn execute_http_logql_expr(
 fn is_scalar_vector_only(expression: &LogqlExpr) -> bool {
     match expression {
         LogqlExpr::Scalar(_) | LogqlExpr::Vector(_) => true,
-        LogqlExpr::Sort { expr, .. }
+        LogqlExpr::Aggregation { expr, .. }
+        | LogqlExpr::Sort { expr, .. }
         | LogqlExpr::Selection { expr, .. }
         | LogqlExpr::LabelReplace { expr, .. }
         | LogqlExpr::LabelJoin { expr, .. } => is_scalar_vector_only(expr),

@@ -23,10 +23,9 @@ use krabka_observability::server_security::{
 };
 use krabka_pprof::{
     COL_FINGERPRINT, COL_TIMESTAMP, EngineOpts, FlameEngine, FlameGraph, InMemoryProfileStore,
-    LabeledHeatmap, PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE,
-    PCOL_TRACE_ID, PCOL_VALUE, ProfileError, ProfileStats, ProfileStore, ProfileType,
-    SampleSelector, Series, SeriesAgg, bin_heatmap, parse_label_selector, step_bucket_ms,
-    step_from_secs,
+    PCOL_SPAN_ID, PCOL_STACKTRACE_ID, PCOL_STACKTRACE_PARTITION, PCOL_TOTAL_VALUE, PCOL_TRACE_ID,
+    PCOL_VALUE, ProfileError, ProfileStats, ProfileStore, ProfileType, SampleSelector, Series,
+    SeriesAgg, parse_label_selector, step_bucket_ms, step_from_secs,
 };
 use krabka_units::{
     Time,
@@ -112,51 +111,27 @@ mod tests {
         check!(empty.slots.is_empty());
     }
 
-    /// `heatmap_slot_timestamp` places a sample in one of `time_buckets` slots
-    /// and returns the slot's *end*. Everything here is boundary work: the
-    /// guard is four clauses joined by `||`, so each has to reject on its own,
-    /// and the arithmetic is a multiply-then-divide whose operators all look
-    /// alike from the middle of a range.
-    ///
-    /// With start 0, end 100 and 4 buckets the step is 25, so a timestamp maps
-    /// to 25, 50, 75 or 100 and nothing else.
+    /// Pinned v2 heatmaps include one lookback step and use right-closed slots.
     #[test]
-    fn heatmap_slots_are_bounded_and_end_labelled() {
-        let slot = |ts| super::heatmap_slot_timestamp(0, 100, 4, ts);
-
-        // Each guard clause, alone: before the range, on the exclusive end,
-        // past it, an inverted range, and no buckets.
-        check!(slot(-1) == None, "before start");
-        check!(slot(100) == None, "end is exclusive");
-        check!(slot(101) == None, "past end");
-        check!(
-            super::heatmap_slot_timestamp(100, 0, 4, 50) == None,
-            "inverted"
-        );
-        check!(
-            super::heatmap_slot_timestamp(0, 100, 0, 50) == None,
-            "no buckets"
-        );
-
-        // Inside: the first instant, each bucket edge, and the last instant.
-        check!(slot(0) == Some(25), "start of the first bucket");
-        check!(slot(24) == Some(25), "last ms of the first bucket");
-        check!(slot(25) == Some(50), "first ms of the second");
-        check!(slot(50) == Some(75), "first ms of the third");
-        check!(slot(75) == Some(100), "first ms of the last");
-        check!(slot(99) == Some(100), "last ms in range");
-
-        // Offset from zero: with start_ms 0 a sign error in the span is
-        // invisible, so repeat over 1000..1400 (step 100).
-        let offset = |ts| super::heatmap_slot_timestamp(1000, 1400, 4, ts);
-        check!(offset(999) == None, "before an offset start");
-        check!(
-            offset(1000) == Some(1100),
-            "first instant of an offset range"
-        );
-        check!(offset(1150) == Some(1200), "mid offset range");
-        check!(offset(1399) == Some(1400), "last ms of an offset range");
-        check!(offset(1400) == None, "offset end is exclusive");
+    fn heatmap_slots_preserve_right_closed_endpoints_and_lookback() {
+        let slot = |ts| super::heatmap_slot_timestamp(0, 100, 25, ts);
+        check!(slot(-26) == None);
+        check!(slot(-25) == Some(0));
+        check!(slot(0) == Some(0));
+        check!(slot(24) == Some(25));
+        check!(slot(25) == Some(25));
+        check!(slot(50) == Some(50));
+        check!(slot(75) == Some(75));
+        check!(slot(99) == Some(100));
+        check!(slot(100) == Some(100));
+        check!(slot(101) == None);
+        check!(super::heatmap_slot_timestamp(100, 0, 25, 50) == None);
+        check!(super::heatmap_slot_timestamp(0, 100, 0, 50) == None);
+        let offset = |ts| super::heatmap_slot_timestamp(1123, 2400, 1000, ts);
+        check!(offset(123) == Some(1123));
+        check!(offset(1123) == Some(1123));
+        check!(offset(1150) == Some(2123));
+        check!(offset(2400) == Some(3123));
     }
 
     /// `query_param_i64` reads the first parameter matching `name`. The lookup
@@ -977,7 +952,7 @@ overrides:
                 "profileTypeID": PT,
                 "labelSelector": "{}",
                 "start": 0,
-                "end": 100,
+                "end": 1_000,
                 "groupBy": ["service_name"],
                 "step": 1.0,
                 "limit": 1,
@@ -991,14 +966,26 @@ overrides:
             .await
             .unwrap();
 
+        let actual: pb::querier::v1::SelectSeriesResponse =
+            serde_json::from_value(response.clone()).unwrap();
         check!(
-            response
-                .pointer("/series/0/labels/0/value")
-                .and_then(serde_json::Value::as_str)
-                == Some("large"),
+            actual
+                == pb::querier::v1::SelectSeriesResponse {
+                    series: vec![pb::querier::v1::ProfileSeries {
+                        labels: vec![pb::querier::v1::LabelPair {
+                            name: "service_name".to_string(),
+                            value: "large".to_string(),
+                        }],
+                        points: vec![pb::querier::v1::Point {
+                            timestamp: 1_000,
+                            value: 10.0,
+                            annotations: Vec::new(),
+                            exemplars: Vec::new(),
+                        }],
+                    }],
+                },
             "{response}"
         );
-        check!(response.pointer("/series/1").is_none(), "{response}");
     }
 
     #[tokio::test]
@@ -1885,9 +1872,7 @@ overrides:
             response
                 .get("dot")
                 .and_then(serde_json::Value::as_str)
-                .is_some_and(
-                    |dot| dot.starts_with("digraph flamegraph") && dot.contains("main.work")
-                ),
+                .is_some_and(|dot| dot.starts_with("digraph profile") && dot.contains("main.work")),
             "{response}"
         );
         check!(
@@ -2082,19 +2067,14 @@ overrides:
             json!({ "type": "ASYNC_QUERY_TYPE_FORCE" }),
             json!({ "requestId": "query-1" }),
         ] {
-            let extra = json!({ "async": async_query });
-            let response = request(extra).send().await.unwrap();
-            let status = response.status();
-            let headers = response.headers().clone();
-            let body = response.text().await.unwrap();
-            check!(
-                status == reqwest::StatusCode::BAD_REQUEST,
-                "status={status} headers={headers:?} body={body}"
-            );
-            check!(
-                body.contains("async profile queries are not supported"),
-                "status={status} headers={headers:?} body={body}"
-            );
+            let response = request(json!({ "async": async_query }))
+                .send()
+                .await
+                .unwrap();
+            check!(response.status() == reqwest::StatusCode::OK);
+            let body: serde_json::Value = response.json().await.unwrap();
+            check!(body.get("async").is_none());
+            check!(body.pointer("/flamegraph/total").and_then(json_i64) == Some(12));
         }
     }
 
@@ -2145,6 +2125,140 @@ overrides:
             .unwrap();
 
         assert!(tree == b"\x00\x00\x01\x09main.work\x07\x00", "{response}");
+    }
+
+    #[tokio::test]
+    async fn v2_span_series_exemplars_are_empty_without_data_and_fail_with_data() {
+        let state = Arc::new(
+            QuerierState::new(Arc::new(store_with_frame("main.work")))
+                .with_query_architecture(super::PyroscopeQueryArchitecture::V2),
+        );
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+        .unwrap();
+        // The sample at 10 ms belongs to the 1000 ms endpoint with a
+        // one-second step. Verify the fixture produces data before exercising
+        // the populated v2 SPAN error.
+        let client = reqwest::Client::new();
+        let url = format!("http://{bound}/querier.v1.QuerierService/SelectSeries");
+        let response: serde_json::Value = client
+            .post(&url)
+            .header("x-scope-orgid", "tenant-a")
+            .json(&json!({
+                "profileTypeID": PT,
+                "labelSelector": "{}",
+                "start": 0,
+                "end": 1000,
+                "step": 1.0
+            }))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let points: Vec<pb::querier::v1::Point> =
+            serde_json::from_value(response["series"][0]["points"].clone()).unwrap();
+        check!(
+            points
+                == vec![pb::querier::v1::Point {
+                    timestamp: 1000,
+                    value: 7.0,
+                    annotations: Vec::new(),
+                    exemplars: Vec::new(),
+                }]
+        );
+        for (selector, status) in [
+            (r#"{service_name="missing"}"#, reqwest::StatusCode::OK),
+            ("{}", reqwest::StatusCode::INTERNAL_SERVER_ERROR),
+        ] {
+            let response = client.post(&url).header("x-scope-orgid","tenant-a").json(&json!({"profileTypeID":PT,"labelSelector":selector,"start":0,"end":1000,"step":1.0,"exemplarType":"EXEMPLAR_TYPE_SPAN"})).send().await.unwrap();
+            check!(response.status() == status);
+            let response: serde_json::Value = response.json().await.unwrap();
+            if status == reqwest::StatusCode::OK {
+                check!(response == json!({}));
+            } else {
+                check!(response["code"] == "unknown");
+            }
+        }
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn query_architecture_binds_async_without_changing_v1() {
+        for (architecture, enabled, concurrency, status) in [
+            (
+                super::PyroscopeQueryArchitecture::V1,
+                true,
+                5,
+                reqwest::StatusCode::OK,
+            ),
+            (
+                super::PyroscopeQueryArchitecture::V2,
+                false,
+                5,
+                reqwest::StatusCode::OK,
+            ),
+            (
+                super::PyroscopeQueryArchitecture::V2,
+                true,
+                0,
+                reqwest::StatusCode::TOO_MANY_REQUESTS,
+            ),
+            (
+                super::PyroscopeQueryArchitecture::V2,
+                true,
+                5,
+                reqwest::StatusCode::OK,
+            ),
+        ] {
+            let state = Arc::new(
+                QuerierState::new_with_limits(
+                    Arc::new(store_with_frame("main.work")),
+                    Limits {
+                        max_async_query_concurrency: concurrency,
+                        ..Default::default()
+                    },
+                )
+                .with_query_architecture(architecture)
+                .with_async_queries_enabled(enabled),
+            );
+            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+            let bound = serve(
+                "127.0.0.1:0".parse().unwrap(),
+                state,
+                &ServerSecurity::default(),
+                async move {
+                    let _ = shutdown_rx.await;
+                },
+            )
+            .await
+            .unwrap();
+            let response = reqwest::Client::new().post(format!("http://{bound}/querier.v1.QuerierService/SelectMergeStacktraces"))
+                .header("x-scope-orgid", "tenant-a").json(&json!({"profileTypeID":PT,"labelSelector":"{}","start":0,"end":100,"async":{"type":"ASYNC_QUERY_TYPE_FORCE"}})).send().await.unwrap();
+            check!(response.status() == status);
+            let response: serde_json::Value = response.json().await.unwrap();
+            if architecture == super::PyroscopeQueryArchitecture::V1 || !enabled {
+                check!(response.get("async").is_none());
+                check!(response["flamegraph"]["total"].as_str() == Some("7"));
+            } else if concurrency > 0 {
+                check!(response["async"]["status"] == "ASYNC_QUERY_STATUS_IN_PROGRESS");
+                check!(response.get("flamegraph").is_none());
+            } else {
+                check!(response["code"] == "resource_exhausted");
+            }
+            let _ = shutdown_tx.send(());
+        }
     }
 
     #[tokio::test]
@@ -2304,15 +2418,15 @@ overrides:
     async fn select_merge_profile_max_nodes_truncates_to_other() {
         let state = Arc::new(QuerierState::new(Arc::new(store_with_leaf_frames(&[
             ("leaf0", 1),
-            ("leaf1", 1),
-            ("leaf2", 1),
-            ("leaf3", 1),
-            ("leaf4", 1),
-            ("leaf5", 1),
-            ("leaf6", 1),
-            ("leaf7", 1),
-            ("leaf8", 1),
-            ("leaf9", 1),
+            ("leaf1", 2),
+            ("leaf2", 3),
+            ("leaf3", 4),
+            ("leaf4", 5),
+            ("leaf5", 6),
+            ("leaf6", 7),
+            ("leaf7", 8),
+            ("leaf8", 9),
+            ("leaf9", 10),
         ]))));
         let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let bound = serve(
@@ -2366,8 +2480,13 @@ overrides:
             .and_then(serde_json::Value::as_array)
             .unwrap();
 
-        check!(samples.len() <= 4, "{response}");
-        check!(total == 10, "{response}");
+        let mut values = samples
+            .iter()
+            .map(|sample| json_i64(&sample["value"][0]).unwrap())
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+        check!(values == [7, 8, 9, 10, 21], "{response}");
+        check!(total == 55, "{response}");
         check!(
             strings.iter().any(|value| value.as_str() == Some("other")),
             "{response}"
@@ -2598,7 +2717,7 @@ overrides:
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
-                "end": 100,
+                "end": 60_000,
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "stackTraceSelector": {
@@ -2614,13 +2733,16 @@ overrides:
             .await
             .unwrap();
 
-        let points = response
-            .pointer("/series/0/points")
-            .and_then(serde_json::Value::as_array)
-            .unwrap();
-        assert!(points.len() == 1, "{response}");
+        let points: Vec<pb::querier::v1::Point> =
+            serde_json::from_value(response["series"][0]["points"].clone()).unwrap();
         assert!(
-            points[0].get("value").and_then(serde_json::Value::as_f64) == Some(7.0),
+            points
+                == vec![pb::querier::v1::Point {
+                    timestamp: 60_000,
+                    value: 7.0,
+                    annotations: Vec::new(),
+                    exemplars: Vec::new(),
+                }],
             "{response}"
         );
     }
@@ -2754,7 +2876,7 @@ overrides:
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
-                "end": 100,
+                "end": 60_000,
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "exemplarType": "EXEMPLAR_TYPE_SPAN"
@@ -2767,6 +2889,14 @@ overrides:
             .json()
             .await
             .unwrap();
+
+        check!(
+            response
+                .pointer("/series/0/points/0/timestamp")
+                .and_then(json_i64)
+                == Some(60_000),
+            "{response}"
+        );
 
         let exemplar = response
             .pointer("/series/0/points/0/exemplars/0")
@@ -2811,7 +2941,7 @@ overrides:
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
-                "end": 100,
+                "end": 60_000,
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "stackTraceSelector": {
@@ -2827,6 +2957,14 @@ overrides:
             .json()
             .await
             .unwrap();
+
+        check!(
+            response
+                .pointer("/series/0/points/0/timestamp")
+                .and_then(json_i64)
+                == Some(60_000),
+            "{response}"
+        );
 
         let exemplars = response
             .pointer("/series/0/points/0/exemplars")
@@ -2863,7 +3001,7 @@ overrides:
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
-                "end": 100,
+                "end": 60_000,
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "exemplarType": "EXEMPLAR_TYPE_INDIVIDUAL"
@@ -2876,6 +3014,14 @@ overrides:
             .json()
             .await
             .unwrap();
+
+        check!(
+            response
+                .pointer("/series/0/points/0/timestamp")
+                .and_then(json_i64)
+                == Some(60_000),
+            "{response}"
+        );
 
         let exemplars = response
             .pointer("/series/0/points/0/exemplars")
@@ -2922,7 +3068,7 @@ overrides:
                 "profileTypeID": PT,
                 "labelSelector": r#"{service_name="api"}"#,
                 "start": 0,
-                "end": 100,
+                "end": 60_000,
                 "groupBy": ["service_name"],
                 "step": 60.0,
                 "stackTraceSelector": {
@@ -2939,6 +3085,14 @@ overrides:
             .await
             .unwrap();
 
+        check!(
+            response
+                .pointer("/series/0/points/0/timestamp")
+                .and_then(json_i64)
+                == Some(60_000),
+            "{response}"
+        );
+
         let exemplars = response
             .pointer("/series/0/points/0/exemplars")
             .and_then(serde_json::Value::as_array)
@@ -2953,6 +3107,116 @@ overrides:
             .collect();
 
         assert!(profile_ids == vec!["profile-a"], "{response}");
+    }
+
+    #[tokio::test]
+    async fn select_series_exemplars_follow_fractional_start_and_complete_endpoints() {
+        let mut store = InMemoryProfileStore::new();
+        // The request includes the first step's lookback. The timestamps at
+        // 2012 and 2500 are in range but belong to the omitted 3011 endpoint.
+        for (timestamp, value) in [
+            (10, 100),
+            (11, 1),
+            (12, 2),
+            (1_011, 3),
+            (1_012, 5),
+            (2_011, 7),
+            (2_012, 200),
+            (2_500, 300),
+            (2_501, 400),
+        ] {
+            store.push_sample_with_total_and_associations(
+                ("tenant-a", PT),
+                vec![
+                    ("__profile_id__".to_string(), "profile-a".to_string()),
+                    ("service_name".to_string(), "api".to_string()),
+                ],
+                (0, 1),
+                (value, value),
+                timestamp,
+                (Some(0x2a), Some(vec![0xab; 16])),
+            );
+        }
+        let state = Arc::new(QuerierState::new(Arc::new(store)));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+        .unwrap();
+        let client = reqwest::Client::new();
+        let labels = vec![pb::querier::v1::LabelPair {
+            name: "service_name".to_string(),
+            value: "api".to_string(),
+        }];
+        for exemplar_type in ["EXEMPLAR_TYPE_SPAN", "EXEMPLAR_TYPE_INDIVIDUAL"] {
+            let actual: pb::querier::v1::SelectSeriesResponse = client
+                .post(format!(
+                    "http://{bound}/querier.v1.QuerierService/SelectSeries"
+                ))
+                .header("x-scope-orgid", "tenant-a")
+                .json(&json!({
+                    "profileTypeID": PT,
+                    "labelSelector": r#"{service_name="api"}"#,
+                    "start": 1_011,
+                    "end": 2_500,
+                    "groupBy": ["service_name"],
+                    "step": 1.0,
+                    "exemplarType": exemplar_type,
+                }))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            let exemplar = |timestamp, value| {
+                let span = exemplar_type == "EXEMPLAR_TYPE_SPAN";
+                pb::types::v1::Exemplar {
+                    timestamp,
+                    value,
+                    labels: vec![pb::types::v1::LabelPair {
+                        name: "service_name".to_string(),
+                        value: "api".to_string(),
+                    }],
+                    span_id: if span { "000000000000002a" } else { "" }.to_string(),
+                    trace_id: if span {
+                        "abababababababababababababababab"
+                    } else {
+                        ""
+                    }
+                    .to_string(),
+                    profile_id: if span { "" } else { "profile-a" }.to_string(),
+                }
+            };
+            let expected = pb::querier::v1::SelectSeriesResponse {
+                series: vec![pb::querier::v1::ProfileSeries {
+                    labels: labels.clone(),
+                    points: vec![
+                        pb::querier::v1::Point {
+                            timestamp: 1_011,
+                            value: 6.0,
+                            annotations: Vec::new(),
+                            exemplars: vec![exemplar(11, 1), exemplar(12, 2), exemplar(1_011, 3)],
+                        },
+                        pb::querier::v1::Point {
+                            timestamp: 2_011,
+                            value: 12.0,
+                            annotations: Vec::new(),
+                            exemplars: vec![exemplar(1_012, 5), exemplar(2_011, 7)],
+                        },
+                    ],
+                }],
+            };
+            assert!(actual == expected, "{exemplar_type}");
+        }
     }
 
     #[tokio::test]
@@ -3263,6 +3527,62 @@ overrides:
                 "{response}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn analyze_query_counts_series_in_overlapping_head_but_not_outside_it() {
+        let mut store = store_with_two_profile_types();
+        store.push_sample(
+            ("tenant-a", PT),
+            vec![
+                ("service_name".to_string(), "api".to_string()),
+                ("__profile_type__".to_string(), PT.to_string()),
+            ],
+            (0, 0),
+            5,
+            100,
+        );
+        let state = Arc::new(QuerierState::new(Arc::new(store)));
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let bound = serve(
+            "127.0.0.1:0".parse().unwrap(),
+            state,
+            &ServerSecurity::default(),
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+        .unwrap();
+        for (start, end, selector, expected) in [
+            (25, 75, "{}", 1),
+            (200, 300, "{}", 0),
+            (25, 75, r#"{service_name="missing"}"#, 0),
+        ] {
+            let response: serde_json::Value = reqwest::Client::new()
+                .post(format!(
+                    "http://{bound}/querier.v1.QuerierService/AnalyzeQuery"
+                ))
+                .header("x-scope-orgid", "tenant-a")
+                .json(&json!({"start":start,"end":end,"query":format!("{PT}{selector}")}))
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            check!(
+                response
+                    .pointer("/queryImpact/totalQueriedSeries")
+                    .and_then(json_i64)
+                    .unwrap_or_default()
+                    == expected,
+                "{response}"
+            );
+        }
+        let _ = shutdown_tx.send(());
     }
 
     #[tokio::test]
@@ -3741,6 +4061,8 @@ overrides:
 
 mod analyze_query_handler;
 mod analyze_query_inner;
+mod apply_go_pgo;
+mod async_stacktrace_query;
 mod connect_error;
 mod default_heatmap_time_buckets_max;
 mod default_heatmap_value_buckets;
@@ -3758,6 +4080,7 @@ mod flamegraph_dot;
 mod frames_match_call_sites;
 mod get_profile_stats_handler;
 mod get_profile_stats_inner;
+mod heatmap_from_points;
 mod heatmap_individual_exemplars_from_scan;
 mod heatmap_series;
 mod heatmap_slot_timestamp;
@@ -3787,10 +4110,12 @@ mod parse_render_time_param;
 mod parse_span_selectors;
 mod parse_trace_selectors;
 mod post_only_querier;
+mod pprof_dot;
 mod profile_error_response;
 mod profile_id_label;
 mod profile_types_handler;
 mod profile_types_inner;
+mod pyroscope_query_architecture;
 mod querier_state;
 mod query_execution;
 mod query_param_i64;
@@ -3836,6 +4161,8 @@ mod utf8_label_names;
 
 use analyze_query_handler::analyze_query_handler;
 use analyze_query_inner::analyze_query_inner;
+use apply_go_pgo::apply_go_pgo;
+use async_stacktrace_query::async_stacktrace_query;
 use connect_error::connect_error;
 use default_heatmap_time_buckets_max::DEFAULT_HEATMAP_TIME_BUCKETS_MAX;
 use default_heatmap_value_buckets::DEFAULT_HEATMAP_VALUE_BUCKETS;
@@ -3851,6 +4178,7 @@ use flamegraph_dot::flamegraph_dot;
 use frames_match_call_sites::frames_match_call_sites;
 use get_profile_stats_handler::get_profile_stats_handler;
 use get_profile_stats_inner::get_profile_stats_inner;
+use heatmap_from_points::heatmap_from_points;
 use heatmap_individual_exemplars_from_scan::heatmap_individual_exemplars_from_scan;
 use heatmap_slot_timestamp::heatmap_slot_timestamp;
 use heatmap_span_exemplars_by_series::HeatmapSpanExemplarsBySeries;
@@ -3879,10 +4207,12 @@ use parse_render_time_param::parse_render_time_param;
 use parse_span_selectors::parse_span_selectors;
 use parse_trace_selectors::parse_trace_selectors;
 use post_only_querier::post_only_querier;
+use pprof_dot::pprof_dot;
 use profile_error_response::profile_error_response;
 use profile_id_label::PROFILE_ID_LABEL;
 use profile_types_handler::profile_types_handler;
 use profile_types_inner::profile_types_inner;
+pub use pyroscope_query_architecture::PyroscopeQueryArchitecture;
 pub use querier_state::QuerierState;
 use query_execution::QueryExecution;
 use query_param_i64::query_param_i64;

@@ -132,16 +132,17 @@ async fn label_selector_filters_series_before_merge() {
 }
 
 #[tokio::test]
-async fn max_nodes_truncates_to_synthetic_other_and_conserves_total() {
+async fn max_nodes_retains_tied_inline_chain_and_conserves_total() {
     let fg = merge("{}", 3).await;
 
-    check!(fg.names == vec!["total", "main", "other", "work"]);
+    check!(fg.names == vec!["total", "main", "other", "work", "inline_helper", "alloc"]);
     check!(fg.total == 21);
     check!(fg.max_self == 17);
     check!(fg.levels[0].values == vec![0, 21, 0, 0]);
     check!(fg.levels[1].values == vec![0, 21, 0, 1]);
     check!(fg.levels[2].values == vec![4, 17, 0, 3, -4, 4, 4, 2]);
-    check!(fg.levels[3].values == vec![4, 17, 17, 2]);
+    check!(fg.levels[3].values == vec![4, 17, 0, 4]);
+    check!(fg.levels[4].values == vec![4, 17, 17, 5]);
 }
 
 #[test]

@@ -1,12 +1,8 @@
 use super::*;
 
-/// A comparison without `bool` keeps the operand's own labels, metric name
-/// and all; every other binary form drops the metric name. The rule is
-/// written out separately on five paths -- one-to-one matched and filled,
-/// many-to-one filled, one-to-many matched and filled -- and each pairs a
-/// comparison with the arithmetic form of the same query, because a
-/// comparison case alone cannot tell `is_comparison() && !bool` from
-/// `is_comparison() || !bool`.
+/// One-to-one `on` projects comparison labels to the matching set. Grouped
+/// comparisons preserve operand metadata while arithmetic drops metric names.
+/// Each query pair exercises matched and filled paths against explicit labels.
 #[tokio::test]
 pub(crate) async fn a_comparison_keeps_the_metric_name_that_arithmetic_drops() {
     let mut store = InMemoryMetricStore::new();
@@ -29,24 +25,18 @@ pub(crate) async fn a_comparison_keeps_the_metric_name_that_arithmetic_drops() {
         // One-to-one: `x` matches, `y` takes the right-fill path.
         (
             "a > on (job) fill_right(0) b",
-            vec![
-                vec![("__name__", "a"), ("extra", "1"), ("job", "x")],
-                vec![("__name__", "a"), ("extra", "2"), ("job", "y")],
-            ],
+            vec![vec![("job", "x")], vec![("job", "y")]],
         ),
         (
             "a + on (job) fill_right(0) b",
             vec![vec![("job", "x")], vec![("job", "y")]],
         ),
         // The mirror of the pair above: here the *left* side is filled, so the
-        // surviving row keeps the right operand's labels rather than the
-        // left's, and only a left-fill query reaches that branch.
+        // synthetic left operand has the matching labels and no metric name.
+        // Only a left-fill query reaches that branch.
         (
             "b < on (job) fill_left(0) a",
-            vec![
-                vec![("__name__", "a"), ("extra", "2"), ("job", "y")],
-                vec![("__name__", "b"), ("job", "x")],
-            ],
+            vec![vec![("job", "x")], vec![("job", "y")]],
         ),
         (
             "b + on (job) fill_left(0) a",
@@ -71,14 +61,14 @@ pub(crate) async fn a_comparison_keeps_the_metric_name_that_arithmetic_drops() {
         ),
         // One-to-many: `x` matches, `y` takes the left-fill path.
         (
-            "b < on (job) group_right fill_left(0) m",
+            "b < on (job) group_right fill_right(0) m",
             vec![
                 vec![("__name__", "m"), ("inst", "1"), ("job", "x")],
                 vec![("__name__", "m"), ("inst", "9"), ("job", "y")],
             ],
         ),
         (
-            "b + on (job) group_right fill_left(0) m",
+            "b + on (job) group_right fill_right(0) m",
             vec![
                 vec![("inst", "1"), ("job", "x")],
                 vec![("inst", "9"), ("job", "y")],

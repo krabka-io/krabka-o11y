@@ -560,52 +560,239 @@ async fn traceql_search_uses_structural_relationships_after_restart() -> TestRes
     deployment.push(TENANT, input(2, &[1], "other")).await?;
     let rows = expected(1, &[1, 2], "checkout");
     deployment.trace(&deployment.hot, TENANT, 1, &rows).await?;
-    let cold = deployment.stored(TENANT, 1, &rows).await?;
-    for container in [&deployment.hot, &cold] {
-        for query in [
-            r#"{ resource.service.name = "checkout" }"#,
-            r#"{ name = "checkout" } >> { status = error }"#,
-            r#"{ resource.service.name = "checkout" } | count() > 1"#,
-        ] {
-            let result = deployment
-                .get(
-                    container,
-                    TENANT,
-                    "/api/search",
-                    &[("q", query), ("start", "1700000000"), ("end", "1700000001")],
-                )
-                .await?;
-            assert!(
-                search_ids(&result) == vec![hex::encode([1; 16])],
-                "{query}: {result}"
-            );
-        }
-        let result = deployment
-            .get(
-                container,
-                TENANT,
-                "/api/search",
-                &[
-                    ("q", r#"{ resource.service.name = "missing" }"#),
-                    ("start", "1700000000"),
-                    ("end", "1700000001"),
-                ],
-            )
-            .await?;
-        assert!(search_ids(&result).is_empty());
-    }
-    Ok(())
+    let mut evidence = Vec::new();
+    let filename = "tempo-structural-query-transitions.json";
+    check_trace_queries(
+        &deployment,
+        &deployment.hot,
+        TENANT,
+        &[1, 2],
+        "hot-only",
+        &mut evidence,
+        filename,
+    )
+    .await?;
+    check_trace_queries(
+        &deployment,
+        &deployment.hot,
+        "tenant-c",
+        &[],
+        "hot-tenant-negative",
+        &mut evidence,
+        filename,
+    )
+    .await?;
+    let cold = deployment.role("querier", &[]).await?;
+    deployment.missing(&cold, TENANT, 1).await?;
+    check_trace_queries(
+        &deployment,
+        &cold,
+        TENANT,
+        &[],
+        "cold-before-publication",
+        &mut evidence,
+        filename,
+    )
+    .await?;
+    let builder = deployment.role("block-builder", &[]).await?;
+    deployment.trace(&cold, TENANT, 1, &rows).await?;
+    deployment
+        .trace(&cold, TENANT, 2, &expected(2, &[1], "other"))
+        .await?;
+    check_trace_queries(
+        &deployment,
+        &cold,
+        TENANT,
+        &[1, 2],
+        "persisted",
+        &mut evidence,
+        filename,
+    )
+    .await?;
+    check_trace_queries(
+        &deployment,
+        &deployment.hot,
+        TENANT,
+        &[1, 2],
+        "hot-cold-overlap",
+        &mut evidence,
+        filename,
+    )
+    .await?;
+    builder.stop().await?;
+    cold.stop().await?;
+    let restarted = deployment.role("querier", &[]).await?;
+    deployment.trace(&restarted, TENANT, 1, &rows).await?;
+    check_trace_queries(
+        &deployment,
+        &restarted,
+        TENANT,
+        &[1, 2],
+        "restart",
+        &mut evidence,
+        filename,
+    )
+    .await?;
+    check_trace_queries(
+        &deployment,
+        &restarted,
+        "tenant-c",
+        &[],
+        "restart-tenant-negative",
+        &mut evidence,
+        filename,
+    )
+    .await
 }
 
-fn search_ids(result: &Value) -> Vec<String> {
-    let mut ids: Vec<_> = result["traces"]
-        .as_array()
-        .expect("traces")
-        .iter()
-        .map(|trace| trace["traceID"].as_str().expect("traceID").to_string())
-        .collect();
-    ids.sort();
-    ids
+fn transition_search_rows(result: &Value) -> TestResult<Vec<(String, String)>> {
+    let mut rows = Vec::new();
+    for trace in result["traces"].as_array().ok_or("missing search traces")? {
+        let trace_id = trace["traceID"].as_str().ok_or("missing trace ID")?;
+        for set in trace["spanSets"].as_array().ok_or("missing span sets")? {
+            for span in set["spans"].as_array().ok_or("missing selected spans")? {
+                rows.push((
+                    trace_id.to_owned(),
+                    span["spanID"].as_str().ok_or("missing span ID")?.to_owned(),
+                ));
+            }
+        }
+    }
+    rows.sort();
+    Ok(rows)
+}
+
+async fn wait_trace_query(
+    deployment: &Deployment,
+    container: &ContainerAsync<GenericImage>,
+    tenant: &str,
+    path: &str,
+    query: &str,
+    expected: &Value,
+) -> TestResult<Value> {
+    tokio::time::timeout(TIMEOUT, async {
+        loop {
+            let response = deployment
+                .get(
+                    container,
+                    tenant,
+                    path,
+                    &[
+                        ("q", query),
+                        ("start", "1700000000"),
+                        ("end", "1700000001"),
+                        ("step", "1s"),
+                        ("limit", "10"),
+                        ("spss", "10"),
+                    ],
+                )
+                .await?;
+            let actual = if path == "/api/search" {
+                json!(transition_search_rows(&response)?)
+            } else {
+                let mut series = response["series"]
+                    .as_array()
+                    .ok_or("missing metrics series")?
+                    .clone();
+                series.sort_by_key(|series| series["labels"].to_string());
+                json!(series)
+            };
+            if actual == *expected {
+                return Ok(actual);
+            }
+            eprintln!("{tenant} {query}: expected {expected}, actual {actual}");
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    })
+    .await
+    .map_err(|error| format!("{tenant} {query}, expected {expected}: {error}"))?
+}
+
+async fn check_trace_queries(
+    deployment: &Deployment,
+    container: &ContainerAsync<GenericImage>,
+    tenant: &str,
+    span_ids: &[u8],
+    phase: &str,
+    evidence: &mut Vec<Value>,
+    filename: &str,
+) -> TestResult {
+    let child = if span_ids.contains(&2) {
+        vec![2]
+    } else {
+        vec![]
+    };
+    let root = if span_ids.contains(&1) {
+        vec![1]
+    } else {
+        vec![]
+    };
+    let counted = if span_ids.len() > 1 {
+        span_ids.to_vec()
+    } else {
+        vec![]
+    };
+    let mut cases = Vec::new();
+    for (query, ids) in [
+        (
+            r#"{ resource.service.name = "checkout" }"#,
+            span_ids.to_vec(),
+        ),
+        (
+            r#"{ name = "checkout" } >> { status = error }"#,
+            child.clone(),
+        ),
+        (
+            r#"{ resource.service.name = "checkout" } | count() > 1"#,
+            counted,
+        ),
+        (
+            r#"{ resource.service.name = "checkout" && name = "checkout" && duration >= 500ms } >> { .db.system = "postgresql" && status = error && duration > 100ms && duration < 200ms }"#,
+            child,
+        ),
+        (
+            r#"{ resource.service.name = "checkout" && .http.route = "/checkout" && duration >= 500ms }"#,
+            root,
+        ),
+        (r#"{ resource.service.name = "missing" }"#, vec![]),
+    ] {
+        let expected = ids
+            .iter()
+            .map(|id| (hex::encode([1; 16]), hex::encode([*id; 8])))
+            .collect::<Vec<_>>();
+        cases.push(("/api/search", query, json!(expected)));
+    }
+    if !span_ids.is_empty() {
+        // The root starts exactly on the first right-closed bucket boundary;
+        // the child starts 100ms later, so it belongs to the following bucket.
+        let series = span_ids.iter().map(|id| {
+            let (name, counts) = if *id == 1 { ("checkout", [1.0, 0.0]) } else { ("database", [0.0, 1.0]) };
+            json!({"labels":[{"key":"name","value":{"stringValue":name}}],
+                "promLabels":format!("{{name=\"{name}\"}}"),
+                "samples":[{"timestampMs":"1700000000000","value":counts[0]}, {"timestampMs":"1700000001000","value":counts[1]}],
+                "exemplars":[]})
+        }).collect::<Vec<_>>();
+        cases.push(("/api/metrics/query_range", r#"{ resource.service.name = "checkout" && duration > 0ns } | count_over_time() by(name) with(exemplars=false)"#, json!(series)));
+    }
+    for (path, query, expected) in cases {
+        let result = wait_trace_query(deployment, container, tenant, path, query, &expected).await;
+        evidence.push(
+            json!({"phase":phase, "tenant":tenant, "path":path, "query":query,
+            "expected":expected, "actual":result.as_ref().ok(),
+            "status":if result.is_ok() {"matched"} else {"mismatch"},
+            "error":result.as_ref().err().map(ToString::to_string)}),
+        );
+        if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+            let output = std::path::PathBuf::from(output);
+            std::fs::create_dir_all(&output)?;
+            std::fs::write(
+                output.join(filename),
+                serde_json::to_vec_pretty(&json!({"cases":evidence}))?,
+            )?;
+        }
+        result?;
+    }
+    Ok(())
 }
 
 #[tokio::test]
@@ -697,11 +884,63 @@ async fn tenants_keep_the_same_trace_id_isolated_across_restart() -> TestResult 
     deployment
         .trace(&deployment.hot, "tenant-b", 1, &expected(1, &[1], "other"))
         .await?;
+    let mut evidence = Vec::new();
+    let filename = "tempo-tenant-query-transitions.json";
+    check_trace_queries(
+        &deployment,
+        &deployment.hot,
+        TENANT,
+        &[1],
+        "hot-only",
+        &mut evidence,
+        filename,
+    )
+    .await?;
+    check_trace_queries(
+        &deployment,
+        &deployment.hot,
+        "tenant-b",
+        &[],
+        "hot-colliding-tenant-negative",
+        &mut evidence,
+        filename,
+    )
+    .await?;
     let cold = deployment.stored(TENANT, 1, &rows).await?;
     deployment
         .trace(&cold, "tenant-b", 1, &expected(1, &[1], "other"))
         .await?;
-    for container in [&deployment.hot, &cold] {
+    for (container, phase) in [(&deployment.hot, "hot-cold-overlap"), (&cold, "restart")] {
+        check_trace_queries(
+            &deployment,
+            container,
+            TENANT,
+            &[1],
+            phase,
+            &mut evidence,
+            filename,
+        )
+        .await?;
+        check_trace_queries(
+            &deployment,
+            container,
+            "tenant-b",
+            &[],
+            phase,
+            &mut evidence,
+            filename,
+        )
+        .await?;
+        check_trace_queries(
+            &deployment,
+            container,
+            "tenant-c",
+            &[],
+            phase,
+            &mut evidence,
+            filename,
+        )
+        .await?;
         deployment.missing(container, "tenant-c", 1).await?;
         for (tenant, service) in [(TENANT, "checkout"), ("tenant-b", "other")] {
             let result = deployment

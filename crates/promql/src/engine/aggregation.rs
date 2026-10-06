@@ -14,7 +14,7 @@ use super::{
         mismatched_custom_buckets_info, mixed_exponential_custom_warning,
         mixed_floats_histograms_agg_warning,
     },
-    histogram::{add_compatible_native_histogram, scaled_native_histogram},
+    histogram::HistogramAccumulator,
     labels::{aggregate_labels, float_sample_value, labels_key},
     range_functions::kahan_sum_inc,
     result_utils::quantile_value,

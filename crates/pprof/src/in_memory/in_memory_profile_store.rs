@@ -168,8 +168,24 @@ impl ProfileStore for InMemoryProfileStore {
         end_ms: i64,
     ) -> Result<crate::ProfileQueryStats, ProfileError> {
         let compiled = compile_matchers(matchers)?;
+        // This store is one ingester head. Head.Series applies time bounds to
+        // the whole head and then lists all selector-matching series, including
+        // those with no individual profile timestamp in the requested window.
+        let bounds = self.rows_in_range(tenant, i64::MIN, i64::MAX).fold(
+            None::<(i64, i64)>,
+            |bounds, row| {
+                Some(
+                    bounds.map_or((row.timestamp_ms, row.timestamp_ms), |(oldest, newest)| {
+                        (oldest.min(row.timestamp_ms), newest.max(row.timestamp_ms))
+                    }),
+                )
+            },
+        );
+        if !bounds.is_some_and(|(oldest, newest)| start_ms <= newest && end_ms >= oldest) {
+            return Ok(crate::ProfileQueryStats::default());
+        }
         let rows = self
-            .rows_in_range(tenant, start_ms, end_ms)
+            .rows_in_range(tenant, i64::MIN, i64::MAX)
             .filter(|row| row.profile_type == profile_type)
             .filter(|row| row_matches(row, &compiled));
         let mut stats = crate::ProfileQueryStats::default();

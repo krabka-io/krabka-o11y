@@ -3,6 +3,9 @@ use super::*;
 /// Per-tenant profile limits.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Limits {
+    /// Maximum concurrent background queries per tenant; zero disables them.
+    #[serde(default = "default_async_query_concurrency")]
+    pub max_async_query_concurrency: usize,
     /// Shared cross-request query admission budgets.
     #[serde(default)]
     pub query_admission: AdmissionLimits,
@@ -44,6 +47,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            max_async_query_concurrency: default_async_query_concurrency(),
             query_admission: AdmissionLimits::default(),
             ingestion_rate: per_sec(10_000),
             ingestion_burst_profiles: 10_000,
@@ -100,4 +104,8 @@ impl Limits {
         }
         Ok(())
     }
+}
+
+fn default_async_query_concurrency() -> usize {
+    5
 }

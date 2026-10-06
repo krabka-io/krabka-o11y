@@ -194,29 +194,37 @@ impl Tree {
         if self.nodes.len() <= max_nodes {
             return (0..self.nodes.len()).collect();
         }
+        let budget = max_nodes.saturating_sub(1);
+        if budget == 0 {
+            return HashSet::from([self.root]);
+        }
+        let mut totals = self
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != self.root)
+            .map(|(_, node)| node.total)
+            .collect::<Vec<_>>();
+        totals.sort_unstable_by(|left, right| right.cmp(left));
+        let threshold = totals[budget - 1];
+        // Pyroscope's cumulative-value cutoff retains every tied node. The
+        // requested node count is a threshold selector, not a strict cap.
         let parents = self.parents();
-        let mut ranked: Vec<usize> = (0..self.nodes.len())
-            .filter(|node| *node != self.root)
-            .collect();
-        ranked.sort_by(|left, right| {
-            self.nodes[*right]
-                .total
-                .cmp(&self.nodes[*left].total)
-                .then_with(|| self.nodes[*left].name.cmp(&self.nodes[*right].name))
-                .then_with(|| left.cmp(right))
-        });
         let mut keep = HashSet::from([self.root]);
-        for node in ranked {
-            let mut path = Vec::new();
+        for node in 0..self.nodes.len() {
             let mut current = Some(node);
-            while let Some(idx) = current {
-                if keep.contains(&idx) {
+            let mut path = Vec::new();
+            while let Some(index) = current {
+                if index == self.root {
                     break;
                 }
-                path.push(idx);
-                current = parents[idx];
+                if self.nodes[index].total < threshold {
+                    break;
+                }
+                path.push(index);
+                current = parents[index];
             }
-            if keep.len() + path.len() <= max_nodes {
+            if current == Some(self.root) {
                 keep.extend(path);
             }
         }

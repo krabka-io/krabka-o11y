@@ -368,7 +368,7 @@ load 5m
 
 # deriv should return the same as rate in simple cases.
 eval instant at 50m rate(http_requests_total{group="canary", instance="1", job="app-server"}[50m])
-	expect info
+	expect no_info
 	{group="canary", instance="1", job="app-server"} 0.26666666666666666
 
 eval instant at 50m deriv(http_requests_total{group="canary", instance="1", job="app-server"}[50m])
@@ -520,7 +520,6 @@ eval instant at 0m label_replace(testmetric, "dst", "value-$1", "src", "(.*")
   expect fail
 
 # label_replace fails when the destination label name is not a valid Prometheus label name.
-# krabka:divergence the destination label name is the invalid UTF-8 byte `\xff`, which a Rust `String` cannot hold, so the label-name validation upstream fails on never sees it.
 eval instant at 0m label_replace(testmetric, "\xff", "", "src", "(.*)")
   expect fail
 

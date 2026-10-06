@@ -427,6 +427,7 @@ fn write_shape(out: &mut String, expr: &LogqlExpr) {
     match expr {
         LogqlExpr::Stream { .. } => out.push_str("stream"),
         LogqlExpr::Metric { .. } => out.push_str("metric"),
+        LogqlExpr::Aggregation { expr, .. } => nest(out, "aggregation", [expr.as_ref()]),
         LogqlExpr::Scalar(text) => {
             let _ = write!(out, "scalar({text})");
         }

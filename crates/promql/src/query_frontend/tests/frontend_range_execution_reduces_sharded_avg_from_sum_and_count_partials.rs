@@ -44,6 +44,8 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_avg_from_sum_and_co
     assert2::assert!(
         result
             == unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
+                drop_name: false,
+                start_timestamps_ms: std::collections::BTreeMap::new(),
                 labels: labels(&[]),
                 samples: vec![(0, SampleValue::Float(4.0))],
             }]))

@@ -15,6 +15,21 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+      - name: verify pinned query-language inventory
+        run: |
+          set -euo pipefail
+          python3 tools/query-language-inventory.py --check
+          query_inventory_snapshot="$(mktemp -d "${RUNNER_TEMP}/query-language-inventory.XXXXXX")"
+          mkdir -p "${query_inventory_snapshot}/tools" "${query_inventory_snapshot}/qualification"
+          cp tools/query-language-inventory.py "${query_inventory_snapshot}/tools/"
+          python3 "${query_inventory_snapshot}/tools/query-language-inventory.py" --refresh
+          # Compare the source-derived inventory. Explicit evidence mappings are
+          # validated above and remain in the checked-in artifact unchanged.
+          jq -S '(.surfaces[].features) |= map({id})' \
+            qualification/query-language-inventory.json > "${query_inventory_snapshot}/expected.json"
+          jq -S '(.surfaces[].features) |= map({id})' \
+            "${query_inventory_snapshot}/qualification/query-language-inventory.json" > "${query_inventory_snapshot}/actual.json"
+          diff -u "${query_inventory_snapshot}/expected.json" "${query_inventory_snapshot}/actual.json"
       - name: resolve immutable releases
         env:
           GITHUB_TOKEN: ${{ github.token }}

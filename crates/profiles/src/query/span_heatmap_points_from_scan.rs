@@ -1,17 +1,16 @@
 use super::{
-    AsArray, COL_FINGERPRINT, COL_TIMESTAMP, Int64Type, PCOL_SPAN_ID, PCOL_TOTAL_VALUE,
-    ProfileError,
+    AsArray, COL_FINGERPRINT, COL_TIMESTAMP, Int64Type, PCOL_SPAN_ID, PCOL_VALUE, ProfileError,
 };
 
 pub(crate) async fn span_heatmap_points_from_scan(
     scan: &krabka_pprof::ProfileScan,
 ) -> Result<Vec<(i64, i64)>, ProfileError> {
     let sql = format!(
-        "SELECT {timestamp}, MAX({total}) AS total \
+        "SELECT {timestamp}, SUM({total}) AS total \
          FROM {table} WHERE {span} IS NOT NULL \
-         GROUP BY {timestamp}, {fingerprint}",
+         GROUP BY {timestamp}, {fingerprint}, {span}",
         timestamp = COL_TIMESTAMP,
-        total = PCOL_TOTAL_VALUE,
+        total = PCOL_VALUE,
         table = scan.samples_table,
         span = PCOL_SPAN_ID,
         fingerprint = COL_FINGERPRINT,

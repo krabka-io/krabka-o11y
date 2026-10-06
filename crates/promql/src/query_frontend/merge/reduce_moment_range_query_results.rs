@@ -59,6 +59,8 @@ pub(crate) fn reduce_moment_range_query_results(
             .collect::<Vec<_>>();
         if !samples.is_empty() {
             out_series.push(RangeSeries {
+                drop_name: false,
+                start_timestamps_ms: std::collections::BTreeMap::new(),
                 labels: series.labels,
                 samples,
             });

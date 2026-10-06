@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "experiment": "Reuse a canonical cold key only for equal hot labels",
-  "status": "repaired_baseline_ready_for_image_guard_deferred",
+  "status": "main_conformance_merge_validation_pending_guard_deferred",
   "candidate_applied": false,
   "correctness_qualified": false,
   "performance_qualified": false,
@@ -38,7 +38,7 @@
   "canonical_hash_implementation_unchanged": true,
   "prepared_independent_check": "A different hot label set whose row ID equals a canonical cold key still appears under its own canonical key in the complete returned label map. Existing hot-only, sharing, matcher and sample-limit ledgers remain.",
   "negative_control_to_run": "Remove full label equality while keeping key-presence lookup. The different-hot-label complete-map ledger must fail.",
-  "next_action": "Preserve a fresh GCP image of the validated common-repair baseline. Then apply only the runtime equality guard, verify every other shipped ELF remains identical, and compare three alternating uninstrumented pairs before retention.",
+  "next_action": "Finish the main conformance merge and its verification. Then register a new exact GCP baseline before applying the runtime equality guard. Preserve the historical e7bd image and its diagnostic profiles.",
   "draft_review": "Use a nonempty metric-name matcher so the cold index accepts the test query and both differing job labels qualify.",
   "rebase_correctness": "387 ordinary checks and five native wrappers with 37 cases passed before cache removal.",
   "baseline_source_commit": "e7bd6789f0eeb72e4ffdbd31212ce8e2497cdb2b",
@@ -169,13 +169,14 @@
       "crates/promql/src/in_memory/tests/interned_series_labels.rs": "67b01e1408fde757c562429ae9f3c0ce4d7775b2eb3953dac7b370299baab5c7",
       "crates/metrics-service/src/tests/instant_float_scan.rs": "fd1000cdc7123035b13b398e7a9c7044a9eeb84b7faa5c7329cfb5bb0b6385a3"
     },
-    "ready_for_image": true,
+    "ready_for_image": false,
     "validation_record": {
       "path": "qualification/evidence/correctness/common-repairs-baseline-recovery-e7bd6789f0ee/validation-record.json",
       "sha256": "184d0a89d87fe6993414b36dbd851fcf90e4710403327fcd50cd6a4ec629d7c0"
     },
     "correctness_scope": "five-package heap-profiling Cargo Clippy+formatter+387 ordinary targets+three fresh metrics native wrappers; final-head whole-stack CI separate",
-    "whole_stack_ci_qualified": false
+    "whole_stack_ci_qualified": false,
+    "scope_note": "These four-source checks precede merging main 0321cbf3; they do not qualify the merged baseline."
   },
   "previous_common_repair_attempt": {
     "path": "qualification/evidence/correctness/common-repairs-baseline-e7bd6789f0ee/validation-record.json",

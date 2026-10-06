@@ -3,8 +3,6 @@ use std::cmp::Ordering;
 use assert2::assert;
 use serde_json::{Map, Value, json};
 
-const FLOAT_EPSILON: f64 = 1e-6;
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SeedPoint {
     pub metric: &'static str,
@@ -77,18 +75,81 @@ pub fn assert_query_equal(name: &str, left: &Value, right: &Value) {
     let left = normalize(left);
     let right = normalize(right);
     assert!(
-        left == right,
+        queries_equal(&left, &right),
         "query `{name}` differed\nleft: {}\nright: {}",
         pretty(&left),
         pretty(&right)
     );
 }
 
+/// Compares float sample strings with absolute tolerance 1e-6. Labels, sample
+/// timestamps, string results, annotations, nonfinite values, and result shapes
+/// remain exact. Pairwise comparison avoids false failures at rounding boundaries.
+#[must_use]
+pub fn queries_equal(left: &Value, right: &Value) -> bool {
+    equivalent_value(&normalize(left), &normalize(right), false, false)
+}
+
+fn equivalent_value(left: &Value, right: &Value, numeric: bool, string_result: bool) -> bool {
+    match (left, right) {
+        (Value::Object(left), Value::Object(right)) => {
+            let string_result = string_result || left.get("resultType") == Some(&json!("string"));
+            let scalar_result = left.get("resultType") == Some(&json!("scalar"));
+            left.len() == right.len()
+                && left.iter().all(|(key, left)| {
+                    right.get(key).is_some_and(|right| {
+                        if key == "metric" {
+                            return left == right;
+                        }
+                        if key == "result" && scalar_result {
+                            let (Some(left), Some(right)) = (left.as_array(), right.as_array())
+                            else {
+                                return false;
+                            };
+                            return left.len() == 2
+                                && right.len() == 2
+                                && left[0].is_number()
+                                && left[0] == right[0]
+                                && left[1].is_string()
+                                && right[1].is_string()
+                                && equivalent_value(&left[1], &right[1], true, false);
+                        }
+                        let numeric = !string_result
+                            && (numeric
+                                || matches!(
+                                    key.as_str(),
+                                    "value" | "values" | "histogram" | "histograms"
+                                ));
+                        equivalent_value(left, right, numeric, string_result)
+                    })
+                })
+        }
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| equivalent_value(left, right, numeric, string_result))
+        }
+        (Value::String(left), Value::String(right)) if numeric => {
+            if left == right {
+                return true;
+            }
+            match (left.parse::<f64>(), right.parse::<f64>()) {
+                (Ok(left), Ok(right)) if left.is_finite() && right.is_finite() => {
+                    (left - right).abs() <= 1e-6
+                }
+                _ => false,
+            }
+        }
+        _ => left == right,
+    }
+}
+
 fn normalize_value(value: &Value) -> Value {
     match value {
         Value::Array(values) => Value::Array(values.iter().map(normalize_value).collect()),
         Value::Object(object) => normalize_object(object),
-        Value::String(value) => normalize_string(value),
         other => other.clone(),
     }
 }
@@ -99,7 +160,14 @@ fn normalize_object(object: &Map<String, Value>) -> Value {
         if is_volatile_field(key) {
             continue;
         }
-        out.insert(key.clone(), normalize_value(value));
+        out.insert(
+            key.clone(),
+            if key == "metric" {
+                value.clone()
+            } else {
+                normalize_value(value)
+            },
+        );
     }
 
     if let Some(Value::Array(result)) = out.get_mut("result") {
@@ -114,30 +182,6 @@ fn normalize_object(object: &Map<String, Value>) -> Value {
     Value::Object(out)
 }
 
-fn normalize_string(value: &str) -> Value {
-    match value {
-        "NaN" | "+Inf" | "-Inf" => Value::String(value.to_string()),
-        _ => value
-            .parse::<f64>()
-            .map_or_else(|_| Value::String(value.to_string()), rounded_float_string),
-    }
-}
-
-fn rounded_float_string(value: f64) -> Value {
-    if value.is_finite() {
-        Value::String(format!(
-            "{:.6}",
-            (value / FLOAT_EPSILON).round() * FLOAT_EPSILON
-        ))
-    } else if value.is_nan() {
-        Value::String("NaN".to_string())
-    } else if value.is_sign_positive() {
-        Value::String("+Inf".to_string())
-    } else {
-        Value::String("-Inf".to_string())
-    }
-}
-
 fn is_volatile_field(key: &str) -> bool {
     key == "stats"
 }
@@ -149,14 +193,8 @@ fn compare_series_result(left: &Value, right: &Value) -> Ordering {
 fn series_sort_key(value: &Value) -> String {
     let labels = value
         .get("metric")
-        .and_then(Value::as_object)
-        .map(|metric| {
-            metric
-                .iter()
-                .map(|(name, value)| format!("{name}={}", value.as_str().unwrap_or("")))
-                .collect::<Vec<_>>()
-                .join(",")
-        })
+        .filter(|metric| metric.is_object())
+        .map(Value::to_string)
         .unwrap_or_default();
     let sample = value
         .get("value")
@@ -179,4 +217,56 @@ fn _native_histogram_shape_marker() -> Value {
         "positiveSpans": [],
         "negativeSpans": []
     })
+}
+
+#[cfg(test)]
+mod normalization_controls {
+    use super::{assert, json, queries_equal};
+
+    #[test]
+    fn numeric_tolerance_preserves_labels_and_large_finite_values() {
+        let sample = |label: &str, value: &str| json!({"data":{"result":[{"metric":{"instance":label},"value":[1,value]}]}});
+        assert!(queries_equal(&sample("1", "1.00000001"), &sample("1", "1")));
+        assert!(!queries_equal(&sample("1", "1"), &sample("1.0", "1")));
+        assert!(!queries_equal(&sample("1", "1e308"), &sample("1", "+Inf")));
+        assert!(!queries_equal(
+            &sample("1", "1e308"),
+            &sample("1", "1.1e308")
+        ));
+        assert!(!queries_equal(&sample("1", "-1e308"), &sample("1", "-Inf")));
+        assert!(queries_equal(
+            &sample("1", "17.53656249999999"),
+            &sample("1", "17.536562500000002")
+        ));
+        assert!(!queries_equal(&sample("1", "1.000002"), &sample("1", "1")));
+        let timestamp_changed =
+            json!({"data":{"result":[{"metric":{"instance":"1"},"value":[1.000_000_01,"1"]}]}});
+        assert!(!queries_equal(&sample("1", "1"), &timestamp_changed));
+        let string_result = |value| json!({"data":{"resultType":"string","result":[1,value]}});
+        assert!(!queries_equal(&string_result("1"), &string_result("1.0")));
+        let scalar =
+            |timestamp, value| json!({"data":{"resultType":"scalar","result":[timestamp,value]}});
+        assert!(queries_equal(
+            &scalar(json!(1), "-2e-07"),
+            &scalar(json!(1), "-0.0000002")
+        ));
+        assert!(!queries_equal(
+            &scalar(json!(1), "1.000002"),
+            &scalar(json!(1), "1")
+        ));
+        assert!(!queries_equal(
+            &scalar(json!(1), "1"),
+            &scalar(json!(2), "1")
+        ));
+        assert!(!queries_equal(
+            &scalar(json!("1"), "1"),
+            &scalar(json!("1.0"), "1")
+        ));
+        let one = json!({"metric":{"a":"x,b=y"},"value":[1,"1"]});
+        let two = json!({"metric":{"a":"x","b":"y"},"value":[1,"1"]});
+        assert!(queries_equal(
+            &json!({"data":{"result":[one.clone(),two.clone()]}}),
+            &json!({"data":{"result":[two,one]}})
+        ));
+    }
 }

@@ -1,0 +1,1 @@
+histogram_fraction(-4, -2, negative_buckets_lower_falls_in_the_first_bucket)

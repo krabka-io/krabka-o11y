@@ -1,0 +1,1 @@
+histogram_stdvar(rate(const_histogram[5m]))

@@ -1,10 +1,6 @@
 use super::*;
 
-/// `apply_loki_stream_limit` spends one budget across several streams,
-/// truncating the last one that fits. The budget only visibly decrements
-/// when an earlier stream takes part of it and a later stream needs the
-/// rest -- with a single stream, any arithmetic on the remainder looks
-/// alike.
+/// A single global budget selects the earliest entries across overlapping streams.
 #[test]
 pub(crate) fn a_loki_stream_limit_is_spent_across_streams_in_order() {
     let streams = |counts: &[usize]| {
@@ -43,23 +39,25 @@ pub(crate) fn a_loki_stream_limit_is_spent_across_streams_in_order() {
     check!(
         kept(&super::super::prelude::apply_loki_stream_limit(
             streams(&[2, 10]),
+            crate::http::params::value_decoding::LokiDirection::Forward,
             Some(5)
         )) == vec![2, 3]
     );
 
-    // A stream that exhausts the budget empties every stream after it,
-    // and emptied streams are dropped entirely.
+    // Overlapping timestamps interleave both streams within the global cap.
     check!(
         kept(&super::super::prelude::apply_loki_stream_limit(
             streams(&[5, 10]),
+            crate::http::params::value_decoding::LokiDirection::Forward,
             Some(5)
-        )) == vec![5]
+        )) == vec![3, 2]
     );
 
     // Under budget, nothing is touched.
     check!(
         kept(&super::super::prelude::apply_loki_stream_limit(
             streams(&[2, 2]),
+            crate::http::params::value_decoding::LokiDirection::Forward,
             Some(5)
         )) == vec![2, 2]
     );
@@ -68,6 +66,7 @@ pub(crate) fn a_loki_stream_limit_is_spent_across_streams_in_order() {
     check!(
         kept(&super::super::prelude::apply_loki_stream_limit(
             streams(&[9]),
+            crate::http::params::value_decoding::LokiDirection::Forward,
             None
         )) == vec![9]
     );

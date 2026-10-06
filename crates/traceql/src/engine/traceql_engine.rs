@@ -187,6 +187,8 @@ impl<S: SpanStore> TraceqlEngine<S> {
         }
 
         let mut scan_options = scan_options;
+        scan_options.include_raw_attributes |=
+            !metric.by.is_empty() || metric.value.is_some() || max_exemplars > 0;
         extend_metric_projection_matchers(&mut scan_options, &metric);
         let planned = plan_query(
             self.store.as_ref(),

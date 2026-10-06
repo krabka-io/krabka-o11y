@@ -3738,6 +3738,8 @@ dependencies = [
  "krabka-blockstore",
  "krabka-units",
  "regex",
+ "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "tracing",

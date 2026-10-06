@@ -23,7 +23,6 @@ pub fn decode_otlp(
             .resource
             .iter()
             .flat_map(|resource| &resource.attributes)
-            .filter(|attribute| attribute.key.starts_with("process."))
             .filter_map(|attribute| {
                 let value = match attribute.value.as_ref()?.value.as_ref()? {
                     Value::StringValue(value) if !value.is_empty() => value.clone(),

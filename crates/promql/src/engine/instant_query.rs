@@ -81,7 +81,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                                         sample.ts_ms = time_ms;
                                     }
                                 }
-                                finalize_metric_names(&mut result);
+                                finalize_metric_names(&mut result)?;
                                 validate_unique_instant_labelsets(&result)?;
                                 let annotations = ANNOTATIONS.with(|sink| sink.borrow().clone());
                                 Ok((result, annotations))

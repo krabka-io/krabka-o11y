@@ -18,8 +18,11 @@ pub(crate) fn matcher_from_field_expr(fe: &FieldExpr) -> Option<SpanMatcher> {
             value: MatchValue::Nil,
             negated: false,
         }),
-        FieldExpr::And(_, _) | FieldExpr::Or(_, _) | FieldExpr::Not(_) | FieldExpr::Const(_) => {
-            None
-        }
+        FieldExpr::ExpressionComparison { .. }
+        | FieldExpr::FieldComparison { .. }
+        | FieldExpr::And(_, _)
+        | FieldExpr::Or(_, _)
+        | FieldExpr::Not(_)
+        | FieldExpr::Const(_) => None,
     }
 }

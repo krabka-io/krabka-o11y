@@ -7,6 +7,7 @@ pub(crate) fn field_expr_to_negated_matcher_disjuncts(
     fe: &FieldExpr,
 ) -> Option<Vec<Vec<SpanMatcher>>> {
     match fe {
+        FieldExpr::ExpressionComparison { .. } | FieldExpr::FieldComparison { .. } => None,
         FieldExpr::Comparison { .. } | FieldExpr::Field(_) => {
             matcher_from_field_expr(fe).map(|matcher| vec![vec![negate_matcher(matcher)]])
         }

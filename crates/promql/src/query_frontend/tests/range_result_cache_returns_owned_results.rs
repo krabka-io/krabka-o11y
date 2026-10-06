@@ -11,6 +11,8 @@ pub(crate) async fn range_result_cache_returns_owned_results() {
         shard: None,
     };
     let result = unannotated(QueryResult::RangeMatrix(vec![RangeSeries {
+        drop_name: false,
+        start_timestamps_ms: std::collections::BTreeMap::new(),
         labels: labels(&[("__name__", "up")]),
         samples: vec![(0, SampleValue::Float(1.0))],
     }]));

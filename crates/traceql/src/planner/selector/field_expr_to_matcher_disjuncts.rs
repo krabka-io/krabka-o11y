@@ -41,6 +41,8 @@ pub(crate) fn field_expr_to_matcher_disjuncts(fe: &FieldExpr) -> Option<Vec<Vec<
         FieldExpr::Not(inner) if has_nested_scope(inner) => {
             field_expr_to_negated_matcher_disjuncts(inner)
         }
-        FieldExpr::Not(_) => None,
+        FieldExpr::ExpressionComparison { .. }
+        | FieldExpr::FieldComparison { .. }
+        | FieldExpr::Not(_) => None,
     }
 }
