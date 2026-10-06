@@ -82,6 +82,8 @@ pull_image = use_repo_rule("@rules_img//img:pull.bzl", "pull")
         name = name,
         digest = digest,
         layer_handling = "eager",
+        # The mirror can lack a pinned layer. Try Docker Hub for the same bytes.
+        registries = ["index.docker.io"] if registry == "mirror.gcr.io" else [],
         registry = registry,
         repository = repository,
         tag = tag,
