@@ -44,6 +44,15 @@ pub(crate) async fn run_distributor(
     let producer = Box::pin(
         Producer::builder()
             .bootstrap(cli.bootstrap)
+            // Span pushes enqueue many records before awaiting their acks.
+            // Keep the default batch size for custom frame limits.
+            .batch_size(
+                if cli.client_frame_max == krabka_client_core::DEFAULT_CLIENT_FRAME_MAX {
+                    64 * 1024
+                } else {
+                    krabka_client_producer::DEFAULT_PRODUCER_BATCH_BYTES
+                },
+            )
             .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
             .frame_max(cli.client_frame_max)
             .maybe_security(security.wal.clone())
