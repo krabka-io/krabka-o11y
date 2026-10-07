@@ -14,6 +14,19 @@ pub(crate) fn apply_loki_stream_options(
         return value;
     }
 
+    // Hot/cold overlap must not consume the limit before the frontend merges.
+    if limit.is_some()
+        && let Some(streams) = value
+            .pointer_mut("/data/result")
+            .and_then(Value::as_array_mut)
+    {
+        for stream in streams {
+            if let Some(values) = stream.get_mut("values").and_then(Value::as_array_mut) {
+                values.dedup();
+            }
+        }
+    }
+
     apply_loki_stream_end_bound(&mut value, end_exclusive);
     apply_loki_stream_interval(&mut value, interval);
 

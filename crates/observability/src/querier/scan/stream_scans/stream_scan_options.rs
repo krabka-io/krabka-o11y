@@ -1,4 +1,7 @@
-use std::{cmp::Reverse, collections::BinaryHeap};
+use std::{
+    cmp::Reverse,
+    collections::{BinaryHeap, HashSet},
+};
 
 use super::{
     BTreeMap, BlockDescriptor, Labels, LokiDirection, LokiStreamEncoding, LokiStreamEntry,
@@ -61,23 +64,31 @@ impl StreamScanOptions {
         hot_streams: &BTreeMap<Labels, Vec<LokiStreamEntry>>,
         next_block: &BlockDescriptor,
     ) -> bool {
-        if !self.allow_limit_short_circuit {
+        if !self.allow_limit_short_circuit || self.encoding != LokiStreamEncoding::Folded {
             return false;
         }
         let Some(limit) = self.limit else {
             return false;
         };
+        // A cold row can still be in the hot tail until the frontier advances.
+        let mut seen = HashSet::new();
         streams
-            .values()
-            .chain(hot_streams.values())
-            .flatten()
-            .filter_map(LokiStreamEntry::parsed_timestamp_ns)
-            .filter(|timestamp| {
-                self.end_exclusive.is_none_or(|end| *timestamp < end)
-                    && match self.direction {
-                        LokiDirection::Forward => *timestamp < next_block.key.time_range.start_ns,
-                        LokiDirection::Backward => *timestamp > next_block.key.time_range.end_ns,
-                    }
+            .iter()
+            .chain(hot_streams.iter())
+            .flat_map(|(labels, entries)| entries.iter().map(move |entry| (labels, entry)))
+            .filter(|(_, entry)| {
+                entry.parsed_timestamp_ns().is_some_and(|timestamp| {
+                    self.end_exclusive.is_none_or(|end| timestamp < end)
+                        && match self.direction {
+                            LokiDirection::Forward => {
+                                timestamp < next_block.key.time_range.start_ns
+                            }
+                            LokiDirection::Backward => timestamp > next_block.key.time_range.end_ns,
+                        }
+                })
+            })
+            .filter(|(labels, entry)| {
+                seen.insert((*labels, entry.timestamp_ns.as_str(), entry.line.as_str()))
             })
             .take(limit)
             .count()
@@ -94,6 +105,12 @@ impl StreamScanOptions {
         let Some(mut remaining) = self.limit else {
             return;
         };
+        // Match the frontend's folded-entry deduplication before spending the limit.
+        for entries in streams.values_mut() {
+            entries.dedup_by(|left, right| {
+                left.timestamp_ns == right.timestamp_ns && left.line == right.line
+            });
+        }
         if streams.len() > 1 {
             self.trim_multiple_streams_before_encoding(streams, remaining);
             return;

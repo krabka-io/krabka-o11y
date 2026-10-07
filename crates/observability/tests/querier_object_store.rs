@@ -139,6 +139,144 @@ async fn query_endpoint_can_build_querier_from_object_store_shard_catalog_config
 }
 
 #[tokio::test]
+async fn overlapping_hot_and_cold_rows_do_not_spend_the_query_limit_twice() {
+    let object_dir = tempfile::tempdir().unwrap();
+    let data_root = tempfile::tempdir().unwrap();
+    let store = LocalFileSystem::new_with_prefix(object_dir.path()).unwrap();
+    let prefix = ObjectPath::from("indexes");
+    let mut label_index = LabelIndex::default();
+    let sources = ["a", "b"].map(|replica| {
+        let source = labels([("app", "api"), ("replica", replica)]);
+        let fingerprint = label_index.insert_series("tenant-a", source.clone());
+        (source, fingerprint)
+    });
+    let mut block_index = BlockIndex::default();
+    for (start, end) in [(10, 20), (30, 30)] {
+        let rows = sources
+            .iter()
+            .flat_map(|(_, fingerprint)| {
+                [10, 20, 30]
+                    .into_iter()
+                    .filter(move |timestamp| (start..=end).contains(timestamp))
+                    .map(|timestamp| {
+                        LogRow::new(
+                            *fingerprint,
+                            timestamp,
+                            format!("line-{timestamp}"),
+                            labels([("user", "alice")]),
+                        )
+                    })
+            })
+            .collect();
+        block_index.insert(
+            write_log_block_to_object_store(
+                &store,
+                &prefix,
+                &BlockKey::new(
+                    "tenant-a",
+                    0,
+                    start,
+                    end,
+                    TimeRange::new(start, end).unwrap(),
+                ),
+                rows,
+            )
+            .await
+            .unwrap(),
+        );
+    }
+    write_tenant_log_index_manifest_to_object_store(
+        &store,
+        &prefix,
+        "tenant-a",
+        &label_index,
+        &block_index,
+    )
+    .await
+    .unwrap();
+    let hot_tail = InMemoryWalSink::default();
+    for (source, _) in &sources {
+        hot_tail
+            .append(WalLogRecord {
+                tenant: "tenant-a".into(),
+                labels: source.clone(),
+                timestamp_ns: 30,
+                line: "line-30".into(),
+                structured_metadata: labels([("user", "alice")]),
+                position: None,
+            })
+            .await
+            .unwrap();
+    }
+    let config = ServiceConfig {
+        target: Role::Querier,
+        object_store_url: Some(format!("file://{}", object_dir.path().display())),
+        data_root: data_root.path().into(),
+        querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
+        tenant: Some("tenant-a".into()),
+        index_prefix: Some(prefix.to_string()),
+        querier_cold_block_fetch_concurrency: std::num::NonZeroUsize::MIN,
+        ..ServiceConfig::default()
+    };
+    let app = build_service_router(
+        &config,
+        ServiceDependencies::default().with_hot_tail(hot_tail, 0),
+        None,
+    )
+    .await
+    .unwrap();
+    for categorized in [false, true] {
+        for direction in ["forward", "backward"] {
+            for (limit, end, interval, expected_rows) in [
+                (2, 40, None, 1),
+                (4, 40, None, 2),
+                (6, 40, None, 3),
+                (4, 30, None, 2),
+                (4, 40, Some(15), 2),
+            ] {
+                let interval_query = interval
+                    .map(|interval| format!("&interval=0.{interval:09}"))
+                    .unwrap_or_default();
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .uri(format!(
+                                "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.{end:09}&direction={direction}&limit={limit}{interval_query}"
+                            ))
+                            .header("X-Scope-OrgID", "tenant-a")
+                            .header("X-Loki-Response-Encoding-Flags", if categorized { "categorize-labels" } else { "" })
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert!(response.status() == StatusCode::OK);
+                let expected = sources.iter().map(|(source, _)| {
+                    let mut stream = source.clone();
+                    if !categorized { stream.insert("user".into(), "alice".into()); }
+                    let mut timestamps = match (end, interval) {
+                        (30, _) => vec![10, 20],
+                        (_, Some(_)) => vec![10, 30],
+                        _ => vec![10, 20, 30],
+                    };
+                    if direction == "backward" { timestamps.reverse(); }
+                    let values = timestamps.into_iter().take(expected_rows).map(|timestamp| {
+                        if categorized {
+                            json!([timestamp.to_string(), format!("line-{timestamp}"), {"structuredMetadata": {"user": "alice"}}])
+                        } else {
+                            json!([timestamp.to_string(), format!("line-{timestamp}")])
+                        }
+                    }).collect::<Vec<_>>();
+                    json!({"stream": stream, "values": values})
+                }).collect::<Vec<_>>();
+                assert!(json_body(response).await["data"]["result"] == json!(expected));
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn configured_object_store_query_returns_partial_warning_for_missing_block() {
     let object_dir = tempfile::tempdir().unwrap().keep();
     let data_root = tempfile::tempdir().unwrap().keep();
