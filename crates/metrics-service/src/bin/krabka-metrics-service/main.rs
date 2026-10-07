@@ -941,6 +941,9 @@ mod tests {
 #[cfg(all(test, unix))]
 mod sigterm_exits_the_querier;
 
+#[cfg(test)]
+mod the_shared_querier_starts_and_drains;
+
 mod alloc;
 mod cli;
 mod load_runtime_overrides;
@@ -1051,15 +1054,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let serve_role = Box::pin(async {
                 match cli.target {
                     Target::Querier => {
+                        let shutdown = Shutdown::new();
+                        spawn_shutdown_signal_listener(shutdown.clone());
                         run_querier(
                             cli,
                             metrics,
                             readiness,
-                            &server_security,
+                            server_security.clone(),
                             wal_security,
                             audit,
+                            shutdown,
                         )
                         .await
+                        .map_err(|error| error as Box<dyn std::error::Error>)
                     }
                     Target::QueryFrontend => {
                         run_query_frontend(
