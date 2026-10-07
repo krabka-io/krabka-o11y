@@ -221,7 +221,7 @@ impl StreamScanOptions {
     }
 
     pub(crate) fn block_fetch_concurrency(self) -> usize {
-        if !self.allow_limit_short_circuit {
+        if !self.allow_limit_short_circuit || self.encoding != LokiStreamEncoding::Folded {
             return self.block_fetch_concurrency.get();
         }
         self.limit
@@ -378,5 +378,40 @@ mod tests {
             options.trim_before_encoding(&mut bounded);
             assert2::check!(bounded == streams());
         }
+    }
+
+    #[test]
+    fn block_fetch_concurrency_keeps_the_configured_bound_for_exhaustive_scans() {
+        for (encoding, limit, interval, configured, expected) in [
+            (LokiStreamEncoding::Folded, Some(1), None, 8, 1),
+            (LokiStreamEncoding::CategorizeLabels, Some(1), None, 8, 8),
+            (LokiStreamEncoding::Folded, Some(0), None, 8, 1),
+            (LokiStreamEncoding::CategorizeLabels, Some(0), None, 8, 8),
+            (LokiStreamEncoding::Folded, Some(3), None, 8, 3),
+            (LokiStreamEncoding::Folded, Some(12), None, 8, 8),
+            (LokiStreamEncoding::Folded, None, None, 8, 8),
+            (LokiStreamEncoding::CategorizeLabels, None, None, 8, 8),
+            (LokiStreamEncoding::Folded, Some(1), Some(2), 8, 8),
+            (LokiStreamEncoding::CategorizeLabels, Some(1), Some(2), 8, 8),
+            (LokiStreamEncoding::Folded, Some(0), Some(0), 8, 8),
+            (LokiStreamEncoding::Folded, Some(1), None, 1, 1),
+            (LokiStreamEncoding::CategorizeLabels, Some(1), None, 1, 1),
+        ] {
+            let options = StreamScanOptions::from_stream_options(
+                LokiDirection::Forward,
+                limit,
+                interval,
+                None,
+            )
+            .with_encoding(encoding)
+            .with_block_fetch_concurrency(NonZeroUsize::new(configured).unwrap());
+            assert2::check!(options.block_fetch_concurrency() == expected);
+        }
+
+        let mut options =
+            StreamScanOptions::from_stream_options(LokiDirection::Forward, Some(1), None, None)
+                .with_block_fetch_concurrency(NonZeroUsize::new(8).unwrap());
+        options.allow_limit_short_circuit = false;
+        assert2::check!(options.block_fetch_concurrency() == 8);
     }
 }
