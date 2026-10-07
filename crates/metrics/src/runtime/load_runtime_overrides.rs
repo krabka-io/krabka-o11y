@@ -2,7 +2,7 @@ use super::{OverridesProvider, Path};
 
 pub(crate) fn load_runtime_overrides(
     path: Option<&Path>,
-) -> Result<Option<OverridesProvider>, Box<dyn std::error::Error>> {
+) -> Result<Option<OverridesProvider>, Box<dyn std::error::Error + Send + Sync>> {
     let Some(path) = path else {
         return Ok(None);
     };

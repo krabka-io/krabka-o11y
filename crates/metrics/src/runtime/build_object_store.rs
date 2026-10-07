@@ -19,7 +19,7 @@ use super::{Arc, ObjectStore};
 pub(crate) async fn build_object_store(
     url: &str,
     metrics: ObjectStoreMetrics,
-) -> Result<Arc<dyn ObjectStore>, Box<dyn std::error::Error>> {
+) -> Result<Arc<dyn ObjectStore>, Box<dyn std::error::Error + Send + Sync>> {
     let parsed = url::Url::parse(url)?;
     let (store, prefix) = object_store::parse_url_opts(&parsed, std::env::vars())?;
     let store = MeteredObjectStore::wrap(Arc::new(PrefixStore::new(store, prefix)), metrics);

@@ -25,12 +25,8 @@ pub(crate) fn spawn_retention_sweeper(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
-            match krabka_metrics::enforce_compaction_retention(
-                &store,
-                SystemTime::now(),
-                overrides.as_ref(),
-            )
-            .await
+            match crate::enforce_compaction_retention(&store, SystemTime::now(), overrides.as_ref())
+                .await
             {
                 Ok(stats) => record_retention_stats(&metrics, &stats),
                 Err(error) => {
@@ -48,10 +44,7 @@ pub(crate) fn spawn_retention_sweeper(
     })
 }
 
-fn record_retention_stats(
-    metrics: &ServiceMetrics,
-    stats: &krabka_metrics::CompactionRetentionStats,
-) {
+fn record_retention_stats(metrics: &ServiceMetrics, stats: &crate::CompactionRetentionStats) {
     metrics.compaction.record_deleted(
         stats.blocks_deleted.deleted as u64,
         stats.manifests_retired.deleted as u64,
