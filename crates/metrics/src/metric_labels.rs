@@ -84,7 +84,13 @@ impl MetricLabels {
     /// Canonical length-prefixed byte identity, shared by collision and matching keys.
     #[must_use]
     pub fn byte_key(&self) -> Vec<u8> {
-        let mut key = Vec::new();
+        let capacity = self.iter().fold(0usize, |capacity, (name, value)| {
+            capacity
+                .saturating_add(16)
+                .saturating_add(name.len())
+                .saturating_add(value.as_bytes().len())
+        });
+        let mut key = Vec::with_capacity(capacity);
         for (name, value) in self.iter() {
             key.extend_from_slice(&(name.len() as u64).to_le_bytes());
             key.extend_from_slice(name.as_bytes());
