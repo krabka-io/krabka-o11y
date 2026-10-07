@@ -101,6 +101,34 @@ def query_request(signal, window_seconds=30):
     return path, body
 
 
+def log_seed_ledger(records, response, limit):
+    # Both pinned backends discover these labels for the envelope log lines.
+    expected = {
+        (tuple(sorted({**stream['stream'], 'service_name': 'envelope',
+                       'detected_level': 'unknown'}.items())), *entry)
+        for record in records for stream in record['request']['streams']
+        for entry in stream['values']}
+    streams = response['data']['result']
+    keys = [tuple(sorted(stream['stream'].items())) for stream in streams]
+    actual = [(key, *entry) for key, stream in zip(keys, streams) for entry in stream['values']]
+    unique = set(actual)
+    wanted = min(limit, len(expected))
+    cutoff = sorted((int(row[1]) for row in expected), reverse=True)[wanted - 1] if wanted else None
+    newer = {row for row in expected if int(row[1]) > cutoff} if wanted else set()
+    # The limit may cut a timestamp tie. Either backend can select those tied rows.
+    verified = (response['status'] == 'success' and response['data']['resultType'] == 'streams'
+                and wanted > 0 and len(keys) == len(set(keys))
+                and all(stream['values'] for stream in streams)
+                and len(actual) == len(unique) == wanted and unique <= expected and newer <= unique
+                and all(int(row[1]) >= cutoff for row in unique)
+                and all([int(entry[0]) for entry in stream['values']]
+                        == sorted((int(entry[0]) for entry in stream['values']), reverse=True)
+                        for stream in streams))
+    return {'seed_unique_rows': len(expected), 'query_limit': limit,
+            'expected_query_rows': wanted, 'observed_query_rows': len(actual),
+            'complete_seed': len(expected) <= limit, 'verified': verified}
+
+
 def resource_sample(deployment, sample):
     sample['cpu_usec'], sample['throttled_usec'] = {}, {}
     sample['load_generator_cpu_seconds'] = time.process_time()
@@ -333,7 +361,10 @@ class ComparisonDeployment(env.Deployment):
             path, body, content, rows = write_request(signal, sequence, cardinality, tenant, age_seconds)
             started = time.monotonic()
             status, response = http(env.INGEST[signal], path, tenant, body, content)
-            records.append({'sequence': sequence, 'status': status, 'rows': rows, 'seconds': time.monotonic() - started, 'tenant': tenant, 'cardinality': cardinality, 'age_seconds': age_seconds})
+            record = {'sequence': sequence, 'status': status, 'rows': rows, 'seconds': time.monotonic() - started, 'tenant': tenant, 'cardinality': cardinality, 'age_seconds': age_seconds}
+            if signal == 'logs':
+                record['request'] = body
+            records.append(record)
             if not 200 <= status < 300:
                 raise RuntimeError(f'seed failed: {status} {response[:200]!r}')
         try:
@@ -356,6 +387,13 @@ class ComparisonDeployment(env.Deployment):
         if signal == 'metrics':
             observed = float(data['data']['result'][0]['value'][1])
             expected = sum((env.SEED + label) % 97 for label in range(cardinality))
+        elif signal == 'logs':
+            limit = int(env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(path).query)['limit'][0])
+            ledger = log_seed_ledger(records, data, limit)
+            (self.evidence / f'{tenant}.seed-ledger.json').write_text(json.dumps(ledger, indent=2))
+            if not ledger['verified']:
+                raise RuntimeError(f'seed log ledger mismatch: {ledger}')
+            return
         elif signal == 'profiles':
             observed = float(data['flamegraph']['total'])
             expected = len(records) * env.POINTS
@@ -474,6 +512,81 @@ def run(args):
 
 
 def self_test():
+    from unittest.mock import patch
+
+    records = [{'request': {'streams': [
+        {'stream': {'job': 'envelope', 'series': series},
+         'values': [['1', 'older'], ['2', 'newer']]} for series in ('a', 'b')]}}]
+    response = {'status': 'success', 'data': {'resultType': 'streams', 'result': [
+        {'stream': {'job': 'envelope', 'series': series, 'service_name': 'envelope', 'detected_level': 'unknown'},
+         'values': [['2', 'newer'], ['1', 'older']]} for series in ('a', 'b')]}}
+    assert log_seed_ledger(records, response, 1000) == {
+        'seed_unique_rows': 4, 'query_limit': 1000, 'expected_query_rows': 4,
+        'observed_query_rows': 4, 'complete_seed': True, 'verified': True}
+    for corruption in ('missing', 'duplicate', 'stream', 'empty_stream', 'line', 'timestamp', 'labels', 'ordering'):
+        bad = json.loads(json.dumps(response))
+        streams = bad['data']['result']
+        if corruption == 'missing':
+            streams[0]['values'].pop()
+        elif corruption == 'duplicate':
+            streams[0]['values'].append(streams[0]['values'][0])
+        elif corruption == 'stream':
+            streams.append(streams[0])
+        elif corruption == 'empty_stream':
+            streams.append({'stream': {'job': 'envelope', 'series': 'unseeded'}, 'values': []})
+        elif corruption == 'line':
+            streams[0]['values'][0][1] = 'unseeded'
+        elif corruption == 'timestamp':
+            streams[0]['values'][0][0] = '3'
+        elif corruption == 'labels':
+            streams[0]['stream']['series'] = 'unseeded'
+        else:
+            streams[0]['values'].reverse()
+        assert not log_seed_ledger(records, bad, 1000)['verified']
+    limited = json.loads(json.dumps(response))
+    for stream in limited['data']['result']:
+        stream['values'] = stream['values'][:1]
+    assert log_seed_ledger(records, limited, 2) == {
+        'seed_unique_rows': 4, 'query_limit': 2, 'expected_query_rows': 2,
+        'observed_query_rows': 2, 'complete_seed': False, 'verified': True}
+    for selected in limited['data']['result']:
+        tied = {'status': 'success', 'data': {'resultType': 'streams', 'result': [selected]}}
+        assert log_seed_ledger(records, tied, 1)['verified']
+    wrong_boundary = json.loads(json.dumps(limited))
+    wrong_boundary['data']['result'][0]['values'] = [['1', 'older']]
+    assert not log_seed_ledger(records, wrong_boundary, 2)['verified']
+    missing_newer = json.loads(json.dumps(response))
+    missing_newer['data']['result'][1]['values'].pop(0)
+    assert not log_seed_ledger(records, missing_newer, 3)['verified']
+
+    # Exercise seed's real guard: nonempty half-results must stop the benchmark.
+    for incomplete in (False, True):
+        with tempfile.TemporaryDirectory() as directory:
+            deployment = object.__new__(ComparisonDeployment)
+            deployment.evidence = pathlib.Path(directory)
+            deployment.native = True
+            deployment.sequence = iter([0])
+            deployment.wait_query = lambda *_: None
+            pushed = []
+            def seed_http(_port, path, _tenant, body, *_content):
+                if path == '/loki/api/v1/push':
+                    pushed.append(body)
+                    return 204, b''
+                return 200, json.dumps({'status': 'success', 'data': {'resultType': 'streams', 'result': [
+                    {'stream': {**stream['stream'], 'service_name': 'envelope', 'detected_level': 'unknown'},
+                     'values': list(reversed(stream['values']))[:5 if incomplete else 10]}
+                    for stream in pushed[0]['streams']]}}).encode()
+            with patch.dict(globals(), {'http': seed_http}):
+                try:
+                    deployment.seed('logs', 'soak', 100)
+                except RuntimeError as error:
+                    assert incomplete and 'seed log ledger mismatch' in str(error)
+                else:
+                    assert not incomplete
+            ledger = json.loads((deployment.evidence / 'soak.seed-ledger.json').read_text())
+            assert ledger['seed_unique_rows'] == 1000 and ledger['verified'] == (not incomplete)
+            assert json.loads((deployment.evidence / 'soak.seed.jsonl').read_text())['request'] == pushed[0]
+
     assert write_request('metrics', 1, 1000)[3] == 1000
     query = env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(write_request('profiles', 1, 100)[0]).query)
     assert query['units'] == ['nanoseconds'] and query['sampleRate'] == ['1000000000']
