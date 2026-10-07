@@ -4,6 +4,11 @@ use super::{ConsumerRecord, Time, WalHeadConsumerError};
 pub trait WalHeadConsumerPoll: Send {
     async fn poll(&mut self, timeout: Time) -> Result<Vec<ConsumerRecord>, WalHeadConsumerError>;
 
+    /// Awaits the consumer coordinator's shutdown before the role exits.
+    async fn close(self) -> Result<(), WalHeadConsumerError>
+    where
+        Self: Sized;
+
     async fn recovery_state(&mut self) -> Option<(Vec<(String, i32)>, bool)> {
         None
     }

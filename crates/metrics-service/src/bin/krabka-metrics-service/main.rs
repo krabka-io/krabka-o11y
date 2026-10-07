@@ -923,6 +923,10 @@ mod tests {
         > {
             std::future::pending().await
         }
+
+        async fn close(self) -> Result<(), krabka_metrics_service::WalHeadConsumerError> {
+            Ok(())
+        }
     }
 
     #[async_trait::async_trait]
