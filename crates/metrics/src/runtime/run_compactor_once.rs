@@ -1,10 +1,9 @@
-use krabka_metrics::{
-    DeferredBlockDeletions, MetricCompactionError, MetricCompactionPass, compact_metric_blocks_once,
-};
-
 use super::{
     Arc, BlockWriter, CompactionPolicy, DEFAULT_BLOCK_READ_MAX, ObjectStore,
     ObjectStoreCompactionIndexSink, ServiceMetrics,
+};
+use crate::{
+    DeferredBlockDeletions, MetricCompactionError, MetricCompactionPass, compact_metric_blocks_once,
 };
 
 /// Runs one compaction pass and reports what it did.

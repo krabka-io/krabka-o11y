@@ -1,4 +1,3 @@
-use krabka_metrics::DeferredBlockDeletions;
 use krabka_observability::CancellationToken;
 use krabka_units::Time;
 
@@ -6,6 +5,7 @@ use super::{
     Arc, BlockWriter, CompactionPolicy, ObjectStore, ObjectStoreCompactionIndexSink,
     ServiceMetrics, TimeExt, run_compactor_once,
 };
+use crate::DeferredBlockDeletions;
 
 /// Runs compaction passes on `--compactor-interval` until `shutdown` fires.
 ///

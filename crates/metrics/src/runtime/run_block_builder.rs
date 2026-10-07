@@ -14,7 +14,9 @@ pub(crate) async fn run_block_builder(
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     wal_security: Option<ClientSecurity>,
-) -> Result<(), Box<dyn std::error::Error>> {
+    stopping: CancellationToken,
+    startup: krabka_observability::ReadinessGate,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // The block builder serves no data port, so `/ready` on the admin port is
     // the only place an orchestrator can ask. It is ready once it holds the
     // two things it writes between: the WAL consumer and the object store.
@@ -51,7 +53,6 @@ pub(crate) async fn run_block_builder(
         )
         .await?;
     wal_consumer_gate.mark_ready();
-    let stopping = CancellationToken::new();
     let mut tasks = SupervisedTasks::new(stopping.clone());
     // Always, and not only where a tenant has a retention window. Retention and
     // orphan reconciliation are two halves of one pass, and the orphan half is
@@ -69,13 +70,7 @@ pub(crate) async fn run_block_builder(
             metrics.clone(),
         ),
     );
-    let signal = stopping.clone();
-    // Not supervised: this task is meant to finish, and finishing is how it
-    // does its job.
-    tokio::spawn(async move {
-        krabka_observability::shutdown_signal().await;
-        signal.cancel();
-    });
+    startup.mark_ready();
     let result = loop {
         let stop = stopping.clone();
         let attempt = tokio::select! {
@@ -88,15 +83,12 @@ pub(crate) async fn run_block_builder(
                 &metrics,
             ) => result,
             name = tasks.first_unexpected_exit() => {
-                tasks.shutdown().await;
-                return Err(CriticalTaskError(name).into());
+                break Err(Box::<dyn std::error::Error + Send + Sync>::from(CriticalTaskError(name)));
             }
         };
         match attempt {
-            Ok(result) => break result,
-            Err(error @ krabka_metrics::CompactionPollError::Poll(_))
-                if !stopping.is_cancelled() =>
-            {
+            Ok(result) => break Ok(result),
+            Err(error @ crate::CompactionPollError::Poll(_)) if !stopping.is_cancelled() => {
                 tracing::warn!(%error, "metrics block-builder loop failed; retrying");
                 // Drop only cancels the coordinator. Await its shutdown before
                 // a replacement joins the group; replay still starts at the
@@ -105,17 +97,36 @@ pub(crate) async fn run_block_builder(
                     tracing::warn!(%error, "metrics block-builder consumer close failed before retry");
                 }
                 tokio::time::sleep(config.poll_timeout.to_std()).await;
-                consumer = config
+                consumer = match config
                     .build_consumer(&metrics.wal_consumer, wal_security.clone(), None)
-                    .await?;
+                    .await
+                {
+                    Ok(consumer) => consumer,
+                    Err(error) => {
+                        tasks.shutdown().await;
+                        return Err(error.into());
+                    }
+                };
             }
-            Err(error) => return Err(error.into()),
+            Err(error) => break Err(error.into()),
         }
     };
     tasks.shutdown().await;
     // The loop has drained and committed its final durable buffer. Await the
     // coordinator's shutdown before process exit can cancel its LeaveGroup attempt.
-    consumer.into_inner().close().await?;
+    let close = consumer.into_inner().close().await;
+    let result = match result {
+        Ok(result) => {
+            close?;
+            result
+        }
+        Err(error) => {
+            if let Err(close_error) = close {
+                tracing::warn!(%close_error, "metrics block-builder consumer close failed after a loop error");
+            }
+            return Err(error);
+        }
+    };
     // The block counter moves inside the flush, so a running block builder
     // reports what it has written rather than only what it wrote before it
     // stopped.

@@ -8,8 +8,9 @@ use super::{
     parse_distributor_max_decompressed, parse_ingest_rate_bucket_cap,
 };
 
+/// Configuration for a metrics writer role.
 #[derive(Debug, Parser)]
-pub(crate) struct Cli {
+pub struct Cli {
     #[command(flatten)]
     pub(crate) config_file: ConfigFileArgs,
     #[command(flatten)]
@@ -89,7 +90,7 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = "KRABKA_METRICS_BLOCK_BUILDER_FLUSH_MAX_ROWS",
-        default_value_t = krabka_metrics::DEFAULT_FLUSH_MAX_ROWS
+        default_value_t = crate::DEFAULT_FLUSH_MAX_ROWS
     )]
     pub(crate) block_builder_flush_max_rows: usize,
     /// Flush the accumulated block buffer once its oldest record reaches this

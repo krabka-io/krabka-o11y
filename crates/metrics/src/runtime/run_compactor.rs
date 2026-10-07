@@ -31,7 +31,9 @@ pub(crate) async fn run_compactor(
     cli: Cli,
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
-) -> Result<(), Box<dyn std::error::Error>> {
+    stopping: CancellationToken,
+    startup: krabka_observability::ReadinessGate,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let object_store_gate = readiness.gate("object-store");
     let store = build_object_store(&cli.object_store_url, metrics.object_store.clone()).await?;
     object_store_gate.mark_ready();
@@ -44,14 +46,6 @@ pub(crate) async fn run_compactor(
         level_window = %policy.level_window().human(),
         "metrics compactor scheduling passes"
     );
-    let stopping = CancellationToken::new();
-    let signal = stopping.clone();
-    // Not supervised: this task is meant to finish, and finishing is how it
-    // does its job.
-    tokio::spawn(async move {
-        krabka_observability::shutdown_signal().await;
-        signal.cancel();
-    });
     let mut tasks = SupervisedTasks::new(stopping.clone());
     tasks.spawn(
         "metrics compactor pass scheduler",
@@ -65,10 +59,11 @@ pub(crate) async fn run_compactor(
             stopping.clone(),
         ),
     );
+    startup.mark_ready();
     let outcome = tokio::select! {
         () = stopping.cancelled() => Ok(()),
         name = tasks.first_unexpected_exit() => Err(
-            Box::<dyn std::error::Error>::from(CriticalTaskError(name)),
+            Box::<dyn std::error::Error + Send + Sync>::from(CriticalTaskError(name)),
         ),
     };
     // A pass already under way finishes before this returns, so the process
