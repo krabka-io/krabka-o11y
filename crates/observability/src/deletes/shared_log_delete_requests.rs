@@ -1,6 +1,7 @@
 use super::{
-    Arc, FsPath, LogDeleteRequestStoreError, Mutex, SharedLogDeleteRequests,
-    log_delete_requests_path, read_log_delete_requests, write_log_delete_requests,
+    Arc, CompactorDeleteRequests, FsPath, LogDeleteRequestStoreError, Mutex,
+    SharedLogDeleteRequests, log_delete_requests_path, read_log_delete_requests,
+    write_log_delete_requests,
 };
 
 impl SharedLogDeleteRequests {
@@ -14,20 +15,32 @@ impl SharedLogDeleteRequests {
         })
     }
 
-    pub(crate) fn persist(&self) -> Result<(), LogDeleteRequestStoreError> {
+    pub(crate) fn persist(
+        &self,
+        requests: &CompactorDeleteRequests,
+    ) -> Result<(), LogDeleteRequestStoreError> {
         let Some(path) = &self.storage_path else {
             return Ok(());
         };
-        let requests = self.inner.lock().expect("compactor delete state poisoned");
-        write_log_delete_requests(path, &requests)
+        write_log_delete_requests(path, requests)
     }
 
     pub(crate) fn refresh(&self) -> Result<(), LogDeleteRequestStoreError> {
+        self.refresh_from(read_log_delete_requests)
+    }
+
+    fn refresh_from(
+        &self,
+        read: impl FnOnce(&FsPath) -> Result<CompactorDeleteRequests, LogDeleteRequestStoreError>,
+    ) -> Result<(), LogDeleteRequestStoreError> {
         let Some(path) = &self.storage_path else {
             return Ok(());
         };
-        let requests = read_log_delete_requests(path)?;
-        *self.inner.lock().expect("compactor delete state poisoned") = requests;
+        let mut requests = self.inner.lock().expect("compactor delete state poisoned");
+        *requests = read(path)?;
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -24,8 +24,8 @@ pub(crate) fn execute_cancel_delete_request(
     requests
         .requests
         .retain(|request| request.tenant != tenant.as_str() || request.request_id != request_id);
+    let persisted = state.delete_requests.persist(&requests);
     drop(requests);
-    let persisted = state.delete_requests.persist();
     security.admin_operation(
         OPERATION_DELETE_REQUEST_CANCEL,
         vec![
