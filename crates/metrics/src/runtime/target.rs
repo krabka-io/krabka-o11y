@@ -9,14 +9,12 @@ use super::ValueEnum;
 /// API, the query-frontend and the ruler -- is `krabka-metrics-service`, a
 /// separate binary with its own `--target`. This binary once carried those three
 /// names too, over a router that served `/api/v1/status/buildinfo` and nothing
-/// else; [`retired_role_message`] is what an operator who still asks for one of
+/// else; `retired_role_message` is what an operator who still asks for one of
 /// them now gets.
 ///
 /// Metrics has no `live-store`. A metrics querier reads the recent window from
 /// the WAL itself rather than from a separate hot tier. That is a real gap
 /// rather than a difference in naming.
-///
-/// [`retired_role_message`]: super::retired_role_message
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 pub enum Target {
