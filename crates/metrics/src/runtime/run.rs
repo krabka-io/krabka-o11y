@@ -42,7 +42,7 @@ pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     let role = async {
-        super::require_role_topics(&cli, wal_security.clone()).await?;
+        super::require_role_topics(&cli.writer, cli.target, wal_security.clone()).await?;
         // With no `--audit-topic` this spawns nothing and reaches no broker.
         let audit_stop = CancellationToken::new();
         let (audit, audit_writer) = AuditService::start(

@@ -2,7 +2,7 @@ use krabka_observability::{CancellationToken, CriticalTaskError, SupervisedTasks
 use krabka_units::fmt::Human as _;
 
 use super::{
-    BlockWriter, Cli, ObjectStoreCompactionIndexSink, RoleReadiness, ServiceMetrics,
+    BlockWriter, ObjectStoreCompactionIndexSink, RoleReadiness, ServiceMetrics, WriterConfig,
     build_object_store, compactor_loop, compactor_policy_from_cli,
 };
 
@@ -28,7 +28,7 @@ use super::{
 // cargo-mutants: live compactor I/O wiring is covered by integration workflows.
 #[cfg_attr(test, mutants::skip)]
 pub(crate) async fn run_compactor(
-    cli: Cli,
+    cli: WriterConfig,
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     stopping: CancellationToken,

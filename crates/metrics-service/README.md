@@ -18,6 +18,15 @@ bazel run //crates/metrics-service:krabka-metrics-service -- \
 
 Send `X-Scope-OrgID` on every query.
 
+For one process, use `--config.file=deploy/roles/metrics-all.yaml` and set
+`writer-config` to the local path of `deploy/roles/metrics-writer.yaml`.
+The writer file accepts the standalone writer options. Security, audit,
+profiling and admin options belong to the service configuration.
+Both files must name the same object store and runtime overrides file.
+The process drains the distributor, block builder, querier and compactor in
+that order. The block builder freezes the WAL high watermark after ingest
+stops and persists through that cut. A failed or timed-out drain returns an error.
+
 ## Deployment tests
 
 The [Mimir integration-test pattern](https://github.com/grafana/mimir/blob/main/docs/internal/contributing/how-integration-tests-work.md)

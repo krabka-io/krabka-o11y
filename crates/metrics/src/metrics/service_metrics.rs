@@ -42,10 +42,29 @@ pub struct ServiceMetrics {
 impl ServiceMetrics {
     /// Builds a fresh registry, registers every metric, and returns the
     /// bundle.
+    ///
+    /// # Panics
+    /// Panics if its newly created private registry is locked during construction.
     #[must_use]
     pub fn new() -> Self {
-        let mut registry = Registry::with_prefix("krabka_metrics");
+        let shared = Arc::new(Mutex::new(Registry::with_prefix("krabka_metrics")));
+        let mut registry = shared.try_lock().expect("new registry is unlocked");
+        Self::register(&mut registry, Arc::clone(&shared))
+    }
 
+    /// Registers this role's instruments in the process registry.
+    ///
+    /// Each role has a separate prefix. Its gauges do not overwrite another role's gauges.
+    pub async fn for_role(shared: SharedRegistry, role: krabka_observability::RoleKind) -> Self {
+        let mut root = shared.lock().await;
+        let registry = root.sub_registry_with_prefix(format!(
+            "krabka_metrics_{}",
+            role.as_str().replace('-', "_")
+        ));
+        Self::register(registry, Arc::clone(&shared))
+    }
+
+    fn register(registry: &mut Registry, shared: SharedRegistry) -> Self {
         let ingest_requests: Family<StatusLabel, Counter> = Family::default();
         let ingest_bytes = Counter::default();
         let ingest_items = Counter::default();
@@ -96,13 +115,13 @@ impl ServiceMetrics {
         // These three come from the shared modules, so the four signals export
         // the same instrument under their own prefix and one dashboard reads
         // all four.
-        let wal_consumer = WalConsumerMetrics::register(&mut registry);
-        let wal_produce = WalProduceMetrics::register(&mut registry);
-        let compaction = CompactionMetrics::register(&mut registry);
-        let object_store = ObjectStoreMetrics::register(&mut registry);
+        let wal_consumer = WalConsumerMetrics::register(registry);
+        let wal_produce = WalProduceMetrics::register(registry);
+        let compaction = CompactionMetrics::register(registry);
+        let object_store = ObjectStoreMetrics::register(registry);
 
         Self {
-            registry: Arc::new(Mutex::new(registry)),
+            registry: shared,
             wal_consumer,
             wal_produce,
             compaction,

@@ -1,0 +1,4 @@
+# Writer options for metrics-all.yaml. Process security and admin flags stay there.
+listen: 0.0.0.0:4041
+bootstrap: broker:9092
+object-store-url: s3://krabka-metrics

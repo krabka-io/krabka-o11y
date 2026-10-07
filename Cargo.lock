@@ -4478,6 +4478,7 @@ dependencies = [
  "krabka-units",
  "object_store",
  "opentelemetry-proto",
+ "prometheus-client",
  "prost 0.14.4",
  "rcgen",
  "refined_type",

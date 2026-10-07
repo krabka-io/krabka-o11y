@@ -70,6 +70,7 @@ mod serve;
 mod spawn_retention_sweeper;
 mod target;
 mod target_value_parser;
+mod writer_config;
 
 use build_object_store::build_object_store;
 #[cfg_attr(test, mutants::skip)]
@@ -99,7 +100,12 @@ use target_value_parser::TargetValueParser;
 use self::cli::Cli;
 /// Options for one metrics writer role.
 pub use self::cli::Cli as RuntimeConfig;
-pub use self::{run::run, serve::serve};
+pub use self::{
+    run::run,
+    serve::{serve, serve_writer},
+    target::Target as WriterTarget,
+    writer_config::WriterConfig,
+};
 
 #[cfg(test)]
 mod tests;

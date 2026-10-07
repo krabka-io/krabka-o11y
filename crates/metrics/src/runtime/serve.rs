@@ -1,7 +1,7 @@
 use krabka_observability::CancellationToken;
 
 use super::{
-    Cli, ClientSecurity, RoleReadiness, ServerSecurity, ServiceMetrics, Target,
+    Cli, ClientSecurity, RoleReadiness, ServerSecurity, ServiceMetrics, Target, WriterConfig,
     require_role_topics, run_block_builder, run_compactor, run_distributor,
 };
 
@@ -23,12 +23,38 @@ pub fn serve(
     wal_security: Option<ClientSecurity>,
     stopping: CancellationToken,
 ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static {
+    serve_writer(
+        (cli.target, cli.writer),
+        metrics,
+        readiness,
+        security,
+        wal_security,
+        stopping,
+    )
+}
+
+/// Runs an embedded writer role with its caller's process controls.
+/// Registers startup before the returned future is polled.
+/// # Errors
+/// Returns a topic, startup, I/O or supervision error.
+pub fn serve_writer(
+    (target, cli): (Target, WriterConfig),
+    metrics: ServiceMetrics,
+    readiness: RoleReadiness,
+    security: ServerSecurity,
+    wal_security: Option<ClientSecurity>,
+    stopping: CancellationToken,
+) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static {
     let startup = readiness.gate("startup");
-    Box::pin(async move {
-        require_role_topics(&cli, wal_security.clone()).await?;
+    // Register sources in role order before tasks start. The shared recovery
+    // report can then identify the durable writer even before its first commit.
+    if target == Target::BlockBuilder {
         readiness.track_wal_consumer(metrics.wal_consumer.clone());
-        readiness.track_object_store(metrics.object_store.clone());
-        match cli.target {
+    }
+    readiness.track_object_store(metrics.object_store.clone());
+    Box::pin(async move {
+        require_role_topics(&cli, target, wal_security.clone()).await?;
+        match target {
             Target::Distributor => {
                 run_distributor(
                     cli,

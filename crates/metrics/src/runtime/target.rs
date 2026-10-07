@@ -19,7 +19,7 @@ use super::ValueEnum;
 /// [`retired_role_message`]: super::retired_role_message
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
-pub(crate) enum Target {
+pub enum Target {
     /// Accepts remote-write and OTLP pushes and writes the metrics WAL.
     Distributor,
     /// Consumes the metrics WAL and writes blocks to object storage.
@@ -48,7 +48,8 @@ impl Target {
     /// The enum above is the subset `krabka-metrics` implements;
     /// [`RoleKind`] is where the names live, so that a stage is spelled the
     /// same way in every binary and in every manifest.
-    pub(crate) const fn kind(self) -> RoleKind {
+    #[must_use]
+    pub const fn kind(self) -> RoleKind {
         match self {
             Self::Distributor => RoleKind::Distributor,
             Self::BlockBuilder => RoleKind::BlockBuilder,
