@@ -1,1 +1,0 @@
-count_over_time({app="web"}[5m]) > 1

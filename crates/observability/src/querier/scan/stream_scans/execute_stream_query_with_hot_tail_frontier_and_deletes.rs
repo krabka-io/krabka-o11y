@@ -1,4 +1,4 @@
-use std::borrow::Borrow;
+use std::{borrow::Borrow, collections::HashMap};
 
 use super::{
     ActiveLogDeleteFilter, BTreeMap, CompactionFrontier, FsPath, LabelIndex, Labels,
@@ -29,9 +29,18 @@ pub(crate) async fn execute_stream_query_with_hot_tail_frontier_and_deletes<
         append_matching_log_batches(&mut streams, plan, label_index, &batches, delete_filters)?;
     }
 
+    let mut labels_cache = HashMap::new();
     for record in hot_tail {
         let record: &WalLogRecord = record.borrow();
-        append_matching_hot_log_record(&mut streams, plan, record, frontier, delete_filters, false);
+        append_matching_hot_log_record(
+            &mut streams,
+            plan,
+            record,
+            frontier,
+            delete_filters,
+            false,
+            &mut labels_cache,
+        );
     }
     sort_loki_stream_values(&mut streams);
     apply_distinct_to_streams(&mut streams, &plan.query);

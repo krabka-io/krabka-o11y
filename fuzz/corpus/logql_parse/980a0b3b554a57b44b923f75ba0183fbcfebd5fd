@@ -1,1 +1,0 @@
-variants(count_over_time({app="ignored"}[1m]), sum by (app)(rate({app="ignored"}[30s]))) of ({app="api"} |= "of(a,b)" [2m] offset 10s)

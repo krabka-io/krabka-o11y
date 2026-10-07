@@ -1,0 +1,1 @@
+{app="api"} | json object="obj.n", indexed="arr[0].n", first="value"
