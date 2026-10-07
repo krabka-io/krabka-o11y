@@ -1,6 +1,6 @@
 use std::{error::Error, panic::AssertUnwindSafe, sync::Arc};
 
-use futures::FutureExt as _;
+use futures::{FutureExt as _, future::FusedFuture as _};
 use krabka_metrics::runtime::{WriterConfig, WriterTarget, serve_writer};
 use krabka_observability::{CancellationToken, RoleKind, StagedDrain, SupervisedTasks};
 use prometheus_client::registry::Registry;
@@ -201,17 +201,21 @@ pub async fn serve_all(
         profiling,
     )
     .await;
-    let admin_abort = admin
-        .as_ref()
-        .ok()
-        .map(tokio::task::JoinHandle::abort_handle);
-    let outcome: Result<(), RoleError> = match admin {
-        Ok(admin) => {
+    let mut admin = admin.map(|task| {
+        (
+            task.abort_handle(),
+            krabka_telemetry::profiling::await_admin_exit(task)
+                .boxed()
+                .fuse(),
+        )
+    });
+    let outcome: Result<(), RoleError> = match admin.as_mut() {
+        Ok((_, exit)) => {
             tokio::select! {
                 () = stopping.cancelled() => Ok(()),
                 name = drain.first_unexpected_exit() => Err(format!("{name} stopped unexpectedly").into()),
                 name = audit_tasks.first_unexpected_exit() => Err(format!("{name} stopped unexpectedly").into()),
-                result = krabka_telemetry::profiling::await_admin_exit(admin) => result.map_err(|error| error.to_string().into()),
+                result = exit => result.map_err(|error| error.to_string().into()),
             }
         }
         Err(error) => Err(error.to_string().into()),
@@ -220,8 +224,11 @@ pub async fn serve_all(
     let overran = drain.drain().await;
     // Stop audit after the ordered role drain. An overrun fails the process.
     audit_tasks.shutdown().await;
-    if let Some(admin) = admin_abort {
-        admin.abort();
+    if let Ok((abort, exit)) = admin {
+        abort.abort();
+        if !exit.is_terminated() {
+            let _ = exit.await;
+        }
     }
     let mut role_failures = Vec::new();
     while let Ok(error) = failures.try_recv() {
