@@ -71,7 +71,7 @@ impl TableProvider for ProbedBlockTable {
     async fn scan(
         &self,
         state: &dyn Session,
-        projection: Option<&Vec<usize>>,
+        projection: Option<&[usize]>,
         _filters: &[Expr],
         limit: Option<usize>,
     ) -> DataFusionResult<Arc<dyn ExecutionPlan>> {
@@ -103,7 +103,7 @@ impl TableProvider for ProbedBlockTable {
         let config = FileScanConfigBuilder::new(self.object_store_url.clone(), Arc::new(source))
             .with_file_groups(groups)
             .with_statistics(statistics)
-            .with_projection_indices(projection.cloned())?
+            .with_projection_indices(projection.map(<[usize]>::to_vec))?
             .with_limit(limit)
             .with_output_ordering(ordering.into_iter().collect())
             .build();

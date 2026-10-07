@@ -153,6 +153,7 @@ impl ObjectStore for QuirkyStore {
             return Ok(PutResult {
                 e_tag: Some(format!("unmatchable-{bogus}")),
                 version: result.e_tag,
+                extensions: result.extensions,
             });
         }
         Ok(result)

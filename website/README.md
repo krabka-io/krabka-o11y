@@ -74,8 +74,7 @@ are recorded in [`static/lab/certs/README.md`](static/lab/certs/README.md).
 `scripts/build-lab.sh` first obtains locked native Cargo metadata, then stages
 workspace, git, and selected registry sources in `.tools/wasi-source/`. The
 native source tree and lockfile, including cached crate sources, are preserved. WASIX
-dependency and platform adaptations apply to that independent copy; the
-object_store 0.13 and 0.14 APIs remain distinct.
+dependency and platform adaptations apply to that independent copy.
 Staging preserves unchanged files and gives changed content a fresh modification
 time, so incremental Cargo builds cannot reuse an older compiled guest.
 

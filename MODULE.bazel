@@ -273,6 +273,7 @@ SIBLING_MEMBERS = {
     "krabka-kraft-core": "crates/kraft-core",
     "krabka-log": "crates/log",
     "krabka-log-iobench": "crates/log-iobench",
+    "krabka-macros": "crates/macros",
     "krabka-logfmt": "crates/logfmt",
     "krabka-metadata": "crates/metadata",
     "krabka-object-store": "crates/object-store",
@@ -328,6 +329,17 @@ crate.annotation(
     crate = "datafusion-common",
     patch_args = ["-p1"],
     patches = ["//bazel/patches:datafusion-common-manifest-dir.patch"],
+)
+
+# sqlparser_derive's `derive_dialect!` keeps its own manifest directory as an
+# `env!` constant, a fallback for finding `sqlparser`'s dialect source from a
+# registry checkout. The sandboxed build rejects the absolute path that bakes
+# in. The patch reads the variable at expansion time instead. Nothing here
+# expands the macro; `sqlparser` does so only in its own tests.
+crate.annotation(
+    crate = "sqlparser_derive",
+    patch_args = ["-p1"],
+    patches = ["//bazel/patches:sqlparser-derive-manifest-dir.patch"],
 )
 crate.annotation(
     crate = "cargo-mutants",

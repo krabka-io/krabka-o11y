@@ -30,7 +30,10 @@ mod tests {
         catalog::MemTable,
         datasource::memory::MemorySourceConfig,
         logical_expr::{Extension, UserDefinedLogicalNodeCore, col},
-        physical_plan::{collect, display::DisplayableExecutionPlan},
+        physical_plan::{
+            ChildrenPropertiesMode, ReplaceChildrenOptions, collect,
+            display::DisplayableExecutionPlan,
+        },
         prelude::SessionContext,
     };
 
@@ -139,10 +142,20 @@ mod tests {
             ) == "PromSeriesNormalizeExec: time=timestamp, offset_ms=123, filter_nan=true\n  DataSourceExec: partitions=1, partition_sizes=[1]\n"
         );
         check!(exec.maintains_input_order() == vec![false]);
-        check!(Arc::clone(&exec).with_new_children(vec![]).is_err());
         check!(
             Arc::clone(&exec)
-                .with_new_children(vec![input])
+                .replace_children(
+                    vec![],
+                    ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute)
+                )
+                .is_err()
+        );
+        check!(
+            Arc::clone(&exec)
+                .replace_children(
+                    vec![input],
+                    ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute)
+                )
                 .expect("valid child rewrite")
                 .name()
                 == "SeriesNormalizeExec"

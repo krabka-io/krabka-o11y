@@ -1,0 +1,26 @@
+--- a/src/dialect.rs
++++ b/src/dialect.rs
+@@ -270,8 +270,12 @@
+ fn read_dialect_mod_file() -> Result<String, String> {
+     use std::path::{Path, PathBuf};
+ 
+-    const DERIVE_CRATE_DIR: &str = env!("CARGO_MANIFEST_DIR");
+-    let derive_dir = Path::new(DERIVE_CRATE_DIR);
++    // Read at run time rather than baked in: `env!` embeds the absolute
++    // build directory in the compiled proc-macro, which a sandboxed,
++    // reproducible build rejects. At expansion time the variable names the
++    // invoking crate, which is the first candidate below anyway.
++    let derive_crate_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
++    let derive_dir = Path::new(&derive_crate_dir);
+     let mut candidates: Vec<PathBuf> = Vec::new();
+ 
+     // The crate being compiled (eg: within sqlparser).
+@@ -308,7 +312,7 @@
+     Err(format!(
+         "Could not find `sqlparser` dialect/mod.rs file. \
+          Searched in $CARGO_MANIFEST_DIR/src/dialect/mod.rs and \
+-         the `sqlparser_derive` crate at {DERIVE_CRATE_DIR}"
++         the `sqlparser_derive` crate at {derive_crate_dir}"
+     ))
+ }
+ 

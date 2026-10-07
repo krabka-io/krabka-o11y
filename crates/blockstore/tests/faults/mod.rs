@@ -230,6 +230,7 @@ delegate_object_store!(ChecksumStore {
         let meta = result.meta.clone();
         let range = result.range.clone();
         let attributes = result.attributes.clone();
+        let extensions = result.extensions.clone();
         let mut bytes = result.bytes().await?.to_vec();
         if range.end == meta.size
             && let Some(last) = bytes.last_mut()
@@ -242,6 +243,7 @@ delegate_object_store!(ChecksumStore {
             meta,
             range,
             attributes,
+            extensions,
         })
     }
 

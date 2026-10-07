@@ -20,7 +20,7 @@ REQWEST_TLS = {"rustls": "rustls-tls", "rustls-no-provider": "rustls-tls-no-prov
 WASIX_VERSIONS = {"tokio": "1.47.0", "reqwest": "0.12.22", "mio": "1.0.3"}
 # The published Hyper/h2 forks change manifests only. Keep the native HTTP API
 # and use the WASIX Tokio/mio implementations underneath it.
-HTTP_OVERLAYS = {"hyper": "1.11.1", "h2": "0.4.19", "hyper-util": "0.1.20"}
+HTTP_OVERLAYS = {"hyper": "1.12.0", "h2": "0.4.20", "hyper-util": "0.1.21"}
 GETRANDOM_VERSIONS = {(0, 2): "0.2.15", (0, 3): "0.3.3", (0, 4): "0.4.3"}
 
 
