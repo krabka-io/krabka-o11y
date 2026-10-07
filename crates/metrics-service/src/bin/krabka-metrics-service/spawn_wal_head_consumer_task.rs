@@ -76,5 +76,13 @@ where
         if let Err(error) = result {
             tracing::error!(%error, "metrics WAL head consumer stopped");
         }
+        // Drop only requests coordinator shutdown. Await close so this role
+        // cannot finish its stage before the consumer leaves its group.
+        if let Err(error) = consumer.close().await {
+            tracing::error!(%error, "metrics WAL head consumer close failed");
+        }
     })
 }
+
+#[cfg(test)]
+mod tests;

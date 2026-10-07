@@ -14,6 +14,12 @@ impl WalHeadConsumerPoll for Consumer {
     async fn recovery_state(&mut self) -> Option<(Vec<(String, i32)>, bool)> {
         Some((self.assignment().await, self.at_log_end().await))
     }
+
+    async fn close(self) -> Result<(), WalHeadConsumerError> {
+        Consumer::close(self)
+            .await
+            .map_err(|error| WalHeadConsumerError::Close(error.to_string()))
+    }
 }
 
 #[async_trait::async_trait]
