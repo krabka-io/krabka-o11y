@@ -17,7 +17,7 @@ use flate2::{Compression, write::GzEncoder};
 use generated_differential::{LabelMatcher, MatchOp, TypedConstructor, TypedExpr};
 use krabka_blockstore::TenantPolicy;
 use krabka_observability::server_security::ServerSecurity;
-use krabka_pprof::{PprofProfile, proto};
+use krabka_pprof::{InMemoryProfileStore, PprofProfile, UnionProfileStore, proto};
 use krabka_profiles::{
     ProfileRecord, ProfilesError,
     distributor::{self, DistributorState, WalSink},
@@ -1015,7 +1015,10 @@ async fn start_krabka_pair_with_query_options(
     // range to compare against real Pyroscope, so disable the per-query range cap.
     let querier_state = Arc::new(
         QuerierState::new_with_limits(
-            Arc::new(store),
+            Arc::new(UnionProfileStore::new(
+                Arc::new(store),
+                Arc::new(InMemoryProfileStore::new()),
+            )),
             krabka_profiles::limits::Limits {
                 max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
                 ..Default::default()
@@ -3155,7 +3158,10 @@ async fn start_krabka_public(
     // The differential / e2e corpus intentionally queries the full `[0, i64::MAX]`
     // range to compare against real Pyroscope, so disable the per-query range cap.
     let querier_state = Arc::new(QuerierState::new_with_limits(
-        Arc::new(store),
+        Arc::new(UnionProfileStore::new(
+            Arc::new(store),
+            Arc::new(InMemoryProfileStore::new()),
+        )),
         krabka_profiles::limits::Limits {
             max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
             ..Default::default()
