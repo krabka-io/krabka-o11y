@@ -124,13 +124,21 @@ impl InMemoryMetricStore {
         };
         // ponytail: copy O(live series) once per affected WAL batch; measure
         // this against the full hot-head traversal removed from instant reads.
-        Arc::make_mut(
-            self.float_head_summaries
-                .entry(tenant.to_string())
-                .or_default(),
-        )
-        .observe(&row);
-        self.floats.entry(tenant.to_string()).or_default().push(row);
+        if let Some(summary) = self.float_head_summaries.get_mut(tenant) {
+            Arc::make_mut(summary).observe(&row);
+        } else {
+            Arc::make_mut(
+                self.float_head_summaries
+                    .entry(tenant.to_string())
+                    .or_default(),
+            )
+            .observe(&row);
+        }
+        if let Some(rows) = self.floats.get_mut(tenant) {
+            rows.push(row);
+        } else {
+            self.floats.entry(tenant.to_string()).or_default().push(row);
+        }
     }
 
     /// Appends a native-histogram sample. See [`InMemoryMetricStore::push_float`]
