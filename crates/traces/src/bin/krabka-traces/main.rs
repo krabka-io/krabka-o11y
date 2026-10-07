@@ -62,7 +62,7 @@ use url::Url;
 
 #[cfg(test)]
 mod tests {
-    use assert2::check;
+    use assert2::{assert, check};
     use axum::{
         body::Body,
         http::{Request, StatusCode as HttpStatusCode},
@@ -74,7 +74,12 @@ mod tests {
         RoleReadiness,
         topic_contract::{TRACES_TOPICS, TopicSettings, provision_topics},
     };
-    use krabka_units::{hours, minutes, secs};
+    use krabka_traces::{Span, SpanKind, SpanRecord, StatusCode};
+    use krabka_units::{hours, millis, minutes, secs};
+    use opentelemetry_proto::tonic::trace::v1::{
+        ResourceSpans, ScopeSpans, Span as OtlpSpan, TracesData,
+    };
+    use prost::Message as _;
     use tower::ServiceExt;
 
     use super::*;
@@ -2392,6 +2397,142 @@ overrides:
                     .is_ok(),
                 "{args:?} after provisioning"
             );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn otlp_push_preserves_all_wal_records_with_default_and_small_frames() {
+        for frame_max in [kibibytes(32), krabka_client_core::DEFAULT_CLIENT_FRAME_MAX] {
+            let directory = tempfile::tempdir().expect("broker directory");
+            let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
+                .await
+                .expect("broker start");
+            let bootstrap = broker.listen_addr().to_string();
+            create_traces_wal_topic(&bootstrap).await;
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let listen = listener.local_addr().unwrap().to_string();
+            drop(listener);
+            let mut cli = cli_with(&["--target", "distributor"], &bootstrap);
+            cli.client_frame_max = frame_max;
+            cli.otlp_http_listen = listen.clone();
+            cli.grpc_listen = "127.0.0.1:0".into();
+            cli.jaeger_grpc_listen = "127.0.0.1:0".into();
+            cli.jaeger_compact_listen = "127.0.0.1:0".into();
+            cli.jaeger_http_listen = "127.0.0.1:0".into();
+            cli.zipkin_listen = "127.0.0.1:0".into();
+            let shutdown = CancellationToken::new();
+            let role_shutdown = shutdown.clone();
+            let role = tokio::spawn(async move {
+                run_distributor(
+                    cli,
+                    ServiceMetrics::new(),
+                    RoleReadiness::new(),
+                    role_shutdown,
+                    false,
+                    &ProcessSecurity::default(),
+                )
+                .await
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    if tokio::net::TcpStream::connect(&listen).await.is_ok() {
+                        break;
+                    }
+                    assert!(!role.is_finished(), "distributor stopped before listening");
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("distributor listens within 10 seconds");
+
+            // One record fits the small frame; a 64 KiB batch of these does not.
+            let expected = (1_u8..=100)
+                .map(|index| SpanRecord {
+                    tenant: "tenant".into(),
+                    span: Span {
+                        trace_id: [1; 16],
+                        span_id: [index; 8],
+                        parent_span_id: None,
+                        name: format!("span-{index:03} {}", "x".repeat(20 * 1024)),
+                        kind: SpanKind::Unspecified,
+                        start_ns: 1_000 + i64::from(index),
+                        duration_ns: 500,
+                        status: StatusCode::Unset,
+                        status_message: String::new(),
+                        resource_attrs: Vec::new(),
+                        span_attrs: Vec::new(),
+                        events: Vec::new(),
+                        links: Vec::new(),
+                        instrumentation_scope: String::new(),
+                        instrumentation_version: String::new(),
+                    },
+                })
+                .collect::<Vec<_>>();
+            let body = TracesData {
+                resource_spans: vec![ResourceSpans {
+                    scope_spans: vec![ScopeSpans {
+                        spans: expected
+                            .iter()
+                            .map(|record| OtlpSpan {
+                                trace_id: record.span.trace_id.to_vec(),
+                                span_id: record.span.span_id.to_vec(),
+                                name: record.span.name.clone(),
+                                start_time_unix_nano: u64::try_from(record.span.start_ns).unwrap(),
+                                end_time_unix_nano: u64::try_from(record.span.start_ns + 500)
+                                    .unwrap(),
+                                ..OtlpSpan::default()
+                            })
+                            .collect(),
+                        ..ScopeSpans::default()
+                    }],
+                    ..ResourceSpans::default()
+                }],
+            }
+            .encode_to_vec();
+            let response = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(20))
+                .build()
+                .unwrap()
+                .post(format!("http://{listen}/v1/traces"))
+                .header("Content-Type", "application/x-protobuf")
+                .header("X-Scope-OrgID", "tenant")
+                .body(body)
+                .send()
+                .await
+                .unwrap();
+            assert!(
+                response.status() == reqwest::StatusCode::OK,
+                "{frame_max:?}"
+            );
+            let mut consumer = Consumer::builder()
+                .bootstrap(&bootstrap)
+                .group_id("frame-limit-inspect")
+                .subscribe([TRACES_WAL_TOPIC.to_string()])
+                .auto_offset_reset(AutoOffsetReset::Earliest)
+                .build()
+                .await
+                .unwrap();
+            let actual = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                let mut records = Vec::new();
+                while records.len() < expected.len() {
+                    records.extend(
+                        consumer
+                            .poll(millis(100))
+                            .await
+                            .unwrap()
+                            .into_iter()
+                            .map(|record| SpanRecord::decode(&record.value.unwrap()).unwrap()),
+                    );
+                }
+                records
+            })
+            .await
+            .expect("all acknowledged records reach the WAL");
+            assert!(actual == expected, "{frame_max:?}");
+            shutdown.cancel();
+            role.await.unwrap().unwrap();
+            drop(consumer);
+            broker.shutdown().await;
         }
     }
 
