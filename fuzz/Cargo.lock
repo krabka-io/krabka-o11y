@@ -3381,7 +3381,7 @@ dependencies = [
 [[package]]
 name = "krabka-compression"
 version = "0.5.1"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=b26fbd7f62171c2770a47c70115582a424ce88a8#b26fbd7f62171c2770a47c70115582a424ce88a8"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=ff4758a31748ded11ee9a313a505302c9692da19#ff4758a31748ded11ee9a313a505302c9692da19"
 dependencies = [
  "assert2",
  "bytes",
@@ -3398,7 +3398,7 @@ dependencies = [
 [[package]]
 name = "krabka-ids"
 version = "0.5.1"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=b26fbd7f62171c2770a47c70115582a424ce88a8#b26fbd7f62171c2770a47c70115582a424ce88a8"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=ff4758a31748ded11ee9a313a505302c9692da19#ff4758a31748ded11ee9a313a505302c9692da19"
 dependencies = [
  "assert2",
  "base64 0.23.1",
@@ -3661,7 +3661,7 @@ dependencies = [
 [[package]]
 name = "krabka-protocol"
 version = "0.5.1"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=b26fbd7f62171c2770a47c70115582a424ce88a8#b26fbd7f62171c2770a47c70115582a424ce88a8"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=ff4758a31748ded11ee9a313a505302c9692da19#ff4758a31748ded11ee9a313a505302c9692da19"
 dependencies = [
  "assert2",
  "bytes",
@@ -3691,7 +3691,7 @@ dependencies = [
 [[package]]
 name = "krabka-security"
 version = "0.5.1"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=b26fbd7f62171c2770a47c70115582a424ce88a8#b26fbd7f62171c2770a47c70115582a424ce88a8"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=ff4758a31748ded11ee9a313a505302c9692da19#ff4758a31748ded11ee9a313a505302c9692da19"
 dependencies = [
  "arc-swap",
  "assert2",
@@ -3766,7 +3766,7 @@ dependencies = [
 [[package]]
 name = "krabka-trace-context"
 version = "0.5.1"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=b26fbd7f62171c2770a47c70115582a424ce88a8#b26fbd7f62171c2770a47c70115582a424ce88a8"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=ff4758a31748ded11ee9a313a505302c9692da19#ff4758a31748ded11ee9a313a505302c9692da19"
 dependencies = [
  "opentelemetry",
  "serde",
@@ -3852,7 +3852,7 @@ dependencies = [
 [[package]]
 name = "krabka-units"
 version = "0.5.1"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=b26fbd7f62171c2770a47c70115582a424ce88a8#b26fbd7f62171c2770a47c70115582a424ce88a8"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=ff4758a31748ded11ee9a313a505302c9692da19#ff4758a31748ded11ee9a313a505302c9692da19"
 dependencies = [
  "num-traits",
  "serde",
@@ -5070,9 +5070,9 @@ dependencies = [
 
 [[package]]
 name = "picky-krb"
-version = "0.12.5"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e416cdfdfd3f05cddfa7bced8896fd760597616602a87b060776bedf4ce3cde5"
+checksum = "4a272e7c4191fbb5ea7e0b34f47208804d47a6f748344351ba9229b0e5a604ed"
 dependencies = [
  "aes",
  "block-padding",
@@ -6596,7 +6596,7 @@ dependencies = [
 [[package]]
 name = "sspi"
 version = "0.23.0"
-source = "git+https://github.com/robot-head/sspi-rs?rev=df53e86c0ee635348ae61ee84ad930ae790d08f1#df53e86c0ee635348ae61ee84ad930ae790d08f1"
+source = "git+https://github.com/robot-head/sspi-rs?rev=73ad2bcfff41c44b22c7e2400d528faedbf38967#73ad2bcfff41c44b22c7e2400d528faedbf38967"
 dependencies = [
  "async-dnssd",
  "async-recursion",
@@ -8093,12 +8093,12 @@ source = "git+https://github.com/krabka-io/krabka-broker?rev=82fea7dc8de3b212201
 [[patch.unused]]
 name = "krabka-hlc"
 version = "0.5.1"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=b26fbd7f62171c2770a47c70115582a424ce88a8#b26fbd7f62171c2770a47c70115582a424ce88a8"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=ff4758a31748ded11ee9a313a505302c9692da19#ff4758a31748ded11ee9a313a505302c9692da19"
 
 [[patch.unused]]
 name = "krabka-kafka-tap"
 version = "0.5.1"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=b26fbd7f62171c2770a47c70115582a424ce88a8#b26fbd7f62171c2770a47c70115582a424ce88a8"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=ff4758a31748ded11ee9a313a505302c9692da19#ff4758a31748ded11ee9a313a505302c9692da19"
 
 [[patch.unused]]
 name = "krabka-kraft-core"
@@ -8118,7 +8118,7 @@ source = "git+https://github.com/krabka-io/krabka-broker?rev=82fea7dc8de3b212201
 [[patch.unused]]
 name = "krabka-metadata"
 version = "0.5.1"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=b26fbd7f62171c2770a47c70115582a424ce88a8#b26fbd7f62171c2770a47c70115582a424ce88a8"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=ff4758a31748ded11ee9a313a505302c9692da19#ff4758a31748ded11ee9a313a505302c9692da19"
 
 [[patch.unused]]
 name = "krabka-parse-benches"
@@ -8128,7 +8128,7 @@ source = "git+https://github.com/krabka-io/krabka-broker?rev=82fea7dc8de3b212201
 [[patch.unused]]
 name = "krabka-protocol-codegen"
 version = "0.5.1"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=b26fbd7f62171c2770a47c70115582a424ce88a8#b26fbd7f62171c2770a47c70115582a424ce88a8"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=ff4758a31748ded11ee9a313a505302c9692da19#ff4758a31748ded11ee9a313a505302c9692da19"
 
 [[patch.unused]]
 name = "krabka-raft"
@@ -8168,4 +8168,4 @@ source = "git+https://github.com/krabka-io/krabka-schema-registry?rev=ce5f1bdd91
 [[patch.unused]]
 name = "krabka-voters"
 version = "0.5.1"
-source = "git+https://github.com/krabka-io/krabka-protocol?rev=b26fbd7f62171c2770a47c70115582a424ce88a8#b26fbd7f62171c2770a47c70115582a424ce88a8"
+source = "git+https://github.com/krabka-io/krabka-protocol?rev=ff4758a31748ded11ee9a313a505302c9692da19#ff4758a31748ded11ee9a313a505302c9692da19"
