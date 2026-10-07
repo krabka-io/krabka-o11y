@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::{
     LokiDirection, Value, apply_loki_stream_end_bound, apply_loki_stream_interval,
     apply_loki_stream_limit,
@@ -22,7 +24,16 @@ pub(crate) fn apply_loki_stream_options(
     {
         for stream in streams {
             if let Some(values) = stream.get_mut("values").and_then(Value::as_array_mut) {
-                values.dedup();
+                // The full entry preserves distinct categorized metadata at one timestamp.
+                let mut keep = {
+                    let mut seen = HashSet::new();
+                    values
+                        .iter()
+                        .map(|entry| seen.insert(entry))
+                        .collect::<Vec<_>>()
+                }
+                .into_iter();
+                values.retain(|_| keep.next().expect("each entry has a retention flag"));
             }
         }
     }

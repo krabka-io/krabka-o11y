@@ -105,11 +105,17 @@ impl StreamScanOptions {
         let Some(mut remaining) = self.limit else {
             return;
         };
-        // Match the frontend's folded-entry deduplication before spending the limit.
+        // Equal timestamps can interleave cold and hot copies of different lines.
         for entries in streams.values_mut() {
-            entries.dedup_by(|left, right| {
-                left.timestamp_ns == right.timestamp_ns && left.line == right.line
-            });
+            let mut keep = {
+                let mut seen = HashSet::new();
+                entries
+                    .iter()
+                    .map(|entry| seen.insert((entry.timestamp_ns.as_str(), entry.line.as_str())))
+                    .collect::<Vec<_>>()
+            }
+            .into_iter();
+            entries.retain(|_| keep.next().expect("each entry has a retention flag"));
         }
         if streams.len() > 1 {
             self.trim_multiple_streams_before_encoding(streams, remaining);
