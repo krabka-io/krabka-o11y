@@ -1,4 +1,4 @@
-use std::borrow::Borrow;
+use std::{borrow::Borrow, collections::HashMap};
 
 use super::{
     Arc, BTreeMap, LabelIndex, Labels, LokiDirection, LokiStreamEntry, ObjectPath, ObjectStore,
@@ -22,6 +22,7 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
 ) -> Result<ObjectStoreStreamScan, QueryError> {
     if plan.blocks.is_empty() || plan.fingerprints.is_empty() {
         let mut streams = BTreeMap::new();
+        let mut labels_cache = HashMap::new();
         for record in hot_tail.records {
             let record: &WalLogRecord = record.borrow();
             append_matching_hot_log_record(
@@ -31,6 +32,7 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
                 hot_tail.frontier,
                 hot_tail.delete_filters,
                 false,
+                &mut labels_cache,
             );
         }
         sort_loki_stream_values(&mut streams);
@@ -55,6 +57,7 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
     // deciding which timestamp ranges can no longer affect the global limit.
     // Keep it separate to preserve the existing cold/hot order for equal times.
     let mut hot_streams = BTreeMap::new();
+    let mut labels_cache = HashMap::new();
     for record in hot_tail.records {
         let record: &WalLogRecord = record.borrow();
         append_matching_hot_log_record(
@@ -64,6 +67,7 @@ pub(crate) async fn execute_stream_query_from_object_store_with_hot_tail_frontie
             hot_tail.frontier,
             hot_tail.delete_filters,
             false,
+            &mut labels_cache,
         );
     }
 
