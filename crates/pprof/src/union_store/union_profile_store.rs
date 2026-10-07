@@ -43,6 +43,7 @@ where
         let mut symbols = UnionSymbols::default();
         let hot = collect_and_remap(hot, 1, &mut symbols).await?;
         let cold = collect_and_remap(cold, 2, &mut symbols).await?;
+        let cold_is_empty = cold.iter().all(|batch| batch.num_rows() == 0);
         let ctx = crate::profile_session_context();
         for (name, mut batches) in [("hot_samples", hot), ("cold_samples", cold)] {
             if batches.is_empty() {
@@ -56,13 +57,16 @@ where
         // A persisted WAL sample replaces its hot copy. Distinct WAL records
         // remain distinct even when their timestamps, labels and values match.
         // Downsampled rows retain every contributing identity.
-        let samples = ctx
-            .sql(
-                "SELECT hot.* FROM hot_samples hot WHERE NOT EXISTS (
+        let sql = if cold_is_empty {
+            "SELECT * FROM hot_samples"
+        } else {
+            "SELECT hot.* FROM hot_samples hot WHERE NOT EXISTS (
             SELECT 1 FROM (SELECT UNNEST(wal_sample_ids) AS id FROM cold_samples) cold_ids
             WHERE array_element(hot.wal_sample_ids, 1) = cold_ids.id
-        ) UNION ALL SELECT * FROM cold_samples",
-            )
+        ) UNION ALL SELECT * FROM cold_samples"
+        };
+        let samples = ctx
+            .sql(sql)
             .await
             .map_err(|err| ProfileError::Store(err.to_string()))?;
         let samples_table = "samples".to_string();
