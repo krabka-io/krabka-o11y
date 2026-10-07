@@ -54,6 +54,8 @@ def port(root):
     otel_http = single(root, 'registry/opentelemetry-http-0.33.0')
     for directory in [newer_store / 'src', fusion / 'datafusion', broker / 'crates/object-store/src', broker / 'crates/broker/src', broker / 'crates/raft/src', broker / 'crates/telemetry/src', protocol / 'crates/security/src', otel_http / 'src']:
         for source in directory.rglob('*.rs'):
+            if source == broker / 'crates/broker/src/host_port.rs':
+                continue
             text = source.read_text()
             transformed = os_cfg(text, wasi=directory in [broker / 'crates/broker/src', broker / 'crates/raft/src'])
             if transformed != text:
@@ -93,6 +95,19 @@ def port(root):
             if 'target_family = "wasm"' in old or 'target_arch = "wasm32"' in old:
                 targets[os_cfg('#[' + old + ']')[2:-1]] = targets.pop(old)
         manifest.write_text(helper.toml_text(data))
+    # WASIX has no host name either. Keep the broker's WASM branch, which
+    # advertises none, and leave the hostname crate, which has no WASIX
+    # implementation, out of the lab build.
+    source = broker / 'crates/broker/src/host_port.rs'
+    if source.read_text().count('#[cfg(target_family = "wasm")]') != 1:
+        raise ValueError('Pinned broker host-name selection changed')
+    manifest = broker / 'crates/broker/Cargo.toml'
+    data = tomllib.loads(manifest.read_text())
+    targets = data['target']
+    ported = targets[os_cfg('#[cfg(not(target_family = "wasm"))]')[2:-1]]['dependencies']
+    native = targets.setdefault('cfg(not(target_family = "wasm"))', {}).setdefault('dependencies', {})
+    native['hostname'] = ported.pop('hostname')
+    manifest.write_text(helper.toml_text(data))
 
     metadata = json.loads((root.parent / 'native-metadata.json').read_text())
     wasix_metadata = json.loads((root.parent / 'wasix-metadata.json').read_text())
