@@ -40,8 +40,8 @@ pub(crate) fn execute_create_delete_request(
         status: "received".to_string(),
         created_at: current_unix_time_ns() / 1_000_000_000,
     });
+    let persisted = state.delete_requests.persist(&requests);
     drop(requests);
-    let persisted = state.delete_requests.persist();
     security.admin_operation(
         OPERATION_DELETE_REQUEST_CREATE,
         vec![
