@@ -70,8 +70,10 @@ mod tests {
     };
     use assert2::check;
     use datafusion::{
-        common::tree_node::TreeNodeRecursion, datasource::memory::MemorySourceConfig,
-        physical_plan::collect, prelude::SessionContext,
+        common::{plan_err, tree_node::TreeNodeRecursion},
+        datasource::memory::MemorySourceConfig,
+        physical_plan::collect,
+        prelude::SessionContext,
     };
 
     use super::*;
@@ -163,16 +165,9 @@ mod tests {
         let (batch, schema) = series_batch(vec![0], vec![1.0]);
         let mem = MemorySourceConfig::try_new_exec(&[vec![batch]], schema, None).unwrap();
         let exec = RangeManipulateExec::new(0, 0, 1, 1, "timestamp".into(), "value".into(), mem);
-        let mut visited = 0;
-        check!(
-            exec.apply_expressions(&mut |_| {
-                visited += 1;
-                Ok(TreeNodeRecursion::Continue)
-            })
-            .expect("expression walk")
-                == TreeNodeRecursion::Continue
-        );
-        check!(visited == 0);
+        // The plan owns no expression, so a visitor that fails must never run.
+        let walk = exec.apply_expressions(&mut |_| plan_err!("visited an expression"));
+        check!(let Ok(TreeNodeRecursion::Continue) = walk);
     }
 
     #[test]
