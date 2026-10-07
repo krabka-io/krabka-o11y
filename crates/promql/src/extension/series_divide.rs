@@ -25,7 +25,10 @@ mod tests {
         catalog::MemTable,
         datasource::memory::MemorySourceConfig,
         logical_expr::{Extension, UserDefinedLogicalNodeCore, col},
-        physical_plan::{collect, display::DisplayableExecutionPlan},
+        physical_plan::{
+            ChildrenPropertiesMode, ReplaceChildrenOptions, collect,
+            display::DisplayableExecutionPlan,
+        },
         prelude::SessionContext,
     };
 
@@ -113,10 +116,20 @@ mod tests {
         check!(display.starts_with("PromSeriesDivideExec: tags=[\"job\"]"));
         check!(display.contains("DataSourceExec: partitions=1"));
         check!(exec.maintains_input_order() == vec![true]);
-        check!(Arc::clone(&exec).with_new_children(vec![]).is_err());
         check!(
             Arc::clone(&exec)
-                .with_new_children(vec![input])
+                .replace_children(
+                    vec![],
+                    ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute)
+                )
+                .is_err()
+        );
+        check!(
+            Arc::clone(&exec)
+                .replace_children(
+                    vec![input],
+                    ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute)
+                )
                 .expect("valid child rewrite")
                 .name()
                 == "SeriesDivideExec"

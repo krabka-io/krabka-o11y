@@ -5,7 +5,7 @@ use promql_parser::parser::{
     token::{T_GTR, T_LSS, TokenType},
 };
 
-// Private AST tokens for operators absent from promql-parser 0.10. Parsing uses
+// Private AST tokens for operators absent from promql-parser 0.11. Parsing uses
 // the corresponding comparison precedence, then restores the operator in order. A temporary bool modifier permits scalar
 // operands without treating trim as a comparison. A user bool modifier consequently
 // becomes a duplicate and is rejected, as it is for trim in the pinned grammar.

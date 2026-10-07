@@ -1,4 +1,5 @@
 use arrow::array::BinaryArray;
+use datafusion::{common::tree_node::TreeNodeRecursion, physical_expr::PhysicalExpr};
 
 use super::{
     Arc, DataFusionError, DfResult, DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties,
@@ -114,6 +115,13 @@ impl ExecutionPlan for SeriesDivideExec {
 
     fn maintains_input_order(&self) -> Vec<bool> {
         vec![true]
+    }
+
+    fn apply_expressions(
+        &self,
+        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DfResult<TreeNodeRecursion>,
+    ) -> DfResult<TreeNodeRecursion> {
+        Ok(TreeNodeRecursion::Continue)
     }
 
     fn with_new_children(

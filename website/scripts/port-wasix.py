@@ -45,7 +45,6 @@ def ring_crypto(manifest, helper):
 
 
 def port(root):
-    store = single(root, 'git/arrow-rs-object-store-*/*')
     fusion = single(root, 'git/datafusion-*/*')
     client = single(root, 'git/krabka-client-rs-*/*')
     broker = single(root, 'git/krabka-broker-*/*')
@@ -53,7 +52,7 @@ def port(root):
     sspi = single(root, 'git/sspi-rs-*/*')
     newer_store = single(root, 'registry/object_store-0.14.*')
     otel_http = single(root, 'registry/opentelemetry-http-0.33.0')
-    for directory in [store / 'src', newer_store / 'src', fusion / 'datafusion', broker / 'crates/object-store/src', broker / 'crates/broker/src', broker / 'crates/raft/src', broker / 'crates/telemetry/src', protocol / 'crates/security/src', otel_http / 'src']:
+    for directory in [newer_store / 'src', fusion / 'datafusion', broker / 'crates/object-store/src', broker / 'crates/broker/src', broker / 'crates/raft/src', broker / 'crates/telemetry/src', protocol / 'crates/security/src', otel_http / 'src']:
         for source in directory.rglob('*.rs'):
             text = source.read_text()
             transformed = os_cfg(text, wasi=directory in [broker / 'crates/broker/src', broker / 'crates/raft/src'])

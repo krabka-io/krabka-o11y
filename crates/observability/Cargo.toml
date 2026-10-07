@@ -26,7 +26,7 @@ base64 = { workspace = true }
 clap = { workspace = true, features = ["env"] }
 # The audit log, its hash chain, OCSF records and its disk spool. The broker
 # writes its own audit trail with the same crate.
-krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "ffdd381433675bdb34d36d4aab1170e53bb4f5a9", version = "0.7.0" }
+krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "82fea7dc8de3b2122011103c892572f6774634d0", version = "0.7.0" }
 krabka-blockstore = { version = "0.4.0", path = "../blockstore" }
 krabka-client-admin = { version = "0.5.0" }
 krabka-client-core = { version = "0.5.0" }

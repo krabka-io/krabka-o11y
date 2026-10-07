@@ -1,3 +1,5 @@
+use datafusion::{common::tree_node::TreeNodeRecursion, physical_expr::PhysicalExpr};
+
 use super::{
     Arc, ArrayRef, DataFusionError, DfResult, DisplayAs, DisplayFormatType, ExecutionPlan,
     Float64Array, Int64Array, PlanProperties, RecordBatch, RecordBatchStreamAdapter,
@@ -144,6 +146,13 @@ impl ExecutionPlan for InstantManipulateExec {
 
     fn maintains_input_order(&self) -> Vec<bool> {
         vec![false]
+    }
+
+    fn apply_expressions(
+        &self,
+        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DfResult<TreeNodeRecursion>,
+    ) -> DfResult<TreeNodeRecursion> {
+        Ok(TreeNodeRecursion::Continue)
     }
 
     fn with_new_children(
