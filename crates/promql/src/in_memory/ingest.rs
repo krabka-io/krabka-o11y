@@ -42,26 +42,40 @@ impl InMemoryMetricStore {
         self.series_labels.remove(tenant);
     }
 
+    fn live_series_labels(
+        &self,
+        tenant: &str,
+        fp: SeriesFingerprint,
+        matches: impl Fn(&Labels) -> bool,
+    ) -> Option<Arc<Labels>> {
+        let candidates = self.series_labels.get(tenant)?.get(&fp)?;
+        // Dead entries still take the mutable cleanup path below.
+        if !candidates
+            .iter()
+            .all(|candidate| candidate.strong_count() > 0)
+        {
+            return None;
+        }
+        candidates
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .find(|candidate| matches(candidate))
+    }
+
     fn intern_series_labels(
         &mut self,
         tenant: &str,
         labels: Arc<Labels>,
     ) -> (SeriesFingerprint, Arc<Labels>) {
         let fp = labels.fingerprint();
-        let cache = self.series_labels.entry(tenant.to_string()).or_default();
         // A live cache hit does not change the cache. Preserve its sharing
         // with query snapshots instead of copying every series' weak entries.
-        if let Some(candidates) = cache.get(&fp)
-            && candidates
-                .iter()
-                .all(|candidate| candidate.strong_count() > 0)
-            && let Some(candidate) = candidates
-                .iter()
-                .filter_map(std::sync::Weak::upgrade)
-                .find(|candidate| candidate.as_ref() == labels.as_ref())
+        if let Some(candidate) =
+            self.live_series_labels(tenant, fp, |other| other == labels.as_ref())
         {
             return (fp, candidate);
         }
+        let cache = self.series_labels.entry(tenant.to_string()).or_default();
         let candidates = Arc::make_mut(cache).entry(fp).or_default();
         candidates.retain(|candidate| candidate.strong_count() > 0);
         for candidate in candidates.iter().filter_map(std::sync::Weak::upgrade) {
@@ -207,10 +221,21 @@ impl InMemoryMetricStore {
 
     /// Applies one decoded metrics WAL record to this in-memory head.
     pub fn apply_wal_record(&mut self, record: &WalRecord) {
-        // One shared label set for the sample and every exemplar the record
-        // carries, so a record costs one label-set allocation rather than one
-        // per row, and every row that shares it clones by refcount afterwards.
-        let series_labels = Arc::new(record.labels());
+        // Compare sorted WAL labels before allocating an owned label map.
+        // Unsorted names and duplicates retain the canonical map conversion.
+        let series_labels = record
+            .labels
+            .windows(2)
+            .all(|pair| pair[0].0 < pair[1].0)
+            .then(|| {
+                self.live_series_labels(&record.tenant, record.series_fingerprint(), |labels| {
+                    labels
+                        .iter()
+                        .eq(record.labels.iter().map(|(name, value)| (name, value)))
+                })
+            })
+            .flatten()
+            .unwrap_or_else(|| Arc::new(record.labels()));
         match &record.payload {
             SamplePayload::Float {
                 timestamp_ms,
