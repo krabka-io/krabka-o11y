@@ -28,6 +28,7 @@ mod tests {
     use assert2::check;
     use datafusion::{
         catalog::MemTable,
+        common::tree_node::TreeNodeRecursion,
         datasource::memory::MemorySourceConfig,
         logical_expr::{Extension, UserDefinedLogicalNodeCore, col},
         physical_plan::{
@@ -152,6 +153,16 @@ mod tests {
         ));
         check!(display.contains("DataSourceExec: partitions=1"));
         check!(exec.maintains_input_order() == vec![false]);
+        let mut visited = 0;
+        check!(
+            exec.apply_expressions(&mut |_| {
+                visited += 1;
+                Ok(TreeNodeRecursion::Continue)
+            })
+            .expect("expression walk")
+                == TreeNodeRecursion::Continue
+        );
+        check!(visited == 0);
         check!(
             Arc::clone(&exec)
                 .replace_children(
