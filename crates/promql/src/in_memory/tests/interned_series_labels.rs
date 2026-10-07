@@ -213,6 +213,89 @@ async fn cold_labels_do_not_hide_different_hot_labels_with_the_same_row_id() {
     assert!(!Arc::ptr_eq(&scan.labels[&cold_fp], &cold_labels));
 }
 
+#[tokio::test]
+async fn pruned_summary_keeps_canonical_labels_when_the_row_id_differs() {
+    let cold_labels = Arc::new(Labels::from_pairs([("__name__", "up"), ("job", "api")]));
+    let hot_labels = Arc::new(Labels::from_pairs([("__name__", "up"), ("job", "worker")]));
+    let cold_fp = cold_labels.fingerprint();
+    let hot_fp = hot_labels.fingerprint();
+    assert!(cold_fp != hot_fp);
+    let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
+    let mut hot = InMemoryMetricStore::with_retention(secs(1));
+    hot.push_float("tenant-a", lbls(&[("__name__", "expired")]), 100, 1.0);
+    hot.floats
+        .entry("tenant-a".into())
+        .or_default()
+        .push(FloatRow {
+            fp: cold_fp,
+            labels: Arc::clone(&hot_labels),
+            ts_ms: 10_000,
+            value: 7.0,
+            start_timestamp_ms: Some(0),
+        });
+    let head = WalHead::from_store(hot);
+    let before_prune = head.snapshot();
+    assert!(head.prune(10_000).samples_dropped == 1);
+    let pruned = head.snapshot();
+    assert!(
+        summary_ledger(&pruned, "tenant-a", &matchers, 9_000, 9_001, 11_000)
+            == Some((
+                BTreeMap::from([(
+                    cold_fp,
+                    (Arc::clone(&hot_labels), 10_000, 7.0_f64.to_bits(), Some(0)),
+                )]),
+                1,
+            ))
+    );
+    assert!(before_prune.floats["tenant-a"].len() == 2);
+    let mut blocks = BlockStore::new(
+        Arc::new(InMemory::new()),
+        url::Url::parse("memory:///").unwrap(),
+    );
+    blocks
+        .index_mut()
+        .add_series("tenant-a", cold_fp ^ 1, &cold_labels.utf8_projection());
+    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), head.clone());
+    let scan = store
+        .try_latest_float_scan("tenant-a", &matchers, 9_000, 9_001, 11_000, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(scan.samples == vec![(cold_fp, 10_000, 7.0, Some(0))]);
+    assert!(
+        scan.labels
+            == BTreeMap::from([
+                (cold_fp, Arc::clone(&cold_labels)),
+                (hot_fp, Arc::clone(&hot_labels)),
+            ])
+    );
+    assert!(!Arc::ptr_eq(&scan.labels[&cold_fp], &cold_labels));
+    assert!(Arc::ptr_eq(&scan.labels[&hot_fp], &hot_labels));
+    head.delete_tenant("tenant-a");
+    assert!(
+        summary_ledger(
+            &head.snapshot(),
+            "tenant-a",
+            &matchers,
+            9_000,
+            9_001,
+            11_000
+        )
+        .is_none()
+    );
+    assert!(
+        summary_ledger(&pruned, "tenant-a", &matchers, 9_000, 9_001, 11_000)
+            == Some((
+                BTreeMap::from([(
+                    cold_fp,
+                    (Arc::clone(&hot_labels), 10_000, 7.0_f64.to_bits(), Some(0)),
+                )]),
+                1,
+            ))
+    );
+    assert!(Arc::ptr_eq(&scan.labels[&hot_fp], &hot_labels));
+}
+
 type SummaryLedger = BTreeMap<u64, (Arc<Labels>, i64, u64, Option<i64>)>;
 
 pub(super) fn summary_ledger(

@@ -12,6 +12,7 @@ use crate::PromqlLabels as Labels;
 #[derive(Clone)]
 pub struct FloatSeriesSummary {
     pub labels: Arc<Labels>,
+    pub canonical_labels_fingerprint: SeriesFingerprint,
     pub latest: FloatSampleRow,
     pub row_count: usize,
 }
@@ -32,6 +33,7 @@ impl FloatHeadSummary {
             .entry(row.fp)
             .or_insert_with(|| FloatSeriesSummary {
                 labels: Arc::clone(&row.labels),
+                canonical_labels_fingerprint: row.labels.fingerprint(),
                 latest: (row.fp, row.ts_ms, row.value, row.start_timestamp_ms),
                 row_count: 0,
             });

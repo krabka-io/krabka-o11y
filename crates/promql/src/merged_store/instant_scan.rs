@@ -18,6 +18,7 @@ struct LatestSeries {
     sample: Option<FloatSampleRow>,
     labels: Option<Arc<Labels>>,
     matching_labels: Option<Arc<Labels>>,
+    canonical_labels_fingerprint: Option<u64>,
 }
 
 impl MergedMetricStore<MetricBlockStore, WalHead> {
@@ -113,6 +114,7 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
                         LatestSeries {
                             sample: (entry.latest.1 >= start_ms).then_some(entry.latest),
                             labels: Some(Arc::clone(&entry.labels)),
+                            canonical_labels_fingerprint: Some(entry.canonical_labels_fingerprint),
                             ..LatestSeries::default()
                         },
                     );
@@ -161,6 +163,7 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
                                 sample: None,
                                 labels: Some(Arc::clone(&row.labels)),
                                 matching_labels: Some(Arc::clone(&row.labels)),
+                                canonical_labels_fingerprint: None,
                             })
                         }
                     };
@@ -255,7 +258,10 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
         let mut samples = Vec::new();
         for (_, entry) in series {
             if let Some(hot) = entry.labels {
-                labels.entry(hot.fingerprint()).or_insert(hot);
+                let fingerprint = entry
+                    .canonical_labels_fingerprint
+                    .unwrap_or_else(|| hot.fingerprint());
+                labels.entry(fingerprint).or_insert(hot);
             }
             if let Some(sample) = entry.sample {
                 samples.push(sample);
