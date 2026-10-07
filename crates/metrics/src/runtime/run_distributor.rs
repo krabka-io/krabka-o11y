@@ -1,14 +1,14 @@
 use krabka_observability::CancellationToken;
 
 use super::{
-    Arc, AutoOffsetReset, Cli, ClientSecurity, Consumer, DistributorState, KafkaHaElectionSink,
+    Arc, AutoOffsetReset, ClientSecurity, Consumer, DistributorState, KafkaHaElectionSink,
     KafkaSink, Producer, RoleReadiness, ServerListener, ServerSecurity, ServiceMetrics,
-    TcpListener, distributor_router, load_runtime_overrides, readiness_router,
+    TcpListener, WriterConfig, distributor_router, load_runtime_overrides, readiness_router,
     run_ha_election_consumer_loop, serve_router,
 };
 
 pub(crate) async fn run_distributor(
-    cli: Cli,
+    cli: WriterConfig,
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     security: &ServerSecurity,

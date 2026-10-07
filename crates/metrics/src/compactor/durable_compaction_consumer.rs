@@ -35,6 +35,10 @@ where
         self.inner.take_revoked_partitions()
     }
 
+    async fn drain_complete(&mut self) -> Result<bool, CompactionConsumerPollError> {
+        self.inner.drain_complete().await
+    }
+
     async fn poll(
         &mut self,
         timeout: Time,
@@ -53,5 +57,14 @@ where
         offsets: &[CompactionPartitionOffset],
     ) -> Result<(), CompactionConsumerCommitError> {
         self.inner.commit_offsets_sync(&self.topic, offsets).await
+    }
+}
+
+impl DurableCompactionConsumer<super::WalAssignmentConsumer> {
+    /// Freezes the WAL boundary before the first poll after cancellation.
+    #[must_use]
+    pub fn drain_on_shutdown(mut self, stopping: krabka_observability::CancellationToken) -> Self {
+        self.inner.drain_on_shutdown(stopping);
+        self
     }
 }

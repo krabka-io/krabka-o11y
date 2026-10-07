@@ -2,21 +2,16 @@ use krabka_observability::RoleKind;
 
 use super::ValueEnum;
 
-/// The roles `krabka-metrics-service` has.
+/// The metrics read roles and the all-in-one stack.
 ///
-/// These three are the metrics read path, and this binary is the only one that
-/// has them. The write path -- ingest and block building -- is
-/// `krabka-metrics`, whose `--target` takes `distributor` and `block-builder`
-/// and refuses each of these by name.
-///
-/// There is no `all` here for the same reason: metrics is the one signal whose
-/// roles are split across two binaries, so no single process can run them.
-/// Logs, traces and profiles each have a `--target all`.
+/// `all` runs a distributor, block builder, compactor and querier in one runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 pub(crate) enum Target {
     /// Answers a `PromQL` query over blocks and the WAL head.
     Querier,
+    /// Runs the metrics write and query paths in one process.
+    All,
     /// Shards a query, fans out to queriers, and merges what comes back.
     QueryFrontend,
     /// Evaluates recording and alerting rules.
@@ -32,6 +27,7 @@ impl Target {
     pub(crate) const fn kind(self) -> RoleKind {
         match self {
             Self::Querier => RoleKind::Querier,
+            Self::All => RoleKind::All,
             Self::QueryFrontend => RoleKind::QueryFrontend,
             Self::Ruler => RoleKind::Ruler,
         }

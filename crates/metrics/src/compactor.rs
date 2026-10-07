@@ -2491,6 +2491,136 @@ overrides:
         assert!(recorded == vec![format!("index:{block_key}"), "commit:12".to_string()]);
     }
 
+    struct FrozenDrainConsumer {
+        inner: PollAndCommit,
+        end: i64,
+    }
+
+    #[async_trait]
+    impl super::CompactionConsumerPoll for FrozenDrainConsumer {
+        async fn poll(
+            &mut self,
+            timeout: Time,
+        ) -> Result<Vec<krabka_client_consumer::ConsumerRecord>, super::CompactionConsumerPollError>
+        {
+            super::CompactionConsumerPoll::poll(&mut self.inner, timeout).await
+        }
+
+        async fn drain_complete(&mut self) -> Result<bool, super::CompactionConsumerPollError> {
+            Ok(self
+                .inner
+                .committed_offsets
+                .last()
+                .is_some_and(|offsets| offsets.iter().any(|offset| offset.offset.0 >= self.end)))
+        }
+    }
+
+    #[async_trait]
+    impl super::CompactionConsumerCommitMut for FrozenDrainConsumer {
+        async fn commit_offsets_sync_mut(
+            &mut self,
+            offsets: &[super::CompactionPartitionOffset],
+        ) -> Result<(), super::CompactionConsumerCommitError> {
+            super::CompactionConsumerCommitMut::commit_offsets_sync_mut(&mut self.inner, offsets)
+                .await
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_drains_a_frozen_wal_cut_across_empty_polls_without_chasing_later_writes() {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let writer = krabka_blockstore::BlockWriter::new(Arc::clone(&store));
+        let sink = RecordingIndexSink::default();
+        let record = |offset, timestamp| krabka_client_consumer::ConsumerRecord {
+            topic: crate::WAL_TOPIC.to_owned(),
+            partition: 0,
+            offset,
+            leader_epoch: -1,
+            timestamp,
+            timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
+            key: None,
+            value: Some(bytes::Bytes::from(
+                float_record("tenant", "up", "api", timestamp)
+                    .encode()
+                    .unwrap(),
+            )),
+            headers: format_headers(),
+        };
+        let later = vec![record(3, 400), record(4, 500)];
+        let mut consumer = FrozenDrainConsumer {
+            inner: PollAndCommit {
+                batches: vec![
+                    vec![record(0, 100), record(1, 200)],
+                    Vec::new(),
+                    vec![record(2, 300)],
+                    later.clone(),
+                ],
+                commit_calls: 0,
+                committed_offsets: Vec::new(),
+            },
+            end: 3,
+        };
+        let mut first = true;
+        let summary = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            super::run_compactor_consumer_loop(
+                &mut consumer,
+                &writer,
+                &sink,
+                super::CompactionLoopConfig {
+                    wal_topic: crate::WAL_TOPIC.to_owned(),
+                    poll_timeout: millis(1),
+                    flush_max_rows: 100_000,
+                    flush_max_age: hours(1),
+                },
+                |_| std::mem::take(&mut first),
+                &ServiceMetrics::new(),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let manifests = sink.manifests.lock().unwrap().clone();
+        let mut actual = Vec::new();
+        for manifest in manifests {
+            for batch in krabka_blockstore::read_block(Arc::clone(&store), &manifest.block_key)
+                .await
+                .unwrap()
+            {
+                actual.extend(crate::decode_float_samples(&batch).unwrap());
+            }
+        }
+        let fingerprint = float_record("tenant", "up", "api", 100).series_fingerprint();
+        assert!(
+            actual
+                == vec![
+                    (fingerprint, 100, 1.0, None),
+                    (fingerprint, 200, 1.0, None),
+                    (fingerprint, 300, 1.0, None)
+                ]
+        );
+        assert!(
+            (
+                summary.polls,
+                summary.polled_records,
+                consumer.inner.batches
+            ) == (3, 3, vec![later])
+        );
+        assert!(
+            consumer.inner.committed_offsets
+                == vec![
+                    vec![super::CompactionPartitionOffset {
+                        partition: krabka_ids::PartitionIndex(0),
+                        offset: krabka_ids::Offset(2)
+                    }],
+                    vec![super::CompactionPartitionOffset {
+                        partition: krabka_ids::PartitionIndex(0),
+                        offset: krabka_ids::Offset(3)
+                    }],
+                ]
+        );
+    }
+
     struct PollAndCommit {
         batches: Vec<Vec<krabka_client_consumer::ConsumerRecord>>,
         commit_calls: usize,

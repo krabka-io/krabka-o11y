@@ -2,15 +2,16 @@ use krabka_observability::{CancellationToken, CriticalTaskError, SupervisedTasks
 use krabka_units::convert::TimeExt as _;
 
 use super::{
-    Arc, Cli, ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity, Limits,
-    MetricsCompactorConfig, OverridesProvider, RoleReadiness, ServiceMetrics, build_object_store,
-    load_runtime_overrides, run_compactor_consumer_loop, spawn_retention_sweeper,
+    Arc, ClientFrameMax, ClientSecurity, ConnectionDispatchQueueCapacity, Limits,
+    MetricsCompactorConfig, OverridesProvider, RoleReadiness, ServiceMetrics, WriterConfig,
+    build_object_store, load_runtime_overrides, run_compactor_consumer_loop,
+    spawn_retention_sweeper,
 };
 
 // cargo-mutants: live block-builder I/O wiring is covered by integration workflows.
 #[cfg_attr(test, mutants::skip)]
 pub(crate) async fn run_block_builder(
-    cli: Cli,
+    cli: WriterConfig,
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     wal_security: Option<ClientSecurity>,
@@ -51,7 +52,8 @@ pub(crate) async fn run_block_builder(
             wal_security.clone(),
             Some(wal_catch_up_gate),
         )
-        .await?;
+        .await?
+        .drain_on_shutdown(stopping.clone());
     wal_consumer_gate.mark_ready();
     let mut tasks = SupervisedTasks::new(stopping.clone());
     // Always, and not only where a tenant has a retention window. Retention and
@@ -101,7 +103,7 @@ pub(crate) async fn run_block_builder(
                     .build_consumer(&metrics.wal_consumer, wal_security.clone(), None)
                     .await
                 {
-                    Ok(consumer) => consumer,
+                    Ok(consumer) => consumer.drain_on_shutdown(stopping.clone()),
                     Err(error) => {
                         tasks.shutdown().await;
                         return Err(error.into());

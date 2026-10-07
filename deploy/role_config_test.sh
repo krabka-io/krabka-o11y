@@ -51,6 +51,8 @@ check() {
 check "$metrics" metrics-distributor
 check "$metrics" metrics-block-builder
 check "$metrics" metrics-compactor
+check "$metrics" metrics-writer
+check "$metrics_service" metrics-all
 check "$metrics_service" metrics-querier
 check "$metrics_service" metrics-query-frontend
 check "$metrics_service" metrics-ruler

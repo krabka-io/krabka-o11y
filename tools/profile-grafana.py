@@ -256,6 +256,4 @@ if __name__ == '__main__':
     parser.add_argument('--windows', type=int, choices=range(1, 5), default=3)
     parser.add_argument('--output', type=pathlib.Path, required=True)
     args = parser.parse_args()
-    if args.signal == 'metrics' and args.deployment_target != 'split':
-        parser.error('metrics requires split deployment')
     run(args)

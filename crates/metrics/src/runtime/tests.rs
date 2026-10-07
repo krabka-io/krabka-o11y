@@ -690,7 +690,7 @@ async fn a_topic_that_breaks_the_contract_stops_every_role_that_uses_it() {
 
     for target in [Target::Distributor, Target::BlockBuilder] {
         let cli = cli_for(target, &bootstrap);
-        let error = require_role_topics(&cli, None)
+        let error = require_role_topics(&cli.writer, cli.target, None)
             .await
             .expect_err("a role that reaches this broker refuses to start");
         check!(error.to_string().contains(METRICS_HA_TOPIC), "{target:?}");
@@ -709,7 +709,11 @@ async fn a_compactor_starts_with_no_broker_to_answer_it() {
 
     let cli = cli_for(Target::Compactor, &bootstrap);
 
-    check!(require_role_topics(&cli, None).await.is_ok());
+    check!(
+        require_role_topics(&cli.writer, cli.target, None)
+            .await
+            .is_ok()
+    );
     check!(!cli.target.touches_the_wal());
 }
 
@@ -725,7 +729,12 @@ async fn an_unreachable_broker_stops_every_role() {
 
     for target in [Target::Distributor, Target::BlockBuilder] {
         let cli = cli_for(target, &bootstrap);
-        check!(require_role_topics(&cli, None).await.is_err(), "{target:?}");
+        check!(
+            require_role_topics(&cli.writer, cli.target, None)
+                .await
+                .is_err(),
+            "{target:?}"
+        );
     }
 }
 

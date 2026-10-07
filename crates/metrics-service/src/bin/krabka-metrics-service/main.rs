@@ -80,9 +80,13 @@ mod tests {
                 .expect("every target is a possible value");
             assert2::check!(possible.get_name() == target.kind().as_str(), "{target:?}");
             assert2::check!(
-                Cli::try_parse_from(
-                    ["krabka-metrics-service", "--target", target.kind().as_str(),]
-                )
+                Cli::try_parse_from([
+                    "krabka-metrics-service",
+                    "--target",
+                    target.kind().as_str(),
+                    "--writer-config",
+                    "/tmp/writer.yaml"
+                ])
                 .expect("the shared name parses")
                 .target
                     == *target
@@ -958,6 +962,7 @@ mod parse_positive_usize;
 mod parse_remote_read_max_body;
 mod query_engine_opts;
 mod require_role_topics;
+mod run_all;
 mod run_querier;
 mod run_query_frontend;
 mod run_ruler;
@@ -1011,6 +1016,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // text, and no credentials.
         let server_security = cli.server_security.load()?;
         let wal_security = cli.wal_security.load()?;
+        if cli.target == Target::All {
+            return Box::pin(run_all::run_all(cli, server_security, wal_security))
+                .await
+                .map_err(|error| error as Box<dyn std::error::Error>);
+        }
         let metrics = krabka_promql::metrics::ServiceMetrics::new();
         // One readiness for the process. The admin port answers `/ready` from
         // the moment it binds, which is what a probe that cannot reach the
@@ -1057,6 +1067,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // holds its whole serving state.
             let serve_role = Box::pin(async {
                 match cli.target {
+                    Target::All => unreachable!("all has its own process supervisor"),
                     Target::Querier => {
                         let shutdown = Shutdown::new();
                         spawn_shutdown_signal_listener(shutdown.clone());

@@ -1,0 +1,12 @@
+# krabka-metrics-service --target=all
+# One runtime owns ingest, durable block writes, compaction and PromQL queries.
+target: all
+writer-config: /etc/krabka/metrics-writer.yaml
+listen: 0.0.0.0:9090
+admin-listen-addr: 0.0.0.0:9404
+object-store-url: s3://krabka-metrics
+wal-bootstrap: broker:9092
+wal-group-id: krabka-metrics-querier
+wal-client-id: krabka-metrics-querier
+wal-head-retention: 5m
+drain-timeout: 30s
