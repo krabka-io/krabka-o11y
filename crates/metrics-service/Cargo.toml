@@ -41,6 +41,7 @@ krabka-telemetry = { version = "0.7.0" }
 krabka-units = { workspace = true }
 futures = { workspace = true }
 object_store = { workspace = true }
+prometheus-client = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 refined_type = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

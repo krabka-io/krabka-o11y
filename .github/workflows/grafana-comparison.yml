@@ -55,7 +55,7 @@ on:
         options: [split, all, both]
         default: split
       deployment_target:
-        description: Layout for logs, traces and profiles (metrics always uses split)
+        description: Layout for every signal (same aggregate application and broker budget)
         type: choice
         options: [split, all, both]
         default: split
@@ -192,14 +192,11 @@ jobs:
           done > qualification/evidence/comparison/gce.txt
           phases=(steady burst high_cardinality)
           if [[ "${PHASES}" == steady ]]; then phases=(steady); fi
-          targets=(split)
-          if [[ "${SIGNAL}" != metrics ]]; then
-            targets=("${DEPLOYMENT_TARGET}")
-            if [[ "${SIGNAL}" == profiles && "${DEPLOYMENT_TARGET}" == split ]]; then
-              targets=("${PROFILES_TARGET}")
-            fi
-            if [[ "${targets[0]}" == both ]]; then targets=(split all); fi
+          targets=("${DEPLOYMENT_TARGET}")
+          if [[ "${SIGNAL}" == profiles && "${DEPLOYMENT_TARGET}" == split ]]; then
+            targets=("${PROFILES_TARGET}")
           fi
+          if [[ "${targets[0]}" == both ]]; then targets=(split all); fi
           for target in "${targets[@]}"; do
             output=qualification/evidence/comparison
             if [[ "${#targets[@]}" -gt 1 ]]; then
@@ -239,7 +236,6 @@ jobs:
           }, indent=2) + '\n')
           PY
           target="${DEPLOYMENT_TARGET}"
-          if [[ "${SIGNAL}" == metrics ]]; then target=split; fi
           if [[ "${SIGNAL}" == profiles && "${target}" == split ]]; then target="${PROFILES_TARGET}"; fi
           for ((pair=1; pair<=REPETITIONS; pair++)); do
             revisions=(baseline candidate)
@@ -270,7 +266,6 @@ jobs:
         run: |
           set -euo pipefail
           target="${DEPLOYMENT_TARGET}"
-          if [[ "${SIGNAL}" == metrics ]]; then target=split; fi
           [[ "${target}" != both ]]
           python3 -u tools/profile-grafana.py --signal "${SIGNAL}" --mode "${PROFILE_MODE}" \
             --image "$(cat qualification/image/tag)" \

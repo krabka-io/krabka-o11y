@@ -14,4 +14,7 @@ pub enum WalHeadConsumerError {
 
     #[error("metrics WAL consumer commit failed: {0}")]
     Commit(String),
+
+    #[error("metrics WAL consumer close failed: {0}")]
+    Close(String),
 }

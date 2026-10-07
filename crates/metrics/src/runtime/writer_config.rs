@@ -1,26 +1,17 @@
 use super::{
-    AuditArgs, ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
+    ByteSize, ConfigFileArgs, DEFAULT_CONNECTION_DISPATCH_QUEUE_CAPACITY,
     DEFAULT_MAX_BLOCKS_PER_JOB, DEFAULT_MAX_LEVEL, DEFAULT_MAX_RATE_BUCKETS,
-    DEFAULT_TARGET_ROWS_PER_BLOCK, HA_TRACKER_TOPIC, Parser, PathBuf, ServerSecurityArgs,
-    SocketAddr, Target, TargetValueParser, Time, WalClientSecurityArgs, parse,
+    DEFAULT_TARGET_ROWS_PER_BLOCK, HA_TRACKER_TOPIC, Parser, PathBuf, SocketAddr, Time, parse,
     parse_client_dispatch_queue_capacity, parse_client_frame_max,
     parse_compactor_max_blocks_per_job, parse_compactor_max_level, parse_compactor_target_rows,
     parse_distributor_max_decompressed, parse_ingest_rate_bucket_cap,
 };
 
-#[derive(Debug, Parser)]
-pub(crate) struct Cli {
+/// Writer options shared by standalone and all-in-one metrics roles.
+#[derive(Clone, Debug, Parser)]
+pub struct WriterConfig {
     #[command(flatten)]
     pub(crate) config_file: ConfigFileArgs,
-    #[command(flatten)]
-    pub(crate) profiling: krabka_telemetry::profiling::ProfilingConfig,
-    /// The role this process runs: `distributor`, `block-builder` or
-    /// `compactor`.
-    ///
-    /// The read-path roles are `krabka-metrics-service`'s, not this binary's,
-    /// and naming one here is rejected with a message that says so.
-    #[arg(long, env = "KRABKA_METRICS_TARGET", value_parser = TargetValueParser)]
-    pub(crate) target: Target,
     /// HTTP ingest listen address. Default: `0.0.0.0:4041`.
     ///
     /// Every interface, as Prometheus and Mimir default to. A container that
@@ -28,13 +19,6 @@ pub(crate) struct Cli {
     /// symptom is a health check timing out with nothing in the logs.
     #[arg(long, env = "KRABKA_METRICS_LISTEN", default_value = "0.0.0.0:4041")]
     pub(crate) listen: SocketAddr,
-    /// Address for the admin port: pprof, Prometheus metrics and `/ready`. Default: `0.0.0.0:9404`.
-    ///
-    /// The admin port always serves plain HTTP with no authentication. The
-    /// TLS and credential flags apply only to the data port. Bind the admin
-    /// port to an address that only the cluster can reach.
-    #[arg(long, env = "KRABKA_ADMIN_LISTEN_ADDR", default_value = "0.0.0.0:9404")]
-    pub(crate) admin_listen_addr: SocketAddr,
     #[arg(
         long,
         env = "KRABKA_METRICS_BOOTSTRAP",
@@ -89,7 +73,7 @@ pub(crate) struct Cli {
     #[arg(
         long,
         env = "KRABKA_METRICS_BLOCK_BUILDER_FLUSH_MAX_ROWS",
-        default_value_t = krabka_metrics::DEFAULT_FLUSH_MAX_ROWS
+        default_value_t = crate::DEFAULT_FLUSH_MAX_ROWS
     )]
     pub(crate) block_builder_flush_max_rows: usize,
     /// Flush the accumulated block buffer once its oldest record reaches this
@@ -243,15 +227,52 @@ pub(crate) struct Cli {
     /// retention sweep.
     #[arg(long, env = "KRABKA_METRICS_RUNTIME_OVERRIDES")]
     pub(crate) runtime_overrides: Option<PathBuf>,
-    // The shared security flags come after this binary's own flags, so
-    // `--help` lists the role and its listener first.
-    /// TLS, authentication and outbound-credential flags for the data port.
-    #[command(flatten)]
-    pub(crate) server_security: ServerSecurityArgs,
-    /// Audit trail flags. The audit layer is off until `--audit-topic` is set.
-    #[command(flatten)]
-    pub(crate) audit: AuditArgs,
-    /// TLS and SASL flags for every broker connection, the audit producer included.
-    #[command(flatten)]
-    pub(crate) wal_security: WalClientSecurityArgs,
+}
+
+impl WriterConfig {
+    /// Loads the writer option file through the actual writer CLI parser.
+    ///
+    /// Process security, audit, profiling and admin options belong to the caller.
+    /// # Errors
+    /// Returns an error for an unreadable file or an invalid writer option.
+    pub fn from_file(
+        path: &std::path::Path,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let argv = krabka_observability::argv_with_config_file::<Self>([
+            std::ffi::OsString::from("krabka-metrics"),
+            std::ffi::OsString::from("--config.file"),
+            path.as_os_str().to_owned(),
+        ])?;
+        Ok(Self::try_parse_from(argv)?)
+    }
+
+    /// The broker this writer reaches.
+    #[must_use]
+    pub fn bootstrap(&self) -> &str {
+        &self.bootstrap
+    }
+
+    /// The durable block builder's consumer group.
+    #[must_use]
+    pub fn block_builder_group_id(&self) -> &str {
+        &self.block_builder_group_id
+    }
+
+    /// The object storage shared by the writer and query roles.
+    #[must_use]
+    pub fn object_store_url(&self) -> &str {
+        &self.object_store_url
+    }
+
+    /// The distributor's data listener.
+    #[must_use]
+    pub fn listen(&self) -> SocketAddr {
+        self.listen
+    }
+
+    /// The tenant policy file shared by all metrics roles.
+    #[must_use]
+    pub fn runtime_overrides(&self) -> Option<&std::path::Path> {
+        self.runtime_overrides.as_deref()
+    }
 }

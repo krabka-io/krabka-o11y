@@ -141,9 +141,9 @@ The workflow waits for low background CPU before warm-up. The harness records
 host CPU and rejects runs averaging more than two external cores or exceeding
 four external cores over ten sample intervals; the summarizer suppresses
 qualified ratios for failed steady objectives.
-Use `deployment_target=all` for the shipped single-process logs, traces and
-profiles services, or `deployment_target=both` for paired measurements of both
-layouts. Metrics always uses separate roles. Each layout retains the same
+Use `deployment_target=all` for the shipped single-process metrics, logs, traces
+and profiles services, or `deployment_target=both` for paired measurements of both
+layouts. Each layout retains the same
 aggregate resource ceilings; single-process layouts pool the application
 roles' allocations, with the broker remaining separate. Local invocation uses
 `--deployment-target all` or `--deployment-target split`.

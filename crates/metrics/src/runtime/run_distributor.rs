@@ -1,17 +1,21 @@
+use krabka_observability::CancellationToken;
+
 use super::{
-    Arc, AutoOffsetReset, Cli, ClientSecurity, Consumer, DistributorState, KafkaHaElectionSink,
+    Arc, AutoOffsetReset, ClientSecurity, Consumer, DistributorState, KafkaHaElectionSink,
     KafkaSink, Producer, RoleReadiness, ServerListener, ServerSecurity, ServiceMetrics,
-    TcpListener, distributor_router, load_runtime_overrides, readiness_router,
+    TcpListener, WriterConfig, distributor_router, load_runtime_overrides, readiness_router,
     run_ha_election_consumer_loop, serve_router,
 };
 
 pub(crate) async fn run_distributor(
-    cli: Cli,
+    cli: WriterConfig,
     metrics: ServiceMetrics,
     readiness: RoleReadiness,
     security: &ServerSecurity,
     wal_security: Option<ClientSecurity>,
-) -> Result<(), Box<dyn std::error::Error>> {
+    stopping: CancellationToken,
+    startup: krabka_observability::ReadinessGate,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // A distributor with no broker behind it accepts a push and has nowhere to
     // put it. Both client builds below reach the broker, and neither has
     // happened yet.
@@ -66,18 +70,30 @@ pub(crate) async fn run_distributor(
     let ha_state = Arc::clone(&state);
     let ha_topic = cli.ha_tracker_topic.clone();
     let ha_poll_timeout = cli.ha_tracker_poll_timeout;
+    let listener = ServerListener::bind(TcpListener::bind(cli.listen).await?, security)?;
+    let ha_stop = stopping.clone();
     let mut ha_task = tokio::spawn(async move {
-        run_ha_election_consumer_loop(
+        let outcome = run_ha_election_consumer_loop(
             &mut ha_consumer,
             ha_state.tracker(),
             &ha_topic,
             ha_poll_timeout,
-            |_| false,
+            move |_| ha_stop.is_cancelled(),
         )
         .await
+        .map_err(Box::<dyn std::error::Error + Send + Sync>::from);
+        let close = ha_consumer.close().await;
+        if outcome.is_err() {
+            if let Err(error) = close {
+                tracing::warn!(%error, "metrics HA consumer close failed after a loop error");
+            }
+            return outcome;
+        }
+        close?;
+        outcome
     });
-    let listener = ServerListener::bind(TcpListener::bind(cli.listen).await?, security)?;
     let bound = listener.local_addr();
+    startup.mark_ready();
     tracing::info!(
         %bound,
         tls = security.tls_enabled(),
@@ -90,22 +106,29 @@ pub(crate) async fn run_distributor(
             distributor_router(state).merge(readiness_router(readiness)),
             security,
         )
-        .with_graceful_shutdown(async {
-            krabka_observability::shutdown_signal().await;
-        }),
+        .with_graceful_shutdown(stopping.clone().cancelled_owned()),
     );
     tokio::pin!(server);
     tokio::select! {
         result = &mut server => {
-            ha_task.abort();
+            stopping.cancel();
+            let ha_outcome = ha_task.await;
             result?;
+            ha_outcome??;
         }
         result = &mut ha_task => {
-            match result {
-                Ok(Ok(_)) => return Err("metrics HA tracker consumer stopped unexpectedly".into()),
-                Ok(Err(error)) => return Err(error.into()),
-                Err(error) => return Err(error.into()),
-            }
+            let failure: Box<dyn std::error::Error + Send + Sync> = match result {
+                Ok(Ok(_)) if stopping.is_cancelled() => {
+                    server.await?;
+                    return Ok(());
+                }
+                Ok(Ok(_)) => "metrics HA tracker consumer stopped unexpectedly".into(),
+                Ok(Err(error)) => error,
+                Err(error) => error.into(),
+            };
+            stopping.cancel();
+            server.await?;
+            return Err(failure);
         }
     }
     Ok(())

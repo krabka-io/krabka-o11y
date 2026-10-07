@@ -183,16 +183,17 @@ def configure_all(services, roles, admin_ports, signal):
                                   if volume['target'] == '/var/lib/krabka')
     for name in names:
         del services[name]
-    binary = 'krabka-observability' if signal == 'logs' else 'krabka-' + signal
+    binary = {'logs': 'krabka-observability', 'metrics': 'krabka-metrics-service'}.get(signal, 'krabka-' + signal)
     service.update(command=[binary, f'--config.file=/etc/krabka/{signal}-all.yaml'],
                    cpus=application_cpu, mem_limit=f'{application_cpu:g}g',
                    stop_grace_period='180s')
-    query_port = {'logs': 3100, 'traces': 3200, 'profiles': 4040}[signal]
+    query_port = {'metrics': 9090, 'logs': 3100, 'traces': 3200, 'profiles': 4040}[signal]
     if not any(p['target'] == query_port for p in service['ports']):
         service['ports'].append({'target': query_port, 'published': str(query_port),
                                  'host_ip': '127.0.0.1'})
     services[signal + '-all'] = service
     overrides = {
+        'metrics': 'runtime-overrides: /etc/krabka/metrics-limits.yaml\n',
         'logs': 'compactor-retention-sweep-interval: 2s\n'
                 'logs-limits-overrides-config: /etc/krabka/logs-limits.yaml\n',
         'traces': 'block-builder-window: 5s\nblock-builder-flush-max-records: 50000\n'
@@ -203,6 +204,11 @@ def configure_all(services, roles, admin_ports, signal):
                     'hot-store-max-age: 30s\nquery-frontend-shard-width: 1h\n'
                     'profiles-limits-overrides-config: /etc/krabka/profiles-limits.yaml\n',
     }
+    if signal == 'metrics':
+        writer = roles / 'metrics-writer.yaml'
+        writer.write_text(writer.read_text() + '\nblock-builder-flush-max-age: 2s\n'
+                          'block-builder-retention-sweep-interval: 2s\ncompactor-interval: 2s\n'
+                          'runtime-overrides: /etc/krabka/metrics-limits.yaml\n')
     config = roles / (signal + '-all.yaml')
     config.write_text(config.read_text() + '\n' + overrides[signal])
     return {'broker': admin_ports['broker'], signal + '-all': port}
@@ -256,7 +262,7 @@ class ComparisonDeployment(env.Deployment):
             if self.target == 'all':
                 self.admin_ports = configure_all(services, self.evidence / 'roles', self.admin_ports, signal)
                 self.role_locks = {name: threading.Lock() for name in self.admin_ports}
-                env.QUERY[signal] = {'logs': 3100, 'traces': 3200, 'profiles': 4040}[signal]
+                env.QUERY[signal] = {'metrics': 9090, 'logs': 3100, 'traces': 3200, 'profiles': 4040}[signal]
         self.file.write_text(json.dumps(data, indent=2))
 
     def drain(self, signal, timeout=180):
@@ -264,7 +270,7 @@ class ComparisonDeployment(env.Deployment):
         # querier bundle in build_service_dependencies_with_client_resource_policy.
         # Require that writer's committed frontier, even while it is still null;
         # selecting whichever consumers currently have commits could hide lag.
-        writer = 0 if signal == 'logs' and self.target == 'all' else None
+        writer = 0 if signal in ('logs', 'metrics') and self.target == 'all' else None
         return super().drain(signal, timeout, admin_port=self.admin_ports.get(f'{signal}-all'),
                              durable_consumer_index=writer)
 
@@ -557,12 +563,15 @@ def self_test():
         assert services['profiles-all']['mem_limit'] == '4g'
         assert selected['profiles-all'] == 15001
         assert 'query-frontend-shard-width: 1h' in (roles / 'profiles-all.yaml').read_text()
-        for signal, query_port, role_count in [('logs', 3100, 3), ('traces', 3200, 5)]:
+        for signal, query_port, role_count in [('logs', 3100, 3), ('traces', 3200, 5), ('metrics', 9090, 4)]:
             (roles / (signal + '-all.yaml')).write_text('target: all\n')
             services = {'broker': {'cpus': 2, 'mem_limit': '2g'},
                         **{f'{signal}-{n}': {'cpus': 1, 'mem_limit': '1g', 'ports': [], 'volumes': []}
                            for n in ['distributor', 'block-builder', 'querier']
                            + (['compactor', 'live-store'] if signal == 'traces' else [])}}
+            if signal == 'metrics':
+                services['metrics-compactor'] = {'cpus': 1, 'mem_limit': '1g', 'ports': [], 'volumes': []}
+                (roles / 'metrics-writer.yaml').write_text('bootstrap: broker:9092\n')
             if signal == 'logs':
                 services['logs-block-builder']['volumes'] = [
                     {'source': 'logs-data', 'target': '/var/lib/krabka'}]
@@ -572,6 +581,9 @@ def self_test():
             assert sum(float(s['cpus']) for s in services.values()) == role_count + 2
             assert services[signal + '-all']['mem_limit'] == f'{role_count}g'
             assert services[signal + '-all']['ports'][0]['target'] == query_port
+            if signal == 'metrics':
+                assert services['metrics-all']['command'][0] == 'krabka-metrics-service'
+                assert 'runtime-overrides: /etc/krabka/metrics-limits.yaml' in (roles / 'metrics-writer.yaml').read_text()
             if signal == 'logs':
                 assert services['logs-all']['volumes'][0]['source'] == 'logs-data'
     print('compare-grafana self-test passed')
@@ -586,7 +598,7 @@ if __name__ == '__main__':
     p.add_argument('--profiles-target', choices=('split', 'all'), default='split',
                    help='Separate profiles role containers or the existing all target; same aggregate budget')
     p.add_argument('--deployment-target', choices=('split', 'all'), default='split',
-                   help='Separate roles or the existing all target for logs, traces and profiles; metrics stays split')
+                   help='Separate roles or the all target for every signal; same aggregate budget')
     p.add_argument('--host-wait-seconds', type=int, default=0,
                    help='Wait for ten host sample intervals without excessive external CPU before warm-up')
     p.add_argument('--seconds', type=int, default=60)
@@ -607,8 +619,6 @@ if __name__ == '__main__':
             p.error('signal, image, image digest, image commit and positive load/duration values are required')
         if not re.fullmatch(r'sha256:[0-9a-f]{64}', options.image_digest):
             p.error('image digest must be sha256 followed by exactly 64 lowercase hexadecimal digits')
-        if options.signal == 'metrics' and options.deployment_target == 'all':
-            p.error('metrics has no all target; use split')
         if options.host_wait_seconds < 0:
             p.error('host wait must be nonnegative')
         if len(set(options.phases)) != len(options.phases) or len(set(options.backends)) != len(options.backends):

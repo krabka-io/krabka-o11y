@@ -19,6 +19,7 @@ pub mod metadata;
 pub mod metrics;
 pub mod otlp;
 pub mod request_tenant;
+pub mod runtime;
 pub mod sample;
 pub mod schema;
 pub mod symbols;
