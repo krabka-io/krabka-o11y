@@ -5,6 +5,8 @@ use super::{
     WalLogRecord, is_deleted_log_entry, matching_loki_stream_entry,
 };
 
+type HotLabelCache<'a> = HashMap<(&'a Labels, &'a Labels), (Labels, Labels, Labels)>;
+
 pub(crate) fn append_matching_hot_log_record<'a>(
     streams: &mut BTreeMap<Labels, Vec<LokiStreamEntry>>,
     plan: &StreamPlan,
@@ -12,7 +14,7 @@ pub(crate) fn append_matching_hot_log_record<'a>(
     frontier: &CompactionFrontier,
     delete_filters: &[ActiveLogDeleteFilter],
     preserve_source_labels: bool,
-    labels_cache: &mut HashMap<&'a Labels, (Labels, Labels)>,
+    labels_cache: &mut HotLabelCache<'a>,
 ) {
     if record.tenant != plan.tenant
         || frontier.is_compacted(record)
@@ -32,30 +34,37 @@ pub(crate) fn append_matching_hot_log_record<'a>(
         return;
     }
 
-    // These queries change neither the line nor labels between records of
-    // one source stream. The caller keeps this cache within one query.
-    if plan.query.pipeline.is_empty() && record.structured_metadata.is_empty() {
-        let (labels, metadata) = match labels_cache.entry(&record.labels) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
-                let Some((labels, value)) = matching_loki_stream_entry(
-                    &plan.query,
-                    &record.labels,
-                    &record.line,
-                    &record.structured_metadata,
-                    record.timestamp_ns,
-                    false,
-                ) else {
-                    return;
-                };
-                entry.insert((labels, value.structured_metadata))
-            }
-        };
+    // Level discovery adds metadata to otherwise plain logs. Cache these
+    // repeated categories within one query; other metadata stays uncached.
+    if plan.query.pipeline.is_empty()
+        && record.structured_metadata.len() <= 1
+        && record
+            .structured_metadata
+            .keys()
+            .all(|name| name == "detected_level")
+    {
+        let (labels, metadata, parsed) =
+            match labels_cache.entry((&record.labels, &record.structured_metadata)) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => {
+                    let Some((labels, value)) = matching_loki_stream_entry(
+                        &plan.query,
+                        &record.labels,
+                        &record.line,
+                        &record.structured_metadata,
+                        record.timestamp_ns,
+                        false,
+                    ) else {
+                        return;
+                    };
+                    entry.insert((labels, value.structured_metadata, value.parsed))
+                }
+            };
         let mut entry = LokiStreamEntry::new(
             record.timestamp_ns,
             record.line.clone(),
             metadata.clone(),
-            Labels::new(),
+            parsed.clone(),
         );
         if preserve_source_labels {
             entry.source_labels = record.labels.clone();
@@ -105,7 +114,9 @@ mod tests {
         records[2].structured_metadata = Labels::from([
             ("trace_id".into(), "trace".into()),
             ("app".into(), "metadata-app".into()),
+            ("__error__".into(), "entry-error".into()),
         ]);
+        records[3].structured_metadata = records[2].structured_metadata.clone();
         records[4].labels.insert("app".into(), "db".into());
         records[5].timestamp_ns = 30;
         records[5].line = "drop".into();
@@ -120,11 +131,16 @@ mod tests {
             offset: Offset(5),
         });
         records[10].labels.insert("level".into(), "info".into());
+        records[10].structured_metadata =
+            Labels::from([("detected_level".into(), "unknown".into())]);
         records[11].labels = records[10].labels.clone();
+        records[11].structured_metadata = Labels::from([("detected_level".into(), "warn".into())]);
         records[12].timestamp_ns = 30;
+        records[12].structured_metadata = records[10].structured_metadata.clone();
         records[13]
             .labels
             .insert("detected_level".into(), "warn".into());
+        records[13].structured_metadata = records[10].structured_metadata.clone();
         let frontier =
             CompactionFrontier::new(3).with_partition_offset(PartitionIndex(0), Offset(4));
         let deletes = [ActiveLogDeleteFilter {
@@ -187,10 +203,12 @@ mod tests {
                     );
                 }
                 assert!(actual == expected, "{query}, preserve={preserve}");
-                assert!(
-                    cache.is_empty()
-                        == (!plan.query.pipeline.is_empty() || query == r#"{app="missing"}"#)
-                );
+                let expected_cache_entries = match query {
+                    r#"{app="api"}"# => 5,
+                    r#"{app=~"api|db"}"# => 6,
+                    _ => 0,
+                };
+                assert!(cache.len() == expected_cache_entries);
             }
         }
     }
