@@ -122,7 +122,7 @@ impl MetricLabels {
 }
 impl From<krabka_blockstore::Labels> for MetricLabels {
     fn from(labels: krabka_blockstore::Labels) -> Self {
-        Self::from(&labels)
+        Self::from_pairs(labels)
     }
 }
 impl From<&krabka_blockstore::Labels> for MetricLabels {
