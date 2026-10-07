@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
+use krabka_units::prelude::TimeExt;
 use promql_parser::parser::{
-    AggregateExpr, Expr,
+    AggregateExpr, Expr, VectorSelector,
     token::{
         T_BOTTOMK, T_COUNT_VALUES, T_LIMIT_RATIO, T_LIMITK, T_QUANTILE, T_STDDEV, T_STDVAR, T_TOPK,
     },
@@ -12,17 +13,20 @@ use super::aggregation::{apply_limit_ratio_aggregate, apply_limitk_aggregate};
 use super::{
     PromqlEngine,
     aggregation::{
-        AggregateOp, apply_count_values_aggregate, apply_k_aggregate, apply_quantile_aggregate,
-        apply_simple_aggregate, apply_stddev_stdvar_aggregate,
+        AggregateOp, AggregateState, apply_count_values_aggregate, apply_k_aggregate,
+        apply_quantile_aggregate, apply_simple_aggregate, apply_stddev_stdvar_aggregate,
     },
+    current_at_modifier_bounds,
     planned::{InstantShape, OperatorInstant, PlannedInstant},
     planner_support::{
         aggregate_grouping, simple_aggregate_op, simple_aggregate_op_to_aggregate_op,
     },
+    selector::{apply_selector_time_modifier, label_matcher_sets},
 };
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels,
     error::Result,
+    extension::is_stale_nan,
     planner::aggregate::{Grouping, SimpleAggregateOp, plan_simple_aggregate},
     result::InstantSample,
     store::MetricStore,
@@ -82,14 +86,21 @@ impl<S: MetricStore> PromqlEngine<S> {
         // accumulation order. DataFusion's hash-aggregate folds the group members
         // in a non-deterministic, parallel order, which flickers run-to-run by a
         // ULP and can flip a fold-produced NaN's sign bit — diverging from the
-        // interpreter's stable fold. Route both ops through the SHARED
-        // `apply_simple_aggregate` kernel (the exact free function the interpreter
-        // uses, folding a fixed `Vec` in a deterministic order), even for a float
-        // `Operator` inner. The audit proved this path is bit-exact with the
-        // interpreter (incl. `sum by(g)(rate(...))`). `min`/`max` already use the
+        // interpreter's stable fold. Global float selectors fold the same
+        // `AggregateState` directly. Other inputs use `apply_simple_aggregate`,
+        // the interpreter's kernel, even for a float `Operator` inner. This
+        // preserves the stable fold (incl. `sum by(g)(rate(...))`). `min`/`max` already use the
         // order-independent `prom_min`/`prom_max` UDAFs and `count`/`group` are
         // exact, so they stay on the DataFusion fast path (no regression).
         if matches!(op, SimpleAggregateOp::Sum | SimpleAggregateOp::Avg) {
+            if matches!(&grouping, Grouping::By(labels) if labels.is_empty())
+                && let Expr::VectorSelector(selector) = aggregate.expr.as_ref()
+            {
+                return self
+                    .plan_latest_float_aggregate(tenant, selector, op, time_ms)
+                    .await
+                    .map(Some);
+            }
             return self
                 .plan_simple_aggregate_via_kernel(tenant, aggregate, op, time_ms)
                 .await;
@@ -178,6 +189,54 @@ impl<S: MetricStore> PromqlEngine<S> {
             time_ms,
         )?;
         Ok(Some(PlannedInstant::Precomputed(aggregated)))
+    }
+
+    /// Folds a global sum or average without copying each series' labels.
+    async fn plan_latest_float_aggregate(
+        &self,
+        tenant: &str,
+        selector: &VectorSelector,
+        op: SimpleAggregateOp,
+        time_ms: i64,
+    ) -> Result<PlannedInstant> {
+        let eval_time_ms = apply_selector_time_modifier(
+            time_ms,
+            selector.at.as_ref(),
+            selector.offset.as_ref(),
+            current_at_modifier_bounds(),
+        )?;
+        let start_ms = eval_time_ms.saturating_sub(self.opts.lookback_delta.millis_i64());
+        let matcher_sets = label_matcher_sets(selector);
+        let op = simple_aggregate_op_to_aggregate_op(op);
+        let aggregated = if let Some(scan) = self
+            .latest_float_scan(tenant, &matcher_sets, start_ms, eval_time_ms)
+            .await?
+        {
+            let mut state = AggregateState::new(Labels::new());
+            // Keep the selector's sample order and the shared compensation rules.
+            for (fp, _, value, _) in scan.samples {
+                if scan.labels.contains_key(&fp) && !is_stale_nan(value) {
+                    state.push_float(value);
+                }
+            }
+            op.finish(&state)
+                .map(|value| InstantSample {
+                    labels: state.labels,
+                    ts_ms: time_ms,
+                    value,
+                    drop_name: state.drop_name,
+                })
+                .into_iter()
+                .collect()
+        } else {
+            // The ordinary float/histogram scan retains warnings and limit errors.
+            // Do not retry the latest scan after it declines.
+            let samples = self
+                .scan_instant_selector(tenant, &matcher_sets, start_ms, eval_time_ms)
+                .await?;
+            apply_simple_aggregate(samples, op, None, time_ms)?
+        };
+        Ok(PlannedInstant::Precomputed(aggregated))
     }
 
     /// Plans a parameterized aggregation onto the operator path.

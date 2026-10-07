@@ -12,8 +12,8 @@ use krabka_metrics::{
     BucketSpan, LimitError, NativeHistogram, ObjectStoreCompactionIndexSink, ResetHint,
 };
 use krabka_promql::{
-    EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine, PromqlError,
-    PromqlLabels as Labels, PromqlMatcher as LabelMatcher, QueryResult, WalHead,
+    Annotations, EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine, PromqlError,
+    PromqlLabels as Labels, PromqlMatcher as LabelMatcher, QueryResult, SampleValue, WalHead,
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
@@ -856,12 +856,30 @@ async fn latest_scan_keeps_retained_history_boundary_labels_and_historical_value
             ..opts
         },
     );
-    assert!(matches!(
-        limited.query_instant(&tenant, "up", 12_000).await,
-        Err(PromqlError::Limit(
-            LimitError::SeriesPerQueryExceeded { .. }
-        ))
-    ));
+    for query in ["up", "sum(up)", "avg(up)"] {
+        assert!(matches!(
+            limited.query_instant(&tenant, query, 12_000).await,
+            Err(PromqlError::Limit(
+                LimitError::SeriesPerQueryExceeded { .. }
+            ))
+        ));
+    }
+    let capped = PromqlEngine::new(
+        Arc::clone(&fixture.store),
+        EngineOpts {
+            max_samples: 1,
+            ..opts
+        },
+    );
+    for query in ["sum(up)", "avg(up)"] {
+        assert!(matches!(
+            capped.query_instant(&tenant, query, 12_000).await,
+            Err(PromqlError::Limit(LimitError::SamplesPerQueryExceeded {
+                limit: 1,
+                ..
+            }))
+        ));
+    }
 
     // A matching future row cannot cause the historical in-window value to
     // disappear. The earlier unmatched future series does not affect it.
@@ -900,4 +918,315 @@ async fn latest_scan_keeps_retained_history_boundary_labels_and_historical_value
             == BTreeMap::from([(labels().fingerprint(), labels())])
     );
     assert!(cold_fixture.reads.load(Ordering::SeqCst) == 0);
+}
+
+/// Keep the entire public response and annotations, including nonfinite float bits.
+fn float_response_ledger(
+    (result, annotations): (QueryResult, Annotations),
+) -> (serde_json::Value, Vec<u64>, Annotations) {
+    let QueryResult::InstantVector(samples) = &result else {
+        panic!("expected an instant vector");
+    };
+    let bits = samples
+        .iter()
+        .map(|sample| {
+            let SampleValue::Float(value) = &sample.value else {
+                panic!("expected a float sample");
+            };
+            value.to_bits()
+        })
+        .collect();
+    (serde_json::to_value(result).unwrap(), bits, annotations)
+}
+
+#[tokio::test]
+async fn global_latest_aggregates_preserve_cold_hot_query_ledgers() {
+    let fixture = fixture(&[("api", 10_000), ("db", 10_000), ("boundary", 9_000)]).await;
+    // Independent effective-row ledger: the first hot 11,000 row wins its
+    // conflicting duplicate, and hot api wins the equal-time cold row.
+    let mut reference = InMemoryMetricStore::new();
+    for (stamp, value, start) in [
+        (9_000, 3.0, None),
+        (11_000, 7.0, Some(5_000)),
+        (10_000, 4.0, None),
+    ] {
+        reference.push_float_with_start_timestamp("tenant-a", labels(), stamp, value, start);
+    }
+    for (job, stamp) in [("db", 10_000), ("boundary", 9_000)] {
+        reference.push_float(
+            "tenant-a",
+            Labels::from_pairs([("__name__", "up"), ("job", job)]),
+            stamp,
+            1.0,
+        );
+    }
+    let tenant = TenantId::new("tenant-a").unwrap();
+    let opts = EngineOpts {
+        lookback_delta: secs(3),
+        ..EngineOpts::default()
+    };
+    let engine = PromqlEngine::new(Arc::clone(&fixture.store), opts);
+    let control = PromqlEngine::new(Arc::new(reference), opts);
+    for (query, value) in [
+        ("sum(up)", 8.0_f64),
+        ("avg(up)", 4.0),
+        ("sum by () (up)", 8.0),
+        ("avg by () (up)", 4.0),
+        ("sum(up @ 10)", 6.0),
+        ("avg(up @ 10)", 2.0),
+        ("sum(up offset 2s)", 6.0),
+        ("avg(up offset 2s)", 2.0),
+        ("sum(up @ start())", 8.0),
+        ("avg(up @ end())", 4.0),
+    ] {
+        let actual = engine
+            .query_instant_with_annotations(&tenant, query, 12_000)
+            .await
+            .unwrap();
+        let expected = (
+            serde_json::json!({"InstantVector": [{"labels": {}, "ts_ms": 12_000, "value": {"Float": value}}]}),
+            vec![value.to_bits()],
+            Annotations::new(),
+        );
+        assert!(float_response_ledger(actual) == expected);
+        assert!(
+            float_response_ledger(
+                control
+                    .query_instant_with_annotations(&tenant, query, 12_000)
+                    .await
+                    .unwrap()
+            ) == expected
+        );
+    }
+    // These expressions retain their established grouping and recursive plans.
+    for query in [
+        "sum by (job) (up)",
+        "avg without (job) (up)",
+        "sum((up))",
+        "sum(rate(up[3s]))",
+        "sum(up{job=~\"api|db\"})",
+    ] {
+        assert!(
+            engine
+                .query_instant_with_annotations(&tenant, query, 12_000)
+                .await
+                .unwrap()
+                == control
+                    .query_instant_with_annotations(&tenant, query, 12_000)
+                    .await
+                    .unwrap()
+        );
+    }
+    // A range request must retain its grid, boundary rules and disabled latest scope.
+    for query in ["sum(up)", "avg(up)", "sum(up @ start())", "avg(up @ end())"] {
+        assert!(
+            engine
+                .query_range(&tenant, query, 11_000, 12_000, secs(1))
+                .await
+                .unwrap()
+                == control
+                    .query_range(&tenant, query, 11_000, 12_000, secs(1))
+                    .await
+                    .unwrap()
+        );
+    }
+}
+
+#[tokio::test]
+async fn global_latest_aggregates_keep_float_bits_staleness_and_empty_groups() {
+    let fixture = fixture(&[]).await;
+    let stale = f64::from_bits(0x7ff0_0000_0000_0002);
+    let genuine_nan = f64::from_bits(0x7ff8_0000_0000_0055);
+    let cases = [
+        (
+            "cancellation",
+            &[1e16, 1.0, -1e16] as &[f64],
+            Some((1.0, 1.0 / 3.0)),
+        ),
+        (
+            "overflow",
+            &[f64::MAX, f64::MAX],
+            Some((f64::INFINITY, f64::MAX)),
+        ),
+        ("negative_zero", &[-0.0], Some((0.0, 0.0))),
+        (
+            "infinity",
+            &[f64::INFINITY],
+            Some((f64::INFINITY, f64::INFINITY)),
+        ),
+        (
+            "opposite_infinities",
+            &[f64::INFINITY, f64::NEG_INFINITY],
+            None,
+        ),
+        ("genuine_nan", &[genuine_nan], None),
+        ("all_stale", &[stale], None),
+        ("empty", &[], None),
+    ];
+    let mut reference = InMemoryMetricStore::new();
+    for (metric, values, _) in cases {
+        for (index, &value) in values.iter().enumerate() {
+            let series = Labels::from_pairs([("__name__", metric), ("job", &index.to_string())]);
+            let start = (index % 2 == 0).then_some(0);
+            reference.push_float_with_start_timestamp(
+                "tenant-a",
+                series.clone(),
+                11_000,
+                value,
+                start,
+            );
+            // The real head includes a conflicting duplicate; the independent
+            // effective-row oracle contains only the stated first winner.
+            fixture.head.update(|hot| {
+                hot.push_float_with_start_timestamp(
+                    "tenant-a",
+                    series.clone(),
+                    11_000,
+                    value,
+                    start,
+                );
+                hot.push_float("tenant-a", series, 11_000, 42.0);
+            });
+        }
+    }
+    let tenant = TenantId::new("tenant-a").unwrap();
+    let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
+    let control = PromqlEngine::new(Arc::new(reference), EngineOpts::default());
+    for (metric, values, expected) in cases {
+        let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, metric)];
+        assert!(
+            fixture
+                .store
+                .try_latest_float_scan("tenant-a", &matchers, 0, 1, 12_000, 100)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        for (op, known_value) in [
+            ("sum", expected.map(|pair| pair.0)),
+            ("avg", expected.map(|pair| pair.1)),
+        ] {
+            let query = format!("{op}({metric})");
+            let actual = float_response_ledger(
+                engine
+                    .query_instant_with_annotations(&tenant, &query, 12_000)
+                    .await
+                    .unwrap(),
+            );
+            // No fixture has __absent__: this grouping has the same result but
+            // retains the original labeled-selector/shared-kernel aggregate path.
+            let original_path = format!("{op} by (__absent__) ({metric})");
+            assert!(
+                actual
+                    == float_response_ledger(
+                        engine
+                            .query_instant_with_annotations(&tenant, &original_path, 12_000)
+                            .await
+                            .unwrap()
+                    )
+            );
+            assert!(
+                actual
+                    == float_response_ledger(
+                        control
+                            .query_instant_with_annotations(&tenant, &query, 12_000)
+                            .await
+                            .unwrap()
+                    )
+            );
+            if let Some(value) = known_value {
+                assert!(
+                    actual
+                        == (
+                            serde_json::json!({"InstantVector": [{"labels": {}, "ts_ms": 12_000, "value": {"Float": value}}]}),
+                            vec![value.to_bits()],
+                            Annotations::new()
+                        )
+                );
+            } else if values.is_empty() || metric == "all_stale" {
+                assert!(
+                    actual
+                        == (
+                            serde_json::json!({"InstantVector": []}),
+                            Vec::new(),
+                            Annotations::new()
+                        )
+                );
+            } else {
+                assert!(
+                    actual.1.len() == 1
+                        && f64::from_bits(actual.1[0]).is_nan()
+                        && actual.1[0] != stale.to_bits()
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn global_latest_aggregates_preserve_histogram_fallback_and_annotations() {
+    let fixture = fixture(&[]).await;
+    let histogram = NativeHistogram {
+        schema: 0,
+        is_float: false,
+        reset_hint: ResetHint::No,
+        zero_threshold: 1e-128,
+        zero_count: 0.0,
+        count: 2.0,
+        sum: 3.0,
+        positive_spans: vec![BucketSpan {
+            offset: 0,
+            length: 1,
+        }],
+        positive_counts: vec![2.0],
+        negative_spans: Vec::new(),
+        negative_counts: Vec::new(),
+        custom_values: None,
+        start_timestamp_ms: Some(0),
+    };
+    let mut reference = InMemoryMetricStore::new();
+    for metric in ["histogram_only", "mixed_samples"] {
+        let series = Labels::from_pairs([("__name__", metric), ("job", "histogram")]);
+        reference.push_histogram("tenant-a", series.clone(), 11_000, histogram.clone());
+        fixture
+            .head
+            .update(|hot| hot.push_histogram("tenant-a", series, 11_000, histogram.clone()));
+    }
+    let series = Labels::from_pairs([("__name__", "mixed_samples"), ("job", "float")]);
+    reference.push_float("tenant-a", series.clone(), 11_000, 7.0);
+    fixture
+        .head
+        .update(|hot| hot.push_float("tenant-a", series, 11_000, 7.0));
+    let tenant = TenantId::new("tenant-a").unwrap();
+    let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
+    let control = PromqlEngine::new(Arc::new(reference), EngineOpts::default());
+    for metric in ["histogram_only", "mixed_samples"] {
+        let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, metric)];
+        assert!(
+            fixture
+                .store
+                .try_latest_float_scan("tenant-a", &matchers, 0, 1, 12_000, 100)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        for op in ["sum", "avg"] {
+            let query = format!("{op}({metric})");
+            let actual = engine
+                .query_instant_with_annotations(&tenant, &query, 12_000)
+                .await
+                .unwrap();
+            assert!(
+                actual
+                    == control
+                        .query_instant_with_annotations(&tenant, &query, 12_000)
+                        .await
+                        .unwrap()
+            );
+            if metric == "mixed_samples" {
+                assert!(actual.0 == QueryResult::InstantVector(Vec::new()));
+                assert!(actual.1.warnings.len() == 1 && actual.1.infos.is_empty());
+            }
+        }
+    }
 }

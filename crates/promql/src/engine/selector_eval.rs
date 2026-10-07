@@ -54,8 +54,8 @@ impl<S: MetricStore> PromqlEngine<S> {
             .latest_labeled_series(tenant, matcher_sets, start_ms, eval_time_ms)
             .await?
         {
-            // Sum and average use this evaluator to preserve compensated
-            // accumulation, rather than the operator selector plan.
+            // Grouped sums and averages use this evaluator to preserve
+            // compensated accumulation and selector sample order.
             let samples = series
                 .into_iter()
                 .filter_map(|series| {
@@ -74,6 +74,19 @@ impl<S: MetricStore> PromqlEngine<S> {
             return Ok(QueryResult::InstantVector(samples));
         }
 
+        self.scan_instant_selector(tenant, matcher_sets, start_ms, eval_time_ms)
+            .await
+            .map(QueryResult::InstantVector)
+    }
+
+    /// Reads the ordinary selector path after the latest scan declines.
+    pub(super) async fn scan_instant_selector(
+        &self,
+        tenant: &str,
+        matcher_sets: &[Vec<crate::PromqlMatcher>],
+        start_ms: i64,
+        eval_time_ms: i64,
+    ) -> Result<Vec<InstantSample>> {
         let labels_by_fp = self
             .labels_by_fingerprint_sets(tenant, matcher_sets, start_ms, eval_time_ms)
             .await?;
@@ -127,7 +140,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 })
             })
             .collect();
-        Ok(QueryResult::InstantVector(samples))
+        Ok(samples)
     }
 
     pub(super) async fn eval_smoothed_instant_selector_with_matchers(

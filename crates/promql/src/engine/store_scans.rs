@@ -17,7 +17,7 @@ use crate::{
     error::Result,
     extension::is_stale_nan,
     planner::{LabeledSeries, TimedValue},
-    store::MetricStore,
+    store::{LatestFloatScan, MetricStore},
 };
 
 /// Raises one `PromQL` warning for each block the scan answered without.
@@ -41,6 +41,38 @@ impl<S: MetricStore> PromqlEngine<S> {
         after_ms: i64,
         through_ms: i64,
     ) -> Result<Option<Vec<LabeledSeries>>> {
+        let Some(scan) = self
+            .latest_float_scan(tenant, matcher_sets, after_ms, through_ms)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let labels = scan.labels;
+        Ok(Some(
+            scan.samples
+                .into_iter()
+                .filter_map(|(fp, ts_ms, value, start_timestamp_ms)| {
+                    Some(LabeledSeries {
+                        fp,
+                        labels: Arc::clone(labels.get(&fp)?),
+                        samples: vec![TimedValue {
+                            ts_ms,
+                            value,
+                            start_timestamp_ms,
+                        }],
+                    })
+                })
+                .collect(),
+        ))
+    }
+
+    pub(super) async fn latest_float_scan(
+        &self,
+        tenant: &str,
+        matcher_sets: &[Vec<LabelMatcher>],
+        after_ms: i64,
+        through_ms: i64,
+    ) -> Result<Option<LatestFloatScan>> {
         if after_ms >= through_ms {
             return Ok(None);
         }
@@ -72,34 +104,21 @@ impl<S: MetricStore> PromqlEngine<S> {
         else {
             return Ok(None);
         };
-        let rows = scan.samples;
-        if rows.len() > self.opts.max_samples {
+        if scan.samples.len() > self.opts.max_samples {
             return Err(samples_per_query_exceeded(
                 self.opts.max_samples,
-                rows.len(),
+                scan.samples.len(),
             ));
         }
-        let labels = scan.labels;
         let max_fetched_series = self.opts.max_fetched_series;
-        if max_fetched_series != 0 && labels.len() > max_fetched_series {
-            return Err(series_per_query_exceeded(max_fetched_series, labels.len()));
+        if max_fetched_series != 0 && scan.labels.len() > max_fetched_series {
+            return Err(series_per_query_exceeded(
+                max_fetched_series,
+                scan.labels.len(),
+            ));
         }
-        record_queryable_samples(rows.len());
-        Ok(Some(
-            rows.into_iter()
-                .filter_map(|(fp, ts_ms, value, start_timestamp_ms)| {
-                    Some(LabeledSeries {
-                        fp,
-                        labels: Arc::clone(labels.get(&fp)?),
-                        samples: vec![TimedValue {
-                            ts_ms,
-                            value,
-                            start_timestamp_ms,
-                        }],
-                    })
-                })
-                .collect(),
-        ))
+        record_queryable_samples(scan.samples.len());
+        Ok(Some(scan))
     }
 
     /// The series of one matcher set over `[start_ms, end_ms]`, by fingerprint.

@@ -31,7 +31,9 @@ use krabka_metrics::{
     distributor::{DistributorState, ProduceError, WalSink},
     wire::pb,
 };
+use krabka_metrics_service::RefreshingMetricBlockStore;
 use krabka_promql::WalHead;
+use object_store::memory::InMemory;
 use opentelemetry_proto::tonic::metrics::v1::{
     Gauge, Metric, MetricsData, NumberDataPoint, ResourceMetrics, ScopeMetrics, metric,
     number_data_point,
@@ -46,6 +48,7 @@ use testcontainers::{
     runners::AsyncRunner,
 };
 use tokio::sync::oneshot;
+use url::Url;
 
 // `normalize` lives with the hand-written seed dataset that `grafana_integration`
 // asserts against; `promql_corpus` reaches it through this module. Nothing else
@@ -877,8 +880,14 @@ fn candidate_engine_opts() -> krabka_promql::EngineOpts {
 
 async fn start_krabka_query_server() -> TestResult<KrabkaServer> {
     let head = WalHead::new();
+    let store = RefreshingMetricBlockStore::new(
+        Arc::new(InMemory::new()),
+        Url::parse("memory:///")?,
+        "metrics",
+        head.clone(),
+    );
     let state = Arc::new(krabka_promql::PrometheusApiState::new(
-        Arc::new(head.clone()),
+        Arc::new(store),
         candidate_engine_opts(),
     ));
     let query_router = krabka_promql::mimir_ruler_prometheus_router(Arc::clone(&state))
