@@ -6,7 +6,7 @@ use super::{DecodedSeries, SamplePayload, WalExemplar, WalRecord, label_pairs};
 pub fn wal_records_from_series(tenant: &str, series: &[DecodedSeries]) -> Vec<WalRecord> {
     let mut out = Vec::new();
     for series in series {
-        let labels = label_pairs(series);
+        let mut labels = label_pairs(series);
         let exemplars = series
             .exemplars
             .iter()
@@ -21,30 +21,34 @@ pub fn wal_records_from_series(tenant: &str, series: &[DecodedSeries]) -> Vec<Wa
             })
             .collect::<Vec<_>>();
 
-        out.extend(series.samples.iter().map(|sample| WalRecord {
-            tenant: tenant.to_string(),
-            labels: labels.clone(),
-            payload: SamplePayload::Float {
+        let payloads = series
+            .samples
+            .iter()
+            .map(|sample| SamplePayload::Float {
                 timestamp_ms: sample.timestamp_ms,
                 value: sample.value,
                 start_timestamp_ms: sample.start_timestamp_ms,
-            },
-            exemplars: Vec::new(),
-        }));
-        out.extend(
-            series
-                .histograms
-                .iter()
-                .map(|(timestamp_ms, hist)| WalRecord {
-                    tenant: tenant.to_string(),
-                    labels: labels.clone(),
-                    payload: SamplePayload::Hist {
+            })
+            .chain(
+                series
+                    .histograms
+                    .iter()
+                    .map(|(timestamp_ms, hist)| SamplePayload::Hist {
                         timestamp_ms: *timestamp_ms,
                         hist: hist.clone(),
-                    },
-                    exemplars: Vec::new(),
-                }),
-        );
+                    }),
+            );
+        let sample_count = series.samples.len() + series.histograms.len();
+        out.extend(payloads.enumerate().map(|(index, payload)| WalRecord {
+            tenant: tenant.to_string(),
+            labels: if index + 1 == sample_count && exemplars.is_empty() {
+                std::mem::take(&mut labels)
+            } else {
+                labels.clone()
+            },
+            payload,
+            exemplars: Vec::new(),
+        }));
         if let Some(metadata) = &series.metadata {
             // Classic histogram and summary samples carry suffixed names;
             // metadata is indexed by the unsuffixed metric family.
