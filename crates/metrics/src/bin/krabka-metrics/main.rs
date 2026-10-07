@@ -57,7 +57,11 @@ mod tests {
     use clap::{CommandFactory, Parser};
     use krabka_broker::{Broker, BrokerConfig};
     use krabka_client_admin::{AdminClient, CreateTopicSpec};
-    use krabka_observability::topic_contract::{METRICS_HA_TOPIC, METRICS_WAL_TOPIC};
+    use krabka_metrics::{SamplePayload, WAL_TOPIC, WalRecord, wire::pb};
+    use krabka_observability::topic_contract::{
+        METRICS_HA_TOPIC, METRICS_WAL_TOPIC, TopicSettings, provision_topics,
+    };
+    use prost::Message as _;
 
     use super::*;
 
@@ -819,6 +823,152 @@ mod tests {
         let error = outcome.expect_err("the role refuses to start");
         check!(error.to_string().contains("topic contract violated"));
         assert!(tokio::net::TcpStream::connect(listen).await.is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn distributor_writes_all_records_with_default_and_small_frames() {
+        for frame_max in [kibibytes(32), krabka_client_core::DEFAULT_CLIENT_FRAME_MAX] {
+            let directory = tempfile::tempdir().unwrap();
+            let broker = Broker::start(BrokerConfig::for_tests(directory.path().to_path_buf()))
+                .await
+                .unwrap();
+            let bootstrap = broker.listen_addr().to_string();
+            provision_topics(
+                &bootstrap,
+                &METRICS_TOPICS,
+                &TopicSettings::single_broker(),
+                None,
+            )
+            .await
+            .unwrap();
+            let reserved = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let listen = reserved.local_addr().unwrap();
+            drop(reserved);
+            let mut cli = cli_for(Target::Distributor, &bootstrap);
+            cli.listen = listen;
+            cli.client_frame_max = frame_max;
+            let role = tokio::spawn(async move {
+                run_distributor(
+                    cli,
+                    ServiceMetrics::new(),
+                    RoleReadiness::new(),
+                    &ServerSecurity::default(),
+                    None,
+                )
+                .await
+                .map_err(|error| error.to_string())
+            });
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    if client
+                        .get(format!("http://{listen}/ready"))
+                        .send()
+                        .await
+                        .is_ok()
+                    {
+                        break;
+                    }
+                    assert!(!role.is_finished(), "distributor stopped before listening");
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("distributor listens within 10 seconds");
+
+            // Each record fits the small frame; a 64 KiB batch of these does not.
+            let expected = (0..100)
+                .map(|index| {
+                    let mut labels = vec![("__name__".into(), "up".into())];
+                    labels.extend(
+                        (0..20).map(|pad| (format!("padding_{pad:02}"), "x".repeat(1024).into())),
+                    );
+                    labels.push(("series".into(), index.to_string().into()));
+                    WalRecord {
+                        tenant: "tenant".into(),
+                        labels,
+                        payload: SamplePayload::Float {
+                            timestamp_ms: 100,
+                            value: f64::from(index),
+                            start_timestamp_ms: None,
+                        },
+                        exemplars: Vec::new(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            let request = pb::v1::WriteRequest {
+                timeseries: expected
+                    .iter()
+                    .map(|record| pb::v1::TimeSeries {
+                        labels: record
+                            .labels
+                            .iter()
+                            .map(|(name, value)| pb::v1::Label {
+                                name: name.clone(),
+                                value: value.utf8().expect("test labels are UTF-8").to_owned(),
+                            })
+                            .collect(),
+                        samples: vec![pb::v1::Sample {
+                            value: match record.payload {
+                                SamplePayload::Float { value, .. } => value,
+                                _ => unreachable!(),
+                            },
+                            timestamp: 100,
+                        }],
+                        ..Default::default()
+                    })
+                    .collect(),
+                ..Default::default()
+            };
+            let body = snap::raw::Encoder::new()
+                .compress_vec(&request.encode_to_vec())
+                .unwrap();
+            let response = client
+                .post(format!("http://{listen}/api/v1/push"))
+                .header("Content-Type", "application/x-protobuf")
+                .header("Content-Encoding", "snappy")
+                .header("X-Scope-OrgID", "tenant")
+                .body(body)
+                .send()
+                .await
+                .unwrap();
+            assert!(
+                response.status() == reqwest::StatusCode::OK,
+                "frame limit {frame_max:?}"
+            );
+            let mut consumer = Consumer::builder()
+                .bootstrap(&bootstrap)
+                .group_id("frame-limit-inspect")
+                .subscribe([WAL_TOPIC.to_string()])
+                .auto_offset_reset(AutoOffsetReset::Earliest)
+                .build()
+                .await
+                .unwrap();
+            let actual = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                let mut records = Vec::new();
+                while records.len() < expected.len() {
+                    records.extend(
+                        consumer
+                            .poll(millis(100))
+                            .await
+                            .unwrap()
+                            .into_iter()
+                            .map(|record| WalRecord::decode(&record.value.unwrap()).unwrap()),
+                    );
+                }
+                records
+            })
+            .await
+            .expect("all acknowledged records reach the WAL");
+            assert!(actual == expected, "frame limit {frame_max:?}");
+            role.abort();
+            let _ = role.await;
+            drop(consumer);
+            broker.shutdown().await;
+        }
     }
 
     fn cli_for(target: Target, bootstrap: &str) -> Cli {

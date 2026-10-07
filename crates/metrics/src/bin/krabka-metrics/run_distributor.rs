@@ -19,6 +19,15 @@ pub(crate) async fn run_distributor(
     let producer = Arc::new(
         Producer::builder()
             .bootstrap(&cli.bootstrap)
+            // Metrics writes enqueue many series before awaiting their acks.
+            // Custom frame limits use the client's 16 KiB batch size.
+            .batch_size(
+                if cli.client_frame_max == krabka_client_core::DEFAULT_CLIENT_FRAME_MAX {
+                    64 * 1024
+                } else {
+                    16 * 1024
+                },
+            )
             .maybe_security(wal_security.clone())
             .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
             .frame_max(cli.client_frame_max)
