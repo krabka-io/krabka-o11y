@@ -18,9 +18,7 @@ pub(crate) struct Shutdown {
 
 impl Shutdown {
     pub(crate) fn new() -> Self {
-        Self {
-            token: CancellationToken::new(),
-        }
+        Self::from(CancellationToken::new())
     }
 
     /// The token the role's supervisor cancels, and that its tasks watch.
@@ -49,5 +47,11 @@ impl Shutdown {
     pub(crate) fn signalled(&self) -> impl Future<Output = ()> + Send + 'static {
         let token = self.token.clone();
         async move { token.cancelled_owned().await }
+    }
+}
+
+impl From<CancellationToken> for Shutdown {
+    fn from(token: CancellationToken) -> Self {
+        Self { token }
     }
 }

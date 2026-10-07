@@ -12,9 +12,8 @@ use krabka_observability::topic_contract::{
 };
 use prost::Message as _;
 
-use crate::{SamplePayload, WAL_TOPIC, WalRecord, wire::pb};
-
 use super::*;
+use crate::{SamplePayload, WAL_TOPIC, WalRecord, wire::pb};
 
 static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -987,4 +986,3 @@ async fn distributor_writes_all_records_with_default_and_small_frames() {
         broker.shutdown().await;
     }
 }
-
