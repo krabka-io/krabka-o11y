@@ -154,7 +154,7 @@ async fn byte_series_selection_precedes_missing_block_warnings_for_every_kind() 
     assert2::assert!(
         exemplars.warnings.is_empty()
             && exemplars.exemplars.len() == 1
-            && exemplars.exemplars[0].value == 2.0
+            && exemplars.exemplars[0].value.to_bits() == 2.0_f64.to_bits()
     );
     let all_exemplars = store.exemplars("tenant-a", &[], 0, 2_000).await.unwrap();
     assert2::assert!(all_exemplars.warnings.len() == 1 && all_exemplars.exemplars.len() == 1);

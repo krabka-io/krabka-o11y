@@ -138,14 +138,14 @@ annotations:
     };
     let prior_wal_bytes = encoded(&prior_wal);
     let mut drifted = prior_wal.clone();
-    let stale = drifted
+    let nan_payload = drifted
         .iter_mut()
         .find_map(|record| match &mut record.payload {
             SamplePayload::Float { value, .. } if value.is_nan() => Some(value),
             _ => None,
         })
         .expect("pending-to-firing transition must write a stale NaN");
-    *stale = f64::from_bits(stale.to_bits() ^ 1);
+    *nan_payload = f64::from_bits(nan_payload.to_bits() ^ 1);
     assert2::assert!(encoded(&drifted) != prior_wal_bytes);
     let prior_states = states.alert_records();
     let prior_alerts = alerts.alerts();
