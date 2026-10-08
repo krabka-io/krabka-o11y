@@ -15,16 +15,16 @@ on:
         type: string
         default: ''
       baseline_image_artifact_name:
-        description: Exact baseline image artifact name (requires steady comparison and one layout)
+        description: Exact baseline image artifact name (requires steady or high-cardinality comparison and one layout)
         type: string
         default: ''
       phases:
         description: Phases to measure
         type: choice
-        options: [all, steady]
+        options: [all, steady, high_cardinality]
         default: all
       phase_seconds:
-        description: Measured seconds (60 for comparison)
+        description: Phase seconds (60 steady or 120 high-cardinality gives 60 measured seconds)
         type: number
         default: 60
       repetitions:
@@ -82,13 +82,18 @@ jobs:
           BASELINE_NAME: ${{ inputs.baseline_image_artifact_name }}
           PROFILING: ${{ inputs.profiling }}
           PHASES: ${{ inputs.phases }}
+          MAX_CARDINALITY: ${{ inputs.max_cardinality }}
           DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
           PROFILES_TARGET: ${{ inputs.profiles_target }}
         run: |
           set -euo pipefail
           if [[ -n "${BASELINE_RUN}" || -n "${BASELINE_NAME}" ]]; then
             [[ "${BASELINE_RUN}" =~ ^[1-9][0-9]*$ && -n "${BASELINE_NAME}" ]]
-            [[ "${PROFILING}" == none && "${PHASES}" == steady ]]
+            [[ "${PROFILING}" == none ]]
+            [[ "${PHASES}" == steady || "${PHASES}" == high_cardinality ]]
+            if [[ "${PHASES}" == high_cardinality ]]; then
+              [[ "${MAX_CARDINALITY}" == 1000 || "${MAX_CARDINALITY}" == 5000 || "${MAX_CARDINALITY}" == 20000 ]]
+            fi
             [[ "${DEPLOYMENT_TARGET}" != both && "${PROFILES_TARGET}" != both ]]
           fi
       - uses: aspect-build/setup-aspect@2306377a61c45954ab2df7c7311698b109364352 # v2026.26.9
@@ -191,7 +196,7 @@ jobs:
             echo
           done > qualification/evidence/comparison/gce.txt
           phases=(steady burst high_cardinality)
-          if [[ "${PHASES}" == steady ]]; then phases=(steady); fi
+          if [[ "${PHASES}" != all ]]; then phases=("${PHASES}"); fi
           targets=("${DEPLOYMENT_TARGET}")
           if [[ "${SIGNAL}" == profiles && "${DEPLOYMENT_TARGET}" == split ]]; then
             targets=("${PROFILES_TARGET}")
@@ -221,6 +226,8 @@ jobs:
           REPETITIONS: ${{ inputs.repetitions }}
           BASELINE_RUN: ${{ inputs.baseline_image_artifact_run }}
           BASELINE_NAME: ${{ inputs.baseline_image_artifact_name }}
+          PHASES: ${{ inputs.phases }}
+          MAX_CARDINALITY: ${{ inputs.max_cardinality }}
           KRABKA_SOAK_RUNNER: gcp-ubuntu-24-04-16core
         run: |
           set -euo pipefail
@@ -243,12 +250,12 @@ jobs:
             for revision in "${revisions[@]}"; do
               image_dir=qualification/image
               if [[ "${revision}" == baseline ]]; then image_dir=qualification/baseline-image; fi
-              python3 -u tools/compare-grafana.py --phases steady --backends krabka --signal "${SIGNAL}" \
+              python3 -u tools/compare-grafana.py --phases "${PHASES}" --backends krabka --signal "${SIGNAL}" \
                 --image "$(cat "${image_dir}/tag")" \
                 --image-digest "$(cat "${image_dir}/manifest-digest")" \
                 --image-commit "$(cat "${image_dir}/commit")" \
                 --deployment-target "${target}" --profiles-target "${target}" \
-                --host-wait-seconds 120 --seconds "${PHASE_SECONDS}" --repetitions 1 \
+                --host-wait-seconds 120 --seconds "${PHASE_SECONDS}" --repetitions 1 --max-cardinality "${MAX_CARDINALITY}" \
                 --output "${root}/${pair}-${revision}"
             done
           done
