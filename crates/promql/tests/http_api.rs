@@ -5643,12 +5643,12 @@ async fn remote_read_preserves_go_byte_labels_in_samples_and_chunked_frames() {
                 assert2::assert!(
                     series.samples.len() == 1 && series.samples[0].timestamp == 10_000
                 );
-                let want = match bytes.as_slice() {
+                let want: f64 = match bytes.as_slice() {
                     [0xff] => 2.0,
                     [0xfe] => 3.0,
                     _ => 4.0,
                 };
-                assert2::assert!(series.samples[0].value == want);
+                assert2::assert!(series.samples[0].value.to_bits() == want.to_bits());
                 actual.push(bytes);
             }
         } else {
@@ -5782,7 +5782,7 @@ rules:
             .iter()
             .map(|alert| alert["activeAt"].as_str().unwrap())
             .collect::<Vec<_>>();
-        starts.sort();
+        starts.sort_unstable();
         assert2::assert!(
             starts
                 == [

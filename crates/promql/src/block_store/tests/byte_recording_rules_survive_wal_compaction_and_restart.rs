@@ -19,93 +19,7 @@ use crate::{
 #[tokio::test]
 async fn byte_recording_rules_survive_wal_compaction_and_restart() {
     let directory = tempfile::tempdir().unwrap();
-    let mut seed = InMemoryMetricStore::new();
-    seed.push_float(
-        "tenant-a",
-        labels(&[("__name__", "input_float")]),
-        30_000,
-        2.0,
-    );
-    seed.push_histogram(
-        "tenant-a",
-        labels(&[("__name__", "input_hist")]),
-        30_000,
-        NativeHistogram {
-            schema: 0,
-            is_float: true,
-            reset_hint: ResetHint::Gauge,
-            zero_threshold: 0.0,
-            zero_count: 0.0,
-            count: 5.0,
-            sum: 5.0,
-            positive_spans: vec![BucketSpan {
-                offset: 0,
-                length: 1,
-            }],
-            positive_counts: vec![5.0],
-            negative_spans: Vec::new(),
-            negative_counts: Vec::new(),
-            custom_values: None,
-            start_timestamp_ms: None,
-        },
-    );
-    let seed_engine = PromqlEngine::new(Arc::new(seed), EngineOpts::default());
-    let values = [
-        vec![0xff],
-        vec![0xfe],
-        "\u{fffd}".as_bytes().to_vec(),
-        b"__krabka_bytes_ff".to_vec(),
-    ];
-    let mut records = Vec::new();
-    for (input, output) in [
-        ("input_float", "recorded_float"),
-        ("input_hist", "recorded_hist"),
-    ] {
-        let query = values
-            .iter()
-            .map(|bytes| {
-                let literal = PromqlString::from(bytes.clone()).quoted();
-                format!("label_replace({input},\"raw\",{literal},\"\",\".*\")")
-            })
-            .collect::<Vec<_>>()
-            .join(" or ");
-        let materialized = evaluate_recording_rule(
-            &seed_engine,
-            &tenant_id("tenant-a"),
-            output,
-            &query,
-            &BTreeMap::new(),
-            30_000,
-        )
-        .await
-        .unwrap();
-        assert2::assert!(materialized.len() == 4);
-        assert2::assert!(
-            materialized
-                .iter()
-                .map(|record| record
-                    .labels()
-                    .get_value("raw")
-                    .unwrap()
-                    .as_bytes()
-                    .to_vec())
-                .collect::<BTreeSet<_>>()
-                == values.iter().cloned().collect::<BTreeSet<_>>()
-        );
-        // Replacing the distinguishing raw label must still reject true collisions.
-        let error = evaluate_recording_rule(
-            &seed_engine,
-            &tenant_id("tenant-a"),
-            output,
-            &query,
-            &BTreeMap::from([("raw".to_owned(), "collapsed".to_owned())]),
-            30_000,
-        )
-        .await
-        .unwrap_err();
-        assert2::assert!(error.to_string().contains("same labelset"));
-        records.extend(materialized);
-    }
+    let (records, values) = recording_rule_fixture().await;
     for (index, record) in records.iter().enumerate() {
         std::fs::write(
             directory.path().join(format!("wal-{index}")),
@@ -283,6 +197,97 @@ async fn byte_recording_rules_survive_wal_compaction_and_restart() {
         panic!("expected vector");
     };
     assert2::assert!(samples.is_empty());
+}
+
+async fn recording_rule_fixture() -> (Vec<WalRecord>, [Vec<u8>; 4]) {
+    let mut seed = InMemoryMetricStore::new();
+    seed.push_float(
+        "tenant-a",
+        labels(&[("__name__", "input_float")]),
+        30_000,
+        2.0,
+    );
+    seed.push_histogram(
+        "tenant-a",
+        labels(&[("__name__", "input_hist")]),
+        30_000,
+        NativeHistogram {
+            schema: 0,
+            is_float: true,
+            reset_hint: ResetHint::Gauge,
+            zero_threshold: 0.0,
+            zero_count: 0.0,
+            count: 5.0,
+            sum: 5.0,
+            positive_spans: vec![BucketSpan {
+                offset: 0,
+                length: 1,
+            }],
+            positive_counts: vec![5.0],
+            negative_spans: Vec::new(),
+            negative_counts: Vec::new(),
+            custom_values: None,
+            start_timestamp_ms: None,
+        },
+    );
+    let seed_engine = PromqlEngine::new(Arc::new(seed), EngineOpts::default());
+    let values = [
+        vec![0xff],
+        vec![0xfe],
+        "\u{fffd}".as_bytes().to_vec(),
+        b"__krabka_bytes_ff".to_vec(),
+    ];
+    let mut records = Vec::new();
+    for (input, output) in [
+        ("input_float", "recorded_float"),
+        ("input_hist", "recorded_hist"),
+    ] {
+        let query = values
+            .iter()
+            .map(|bytes| {
+                let literal = PromqlString::from(bytes.clone()).quoted();
+                format!("label_replace({input},\"raw\",{literal},\"\",\".*\")")
+            })
+            .collect::<Vec<_>>()
+            .join(" or ");
+        let materialized = evaluate_recording_rule(
+            &seed_engine,
+            &tenant_id("tenant-a"),
+            output,
+            &query,
+            &BTreeMap::new(),
+            30_000,
+        )
+        .await
+        .unwrap();
+        assert2::assert!(materialized.len() == 4);
+        assert2::assert!(
+            materialized
+                .iter()
+                .map(|record| record
+                    .labels()
+                    .get_value("raw")
+                    .unwrap()
+                    .as_bytes()
+                    .to_vec())
+                .collect::<BTreeSet<_>>()
+                == values.iter().cloned().collect::<BTreeSet<_>>()
+        );
+        // Replacing the distinguishing raw label must still reject true collisions.
+        let error = evaluate_recording_rule(
+            &seed_engine,
+            &tenant_id("tenant-a"),
+            output,
+            &query,
+            &BTreeMap::from([("raw".to_owned(), "collapsed".to_owned())]),
+            30_000,
+        )
+        .await
+        .unwrap_err();
+        assert2::assert!(error.to_string().contains("same labelset"));
+        records.extend(materialized);
+    }
+    (records, values)
 }
 
 async fn check_byte_ledger<S: MetricStore>(engine: &PromqlEngine<S>, values: &[Vec<u8>; 4]) {
