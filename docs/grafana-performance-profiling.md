@@ -44,10 +44,17 @@ checksums. The normal comparison path remains the default (`profiling=none`).
 CPU profiling captures three consecutive 55-second Linux perf windows from every
 Krabka role, including the broker, after seeding and warming the deployment.
 The measured workload continues for 180 seconds. `perf record` samples the
-software `cpu-clock:u` event at 99Hz with DWARF call stacks. This works without
-a virtual hardware performance counter. Reports resolve symbols through each
-live process's container root; flat and cumulative reports accompany
-the raw perf data. Some recorded mappings could not be unwound completely,
+software `cpu-clock:u` event at 99Hz. A fresh CPU diagnostic build enables
+frame pointers across Rust dependencies and uses `--app-call-graph fp` for
+application roles. The image artifact records the compiler flags under its
+checksums. Preserved images use `dwarf,16384`; the separately pinned broker
+always uses DWARF. `perf_call_graph_by_role` records each role's capture mode.
+Frame-pointer diagnostic images cannot be used for ordinary comparisons.
+
+This works without a virtual hardware performance counter. Reports resolve
+symbols through each live process's container root. Flat reports and cumulative
+caller graphs accompany the raw perf data. Precompiled Rust standard libraries
+and native libraries can still limit caller coverage. Some recorded mappings could not be unwound completely,
 so cumulative reports do not establish complete caller attribution for those
 samples. The first optimization uses resolved flat samples plus the separate
 pprof and allocation captures. The preserved image supplies those same binaries for
