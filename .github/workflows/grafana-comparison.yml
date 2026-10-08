@@ -293,13 +293,14 @@ jobs:
           SIGNAL: ${{ matrix.signal }}
           DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
           PROFILE_MODE: ${{ inputs.profiling }}
-          IMAGE_ARTIFACT_RUN: ${{ inputs.image_artifact_run }}
         run: |
           set -euo pipefail
           target="${DEPLOYMENT_TARGET}"
           [[ "${target}" != both ]]
           app_call_graph=dwarf,16384
-          if [[ "${PROFILE_MODE}" == cpu && -z "${IMAGE_ARTIFACT_RUN}" ]]; then
+          if [[ "${PROFILE_MODE}" == cpu && -f qualification/image/bazel-build-flags ]] && \
+              grep -Eq '^[0-9a-f]{64}  bazel-build-flags$' qualification/image/SHA256SUMS && \
+              grep -Fxq -- '--@rules_rust//rust/settings:extra_rustc_flag=-Cforce-frame-pointers=yes' qualification/image/bazel-build-flags; then
             app_call_graph=fp
           fi
           python3 -u tools/profile-grafana.py --signal "${SIGNAL}" --mode "${PROFILE_MODE}" \
