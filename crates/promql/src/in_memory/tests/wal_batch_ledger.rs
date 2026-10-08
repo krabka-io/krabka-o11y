@@ -177,12 +177,12 @@ fn wal_batch_preserves_rows_snapshots_and_watermarks() {
                 (PartitionIndex(1), Offset(20), Offset(21))
             ]
     );
-    let held = Arc::downgrade(&first.labels);
+    let weak_labels = Arc::downgrade(&first.labels);
     head.delete_tenant("t");
-    assert2::assert!(head.snapshot().floats.get("t").is_none());
-    assert2::assert!(held.upgrade().is_some());
+    assert2::assert!(!head.snapshot().floats.contains_key("t"));
+    assert2::assert!(weak_labels.upgrade().is_some());
     drop(after);
-    assert2::assert!(held.upgrade().is_none());
+    assert2::assert!(weak_labels.upgrade().is_none());
 }
 
 #[test]

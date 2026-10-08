@@ -2,14 +2,6 @@ use super::*;
 
 #[tokio::test]
 async fn byte_strings_keep_identity_through_composed_queries() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "t",
-        labels(&[("__name__", "g"), ("src", "first\nsecond")]),
-        10_000,
-        -2.0,
-    );
-    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     async fn evaluate(
         engine: &PromqlEngine<InMemoryMetricStore>,
         query: &str,
@@ -25,6 +17,14 @@ async fn byte_strings_keep_identity_through_composed_queries() {
             engine.eval_instant_expr("t", &expr, 10_000).await
         }
     }
+    let mut store = InMemoryMetricStore::new();
+    store.push_float(
+        "t",
+        labels(&[("__name__", "g"), ("src", "first\nsecond")]),
+        10_000,
+        -2.0,
+    );
+    let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
     for planned in [false, true] {
         for (query, expected) in [
             (r#""\xff""#, vec![0xff]),
@@ -60,7 +60,7 @@ async fn byte_strings_keep_identity_through_composed_queries() {
             assert2::assert!(
                 samples
                     .iter()
-                    .all(|sample| float_value(&sample.value) == 2.0),
+                    .all(|sample| float_value(&sample.value).to_bits() == 2.0_f64.to_bits()),
                 "{query}"
             );
         }
