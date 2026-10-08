@@ -113,11 +113,26 @@ impl MetricLabels {
     /// Computes the storage-compatible FNV-1a fingerprint over original label bytes.
     #[must_use]
     pub fn fingerprint(&self) -> krabka_blockstore::SeriesFingerprint {
-        self.byte_key()
-            .into_iter()
-            .fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-                (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-            })
+        let mut hash = 0xcbf2_9ce4_8422_2325;
+        for (name, value) in self.iter() {
+            for byte in (name.len() as u64)
+                .to_le_bytes()
+                .iter()
+                .copied()
+                .chain(name.as_bytes().iter().copied())
+                .chain(
+                    (value.as_bytes().len() as u64)
+                        .to_le_bytes()
+                        .iter()
+                        .copied(),
+                )
+                .chain(value.as_bytes().iter().copied())
+            {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        hash
     }
 }
 impl From<krabka_blockstore::Labels> for MetricLabels {
