@@ -12,7 +12,7 @@ pub fn decode_v1(body: &[u8], max_decompressed: ByteSize) -> Result<Vec<DecodedS
 
     let mut out = Vec::with_capacity(req.timeseries.len());
     for series in req.timeseries {
-        let labels = labels_from_v1(&series.labels)?;
+        let labels = labels_from_v1(series.labels)?;
         let samples = series
             .samples
             .into_iter()
@@ -25,10 +25,10 @@ pub fn decode_v1(body: &[u8], max_decompressed: ByteSize) -> Result<Vec<DecodedS
             .collect::<Result<Vec<_>, WireError>>()?;
         let exemplars = series
             .exemplars
-            .iter()
+            .into_iter()
             .map(|exemplar| {
                 Ok(DecodedExemplar {
-                    labels: labels_from_v1(&exemplar.labels)?,
+                    labels: labels_from_v1(exemplar.labels)?,
                     timestamp_ms: exemplar.timestamp,
                     value: exemplar.value,
                 })
