@@ -30,10 +30,10 @@ krabka-metrics = { path = "../metrics", version = "0.4.0" }
 krabka-logql = { path = "../logql", version = "0.4.0" }
 krabka-observability = { path = "../observability", version = "0.4.0" }
 krabka-query-frontend = { path = "../query-frontend", version = "0.4.0" }
-krabka-telemetry = { version = "0.7.0" }
-krabka-client-consumer = { version = "0.5.0" }
-krabka-client-producer = { version = "0.5.0" }
-krabka-client-core = { version = "0.5.0" }
+krabka-telemetry = { version = "1.0.0" }
+krabka-client-consumer = { version = "0.6.0" }
+krabka-client-producer = { version = "0.6.0" }
+krabka-client-core = { version = "0.6.0" }
 krabka-traceql = { path = "../traceql", version = "0.4.0" }
 krabka-units = { workspace = true }
 arrow = { workspace = true }
@@ -75,8 +75,8 @@ wincode = { workspace = true }
 tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
 
 [dev-dependencies]
-krabka-broker = { version = "0.7.0" }
-krabka-protocol = { version = "0.5.0" }
+krabka-broker = { version = "1.0.0" }
+krabka-protocol = { version = "0.6.0" }
 datatest-stable = { workspace = true }
 http-body-util = "0.1"
 # OTel stack for the `set_remote_parent_from_records` re-parenting test — mirrors

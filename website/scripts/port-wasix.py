@@ -49,7 +49,7 @@ def port(root):
     client = single(root, 'git/krabka-client-rs-*/*')
     broker = single(root, 'git/krabka-broker-*/*')
     protocol = single(root, 'git/krabka-protocol-*/*')
-    sspi = single(root, 'git/sspi-rs-*/*')
+    sspi = single(root, 'registry/krabka-sspi-0.23.*')
     newer_store = single(root, 'registry/object_store-0.14.*')
     otel_http = single(root, 'registry/opentelemetry-http-0.33.0')
     for directory in [newer_store / 'src', fusion / 'datafusion', broker / 'crates/object-store/src', broker / 'crates/broker/src', broker / 'crates/raft/src', broker / 'crates/telemetry/src', protocol / 'crates/security/src', otel_http / 'src']:

@@ -28,16 +28,16 @@ axum = { workspace = true, features = ["json"] }
 bytes = { workspace = true }
 clap = { workspace = true, features = ["env"] }
 krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
-krabka-ids = { version = "0.5.0" }
-krabka-client-consumer = { version = "0.5.0" }
-krabka-client-coordination = { version = "0.5.0" }
-krabka-client-core = { version = "0.5.0" }
-krabka-client-producer = { version = "0.5.0" }
+krabka-ids = { version = "0.6.0" }
+krabka-client-consumer = { version = "0.6.0" }
+krabka-client-coordination = { version = "0.6.0" }
+krabka-client-core = { version = "0.6.0" }
+krabka-client-producer = { version = "0.6.0" }
 krabka-metrics = { path = "../metrics", version = "0.4.0" }
 krabka-observability = { path = "../observability", version = "0.4.0" }
 krabka-promql = { path = "../promql", version = "0.4.0" }
 krabka-query-frontend = { path = "../query-frontend", version = "0.4.0" }
-krabka-telemetry = { version = "0.7.0" }
+krabka-telemetry = { version = "1.0.0" }
 krabka-units = { workspace = true }
 futures = { workspace = true }
 object_store = { workspace = true }
@@ -60,8 +60,8 @@ tikv-jemallocator = { version = "0.7", optional = true, features = ["profiling",
 
 [dev-dependencies]
 flate2 = { workspace = true }
-krabka-broker = { version = "0.7.0" }
-krabka-client-admin = { version = "0.5.0" }
+krabka-broker = { version = "1.0.0" }
+krabka-client-admin = { version = "0.6.0" }
 opentelemetry-proto = { workspace = true }
 prost = { workspace = true }
 rcgen = { workspace = true }
