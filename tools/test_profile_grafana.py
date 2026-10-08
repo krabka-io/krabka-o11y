@@ -27,6 +27,7 @@ class PerfProfileTest(unittest.TestCase):
                     deployment = mock.Mock(admin_ports=dict.fromkeys(roles, 15000),
                                            pids={role: 100 + i for i, role in enumerate(roles)})
                     args = types.SimpleNamespace(signal='metrics', deployment_target=target,
+                        phase='steady', cardinality=None,
                         mode='cpu', cpu_profiler='perf', app_call_graph=mode, output=output,
                         image='diagnostic-image', image_commit='source', image_digest='digest',
                         profile_seconds=1, windows=1)
@@ -91,6 +92,77 @@ class PerfProfileTest(unittest.TestCase):
                         mock.patch.object(profiler.env, 'command', side_effect=reports), \
                         self.assertRaisesRegex(RuntimeError, 'empty CPU profile'):
                     profiler.report_perf(os.getpid(), raw)
+
+
+    def test_workload_phase_and_cardinality(self):
+        cases = [('metrics', 'steady', None, 1000, False, 'cpu'),
+                 ('logs', 'steady', None, 100, False, 'cpu'),
+                 ('traces', 'steady', None, 100, False, 'cpu'),
+                 ('profiles', 'steady', None, 100, False, 'cpu'),
+                 ('metrics', 'high_cardinality', 20000, 20000, True, 'cpu'),
+                 ('metrics', 'steady', 5000, 5000, False, 'cpu'),
+                 ('metrics', 'high_cardinality', 20000, 20000, True, 'allocations')]
+        for signal, phase, requested, cardinality, cold, mode in cases:
+            with self.subTest(signal=signal, phase=phase, cardinality=requested, mode=mode), \
+                    tempfile.TemporaryDirectory() as directory:
+                output = pathlib.Path(directory) / 'profile'
+                deployment = mock.Mock()
+                args = types.SimpleNamespace(signal=signal, phase=phase, cardinality=requested,
+                    deployment_target='all', mode=mode, cpu_profiler='pprof', app_call_graph='fp',
+                    output=output, image='diagnostic-image', image_commit='source', image_digest='digest',
+                    profile_seconds=55, windows=3)
+
+                def command(*argv):
+                    if argv[:2] == ('docker', 'inspect'):
+                        return '[{}]'
+                    if argv[:2] == ('lscpu', '-J'):
+                        return '{"lscpu": []}'
+                    return 'mock output'
+
+                result = {'ingest': {'error_rate': 0},
+                          'query': {'error_rate': 0, 'empty_queries': 0}}
+                with mock.patch.object(profiler.comparison, 'ComparisonDeployment', return_value=deployment), \
+                        mock.patch.object(profiler.env, 'command', side_effect=command), \
+                        mock.patch.object(profiler, 'configure_allocations', return_value=None), \
+                        mock.patch.object(profiler, 'capture') as capture, \
+                        mock.patch.object(profiler.env, 'measure', return_value=(result, [], [])) as measure:
+                    profiler.run(args)
+                    measure.call_args.kwargs['on_measurement']()
+                    capture.assert_called_once_with(deployment, output, 55, 3,
+                        cpu=mode == 'cpu', cpu_profiler='pprof', app_call_graph='fp')
+
+                deployment.seed.assert_called_once_with(signal, 'soak', cardinality)
+                deployment.wait_for_quiet_host.assert_called_once_with(120)
+                self.assertEqual(measure.call_args.args,
+                                 (deployment, signal, 180 if mode == 'cpu' else 70, 15, 2, cardinality))
+                self.assertEqual({key: measure.call_args.kwargs[key]
+                                  for key in ('cold', 'interval', 'check_durability')},
+                                 {'cold': cold, 'interval': 1, 'check_durability': False})
+                report = json.loads((output / 'profile-report.json').read_text())
+                self.assertEqual((report['phase'], report['cardinality']), (phase, cardinality))
+                deployment.close.assert_called_once_with()
+                if signal == 'metrics':
+                    path, body = profiler.comparison.query_request(signal, 1800 if cold else 30)
+                    query = profiler.env.urllib.parse.parse_qs(profiler.env.urllib.parse.urlsplit(path).query)
+                    self.assertEqual(query['query'], ['sum(last_over_time(envelope_samples[30m]))'
+                                                     if cold else 'sum(envelope_samples)'])
+                    self.assertIsNone(body)
+
+        script = pathlib.Path(profiler.__file__)
+        help_result = subprocess.run(['python3', str(script), '--help'],
+                                     capture_output=True, text=True, check=True)
+        self.assertLess(len(help_result.stdout), 8192)
+        for cardinality in (0, 20001):
+            with self.subTest(invalid_cardinality=cardinality), tempfile.TemporaryDirectory() as directory:
+                output = pathlib.Path(directory) / 'profile'
+                rejected = subprocess.run(['python3', str(script), '--signal', 'metrics',
+                    '--phase', 'high_cardinality', '--cardinality', str(cardinality),
+                    '--image', 'unused', '--image-commit', 'unused', '--image-digest', 'unused',
+                    '--output', str(output)], capture_output=True, text=True, check=False)
+                self.assertEqual(rejected.returncode, 2)
+                self.assertIn('--cardinality must be between 1 and 20000', rejected.stderr)
+                self.assertLess(len(rejected.stderr), 8192)
+                self.assertFalse(output.exists())
 
 
 if __name__ == '__main__':

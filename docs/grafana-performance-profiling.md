@@ -33,6 +33,13 @@ layout. `signal=all` schedules all four signals on separate VMs. An empty
 `image_artifact_run` builds and preserves the selected branch's image first.
 Profiling requires one concrete layout; `deployment_target=both` is rejected.
 
+For a metrics diagnostic at 20,000 series, add `-f phases=high_cardinality` and
+`-f max_cardinality=20000`. Profiling captures only that selected level;
+`phases=all` and `phases=steady` retain the default profiling workload.
+Metrics queries use `sum(last_over_time(envelope_samples[30m]))`, selecting
+a logical 30-minute history window without proving reads from physical cold
+blocks. CPU profiling still runs for 180 measured seconds.
+
 The workflow validates the image artifact's file checksums and Docker image
 identity before starting it. The report records the source commit, image
 identity, harness hashes, workload, tool versions and host. Evidence includes

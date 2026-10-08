@@ -187,6 +187,7 @@ def analyze_allocations(deployment, output, role):
 def run(args):
     env.SIGNALS = (args.signal,)
     env.write_request, env.query_request, env.http = comparison.write_request, comparison.query_request, comparison.http
+    cardinality = args.cardinality or (1000 if args.signal == 'metrics' else 100)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     report = {'diagnostic_only': True, 'comparison_qualified': False,
@@ -194,6 +195,7 @@ def run(args):
               'image_commit': args.image_commit, 'image_digest': args.image_digest,
               'image_identity': json.loads(env.command('docker', 'inspect', args.image))[0],
               'signal': args.signal, 'deployment_target': args.deployment_target,
+              'phase': args.phase, 'cardinality': cardinality,
               'profile_seconds': args.profile_seconds, 'windows': args.windows if args.mode == 'cpu' else 1,
               'mode': args.mode,
               'cpu_profiler': args.cpu_profiler,
@@ -216,13 +218,12 @@ def run(args):
         report['tool_versions']['heaptrack'] = env.command('heaptrack', '--version')
     try:
         deployment.start()
-        cardinality = 1000 if args.signal == 'metrics' else 100
         deployment.seed(args.signal, 'soak', cardinality)
         deployment.wait_for_quiet_host(120)
         seconds = args.profile_seconds * (args.windows if args.mode == 'cpu' else 1) + 15
         report['started_unix'] = time.time()
         result, operations, samples = env.measure(deployment, args.signal, seconds, 15, 2,
-            cardinality, interval=1, check_durability=False,
+            cardinality, cold=args.phase == 'high_cardinality', interval=1, check_durability=False,
             on_measurement=lambda: capture(deployment, output, args.profile_seconds, args.windows,
                                            cpu=args.mode == 'cpu', cpu_profiler=args.cpu_profiler,
                                            app_call_graph=args.app_call_graph))
@@ -255,6 +256,8 @@ def run(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--signal', choices=comparison.PRODUCTS, required=True)
+    parser.add_argument('--phase', choices=['steady', 'high_cardinality'], default='steady')
+    parser.add_argument('--cardinality', type=int, default=None)
     parser.add_argument('--mode', choices=['cpu', 'allocations'], default='cpu')
     parser.add_argument('--cpu-profiler', choices=['perf', 'pprof'], default='perf')
     parser.add_argument('--app-call-graph', choices=['dwarf,16384', 'fp'], default='dwarf,16384',
@@ -267,4 +270,6 @@ if __name__ == '__main__':
     parser.add_argument('--windows', type=int, choices=range(1, 5), default=3)
     parser.add_argument('--output', type=pathlib.Path, required=True)
     args = parser.parse_args()
+    if args.cardinality is not None and not 1 <= args.cardinality <= 20000:
+        parser.error('--cardinality must be between 1 and 20000')
     run(args)

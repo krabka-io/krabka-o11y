@@ -293,6 +293,8 @@ jobs:
           SIGNAL: ${{ matrix.signal }}
           DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
           PROFILE_MODE: ${{ inputs.profiling }}
+          PHASES: ${{ inputs.phases }}
+          MAX_CARDINALITY: ${{ inputs.max_cardinality }}
         run: |
           set -euo pipefail
           target="${DEPLOYMENT_TARGET}"
@@ -303,12 +305,17 @@ jobs:
               grep -Fxq -- '--@rules_rust//rust/settings:extra_rustc_flag=-Cforce-frame-pointers=yes' qualification/image/bazel-build-flags; then
             app_call_graph=fp
           fi
+          profile_flags=()
+          if [[ "${PHASES}" == high_cardinality ]]; then
+            profile_flags+=(--phase high_cardinality --cardinality "${MAX_CARDINALITY}")
+          fi
           python3 -u tools/profile-grafana.py --signal "${SIGNAL}" --mode "${PROFILE_MODE}" \
             --image "$(cat qualification/image/tag)" \
             --image-digest "$(cat qualification/image/manifest-digest)" \
             --image-commit "$(cat qualification/image/commit)" \
             --deployment-target "${target}" \
             --app-call-graph "${app_call_graph}" \
+            "${profile_flags[@]}" \
             --output qualification/evidence/comparison/profiles
       - name: Hash evidence
         if: always()
