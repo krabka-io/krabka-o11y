@@ -106,10 +106,16 @@ jobs:
           upload: 'true'
       - name: Build and preserve this commit's image
         if: inputs.image_artifact_run == ''
+        env:
+          PROFILE_MODE: ${{ inputs.profiling }}
         run: |
           set -euo pipefail
-          bazel run -c opt --bes_backend= //bazel/images/krabka:load
-          manifest=$(bazel cquery -c opt //bazel/images/krabka:image_manifest_blob --output=files)
+          build_flags=(-c opt)
+          if [[ "${PROFILE_MODE}" == cpu ]]; then
+            build_flags+=(--@rules_rust//rust/settings:extra_rustc_flag=-Cforce-frame-pointers=yes)
+          fi
+          bazel run "${build_flags[@]}" --bes_backend= //bazel/images/krabka:load
+          manifest=$(bazel cquery "${build_flags[@]}" //bazel/images/krabka:image_manifest_blob --output=files)
           image="localhost/krabka-o11y:sha-${GITHUB_SHA::12}"
           identity=$(docker image ls --filter reference=krabka-o11y:dev --format '{{.ID}}' | head -1)
           docker tag "${identity}" "${image}"
@@ -119,7 +125,12 @@ jobs:
           echo "sha256:$(sha256sum "${manifest}" | cut -d ' ' -f 1)" > qualification/image/manifest-digest
           echo "${GITHUB_SHA}" > qualification/image/commit
           docker inspect --format '{{.Id}}' "${image}" > qualification/image/config-digest
-          (cd qualification/image && sha256sum image.tar tag manifest-digest commit config-digest > SHA256SUMS)
+          payload=(image.tar tag manifest-digest commit config-digest)
+          if [[ "${PROFILE_MODE}" == cpu ]]; then
+            printf '%s\n' "${build_flags[@]}" > qualification/image/bazel-build-flags
+            payload+=(bazel-build-flags)
+          fi
+          (cd qualification/image && sha256sum "${payload[@]}" > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         if: inputs.image_artifact_run == ''
         with:
@@ -144,10 +155,17 @@ jobs:
           name: ${{ inputs.image_artifact_name }}
           path: qualification/image
       - name: Load the exact image
+        env:
+          PROFILE_MODE: ${{ inputs.profiling }}
         run: |
           set -euo pipefail
           cd qualification/image
           sha256sum -c SHA256SUMS
+          if [[ "${PROFILE_MODE:-none}" == none && -f bazel-build-flags ]] && \
+              grep -Fxq -- '--@rules_rust//rust/settings:extra_rustc_flag=-Cforce-frame-pointers=yes' bazel-build-flags; then
+            echo 'Frame-pointer diagnostic images cannot be used for ordinary comparisons.' >&2
+            exit 1
+          fi
           docker load -i image.tar
           [[ "$(docker inspect --format '{{.Id}}' "$(cat tag)")" == "$(cat config-digest)" ]]
       - name: Download the baseline image
@@ -164,6 +182,11 @@ jobs:
           set -euo pipefail
           cd qualification/baseline-image
           sha256sum -c SHA256SUMS
+          if [[ -f bazel-build-flags ]] && \
+              grep -Fxq -- '--@rules_rust//rust/settings:extra_rustc_flag=-Cforce-frame-pointers=yes' bazel-build-flags; then
+            echo 'Frame-pointer diagnostic images cannot be used for ordinary comparisons.' >&2
+            exit 1
+          fi
           docker load -i image.tar
           [[ "$(docker inspect --format '{{.Id}}' "$(cat tag)")" == "$(cat config-digest)" ]]
       - name: Compare both backends on this host
@@ -263,15 +286,21 @@ jobs:
           SIGNAL: ${{ matrix.signal }}
           DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
           PROFILE_MODE: ${{ inputs.profiling }}
+          IMAGE_ARTIFACT_RUN: ${{ inputs.image_artifact_run }}
         run: |
           set -euo pipefail
           target="${DEPLOYMENT_TARGET}"
           [[ "${target}" != both ]]
+          app_call_graph=dwarf,16384
+          if [[ "${PROFILE_MODE}" == cpu && -z "${IMAGE_ARTIFACT_RUN}" ]]; then
+            app_call_graph=fp
+          fi
           python3 -u tools/profile-grafana.py --signal "${SIGNAL}" --mode "${PROFILE_MODE}" \
             --image "$(cat qualification/image/tag)" \
             --image-digest "$(cat qualification/image/manifest-digest)" \
             --image-commit "$(cat qualification/image/commit)" \
             --deployment-target "${target}" \
+            --app-call-graph "${app_call_graph}" \
             --output qualification/evidence/comparison/profiles
       - name: Hash evidence
         if: always()

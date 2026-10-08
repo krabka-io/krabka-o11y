@@ -295,6 +295,7 @@ jobs:
       - run: tools/soak-gate.py --self-test
       - run: python3 tools/deployment-envelope.py --self-test
       - run: python3 tools/compare-grafana.py --self-test
+      - run: python3 tools/test_profile_grafana.py
       # //tools/mutants-record.py checks the two Milestone 19 records under
       # //qualification. Each record must name the commit, toolchain, host
       # shape, command, duration and checksums of its run, and each number in
