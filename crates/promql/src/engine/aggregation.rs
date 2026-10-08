@@ -61,7 +61,7 @@ mod limit_ratio_includes_sample;
 mod prometheus_labels_hash;
 
 pub(super) use aggregate_op::AggregateOp;
-use aggregate_state::AggregateState;
+pub(super) use aggregate_state::AggregateState;
 pub(super) use apply_count_values_aggregate::apply_count_values_aggregate;
 pub(super) use apply_k_aggregate::apply_k_aggregate;
 #[cfg(feature = "experimental-functions")]
