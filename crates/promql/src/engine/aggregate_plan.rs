@@ -1,5 +1,7 @@
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
 
+use datafusion::common::utils::quote_identifier;
+use krabka_units::prelude::TimeExt as _;
 use promql_parser::parser::{
     AggregateExpr, Expr,
     token::{
@@ -12,18 +14,27 @@ use super::aggregation::{apply_limit_ratio_aggregate, apply_limitk_aggregate};
 use super::{
     PromqlEngine,
     aggregation::{
-        AggregateOp, apply_count_values_aggregate, apply_k_aggregate, apply_quantile_aggregate,
-        apply_simple_aggregate, apply_stddev_stdvar_aggregate,
+        AggregateOp, AggregateState, apply_count_values_aggregate, apply_k_aggregate,
+        apply_quantile_aggregate, apply_simple_aggregate, apply_stddev_stdvar_aggregate,
     },
+    apply_selector_time_modifier, label_matcher_sets,
     planned::{InstantShape, OperatorInstant, PlannedInstant},
     planner_support::{
-        aggregate_grouping, simple_aggregate_op, simple_aggregate_op_to_aggregate_op,
+        aggregate_grouping, match_over_time_range_call, simple_aggregate_op,
+        simple_aggregate_op_to_aggregate_op,
     },
+    record_queryable_samples, samples_per_query_exceeded, selector_duration,
+    step_vectors::RANGE_STEP_VECTORS,
 };
 use crate::{
-    PromqlError,
+    PromqlError, PromqlLabels as Labels,
     error::Result,
-    planner::aggregate::{Grouping, SimpleAggregateOp, plan_simple_aggregate},
+    extension::{is_stale_nan, range_manipulate::RANGE_SUFFIX},
+    functions::OverTimeFamily,
+    planner::{
+        aggregate::{Grouping, SimpleAggregateOp, plan_simple_aggregate},
+        over_time_range::{TIME_COLUMN, VALUE_COLUMN},
+    },
     result::InstantSample,
     store::MetricStore,
 };
@@ -90,6 +101,13 @@ impl<S: MetricStore> PromqlEngine<S> {
         // order-independent `prom_min`/`prom_max` UDAFs and `count`/`group` are
         // exact, so they stay on the DataFusion fast path (no regression).
         if matches!(op, SimpleAggregateOp::Sum | SimpleAggregateOp::Avg) {
+            if matches!(&grouping, Grouping::By(labels) if labels.is_empty())
+                && let Some(folded) = self
+                    .plan_last_over_time_aggregate(tenant, aggregate, op, time_ms)
+                    .await?
+            {
+                return Ok(Some(folded));
+            }
             return self
                 .plan_simple_aggregate_via_kernel(tenant, aggregate, op, time_ms)
                 .await;
@@ -178,6 +196,95 @@ impl<S: MetricStore> PromqlEngine<S> {
             time_ms,
         )?;
         Ok(Some(PlannedInstant::Precomputed(aggregated)))
+    }
+
+    /// Folds a global float `sum` or `avg` over the last sample in each window.
+    async fn plan_last_over_time_aggregate(
+        &self,
+        tenant: &str,
+        aggregate: &AggregateExpr,
+        op: SimpleAggregateOp,
+        time_ms: i64,
+    ) -> Result<Option<PlannedInstant>> {
+        // Range queries keep the existing grid memo and its union sample count.
+        if RANGE_STEP_VECTORS.try_with(|_| ()).is_ok() {
+            return Ok(None);
+        }
+        let mut inner = aggregate.expr.as_ref();
+        while let Expr::Paren(paren) = inner {
+            inner = paren.expr.as_ref();
+        }
+        let Some((selector, OverTimeFamily::Last, _)) = match_over_time_range_call(inner) else {
+            return Ok(None);
+        };
+        let matcher_sets = label_matcher_sets(&selector.vs);
+        // The union path merges overlapping matcher branches before the fold.
+        let [matchers] = matcher_sets.as_slice() else {
+            return Ok(None);
+        };
+        if self
+            .matrix_selector_has_histogram_series(tenant, selector, time_ms)
+            .await?
+        {
+            return Ok(None);
+        }
+        let range = selector_duration(selector.range)?;
+        let end_ms = apply_selector_time_modifier(
+            time_ms,
+            selector.vs.at.as_ref(),
+            selector.vs.offset.as_ref(),
+            None,
+        )?;
+        // Keep the operator's errors at the limits of its one-point grid.
+        let Some(after_ms) = end_ms.checked_sub(range.millis_i64()) else {
+            return Ok(None);
+        };
+        if end_ms.checked_add(range.millis_i64().max(1)).is_none() {
+            return Ok(None);
+        }
+        let labels_by_fp = self
+            .labels_by_fingerprint_sets(tenant, &matcher_sets, after_ms, end_ms)
+            .await?;
+        let from_ms = after_ms.saturating_add(1);
+        let window = self.float_window(tenant, matchers, from_ms, end_ms).await?;
+        let mut total = 0;
+        let mut state = AggregateState::new(Labels::new());
+        // The label index uses canonical fingerprints. These matched runs have
+        // the same order as the existing over-time result's fingerprint map.
+        for (fp, rows) in window.series(from_ms, end_ms) {
+            total += rows.len();
+            if total > self.opts.max_samples {
+                return Err(samples_per_query_exceeded(self.opts.max_samples, total));
+            }
+            let Some(labels) = labels_by_fp.get(&fp) else {
+                continue;
+            };
+            let Some(last) = rows.iter().rev().find(|row| !is_stale_nan(row.value)) else {
+                continue;
+            };
+            // Keep the existing Arrow column-name validation on these inputs.
+            if labels.iter().any(|(name, _)| {
+                let column = name.strip_suffix(RANGE_SUFFIX).unwrap_or(name);
+                column == TIME_COLUMN
+                    || column == VALUE_COLUMN
+                    || matches!(quote_identifier(name), Cow::Owned(_))
+            }) {
+                return Ok(None);
+            }
+            state.push_float(last.value);
+        }
+        record_queryable_samples(total);
+        let samples = simple_aggregate_op_to_aggregate_op(op)
+            .finish(&state)
+            .map(|value| InstantSample {
+                labels: state.labels,
+                ts_ms: time_ms,
+                value,
+                drop_name: false,
+            })
+            .into_iter()
+            .collect();
+        Ok(Some(PlannedInstant::Precomputed(samples)))
     }
 
     /// Plans a parameterized aggregation onto the operator path.
