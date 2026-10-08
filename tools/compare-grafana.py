@@ -5,6 +5,8 @@ API acknowledgements have different durability contracts. This experiment
 reports accepted throughput, not equivalent durable throughput.
 """
 import argparse
+import base64
+from decimal import Decimal, InvalidOperation
 import functools
 import hashlib
 import importlib.util
@@ -37,9 +39,12 @@ _timestamp_lock = threading.Lock()
 _last_ms = {}
 
 
-def write_request(signal, sequence, cardinality, tenant='soak', age_seconds=0):
+def write_request(signal, sequence, cardinality, tenant='soak', age_seconds=0, *, seed_record=None):
     if signal != 'metrics':
-        path, body, content, rows = _original_write(signal, sequence, cardinality, tenant, age_seconds)
+        if signal == 'traces' and seed_record is not None:
+            path, body, content, rows = _original_write(signal, sequence, cardinality, tenant, age_seconds, seed_record=seed_record)
+        else:
+            path, body, content, rows = _original_write(signal, sequence, cardinality, tenant, age_seconds)
         if signal == 'profiles':
             query = env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(path).query)
             # Legacy Pyroscope labels use unquoted values. Quoted values are
@@ -54,6 +59,8 @@ def write_request(signal, sequence, cardinality, tenant='soak', age_seconds=0):
     with _timestamp_lock:
         stamp = max(now, _last_ms.get((tenant, age_seconds), 0) + 1)
         _last_ms[tenant, age_seconds] = stamp
+    if seed_record is not None:
+        seed_record['timestamp_ms'] = stamp
     timestamp = env.wire.pb_int64_field(2, stamp)
     prefixes = metric_prefixes(cardinality, len(timestamp))
     start = sequence * 1000 % cardinality
@@ -99,6 +106,182 @@ def query_request(signal, window_seconds=30):
     if signal == 'metrics' and env.QUERY[signal] == 9009:
         path = '/prometheus' + path
     return path, body
+
+
+def metrics_seed_ledger(records, response, evaluation_ms):
+    ledger = {'verified': False, 'complete_seed': False}
+    try:
+        cardinality = records[0]['cardinality']
+        if cardinality <= 0 or len(records) != math.ceil(cardinality / 1000):
+            raise ValueError('wrong seed request count')
+        sequences = sorted(record['sequence'] for record in records)
+        if sequences != list(range(sequences[0], sequences[0] + len(records))):
+            raise ValueError('seed sequences are not distinct and consecutive')
+        expected, timestamps = {}, set()
+        for record in records:
+            if not (200 <= record['status'] < 300 and record['rows'] == 1000
+                    and record['tenant'] == records[0]['tenant'] and record['cardinality'] == cardinality
+                    and record['age_seconds'] == records[0]['age_seconds']):
+                raise ValueError('wrong seed admission or dataset')
+            timestamp = record['timestamp_ms']
+            if not isinstance(timestamp, int) or isinstance(timestamp, bool) or timestamp in timestamps:
+                raise ValueError('seed receipt timestamps are not distinct integer milliseconds')
+            timestamps.add(timestamp)
+            if not evaluation_ms - 1800000 < timestamp <= evaluation_ms:
+                raise ValueError('seed timestamp is outside the matrix window')
+            if record['age_seconds'] == 0 and timestamp <= evaluation_ms - 300000:
+                raise ValueError('fresh seed is outside instant lookback')
+            for index in range(1000):
+                series = (record['sequence'] * 1000 + index) % cardinality
+                key = (('__name__', 'envelope_samples'), ('series', str(series)))
+                expected.setdefault(key, set()).add((timestamp, (env.SEED + series) % 97))
+        expected = {key: sorted(values) for key, values in expected.items()}
+        ledger.update(seed_request_rows=sum(record['rows'] for record in records),
+                      seed_unique_rows=sum(len(values) for values in expected.values()),
+                      expected_series=[{'metric': dict(key), 'values': values}
+                                       for key, values in sorted(expected.items())],
+                      expected_series_count=cardinality, evaluation_ms=evaluation_ms)
+        if not (len(expected) == cardinality and response['status'] == 'success'
+                and response['data']['resultType'] == 'matrix'
+                and not any(key in response for key in ('warnings', 'infos', 'error', 'errorType'))):
+            raise ValueError('incomplete seed identities or wrong response envelope')
+        series = response['data']['result']
+        if not isinstance(series, list):
+            raise ValueError('matrix result is not a list')
+        actual = {}
+        for item in series:
+            if set(item) != {'metric', 'values'} or not isinstance(item['metric'], dict):
+                raise ValueError('wrong matrix series shape')
+            key = tuple(sorted(item['metric'].items()))
+            if key in actual or key not in expected:
+                raise ValueError('duplicate or unexpected series labels')
+            values = item['values']
+            if not isinstance(values, list) or not values:
+                raise ValueError('series has no sample rows')
+            points = []
+            for point in values:
+                if not isinstance(point, list) or len(point) != 2:
+                    raise ValueError('wrong matrix sample shape')
+                timestamp, value = point
+                if not (isinstance(timestamp, (int, float, Decimal)) and not isinstance(timestamp, bool)
+                        and isinstance(value, str)):
+                    raise ValueError('wrong timestamp or value type')
+                millis = Decimal(str(timestamp)) * 1000
+                value = Decimal(value)
+                if not (millis.is_finite() and millis == millis.to_integral_value() and value.is_finite()):
+                    raise ValueError('nonfinite sample or fractional millisecond')
+                points.append((int(millis), value))
+            if not all(right[0] > left[0] for left, right in zip(points, points[1:])):
+                raise ValueError('sample timestamps are duplicated or unordered')
+            actual[key] = points
+        ledger.update(observed_series_count=len(actual),
+                      observed_unique_rows=sum(len(points) for points in actual.values()))
+        if actual != expected:
+            raise ValueError('matrix identities, timestamps or values differ from seed')
+        ledger.update(verified=True, complete_seed=True)
+    except (KeyError, TypeError, ValueError, IndexError, InvalidOperation) as error:
+        ledger['error'] = f'metrics seed matrix mismatch: {type(error).__name__}: {error}'
+    return ledger
+
+
+def trace_seed_expected(records):
+    expected, sequences = {}, set()
+    if not records:
+        raise ValueError('no trace seed receipts')
+    tenant, cardinality, age = (records[0][key] for key in ('tenant', 'cardinality', 'age_seconds'))
+    if not isinstance(cardinality, int) or isinstance(cardinality, bool) or cardinality < 1:
+        raise ValueError('invalid trace seed cardinality')
+    if len(records) != math.ceil(cardinality / 10):
+        raise ValueError('missing trace seed receipts')
+    for record in records:
+        sequence, stamp = record['sequence'], record['timestamp_ns']
+        if (not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 0
+                or sequence in sequences or not isinstance(stamp, int) or isinstance(stamp, bool)
+                or not 0 <= stamp <= 2**64 - 1 - 1000009
+                or (record['tenant'], record['cardinality'], record['age_seconds']) != (tenant, cardinality, age)
+                or type(record['status']) is not int or not 200 <= record['status'] < 300
+                or type(record['rows']) is not int or record['rows'] != 100):
+            raise ValueError('invalid or duplicate trace seed receipt')
+        sequences.add(sequence)
+        for index in range(10):
+            series = (sequence * 10 + index) % cardinality
+            trace_id = hashlib.sha256(f'{env.SEED}-{tenant}-{sequence}-{series}'.encode()).hexdigest()[:32]
+            fact = {'timestamp_ns': stamp, 'series': str(series)}
+            if trace_id in expected and expected[trace_id] != fact:
+                raise ValueError('conflicting trace seed identity')
+            expected[trace_id] = fact
+    if sorted(sequences) != list(range(min(sequences), min(sequences) + len(records))):
+        raise ValueError('seed sequences are not distinct and consecutive')
+    return expected
+
+
+def trace_seed_expected_rows(trace_id, fact):
+    # Complete query-visible OTLP rows, independently specified from seed facts.
+    return [{'resource': {'attributes': [
+                {'key': 'series', 'value': {'stringValue': fact['series']}},
+                {'key': 'service.name', 'value': {'stringValue': 'envelope'}}], 'droppedAttributesCount': 0},
+             'scope': {'name': '', 'version': '', 'attributes': [], 'droppedAttributesCount': 0},
+             'resourceSchemaUrl': '', 'scopeSchemaUrl': '',
+             'span': {'traceId': trace_id, 'spanId': (index + 1).to_bytes(8, 'big').hex(),
+                      'parentSpanId': '', 'traceState': '', 'flags': 0, 'name': 'envelope',
+                      'kind': 'SPAN_KIND_UNSPECIFIED', 'startTimeUnixNano': str(fact['timestamp_ns'] + index),
+                      'endTimeUnixNano': str(fact['timestamp_ns'] + index + 1000000),
+                      'attributes': [], 'droppedAttributesCount': 0, 'events': [], 'droppedEventsCount': 0,
+                      'links': [], 'droppedLinksCount': 0, 'status': {'code': 'STATUS_CODE_UNSET', 'message': ''}}}
+            for index in range(env.POINTS)]
+
+
+def trace_seed_rows(response):
+    # Both by-ID APIs use OTLP JSON. Normalize omitted protobuf defaults and
+    # grouping/order only; keep all other fields for the whole-row comparison.
+    if (not isinstance(response, dict) or set(response) - {'trace', 'metrics', 'status', 'message'}
+            or response.get('status', 'COMPLETE') != 'COMPLETE' or response.get('message', '') != ''):
+        raise ValueError('partial or invalid trace response')
+    trace = response['trace']
+    if set(trace) != {'resourceSpans'} or not isinstance(trace['resourceSpans'], list):
+        raise ValueError('invalid trace envelope')
+    rows, identities = [], set()
+    for group in trace['resourceSpans']:
+        if (set(group) - {'resource', 'scopeSpans', 'schemaUrl'}
+                or not isinstance(group['scopeSpans'], list) or not group['scopeSpans']):
+            raise ValueError('unexpected resource group fields')
+        resource = {'attributes': [], 'droppedAttributesCount': 0, **group.get('resource', {})}
+        for scoped in group['scopeSpans']:
+            if (set(scoped) - {'scope', 'spans', 'schemaUrl'}
+                    or not isinstance(scoped['spans'], list) or not scoped['spans']):
+                raise ValueError('unexpected scope group fields')
+            scope = {'name': '', 'version': '', 'attributes': [], 'droppedAttributesCount': 0, **scoped.get('scope', {})}
+            for owner in (resource, scope):
+                attributes = owner['attributes']
+                keys = [attribute['key'] for attribute in attributes]
+                if len(keys) != len(set(keys)) or not all(isinstance(key, str) for key in keys):
+                    raise ValueError('duplicate or invalid trace attributes')
+                owner['attributes'] = sorted(attributes, key=lambda attribute: attribute['key'])
+            for value in scoped['spans']:
+                span = {'parentSpanId': '', 'traceState': '', 'flags': 0, 'kind': 'SPAN_KIND_UNSPECIFIED',
+                        'attributes': [], 'droppedAttributesCount': 0, 'events': [], 'droppedEventsCount': 0,
+                        'links': [], 'droppedLinksCount': 0, 'status': {}, **value}
+                span['status'] = {'code': 'STATUS_CODE_UNSET', 'message': '', **span['status']}
+                for key, size in (('traceId', 16), ('spanId', 8), ('parentSpanId', 8)):
+                    if key == 'parentSpanId' and span[key] == '':
+                        continue
+                    decoded = base64.b64decode(span[key], validate=True)
+                    if len(decoded) != size:
+                        raise ValueError('invalid trace identity length')
+                    span[key] = decoded.hex()
+                identity = span['traceId'], span['spanId']
+                if identity in identities:
+                    raise ValueError('duplicate trace span')
+                identities.add(identity)
+                for key in ('flags', 'droppedAttributesCount', 'droppedEventsCount', 'droppedLinksCount'):
+                    if type(span[key]) is not int:
+                        raise ValueError('invalid span counter type')
+                if type(resource['droppedAttributesCount']) is not int or type(scope['droppedAttributesCount']) is not int:
+                    raise ValueError('invalid attribute counter type')
+                rows.append({'resource': resource, 'scope': scope,
+                             'resourceSchemaUrl': group.get('schemaUrl', ''),
+                             'scopeSchemaUrl': scoped.get('schemaUrl', ''), 'span': span})
+    return sorted(rows, key=lambda row: (row['span']['traceId'], row['span']['spanId']))
 
 
 def log_seed_ledger(records, response, limit):
@@ -387,10 +570,14 @@ class ComparisonDeployment(env.Deployment):
         records = []
         def write(_):
             sequence = next(self.sequence)
-            path, body, content, rows = write_request(signal, sequence, cardinality, tenant, age_seconds)
+            record = {'sequence': sequence, 'tenant': tenant, 'cardinality': cardinality, 'age_seconds': age_seconds}
+            if signal in ('metrics', 'traces'):
+                path, body, content, rows = write_request(signal, sequence, cardinality, tenant, age_seconds, seed_record=record)
+            else:
+                path, body, content, rows = write_request(signal, sequence, cardinality, tenant, age_seconds)
             started = time.monotonic()
             status, response = http(env.INGEST[signal], path, tenant, body, content)
-            record = {'sequence': sequence, 'status': status, 'rows': rows, 'seconds': time.monotonic() - started, 'tenant': tenant, 'cardinality': cardinality, 'age_seconds': age_seconds}
+            record.update(status=status, rows=rows, seconds=time.monotonic() - started)
             if signal == 'logs':
                 record['request'] = body
             records.append(record)
@@ -407,6 +594,23 @@ class ComparisonDeployment(env.Deployment):
             if not recovery['recovered']:
                 raise RuntimeError('seed WAL did not drain')
         self.wait_query(signal, tenant, True)
+        if signal == 'metrics':
+            evaluation_ms = max(time.time_ns() // 1000000, max(record['timestamp_ms'] for record in records))
+            path, _ = query_request(signal, 1800)
+            path = path.split('?', 1)[0] + '?' + env.urllib.parse.urlencode({
+                'query': 'envelope_samples[30m]', 'time': str(Decimal(evaluation_ms) / 1000)})
+            status, response = http(env.QUERY[signal], path, tenant)
+            response_file = f'{tenant}.seed-matrix.json'
+            (self.evidence / response_file).write_bytes(response)
+            try:
+                data = json.loads(response, parse_float=Decimal)
+                ledger = metrics_seed_ledger(records, data, evaluation_ms) if status == 200 else {'verified': False}
+            except (ValueError, InvalidOperation):
+                ledger = {'verified': False}
+            ledger.update(path=path, status=status, response_file=response_file)
+            (self.evidence / f'{tenant}.seed-ledger.json').write_text(json.dumps(ledger, indent=2) + '\n')
+            if not ledger['verified']:
+                raise RuntimeError(f'metrics seed matrix mismatch: {response_file}: {ledger.get("error", status)}')
         path, body = query_request(signal, 1800)
         status, response = http(env.QUERY[signal], path, tenant, body)
         (self.evidence / f'{tenant}.seed-query.json').write_bytes(response)
@@ -439,6 +643,46 @@ class ComparisonDeployment(env.Deployment):
                 (self.evidence / f'{tenant}.seed-ledger.json').write_text(json.dumps(ledger, indent=2))
                 if not check['complete_seed'] or not check['verified']:
                     raise RuntimeError(f'seed log ledger mismatch: {ledger}')
+            return
+        elif signal == 'traces':
+            expected = trace_seed_expected(records)
+            limit = int(env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(path).query)['limit'][0])
+            ledger = {'verified': False, 'complete_seed': False, 'expected_traces': len(expected),
+                      'expected_unique_spans': len(expected) * env.POINTS, 'by_id_verified_traces': 0,
+                      'search_all_identities_verified': len(expected) <= limit,
+                      'response_file': f'{tenant}.seed-traces.jsonl',
+                      'native_benchmark_image': PRODUCTS['traces'][1] if self.native else None,
+                      'payload_contract': 'OTLP JSON defaults verified against MODULE Tempo 3.0.3; benchmark image recorded separately.',
+                      'scope': 'Untimed by-ID seed verification warms both backends; timed query/writer rates are unchanged.'}
+            try:
+                if not isinstance(data['traces'], list) or any(
+                        not isinstance(trace['traceID'], str) or not re.fullmatch('[0-9a-f]{1,32}', trace['traceID'])
+                        for trace in data['traces']):
+                    raise ValueError('invalid trace seed search shape')
+                ids = [trace['traceID'].zfill(32) for trace in data['traces']]
+                if (len(ids) != len(set(ids)) or not set(ids) <= expected.keys()
+                        or len(expected) <= limit and set(ids) != expected.keys()
+                        or any(trace['rootServiceName'] != 'envelope' or trace['rootTraceName'] != 'envelope'
+                               or trace['durationMs'] != 1 or len(trace['spanSets']) != 1
+                               or trace['spanSets'][0]['matched'] != env.POINTS for trace in data['traces'])):
+                    raise ValueError('trace seed search identities or matched counts differ')
+                start = min(fact['timestamp_ns'] for fact in expected.values()) // 1000000000
+                end = (max(fact['timestamp_ns'] for fact in expected.values()) + 1000009) // 1000000000 + 1
+                with (self.evidence / ledger['response_file']).open('w') as output:
+                    for trace_id, fact in sorted(expected.items()):
+                        path = f'/api/v2/traces/{trace_id}?' + env.urllib.parse.urlencode({'start': start, 'end': end})
+                        status, response = http(env.QUERY[signal], path, tenant)
+                        output.write(json.dumps({'trace_id': trace_id, 'path': path, 'status': status,
+                                                 'response_base64': base64.b64encode(response).decode()}) + '\n')
+                        if status != 200 or trace_seed_rows(json.loads(response)) != trace_seed_expected_rows(trace_id, fact):
+                            raise ValueError(f'trace seed payload differs: {trace_id} ({status})')
+                        ledger['by_id_verified_traces'] += 1
+                ledger.update(verified=True, complete_seed=True)
+            except (ValueError, TypeError, KeyError, IndexError) as error:
+                ledger['error'] = str(error)
+                raise RuntimeError(f'trace seed mismatch: {error}') from error
+            finally:
+                (self.evidence / f'{tenant}.seed-ledger.json').write_text(json.dumps(ledger, indent=2) + '\n')
             return
         elif signal == 'profiles':
             observed = float(data['flamegraph']['total'])
@@ -519,6 +763,9 @@ def run(args):
                             deployment.seed(args.signal, tenant, cardinality)
                             if args.host_wait_seconds:
                                 deployment.wait_for_quiet_host(args.host_wait_seconds)
+                                if phase == 'high_cardinality':
+                                    (output / f'{level}.host-preflight.jsonl').write_bytes(
+                                        (output / 'host-preflight.jsonl').read_bytes())
                             duration = args.seconds if phase == 'steady' else args.seconds / 2
                             result, operations, samples = env.measure(deployment, args.signal, duration, duration / 4,
                                 writers, cardinality, cold=phase == 'high_cardinality', interval=1, tenant=tenant, check_durability=False)
@@ -557,7 +804,176 @@ def run(args):
     (args.output / 'SHA256SUMS').write_text(''.join(checksums))
 
 
+def trace_seed_self_test():
+    from unittest.mock import patch
+    # These wire hashes come from the unchanged 3da encoder, at the fixed
+    # clock below. The optional receipt must not alter the actual protobuf.
+    goldens = [(37, 100, 0, '1fc68ccf36efca8b9c31fd5fa863b7072237eab41cc791b5f435582573bbf65f'),
+               (38, 11, 30, '30dc85372798035ad92b0d5cb51782cc45d7b14a08d5db8d3712b56190c31552'),
+               (0, 3, 0, '106c69bd362c791255c7e46bef0d0c32dd00ed4a766f03966197c6c8686a9a13')]
+    with patch.object(time, 'time_ns', return_value=1700000000000000000):
+        for sequence, cardinality, age, digest in goldens:
+            receipt = {}
+            actual = write_request('traces', sequence, cardinality, 'seed-test', age, seed_record=receipt)
+            assert actual == write_request('traces', sequence, cardinality, 'seed-test', age)
+            assert actual[0] == '/v1/traces' and actual[2:] == ('application/x-protobuf', 100)
+            assert hashlib.sha256(actual[1]).hexdigest() == digest
+            assert receipt == {'timestamp_ns': 1700000000000000000 - age * 1000000000}
+
+    failures = ('missing_search_trace', 'duplicate_search_trace', 'matched_count', 'missing_span',
+                'duplicate_span', 'substituted_span', 'wrong_trace', 'start', 'end', 'name', 'series', 'service',
+                'extra_attribute', 'duplicate_attribute', 'parent', 'scope', 'events', 'kind',
+                'boolean_counter', 'partial', 'http_error', 'malformed', 'wrong_shape')
+    cases = [(100, None), (100, 'defaults'), (100, 'grouping'), (3, None), (11, None), (1100, None), (1100, 'older_missing')]
+    cases += [(100, failure) for failure in failures]
+    encoder = write_request
+    for case_index, (cardinality, failure) in enumerate(cases):
+        with tempfile.TemporaryDirectory() as directory:
+            deployment = object.__new__(ComparisonDeployment)
+            deployment.evidence = pathlib.Path(directory)
+            deployment.native = case_index % 2 == 0
+            deployment.sequence = iter(range(37, 37 + math.ceil(cardinality / 10)))
+            deployment.wait_query = lambda *_: None
+            events, emitted, replies = [], {}, []
+            deployment.drain = lambda _signal: events.append('drain') or {'recovered': True}
+            def receipt_request(signal, sequence, size, tenant, age, *, seed_record):
+                request = encoder(signal, sequence, size, tenant, age, seed_record=seed_record)
+                assert seed_record['timestamp_ns'] == 1700000000000000000
+                for index in range(10):
+                    series = (sequence * 10 + index) % size
+                    trace = hashlib.sha256(f'267-{tenant}-{sequence}-{series}'.encode()).digest()[:16]
+                    emitted[trace.hex()] = (trace, str(series))
+                return request
+            def traces_http(_port, path, _tenant, body=None, *_content):
+                if path == '/v1/traces':
+                    return 204, b''
+                selected = sorted(emitted, reverse=True)[:1000]
+                if path.startswith('/api/search?'):
+                    events.append('search')
+                    traces = [{'traceID': identity, 'rootServiceName': 'envelope', 'rootTraceName': 'envelope',
+                               'durationMs': 1, 'spanSets': [{'matched': 10}]} for identity in selected]
+                    if failure == 'missing_search_trace':
+                        traces.pop()
+                    elif failure == 'duplicate_search_trace':
+                        traces[1] = traces[0]
+                    elif failure == 'matched_count':
+                        traces[0]['spanSets'][0]['matched'] = 9
+                    return 200, json.dumps({'traces': traces}).encode()
+                identity = path.split('/api/v2/traces/')[1].split('?')[0]
+                trace, series = emitted[identity]
+                bounds = env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(path).query)
+                assert bounds == {'start': ['1700000000'], 'end': ['1700000001']}
+                replies.append(identity)
+                spans = [{'traceId': base64.b64encode(trace).decode(),
+                          'spanId': base64.b64encode((point + 1).to_bytes(8, 'big')).decode(),
+                          'name': 'envelope', 'startTimeUnixNano': str(1700000000000000000 + point),
+                          'endTimeUnixNano': str(1700000000001000000 + point)} for point in range(10)]
+                # Group/span/attribute order is irrelevant, but every full row
+                # must match the independent wire fixture, including resources.
+                attributes = [{'key': 'service.name', 'value': {'stringValue': 'envelope'}},
+                              {'key': 'series', 'value': {'stringValue': series}}]
+                resource = {'attributes': attributes}
+                scope = {}
+                reply = {'trace': {'resourceSpans': [{'resource': resource,
+                           'scopeSpans': [{'scope': scope, 'spans': spans[::-1]}]}]}}
+                if failure == 'defaults':
+                    reply.update(status='COMPLETE', message='')
+                    for span in spans:
+                        span.update(parentSpanId='', traceState='', flags=0, kind='SPAN_KIND_UNSPECIFIED',
+                                    attributes=[], events=[], links=[], droppedAttributesCount=0,
+                                    droppedEventsCount=0, droppedLinksCount=0,
+                                    status={'code': 'STATUS_CODE_UNSET', 'message': ''})
+                elif failure == 'grouping':
+                    reply['trace']['resourceSpans'] = [
+                        {'resource': resource, 'scopeSpans': [{'spans': [span]}]} for span in spans[::-1]]
+                if failure == 'older_missing' and identity not in selected:
+                    return 404, b'not found'
+                if failure == 'missing_span':
+                    reply['trace']['resourceSpans'][0]['scopeSpans'][0]['spans'].pop()
+                elif failure == 'duplicate_span':
+                    spans[1]['spanId'] = spans[0]['spanId']
+                elif failure == 'substituted_span':
+                    spans[0]['spanId'] = base64.b64encode((11).to_bytes(8, 'big')).decode()
+                elif failure == 'wrong_trace':
+                    spans[0]['traceId'] = base64.b64encode(bytes(16)).decode()
+                elif failure in ('start', 'end'):
+                    spans[0]['startTimeUnixNano' if failure == 'start' else 'endTimeUnixNano'] = '1700000000000000001'
+                elif failure == 'name':
+                    spans[0]['name'] = 'wrong'
+                elif failure in ('series', 'service'):
+                    attributes[1 if failure == 'series' else 0]['value']['stringValue'] = 'wrong'
+                elif failure == 'extra_attribute':
+                    attributes.append({'key': 'extra', 'value': {'stringValue': 'wrong'}})
+                elif failure == 'duplicate_attribute':
+                    attributes.append(attributes[0])
+                elif failure == 'parent':
+                    spans[0]['parentSpanId'] = base64.b64encode(bytes(8)).decode()
+                elif failure == 'scope':
+                    scope['name'] = 'wrong'
+                elif failure == 'events':
+                    spans[0]['events'] = [{}]
+                elif failure == 'kind':
+                    spans[0]['kind'] = 'SPAN_KIND_CLIENT'
+                elif failure == 'boolean_counter':
+                    spans[0]['flags'] = False
+                elif failure == 'partial':
+                    reply['status'] = 'PARTIAL'
+                elif failure == 'malformed':
+                    return 200, b'not-json'
+                elif failure == 'wrong_shape':
+                    reply['trace'] = []
+                return (503 if failure == 'http_error' else 200), json.dumps(reply).encode()
+            with patch.dict(globals(), {'write_request': receipt_request, 'http': traces_http}), \
+                    patch.object(time, 'time_ns', return_value=1700000000000000000), \
+                    patch.object(time, 'time', return_value=1700000000):
+                try:
+                    deployment.seed('traces', 'seed-test', cardinality)
+                except RuntimeError as error:
+                    assert failure not in (None, 'defaults', 'grouping') and 'trace seed mismatch' in str(error)
+                else:
+                    assert failure in (None, 'defaults', 'grouping')
+            ledger = json.loads((deployment.evidence / 'seed-test.seed-ledger.json').read_text())
+            assert ledger['verified'] == (failure in (None, 'defaults', 'grouping'))
+            assert ledger['expected_traces'] == len(emitted)
+            assert ledger['search_all_identities_verified'] == (len(emitted) <= 1000)
+            assert events == (['search'] if deployment.native else ['drain', 'search'])
+            if ledger['verified']:
+                assert len(replies) == len(set(replies)) == ledger['by_id_verified_traces'] == len(emitted)
+            elif failure == 'older_missing':
+                assert replies[-1] not in sorted(emitted, reverse=True)[:1000]
+            recorded = [json.loads(line) for line in (deployment.evidence / 'seed-test.seed.jsonl').read_text().splitlines()]
+            assert all(record['timestamp_ns'] == 1700000000000000000 for record in recorded)
+            if replies:
+                raw = [json.loads(line) for line in (deployment.evidence / 'seed-test.seed-traces.jsonl').read_text().splitlines()]
+                assert [entry['trace_id'] for entry in raw] == replies
+                assert all(base64.b64decode(entry['response_base64'], validate=True) for entry in raw)
+    records = [{'sequence': sequence, 'timestamp_ns': 1700000000000000000, 'tenant': 'seed-test',
+                'cardinality': 20000, 'age_seconds': 0, 'status': 204, 'rows': 100} for sequence in range(2000)]
+    assert len(trace_seed_expected(records)) == 20000
+    for key, value in [('timestamp_ns', True), ('timestamp_ns', 1700000000000000000.0),
+                       ('sequence', True), ('cardinality', True), ('status', 204.0), ('rows', 100.0)]:
+        bad = [{'sequence': 0, 'timestamp_ns': 1700000000000000000, 'tenant': 'seed-test',
+                'cardinality': 3, 'age_seconds': 0, 'status': 204, 'rows': 100, key: value}]
+        try:
+            trace_seed_expected(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f'invalid trace receipt accepted: {key}')
+    nonconsecutive = [{'sequence': sequence, 'timestamp_ns': 1700000000000000000, 'tenant': 'seed-test',
+                       'cardinality': 100, 'age_seconds': 0, 'status': 204, 'rows': 100}
+                      for sequence in range(0, 100, 10)]
+    try:
+        trace_seed_expected(nonconsecutive)
+    except ValueError as error:
+        assert str(error) == 'seed sequences are not distinct and consecutive'
+    else:
+        raise AssertionError('nonconsecutive trace seed receipts accepted')
+    print('trace seed controls passed: three wire goldens, complete and above-limit fixtures, 24 API negatives')
+
+
 def self_test():
+    trace_seed_self_test()
     from unittest.mock import patch
 
     records = [{'request': {'streams': [
@@ -670,6 +1086,117 @@ def self_test():
             assert sorted(json.dumps(request, sort_keys=True) for request in recorded) == sorted(
                 json.dumps(request, sort_keys=True) for request in pushed)
 
+    # Check the real metrics seed path against independent outgoing receipts.
+    seed_cases = [(n, None) for n in (100, 1000, 1501, 5000, 20000)] + [
+        (1501 if failure in ('missing_older', 'older_value', 'ordering', 'duplicate_point') else 1000, failure)
+        for failure in ('zero_missing', 'canceling_values', 'missing_older', 'older_value', 'duplicate_series',
+                        'extra_series', 'renamed', 'extra_label', 'timestamp', 'fractional_ms',
+                        'ordering', 'duplicate_point', 'histogram', 'wrong_shape', 'warning', 'info', 'error', 'http_error')]
+    encoder = write_request
+    for case_index, (cardinality, failure) in enumerate(seed_cases):
+        with tempfile.TemporaryDirectory() as directory:
+            deployment = object.__new__(ComparisonDeployment)
+            deployment.evidence = pathlib.Path(directory)
+            deployment.native = case_index % 2 == 0
+            deployment.sequence = iter(range(37, 37 + math.ceil(cardinality / 1000)))
+            deployment.wait_query = lambda *_: None
+            events, receipts = [], []
+            def drain(_signal):
+                events.append('drain')
+                return {'recovered': True}
+            deployment.drain = drain
+            def receipt_request(signal, sequence, size, tenant, age, *, seed_record):
+                request = encoder(signal, sequence, size, tenant, age, seed_record=seed_record)
+                receipts.append((sequence, seed_record['timestamp_ms']))
+                return request
+            def metrics_http(_port, path, tenant, body=None, *_content):
+                if path == '/api/v1/push':
+                    return 204, b''
+                query = env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(path).query)
+                if query['query'] != ['envelope_samples[30m]']:
+                    return 200, json.dumps({'status': 'success', 'data': {'resultType': 'vector',
+                        'result': [{'metric': {}, 'value': [1791120000, str(sum((267 + i) % 97 for i in range(cardinality)))]}]}}).encode()
+                events.append('matrix')
+                assert path.startswith('/prometheus/api/v1/query?' if deployment.native else '/api/v1/query?')
+                assert Decimal(query['time'][0]) * 1000 >= max(stamp for _, stamp in receipts)
+                expected = {}
+                for sequence, stamp in reversed(receipts):
+                    for index in range(1000):
+                        series = (sequence * 1000 + index) % cardinality
+                        expected.setdefault(series, set()).add((stamp, (267 + series) % 97))
+                matrix = [{'metric': {'__name__': 'envelope_samples', 'series': str(series)},
+                           'values': [[float(Decimal(stamp) / 1000), str(value)] for stamp, value in sorted(points)]}
+                          for series, points in sorted(expected.items(), reverse=True)]
+                historical = next((item for item in matrix if len(item['values']) > 1), None)
+                if failure == 'zero_missing':
+                    matrix = [item for item in matrix if item['values'][-1][1] != '0']
+                elif failure == 'canceling_values':
+                    matrix[0]['values'][0][1] = str(int(matrix[0]['values'][0][1]) + 1)
+                    matrix[1]['values'][0][1] = str(int(matrix[1]['values'][0][1]) - 1)
+                elif failure == 'missing_older':
+                    historical['values'].pop(0)
+                elif failure == 'older_value':
+                    historical['values'][0][1] = '999'
+                elif failure == 'duplicate_series':
+                    matrix.append(matrix[0])
+                elif failure == 'extra_series':
+                    matrix.append({'metric': {'__name__': 'envelope_samples', 'series': 'unexpected'}, 'values': matrix[0]['values']})
+                elif failure == 'renamed':
+                    matrix[0]['metric']['__name__'] = 'renamed'
+                elif failure == 'extra_label':
+                    matrix[0]['metric']['extra'] = 'unexpected'
+                elif failure == 'timestamp':
+                    matrix[0]['values'][0][0] += 0.001
+                elif failure == 'fractional_ms':
+                    matrix[0]['values'][0][0] += 0.0001
+                elif failure == 'ordering':
+                    historical['values'].reverse()
+                elif failure == 'duplicate_point':
+                    historical['values'].append(historical['values'][-1])
+                elif failure == 'histogram':
+                    matrix[0]['histograms'] = []
+                reply = {'status': 'success', 'data': {'resultType': 'matrix', 'result': matrix}}
+                if failure == 'wrong_shape':
+                    reply['data']['resultType'] = 'vector'
+                elif failure == 'warning':
+                    reply['warnings'] = ['short result']
+                elif failure == 'info':
+                    reply['infos'] = []
+                elif failure == 'error':
+                    reply = {'status': 'error', 'error': 'query failed'}
+                return (500 if failure == 'http_error' else 200), json.dumps(reply).encode()
+            with patch.dict(globals(), {'write_request': receipt_request, 'http': metrics_http}), \
+                    patch.dict(env.QUERY, {'metrics': 9009 if deployment.native else 9090}), \
+                    patch.dict(_last_ms, {}, clear=True), patch.object(time, 'time_ns', return_value=1791120000000000000):
+                try:
+                    deployment.seed('metrics', 'seed-test', cardinality)
+                except RuntimeError as error:
+                    assert failure is not None and 'metrics seed matrix mismatch' in str(error)
+                else:
+                    assert failure is None
+            ledger = json.loads((deployment.evidence / 'seed-test.seed-ledger.json').read_text())
+            assert ledger['verified'] == (failure is None)
+            assert events == (['matrix'] if deployment.native else ['drain', 'matrix'])
+            if failure is None:
+                assert ledger['complete_seed'] and ledger['expected_series_count'] == cardinality
+                assert ledger['observed_series_count'] == cardinality
+                assert ledger['seed_request_rows'] == math.ceil(cardinality / 1000) * 1000
+                assert ledger['observed_unique_rows'] == ledger['seed_unique_rows'] == min(1000, cardinality) * math.ceil(cardinality / 1000)
+            recorded = [json.loads(line) for line in (deployment.evidence / 'seed-test.seed.jsonl').read_text().splitlines()]
+            assert sorted((record['sequence'], record['timestamp_ms']) for record in recorded) == sorted(receipts)
+
+    # Even a matching API response cannot validate a corrupt emission receipt.
+    for timestamps in ([True], [1791120000000.0], [1791120000000, 1791120000000]):
+        records = [{'sequence': i, 'timestamp_ms': stamp, 'cardinality': len(timestamps) * 1000,
+                    'status': 204, 'rows': 1000, 'tenant': 'receipt-test', 'age_seconds': 0}
+                   for i, stamp in enumerate(timestamps)]
+        reply = {'status': 'success', 'data': {'resultType': 'matrix', 'result': [
+            {'metric': {'__name__': 'envelope_samples', 'series': str(i)},
+             'values': [[timestamps[i // 1000] / 1000, str((267 + i) % 97)]]}
+            for i in range(len(timestamps) * 1000)]}}
+        ledger = metrics_seed_ledger(records, reply, max(timestamps))
+        assert not ledger['verified'] and 'distinct integer milliseconds' in ledger['error']
+
     assert write_request('metrics', 1, 1000)[3] == 1000
     query = env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(write_request('profiles', 1, 100)[0]).query)
     assert query['units'] == ['nanoseconds'] and query['sampleRate'] == ['1000000000']
@@ -776,6 +1303,57 @@ def self_test():
                 assert 'runtime-overrides: /etc/krabka/metrics-limits.yaml' in (roles / 'metrics-writer.yaml').read_text()
             if signal == 'logs':
                 assert services['logs-all']['volumes'][0]['source'] == 'logs-data'
+    # Run the real phase loop with external deployment and measurement stubbed.
+    for phase, seconds, maximum, levels, duration in [
+        ('steady', 60, 20000, [1000], 60),
+        ('high_cardinality', 60, 20000, [1000, 5000, 20000], 30),
+        ('high_cardinality', 120, 20000, [1000, 5000, 20000], 60),
+        ('high_cardinality', 120, 5000, [1000, 5000], 60),
+        ('high_cardinality', 120, 1000, [1000], 60),
+    ]:
+        with tempfile.TemporaryDirectory() as directory:
+            calls, seeded = [], []
+            deployment_type = ComparisonDeployment
+            def deployment_for_phase(evidence, *_args):
+                deployment = object.__new__(deployment_type)
+                deployment.evidence = evidence
+                deployment.target = 'all'
+                deployment.service_cpu = deployment.service_memory_gib = 6
+                deployment.ids = {}
+                deployment.start = lambda: evidence.mkdir(parents=True)
+                deployment.seed = lambda signal, tenant, cardinality: seeded.append((tenant, cardinality))
+                def quiet_host(_timeout):
+                    (evidence / 'host-preflight.jsonl').write_text(json.dumps(seeded[-1]) + '\n')
+                deployment.wait_for_quiet_host = quiet_host
+                deployment.close = lambda: None
+                return deployment
+            def phase_measure(_deployment, signal, measured, warmup, writers, cardinality, **options):
+                calls.append((signal, measured, warmup, writers, cardinality, options))
+                return ({'duration_seconds': measured, 'objectives_met': True,
+                         'ingest': {'accepted_rows': 1000 * writers * measured}, 'query': {}},
+                        [], [{'time_unix': 0}, {'time_unix': measured}])
+            args = argparse.Namespace(signal='metrics', profiles_target='all', deployment_target='all',
+                                      image='test-image', image_digest='sha256:' + '0' * 64,
+                                      image_commit='test-source', seconds=seconds, repetitions=1,
+                                      phases=[phase], backends=['krabka'], max_writers=256,
+                                      max_cardinality=maximum, host_wait_seconds=120,
+                                      output=pathlib.Path(directory))
+            with patch.dict(globals(), {'ComparisonDeployment': deployment_for_phase,
+                                        'cost': lambda _: {'cpu_seconds_total': 1, 'host_activity_qualified': True}}), \
+                    patch.object(env, 'command', return_value='[{}]'), patch.object(env, 'measure', phase_measure):
+                run(args)
+            assert calls == [
+                ('metrics', duration, duration / 4, 2, level,
+                 {'cold': phase == 'high_cardinality', 'interval': 1,
+                  'tenant': f'cardinality-{level}' if phase == 'high_cardinality' else 'soak',
+                  'check_durability': False}) for level in levels]
+            output = args.output / f'1-krabka-{phase}'
+            if phase == 'high_cardinality':
+                assert [json.loads((output / f'{level}.host-preflight.jsonl').read_text())
+                        for level in levels] == [[f'cardinality-{level}', level] for level in levels]
+                assert json.loads((output / 'host-preflight.jsonl').read_text()) == [f'cardinality-{levels[-1]}', levels[-1]]
+            else:
+                assert not list(output.glob('*.host-preflight.jsonl'))
     print('compare-grafana self-test passed')
 
 

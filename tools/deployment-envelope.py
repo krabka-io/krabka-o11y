@@ -67,7 +67,7 @@ def http(port, path, tenant="soak", body=None, content_type="application/json"):
         return 0, str(error).encode()
 
 
-def write_request(signal, sequence, cardinality, tenant="soak", age_seconds=0):
+def write_request(signal, sequence, cardinality, tenant="soak", age_seconds=0, *, seed_record=None):
     now = time.time_ns() - int(age_seconds * 1e9)
     # Trace searches assemble spans, rather than evaluating a scalar. Keep
     # their starting batch below the query saturation point, then ramp load.
@@ -85,6 +85,8 @@ def write_request(signal, sequence, cardinality, tenant="soak", age_seconds=0):
         ]} for s in series]
         return "/loki/api/v1/push", {"streams": streams}, "application/json", SERIES * POINTS
     if signal == "traces":
+        if seed_record is not None:
+            seed_record["timestamp_ns"] = now
         groups = []
         for s in series:
             trace = hashlib.sha256(f"{SEED}-{tenant}-{sequence}-{s}".encode()).digest()[:16]
