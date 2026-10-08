@@ -10,6 +10,14 @@ pub(crate) struct RecordingObjectStore {
     pub(crate) get_delay: Duration,
     pub(crate) active_gets: Arc<std::sync::atomic::AtomicUsize>,
     pub(crate) max_active_gets: Arc<std::sync::atomic::AtomicUsize>,
+    get_barrier: Option<Arc<GetBarrier>>,
+}
+
+struct GetBarrier {
+    location: String,
+    armed: std::sync::atomic::AtomicBool,
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Semaphore>,
 }
 
 impl RecordingObjectStore {
@@ -23,11 +31,27 @@ impl RecordingObjectStore {
             get_delay: Duration::ZERO,
             active_gets: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             max_active_gets: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            get_barrier: None,
         }
     }
 
     pub(crate) fn with_get_delay(mut self, get_delay: Duration) -> Self {
         self.get_delay = get_delay;
+        self
+    }
+
+    pub(crate) fn with_get_barrier(
+        mut self,
+        location: String,
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Semaphore>,
+    ) -> Self {
+        self.get_barrier = Some(Arc::new(GetBarrier {
+            location,
+            armed: std::sync::atomic::AtomicBool::new(true),
+            entered,
+            release,
+        }));
         self
     }
 
@@ -133,6 +157,15 @@ impl ObjectStore for RecordingObjectStore {
             sleep(self.get_delay).await;
         }
         let result = self.inner.get_opts(location, options).await;
+        if let Some(barrier) = &self.get_barrier
+            && barrier.location == location.as_ref()
+            && barrier
+                .armed
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            barrier.entered.notify_one();
+            barrier.release.acquire().await.unwrap().forget();
+        }
         self.record_get_end();
         result
     }

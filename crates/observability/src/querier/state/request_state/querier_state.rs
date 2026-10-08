@@ -1,5 +1,24 @@
 use super::*;
-use crate::{ByteSize, Time};
+use crate::{ByteSize, Time, WalLogRecord};
+
+struct SnapshotLogHotTail(Vec<Arc<WalLogRecord>>);
+
+impl LogHotTail for SnapshotLogHotTail {
+    fn records(&self) -> Vec<WalLogRecord> {
+        self.0
+            .iter()
+            .map(|record| record.as_ref().clone())
+            .collect()
+    }
+
+    fn records_shared_in_range(&self, start_ns: i64, end_ns: i64) -> Vec<Arc<WalLogRecord>> {
+        self.0
+            .iter()
+            .filter(|record| record.timestamp_ns >= start_ns && record.timestamp_ns <= end_ns)
+            .cloned()
+            .collect()
+    }
+}
 
 impl QuerierState {
     #[must_use]
@@ -261,6 +280,66 @@ impl QuerierState {
     }
 
     pub(crate) async fn with_request_tenant_index(
+        &self,
+        tenant: &str,
+        query_range: TimeRange,
+    ) -> Result<Self, BlockStoreError> {
+        self.with_request_tenant_index_and_hot_range(tenant, query_range, Some(query_range))
+            .await
+    }
+
+    pub(crate) async fn with_request_tenant_index_and_hot_range(
+        &self,
+        tenant: &str,
+        query_range: TimeRange,
+        hot_range: Option<TimeRange>,
+    ) -> Result<Self, BlockStoreError> {
+        if self.dynamic_index.is_none() {
+            return Ok(self.clone());
+        }
+        loop {
+            let mut request = self.clone();
+            let captured = self.hot_tail.as_ref().map(|hot_tail| {
+                let (version, frontier) = match &hot_tail.frontier {
+                    CompactionFrontierSource::Shared(shared) => {
+                        let (version, frontier) = shared.snapshot_with_version();
+                        request.dynamic_index_cache =
+                            self.dynamic_index_cache.for_frontier(shared, version);
+                        (Some(version), frontier)
+                    }
+                    CompactionFrontierSource::Snapshot(frontier) => (None, frontier.clone()),
+                };
+                (hot_tail, version, frontier)
+            });
+            let loaded = request.with_loaded_tenant_index(tenant, query_range).await;
+            let records = captured.as_ref().map(|(hot_tail, _, _)| {
+                let range = hot_range.unwrap_or(TimeRange {
+                    start_ns: i64::MIN,
+                    end_ns: i64::MAX,
+                });
+                hot_tail
+                    .source
+                    .records_shared_in_range(range.start_ns, range.end_ns)
+            });
+            if let Some((hot_tail, Some(version), _)) = &captured
+                && let CompactionFrontierSource::Shared(shared) = &hot_tail.frontier
+                && shared.snapshot_with_version().0 != *version
+            {
+                continue;
+            }
+            let mut request = loaded?;
+            if let Some((_, _, frontier)) = captured {
+                request = request.with_hot_tail_frontier(
+                    SnapshotLogHotTail(records.expect("hot tail snapshot exists")),
+                    frontier,
+                );
+            }
+            request.dynamic_index = None;
+            return Ok(request);
+        }
+    }
+
+    async fn with_loaded_tenant_index(
         &self,
         tenant: &str,
         query_range: TimeRange,
