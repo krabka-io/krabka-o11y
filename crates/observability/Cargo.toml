@@ -28,11 +28,11 @@ clap = { workspace = true, features = ["env"] }
 # writes its own audit trail with the same crate.
 krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "5ac67b74ccaf6a9c60fd286a0669890904585497", version = "0.7.0" }
 krabka-blockstore = { version = "0.4.0", path = "../blockstore" }
-krabka-client-admin = { version = "0.5.0" }
-krabka-client-core = { version = "0.5.0" }
-krabka-client-consumer = { version = "0.5.0" }
-krabka-client-producer = { version = "0.5.0" }
-krabka-ids = { version = "0.5.0" }
+krabka-client-admin = { version = "0.6.0" }
+krabka-client-core = { version = "0.6.0" }
+krabka-client-consumer = { version = "0.6.0" }
+krabka-client-producer = { version = "0.6.0" }
+krabka-ids = { version = "0.6.0" }
 # `/log_level` reloads this process's filter, which means this crate -- not
 # the pinned `krabka-telemetry`, whose `init` returns no reload handle --
 # installs the stdout subscriber. `krabka-logfmt` is the formatter that
@@ -42,7 +42,7 @@ krabka-logql = { version = "0.4.0", path = "../logql" }
 krabka-query-frontend = { version = "0.4.0", path = "../query-frontend" }
 # `ListenerProtocol` and `SaslMechanism`, the two types a `ClientSecurity` names
 # that `krabka-client-core` does not re-export.
-krabka-security = { version = "0.5.0" }
+krabka-security = { version = "0.6.0" }
 krabka-telemetry = { version = "0.7.0" }
 krabka-units = { workspace = true }
 datafusion.workspace = true
