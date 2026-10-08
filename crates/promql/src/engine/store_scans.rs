@@ -221,7 +221,7 @@ impl<S: MetricStore> PromqlEngine<S> {
     ///
     /// The rows may cover more than `[start_ms, end_ms]`. See
     /// [`Self::scanned_rows`].
-    async fn float_window(
+    pub(super) async fn float_window(
         &self,
         tenant: &str,
         matchers: &[LabelMatcher],
