@@ -95,6 +95,6 @@ testcontainers = { workspace = true }
 qubit-clock = "~0.13.0"
 rcgen = { workspace = true }
 flate2 = { workspace = true }
-krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "82fea7dc8de3b2122011103c892572f6774634d0", version = "0.7.0" }
+krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "5ac67b74ccaf6a9c60fd286a0669890904585497", version = "0.7.0" }
 krabka-broker = { version = "0.7.0" }
 krabka-pprof = { path = "../pprof", version = "0.4.0" }

@@ -58,7 +58,7 @@ time = { version = "0.3", default-features = false, features = ["parsing", "form
 crc32c = { workspace = true }
 axum = { workspace = true, features = ["json", "query"] }
 datatest-stable = { workspace = true }
-krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "82fea7dc8de3b2122011103c892572f6774634d0", version = "0.7.0" }
+krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "5ac67b74ccaf6a9c60fd286a0669890904585497", version = "0.7.0" }
 krabka-units = { workspace = true }
 proptest = { workspace = true }
 reqwest = { workspace = true }

@@ -108,15 +108,6 @@ def port(root):
     native = targets.setdefault('cfg(not(target_family = "wasm"))', {}).setdefault('dependencies', {})
     native['hostname'] = ported.pop('hostname')
     manifest.write_text(helper.toml_text(data))
-    # Like the broker's log I/O, skip the directory sync where std cannot open
-    # a directory handle to sync; WASIX reports EISDIR. The temporary file is
-    # still synced before its rename into place.
-    source = broker / 'crates/format/src/meta_properties.rs'
-    text = source.read_text()
-    old = '        fs::File::open(dir)?.sync_all()?;\n'
-    if text.count(old) != 1:
-        raise ValueError('Pinned meta.properties directory sync changed')
-    source.write_text(text.replace(old, '        #[cfg(not(target_family = "wasm"))]\n' + old))
 
     metadata = json.loads((root.parent / 'native-metadata.json').read_text())
     wasix_metadata = json.loads((root.parent / 'wasix-metadata.json').read_text())
