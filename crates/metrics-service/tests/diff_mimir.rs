@@ -31,7 +31,7 @@ use krabka_metrics::{
     distributor::{DistributorState, ProduceError, WalSink},
     wire::pb,
 };
-use krabka_promql::WalHead;
+use krabka_promql::{InMemoryMetricStore, MergedMetricStore, WalHead};
 use opentelemetry_proto::tonic::metrics::v1::{
     Gauge, Metric, MetricsData, NumberDataPoint, ResourceMetrics, ScopeMetrics, metric,
     number_data_point,
@@ -914,7 +914,10 @@ fn candidate_engine_opts() -> krabka_promql::EngineOpts {
 async fn start_krabka_query_server() -> TestResult<KrabkaServer> {
     let head = WalHead::new();
     let state = Arc::new(krabka_promql::PrometheusApiState::new(
-        Arc::new(head.clone()),
+        Arc::new(MergedMetricStore::new(
+            InMemoryMetricStore::new(),
+            head.clone(),
+        )),
         candidate_engine_opts(),
     ));
     let query_router = krabka_promql::mimir_ruler_prometheus_router(Arc::clone(&state))

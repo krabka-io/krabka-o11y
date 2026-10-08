@@ -172,7 +172,10 @@ async fn last_over_time_aggregate_keeps_float_bits_and_compensation() {
                 *value,
             );
         }
-        let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+        let engine = PromqlEngine::new(
+            Arc::new(MergedMetricStore::new(InMemoryMetricStore::new(), store)),
+            EngineOpts::default(),
+        );
         for (query, expected) in [
             ("sum(last_over_time(m[30m]))", sum),
             ("avg(last_over_time(m[30m]))", avg),
@@ -218,7 +221,10 @@ async fn last_over_time_aggregate_keeps_float_bits_and_compensation() {
                 value,
             );
         }
-        let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+        let engine = PromqlEngine::new(
+            Arc::new(MergedMetricStore::new(InMemoryMetricStore::new(), store)),
+            EngineOpts::default(),
+        );
         let actual = engine
             .query_instant_with_annotations(
                 &tenant_id("t"),
@@ -531,5 +537,137 @@ async fn last_over_time_aggregate_accepts_nonreserved_and_unicode_label_names() 
                 "{name}: {query}"
             );
         }
+    }
+}
+
+#[tokio::test]
+async fn last_over_time_aggregate_preserves_duplicate_stale_history_and_raw_caps() {
+    let mut hot = InMemoryMetricStore::new();
+    let series = labels(&[("__name__", "m")]);
+    for (timestamp, value) in [(2, 9.0), (1, 5.0), (2, stale_nan())] {
+        hot.push_float("t", series.clone(), timestamp, value);
+    }
+    // A generic scan retains its last duplicate, including a stale marker.
+    // The earlier non-stale sample then answers last_over_time.
+    for (max_samples, expected) in [(3, Some(5.0)), (2, None)] {
+        let engine = PromqlEngine::new(
+            Arc::new(hot.clone()),
+            EngineOpts {
+                max_samples,
+                ..EngineOpts::default()
+            },
+        );
+        for query in ["sum(last_over_time(m[2ms]))", "avg(last_over_time(m[2ms]))"] {
+            let actual = engine
+                .query_instant_with_annotations(&tenant_id("t"), query, 2)
+                .await;
+            if let Some(value) = expected {
+                assert2::assert!(
+                    actual.unwrap() == (vector(2, &[(&[], value)]), Annotations::default())
+                );
+            } else {
+                assert2::assert!(matches!(
+                    actual,
+                    Err(PromqlError::Limit(LimitError::SamplesPerQueryExceeded {
+                        limit: 2,
+                        observed: 3
+                    }))
+                ));
+            }
+        }
+    }
+    // The production merged scan chooses the first hot duplicate, and its
+    // stale cold duplicate cannot replace that sample.
+    let mut cold = InMemoryMetricStore::new();
+    cold.push_float("t", series, 2, stale_nan());
+    cold.push_float(
+        "t",
+        labels(&[("__name__", "m"), ("instance", "cold")]),
+        2,
+        4.0,
+    );
+    for (max_samples, accepted) in [(3, true), (2, false)] {
+        let engine = PromqlEngine::new(
+            Arc::new(MergedMetricStore::new(cold.clone(), hot.clone())),
+            EngineOpts {
+                max_samples,
+                ..EngineOpts::default()
+            },
+        );
+        for (query, value) in [
+            ("sum(last_over_time(m[2ms]))", 13.0),
+            ("avg(last_over_time(m[2ms]))", 6.5),
+        ] {
+            let actual = engine
+                .query_instant_with_annotations(&tenant_id("t"), query, 2)
+                .await;
+            if accepted {
+                assert2::assert!(
+                    actual.unwrap() == (vector(2, &[(&[], value)]), Annotations::default())
+                );
+            } else {
+                assert2::assert!(matches!(
+                    actual,
+                    Err(PromqlError::Limit(LimitError::SamplesPerQueryExceeded {
+                        limit: 2,
+                        observed: 3
+                    }))
+                ));
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn last_over_time_aggregate_reuses_wider_scans_and_initialized_float_windows() {
+    let mut hot = InMemoryMetricStore::new();
+    for (timestamp, value) in [(1, 5.0), (2, 9.0), (3, stale_nan())] {
+        hot.push_float("t", labels(&[("__name__", "m")]), timestamp, value);
+    }
+    let engine = PromqlEngine::new(
+        Arc::new(MergedMetricStore::new(InMemoryMetricStore::new(), hot)),
+        EngineOpts::default(),
+    );
+    for (query, value, total, peak) in [
+        (
+            "sum(last_over_time(m[3ms])) + sum(last_over_time(m[2ms]))",
+            18.0,
+            5,
+            3,
+        ),
+        (
+            "sum(sum_over_time(m[3ms])) + sum(last_over_time(m[3ms]))",
+            23.0,
+            6,
+            3,
+        ),
+        (
+            "sum(last_over_time(m[3ms])) + sum(sum_over_time(m[3ms]))",
+            23.0,
+            6,
+            3,
+        ),
+    ] {
+        let (actual, stats) = super::super::collect_query_sample_stats(
+            false,
+            3,
+            3,
+            1,
+            engine.query_instant_with_annotations(&tenant_id("t"), query, 3),
+        )
+        .await;
+        assert2::assert!(
+            actual.unwrap() == (vector(3, &[(&[], value)]), Annotations::default()),
+            "{query}"
+        );
+        assert2::assert!(
+            stats
+                == super::super::QuerySampleStats {
+                    total_queryable_samples: total,
+                    peak_samples: peak,
+                    per_step: BTreeMap::new(),
+                },
+            "{query}"
+        );
     }
 }

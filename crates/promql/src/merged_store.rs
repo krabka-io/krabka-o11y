@@ -42,6 +42,11 @@ where
     C: MetricStore,
     H: MetricStore,
 {
+    fn float_samples_are_unique(&self) -> bool {
+        // Every scan uses the merged store's fingerprint/timestamp deduplication.
+        true
+    }
+
     #[tracing::instrument(
         name = "promql.merged_scan",
         level = "debug",

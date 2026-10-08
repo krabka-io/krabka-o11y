@@ -234,6 +234,39 @@ impl<S: MetricStore> PromqlEngine<S> {
             .await
     }
 
+    /// Last non-stale sample per series and the complete in-window row count.
+    pub(super) async fn last_float_rows(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<(usize, Vec<FloatRow>)> {
+        let scan = self
+            .scanned_rows(tenant, matchers, start_ms, end_ms)
+            .await?;
+        if self.store.float_samples_are_unique()
+            && let Some(last) = scan
+                .try_last_floats(self.opts.max_samples, start_ms, end_ms)
+                .await?
+        {
+            return Ok(last);
+        }
+        let window = scan.floats(self.opts.max_samples).await?;
+        let mut total = 0;
+        let rows = window
+            .series(start_ms, end_ms)
+            .filter_map(|(_, rows)| {
+                total += rows.len();
+                rows.iter()
+                    .rev()
+                    .find(|row| !is_stale_nan(row.value))
+                    .copied()
+            })
+            .collect();
+        Ok((total, rows))
+    }
+
     /// Every matcher set's float rows over `[start_ms, end_ms]`, flattened.
     ///
     /// Rows come back in `(fingerprint, timestamp)` order within each matcher

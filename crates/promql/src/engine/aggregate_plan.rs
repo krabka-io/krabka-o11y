@@ -23,13 +23,13 @@ use super::{
         aggregate_grouping, match_over_time_range_call, simple_aggregate_op,
         simple_aggregate_op_to_aggregate_op,
     },
-    record_queryable_samples, samples_per_query_exceeded, selector_duration,
+    record_queryable_samples, selector_duration,
     step_vectors::RANGE_STEP_VECTORS,
 };
 use crate::{
     PromqlError, PromqlLabels as Labels,
     error::Result,
-    extension::{is_stale_nan, range_manipulate::RANGE_SUFFIX},
+    extension::range_manipulate::RANGE_SUFFIX,
     functions::OverTimeFamily,
     planner::{
         aggregate::{Grouping, SimpleAggregateOp, plan_simple_aggregate},
@@ -246,20 +246,14 @@ impl<S: MetricStore> PromqlEngine<S> {
             .labels_by_fingerprint_sets(tenant, &matcher_sets, after_ms, end_ms)
             .await?;
         let from_ms = after_ms.saturating_add(1);
-        let window = self.float_window(tenant, matchers, from_ms, end_ms).await?;
-        let mut total = 0;
+        let (total, rows) = self
+            .last_float_rows(tenant, matchers, from_ms, end_ms)
+            .await?;
         let mut state = AggregateState::new(Labels::new());
         // The label index uses canonical fingerprints. These matched runs have
         // the same order as the existing over-time result's fingerprint map.
-        for (fp, rows) in window.series(from_ms, end_ms) {
-            total += rows.len();
-            if total > self.opts.max_samples {
-                return Err(samples_per_query_exceeded(self.opts.max_samples, total));
-            }
-            let Some(labels) = labels_by_fp.get(&fp) else {
-                continue;
-            };
-            let Some(last) = rows.iter().rev().find(|row| !is_stale_nan(row.value)) else {
+        for last in rows {
+            let Some(labels) = labels_by_fp.get(&last.fp) else {
                 continue;
             };
             // Keep the existing Arrow column-name validation on these inputs.
