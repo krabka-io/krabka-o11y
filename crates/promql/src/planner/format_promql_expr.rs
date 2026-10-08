@@ -330,14 +330,14 @@ mod tests {
             matrix
                 == serde_json::json!({
                     "type":"call", "func":{"name":"rate","argTypes":["matrix"],"variadic":0,"returnType":"vector"},
-                    "args":[{"type":"matrixSelector","name":"a","matchers":[],"range":300000,"rangeExpr":null,"offset":0,"offsetExpr":null,"timestamp":null,"startOrEnd":null,"anchored":true,"smoothed":false}]
+                    "args":[{"type":"matrixSelector","name":"a","matchers":[],"range":300_000,"rangeExpr":null,"offset":0,"offsetExpr":null,"timestamp":null,"startOrEnd":null,"anchored":true,"smoothed":false}]
                 })
         );
         let subquery =
             serialize_promql_expr(&super::super::parse_promql("(a)[5m:] offset -1m").unwrap())
                 .unwrap();
         assert2::assert!(
-            subquery["range"] == 300000 && subquery["step"] == 0 && subquery["offset"] == -60000
+            subquery["range"] == 300_000 && subquery["step"] == 0 && subquery["offset"] == -60_000
         );
         for key in ["rangeExpr", "stepExpr", "offsetExpr"] {
             assert2::assert!(subquery[key].is_null());

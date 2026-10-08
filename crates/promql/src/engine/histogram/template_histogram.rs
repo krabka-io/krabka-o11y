@@ -1225,6 +1225,107 @@ fn source_linear_midpoint(lower: f64, upper: f64) -> f64 {
     sum / 2.0
 }
 
+fn spans_from_buckets(buckets: BTreeMap<i32, f64>) -> (Vec<krabka_metrics::BucketSpan>, Vec<f64>) {
+    let mut spans = Vec::new();
+    let mut counts = Vec::new();
+    let mut start = None;
+    let mut end = 0;
+    let mut previous = 0;
+    for (index, count) in buckets {
+        if start.is_some() && index != previous + 1 {
+            let begin = start.take().expect("span started");
+            spans.push(krabka_metrics::BucketSpan {
+                offset: begin - end,
+                length: u32::try_from(previous - begin + 1).expect("span length"),
+            });
+            end = previous + 1;
+        }
+        if start.is_none() {
+            start = Some(index);
+        }
+        counts.push(count);
+        previous = index;
+    }
+    if let Some(begin) = start {
+        spans.push(krabka_metrics::BucketSpan {
+            offset: begin - end,
+            length: u32::try_from(previous - begin + 1).expect("span length"),
+        });
+    }
+    (spans, counts)
+}
+fn template_bound(index: i32, schema: i32) -> f64 {
+    super::standard_histogram_bound::bound(index, schema)
+}
+fn refresh_display(hist: &mut Dto) {
+    let mut buckets = Vec::new();
+    for positive in [false, true] {
+        let (spans, counts) = if positive {
+            (&hist.positive_spans, &hist.positive_buckets)
+        } else {
+            (&hist.negative_spans, &hist.negative_buckets)
+        };
+        let spans = spans
+            .iter()
+            .map(|span| krabka_metrics::BucketSpan {
+                offset: span.offset,
+                length: span.length,
+            })
+            .collect::<Vec<_>>();
+        for (index, count) in spanned_histogram_counts(&spans, counts) {
+            if count == 0.0 {
+                continue;
+            }
+            let (lower, upper, boundary_rule) = if hist.schema == -53 {
+                let bound = |index: i32| {
+                    usize::try_from(index)
+                        .ok()
+                        .and_then(|index| hist.custom_values.get(index))
+                        .copied()
+                        .unwrap_or(if index < 0 {
+                            f64::NEG_INFINITY
+                        } else {
+                            f64::INFINITY
+                        })
+                };
+                (
+                    bound(index - 1),
+                    bound(index),
+                    if index == 0 { 3 } else { 0 },
+                )
+            } else if positive {
+                (
+                    template_bound(index - 1, hist.schema),
+                    template_bound(index, hist.schema),
+                    0,
+                )
+            } else {
+                (
+                    -template_bound(index, hist.schema),
+                    -template_bound(index - 1, hist.schema),
+                    1,
+                )
+            };
+            buckets.push(TemplateHistogramBucket {
+                lower,
+                upper,
+                count,
+                boundary_rule,
+            });
+        }
+    }
+    if hist.schema != -53 && hist.zero_count != 0.0 {
+        buckets.push(TemplateHistogramBucket {
+            lower: -hist.zero_threshold,
+            upper: hist.zero_threshold,
+            count: hist.zero_count,
+            boundary_rule: 3,
+        });
+    }
+    buckets.sort_by(|a, b| a.lower.total_cmp(&b.lower));
+    hist.display_buckets = buckets;
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -1450,347 +1551,348 @@ mod tests {
         assert2::assert!(actual == Ok(b"true/false".to_vec()));
     }
 
+    // Go1.26.5 / Prometheusv0.314.0 independent captures, SHA256
+    // e6389a33185dc4fd309a4e4db8ab3795cd4bc4144eb60ba8fad8c759210e5be5.
+    // Only process-local histogram addresses are bound to the separately
+    // printed pointer; all fields, numeric types and slice headers are exact.
+    const HISTOGRAM_FORMATTING_GOLDENS: &[(&str, &str)] = &[
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%s/%q/%d/%p\" $h.Validate $h.Validate $h.Validate $h.Validate}}",
+            "%!s(<nil>)/%!q(<nil>)/%!d(<nil>)/%!p(<nil>)",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$alias:=$i}}{{$copy:=$h.Copy}}{{eq (printf \"%p\" $i) (printf \"%p\" $alias)}}/{{eq (printf \"%p\" $h) (printf \"%p\" $copy)}}/{{eq $h.CustomValues nil}}/{{eq $h.PositiveBuckets nil}}",
+            "true/false/true/false",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$b:=$h.PositiveBuckets}}{{$view:=slice $b 0 1}}{{$x:=$h.Div 0}}{{eq $b nil}}/{{eq $view nil}}/{{printf \"%#v\" $b}}/{{printf \"%#v\" $view}}",
+            "true/false/[]float64(nil)/[]float64{1}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{printf \"%s\" $i}}",
+            "&{{%!s(int32=0) [{%!s(int32=0) %!s(uint32=2)}] [%!s(float64=1) %!s(float64=2)] %!s(bool=true) %!s(int=0) %!s(uint32=0) %!s(int=0) %!s(float64=0) %!s(int32=0) []} %!s(int32=0) %!s(int32=0) %!s(float64=0) %!s(bool=true)}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%d\" $h}}/{{printf \"%d\" $h.ZeroBucket}}",
+            "&{3 0 %!d(float64=0.001) %!d(float64=2) %!d(float64=8) %!d(float64=10) [{0 2}] [{0 2}] [%!d(float64=1) %!d(float64=2)] [%!d(float64=1) %!d(float64=2)] []}/{%!d(float64=-0.001) %!d(float64=0.001) %!d(bool=true) %!d(bool=true) %!d(float64=2) 0}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%v\" $h}}",
+            "{count:8, sum:10, [-2,-1):2, [-1,-0.5):1, [-0.001,0.001]:2, (0.5,1]:1, (1,2]:2}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%+v\" $h}}",
+            "{count:8, sum:10, [-2,-1):2, [-1,-0.5):1, [-0.001,0.001]:2, (0.5,1]:1, (1,2]:2}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%#v\" $h}}",
+            "&histogram.FloatHistogram{CounterResetHint:0x3, Schema:0, ZeroThreshold:0.001, ZeroCount:2, Count:8, Sum:10, PositiveSpans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, NegativeSpans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, PositiveBuckets:[]float64{1, 2}, NegativeBuckets:[]float64{1, 2}, CustomValues:[]float64(nil)}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%v\" $h.ZeroBucket}}",
+            "[-0.001,0.001]:2",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%+v\" $h.ZeroBucket}}",
+            "[-0.001,0.001]:2",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%#v\" $h.ZeroBucket}}",
+            "histogram.Bucket[float64]{Lower:-0.001, Upper:0.001, LowerInclusive:true, UpperInclusive:true, Count:2, Index:0}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%v\" (index $h.PositiveSpans 0)}}",
+            "{0 2}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%+v\" (index $h.PositiveSpans 0)}}",
+            "{Offset:0 Length:2}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%#v\" (index $h.PositiveSpans 0)}}",
+            "histogram.Span{Offset:0, Length:0x2}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%v\" $h.PositiveSpans}}",
+            "[{0 2}]",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%+v\" $h.PositiveSpans}}",
+            "[{Offset:0 Length:2}]",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%#v\" $h.PositiveSpans}}",
+            "[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%v\" $h.PositiveBuckets}}",
+            "[1 2]",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%+v\" $h.PositiveBuckets}}",
+            "[1 2]",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%#v\" $h.PositiveBuckets}}",
+            "[]float64{1, 2}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%v\" $h.CustomValues}}",
+            "[]",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%+v\" $h.CustomValues}}",
+            "[]",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%#v\" $h.CustomValues}}",
+            "[]float64(nil)",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{printf \"%v\" $i}}",
+            "&{{0 [{0 2}] [1 2] true 0 0 0 0 0 []} 0 0 0 true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{printf \"%+v\" $i}}",
+            "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:0 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{printf \"%#v\" $i}}",
+            "&histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:0, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%v\" $i}}",
+            "&{{0 [{0 2}] [2 4] true 0 1 1 1 0 []} 0 0 0 true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%+v\" $i}}",
+            "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:1 bucketsIdx:1 currCount:1 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%#v\" $i}}",
+            "&histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x1, bucketsIdx:1, currCount:1, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%v\" $i}}",
+            "&{{0 [{0 2}] [2 4] true 0 2 2 4 2 []} 0 0 0 true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%+v\" $i}}",
+            "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:2 bucketsIdx:2 currCount:4 currIdx:2 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%#v\" $i}}",
+            "&histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x2, bucketsIdx:2, currCount:4, currIdx:2, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{printf \"%v\" $i}}",
+            "&{{0 [{0 2}] [1 2] false 0 0 0 0 0 []} 0 0 0 true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{printf \"%+v\" $i}}",
+            "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:0 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{printf \"%#v\" $i}}",
+            "&histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:0, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%v\" $i}}",
+            "&{{0 [{0 2}] [2 4] false 0 1 1 1 0 []} 0 0 0 true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%+v\" $i}}",
+            "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:1 bucketsIdx:1 currCount:1 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%#v\" $i}}",
+            "&histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x1, bucketsIdx:1, currCount:1, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%v\" $i}}",
+            "&{{0 [{0 2}] [2 4] false 0 2 2 4 2 []} 0 0 0 true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%+v\" $i}}",
+            "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:2 bucketsIdx:2 currCount:4 currIdx:2 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%#v\" $i}}",
+            "&histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x2, bucketsIdx:2, currCount:4, currIdx:2, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{printf \"%v\" $i}}",
+            "&{{0 [{0 2}] [1 2] true 0 0 1 0 2 []} 1}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{printf \"%+v\" $i}}",
+            "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:1 currCount:0 currIdx:2 customValues:[]} idxInSpan:1}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{printf \"%#v\" $i}}",
+            "&histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:1, currCount:0, currIdx:2, customValues:[]float64(nil)}, idxInSpan:1}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%v\" $i}}",
+            "&{{0 [{0 2}] [2 4] true 0 0 0 2 1 []} 0}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%+v\" $i}}",
+            "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:2 currIdx:1 customValues:[]} idxInSpan:0}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%#v\" $i}}",
+            "&histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:2, currIdx:1, customValues:[]float64(nil)}, idxInSpan:0}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%v\" $i}}",
+            "&{{0 [{0 2}] [2 4] true 0 0 -1 2 -1 []} -1}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%+v\" $i}}",
+            "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:-1 currCount:2 currIdx:-1 customValues:[]} idxInSpan:-1}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%#v\" $i}}",
+            "&histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:-1, currCount:2, currIdx:-1, customValues:[]float64(nil)}, idxInSpan:-1}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{printf \"%v\" $i}}",
+            "&{{0 [{0 2}] [1 2] false 0 0 1 0 2 []} 1}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{printf \"%+v\" $i}}",
+            "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:1 currCount:0 currIdx:2 customValues:[]} idxInSpan:1}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{printf \"%#v\" $i}}",
+            "&histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:1, currCount:0, currIdx:2, customValues:[]float64(nil)}, idxInSpan:1}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%v\" $i}}",
+            "&{{0 [{0 2}] [2 4] false 0 0 0 2 1 []} 0}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%+v\" $i}}",
+            "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:2 currIdx:1 customValues:[]} idxInSpan:0}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%#v\" $i}}",
+            "&histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:2, currIdx:1, customValues:[]float64(nil)}, idxInSpan:0}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%v\" $i}}",
+            "&{{0 [{0 2}] [2 4] false 0 0 -1 2 -1 []} -1}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%+v\" $i}}",
+            "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:-1 currCount:2 currIdx:-1 customValues:[]} idxInSpan:-1}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%#v\" $i}}",
+            "&histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:-1, currCount:2, currIdx:-1, customValues:[]float64(nil)}, idxInSpan:-1}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{printf \"%v\" $i}}",
+            "&{$HISTOGRAM_POINTER {{0 [{0 2}] [1 2] false 0 0 1 0 2 []} 1} {{0 [{0 2}] [1 2] true 0 0 0 0 0 []} 0 0 0 true} -1 {0 0 false false 0 0}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{printf \"%+v\" $i}}",
+            "&{h:$HISTOGRAM_POINTER leftIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:1 currCount:0 currIdx:2 customValues:[]} idxInSpan:1} rightIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:0 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true} state:-1 currBucket:{Lower:0 Upper:0 LowerInclusive:false UpperInclusive:false Count:0 Index:0}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{printf \"%#v\" $i}}",
+            "&histogram.allFloatBucketIterator{h:(*histogram.FloatHistogram)($HISTOGRAM_POINTER), leftIter:histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:1, currCount:0, currIdx:2, customValues:[]float64(nil)}, idxInSpan:1}, rightIter:histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:0, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}, state:-1, currBucket:histogram.Bucket[float64]{Lower:0, Upper:0, LowerInclusive:false, UpperInclusive:false, Count:0, Index:0}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%v\" $i}}",
+            "&{$HISTOGRAM_POINTER {{0 [{0 2}] [2 4] false 0 0 0 2 1 []} 0} {{0 [{0 2}] [2 4] true 0 0 0 0 0 []} 0 0 0 true} -1 {-2 -1 true false 2 1}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%+v\" $i}}",
+            "&{h:$HISTOGRAM_POINTER leftIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:2 currIdx:1 customValues:[]} idxInSpan:0} rightIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:0 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true} state:-1 currBucket:{Lower:-2 Upper:-1 LowerInclusive:true UpperInclusive:false Count:2 Index:1}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%#v\" $i}}",
+            "&histogram.allFloatBucketIterator{h:(*histogram.FloatHistogram)($HISTOGRAM_POINTER), leftIter:histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:2, currIdx:1, customValues:[]float64(nil)}, idxInSpan:0}, rightIter:histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:0, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}, state:-1, currBucket:histogram.Bucket[float64]{Lower:-2, Upper:-1, LowerInclusive:true, UpperInclusive:false, Count:2, Index:1}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%v\" $i}}",
+            "&{$HISTOGRAM_POINTER {{0 [{0 2}] [2 4] false 0 0 -1 2 -1 []} -1} {{0 [{0 2}] [2 4] true 0 2 2 4 2 []} 0 0 0 true} 42 {1 2 false true 4 1}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%+v\" $i}}",
+            "&{h:$HISTOGRAM_POINTER leftIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:-1 currCount:2 currIdx:-1 customValues:[]} idxInSpan:-1} rightIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:2 bucketsIdx:2 currCount:4 currIdx:2 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true} state:42 currBucket:{Lower:1 Upper:2 LowerInclusive:false UpperInclusive:true Count:4 Index:1}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%#v\" $i}}",
+            "&histogram.allFloatBucketIterator{h:(*histogram.FloatHistogram)($HISTOGRAM_POINTER), leftIter:histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:-1, currCount:2, currIdx:-1, customValues:[]float64(nil)}, idxInSpan:-1}, rightIter:histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x2, bucketsIdx:2, currCount:4, currIdx:2, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}, state:42, currBucket:histogram.Bucket[float64]{Lower:1, Upper:2, LowerInclusive:false, UpperInclusive:true, Count:4, Index:1}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{printf \"%v\" $i}}",
+            "&{$HISTOGRAM_POINTER {{0 [{0 2}] [1 2] true 0 0 1 0 2 []} 1} {{0 [{0 2}] [1 2] false 0 0 0 0 0 []} 0 0 0 true} -1 {0 0 false false 0 0}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{printf \"%+v\" $i}}",
+            "&{h:$HISTOGRAM_POINTER leftIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:1 currCount:0 currIdx:2 customValues:[]} idxInSpan:1} rightIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:0 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true} state:-1 currBucket:{Lower:0 Upper:0 LowerInclusive:false UpperInclusive:false Count:0 Index:0}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{printf \"%#v\" $i}}",
+            "&histogram.allFloatBucketIterator{h:(*histogram.FloatHistogram)($HISTOGRAM_POINTER), leftIter:histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:1, currCount:0, currIdx:2, customValues:[]float64(nil)}, idxInSpan:1}, rightIter:histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:0, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}, state:-1, currBucket:histogram.Bucket[float64]{Lower:0, Upper:0, LowerInclusive:false, UpperInclusive:false, Count:0, Index:0}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%v\" $i}}",
+            "&{$HISTOGRAM_POINTER {{0 [{0 2}] [2 4] true 0 0 0 2 1 []} 0} {{0 [{0 2}] [2 4] false 0 0 0 0 0 []} 0 0 0 true} -1 {1 2 false true 2 1}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%+v\" $i}}",
+            "&{h:$HISTOGRAM_POINTER leftIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:2 currIdx:1 customValues:[]} idxInSpan:0} rightIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:0 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true} state:-1 currBucket:{Lower:1 Upper:2 LowerInclusive:false UpperInclusive:true Count:2 Index:1}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%#v\" $i}}",
+            "&histogram.allFloatBucketIterator{h:(*histogram.FloatHistogram)($HISTOGRAM_POINTER), leftIter:histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:2, currIdx:1, customValues:[]float64(nil)}, idxInSpan:0}, rightIter:histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:0, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}, state:-1, currBucket:histogram.Bucket[float64]{Lower:1, Upper:2, LowerInclusive:false, UpperInclusive:true, Count:2, Index:1}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%v\" $i}}",
+            "&{$HISTOGRAM_POINTER {{0 [{0 2}] [2 4] true 0 0 -1 2 -1 []} -1} {{0 [{0 2}] [2 4] false 0 2 2 4 2 []} 0 0 0 true} 42 {-2 -1 true false 4 1}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%+v\" $i}}",
+            "&{h:$HISTOGRAM_POINTER leftIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:-1 currCount:2 currIdx:-1 customValues:[]} idxInSpan:-1} rightIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:2 bucketsIdx:2 currCount:4 currIdx:2 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true} state:42 currBucket:{Lower:-2 Upper:-1 LowerInclusive:true UpperInclusive:false Count:4 Index:1}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%#v\" $i}}",
+            "&histogram.allFloatBucketIterator{h:(*histogram.FloatHistogram)($HISTOGRAM_POINTER), leftIter:histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:-1, currCount:2, currIdx:-1, customValues:[]float64(nil)}, idxInSpan:-1}, rightIter:histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x2, bucketsIdx:2, currCount:4, currIdx:2, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}, state:42, currBucket:histogram.Bucket[float64]{Lower:-2, Upper:-1, LowerInclusive:true, UpperInclusive:false, Count:4, Index:1}}",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%v\" $h.Validate}}",
+            "<nil>",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%+v\" $h.Validate}}",
+            "<nil>",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%#v\" $h.Validate}}",
+            "<nil>",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%v\" ($h.ReduceResolution 1)}}",
+            "cannot reduce resolution from schema 0 to 1",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%+v\" ($h.ReduceResolution 1)}}",
+            "cannot reduce resolution from schema 0 to 1",
+        ),
+        (
+            "{{printf \"%p\" $h}}\n{{printf \"%#v\" ($h.ReduceResolution 1)}}",
+            "&errors.errorString{s:\"cannot reduce resolution from schema 0 to 1\"}",
+        ),
+    ];
+
     #[test]
     fn histogram_formatting_matches_pinned_go_cursor_and_reflection_goldens() {
-        // Go1.26.5 / Prometheusv0.314.0 independent captures, SHA256
-        // e6389a33185dc4fd309a4e4db8ab3795cd4bc4144eb60ba8fad8c759210e5be5.
-        // Only process-local histogram addresses are bound to the separately
-        // printed pointer; all fields, numeric types and slice headers are exact.
-        let cases = [
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%s/%q/%d/%p\" $h.Validate $h.Validate $h.Validate $h.Validate}}",
-                "%!s(<nil>)/%!q(<nil>)/%!d(<nil>)/%!p(<nil>)",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$alias:=$i}}{{$copy:=$h.Copy}}{{eq (printf \"%p\" $i) (printf \"%p\" $alias)}}/{{eq (printf \"%p\" $h) (printf \"%p\" $copy)}}/{{eq $h.CustomValues nil}}/{{eq $h.PositiveBuckets nil}}",
-                "true/false/true/false",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$b:=$h.PositiveBuckets}}{{$view:=slice $b 0 1}}{{$x:=$h.Div 0}}{{eq $b nil}}/{{eq $view nil}}/{{printf \"%#v\" $b}}/{{printf \"%#v\" $view}}",
-                "true/false/[]float64(nil)/[]float64{1}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{printf \"%s\" $i}}",
-                "&{{%!s(int32=0) [{%!s(int32=0) %!s(uint32=2)}] [%!s(float64=1) %!s(float64=2)] %!s(bool=true) %!s(int=0) %!s(uint32=0) %!s(int=0) %!s(float64=0) %!s(int32=0) []} %!s(int32=0) %!s(int32=0) %!s(float64=0) %!s(bool=true)}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%d\" $h}}/{{printf \"%d\" $h.ZeroBucket}}",
-                "&{3 0 %!d(float64=0.001) %!d(float64=2) %!d(float64=8) %!d(float64=10) [{0 2}] [{0 2}] [%!d(float64=1) %!d(float64=2)] [%!d(float64=1) %!d(float64=2)] []}/{%!d(float64=-0.001) %!d(float64=0.001) %!d(bool=true) %!d(bool=true) %!d(float64=2) 0}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%v\" $h}}",
-                "{count:8, sum:10, [-2,-1):2, [-1,-0.5):1, [-0.001,0.001]:2, (0.5,1]:1, (1,2]:2}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%+v\" $h}}",
-                "{count:8, sum:10, [-2,-1):2, [-1,-0.5):1, [-0.001,0.001]:2, (0.5,1]:1, (1,2]:2}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%#v\" $h}}",
-                "&histogram.FloatHistogram{CounterResetHint:0x3, Schema:0, ZeroThreshold:0.001, ZeroCount:2, Count:8, Sum:10, PositiveSpans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, NegativeSpans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, PositiveBuckets:[]float64{1, 2}, NegativeBuckets:[]float64{1, 2}, CustomValues:[]float64(nil)}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%v\" $h.ZeroBucket}}",
-                "[-0.001,0.001]:2",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%+v\" $h.ZeroBucket}}",
-                "[-0.001,0.001]:2",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%#v\" $h.ZeroBucket}}",
-                "histogram.Bucket[float64]{Lower:-0.001, Upper:0.001, LowerInclusive:true, UpperInclusive:true, Count:2, Index:0}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%v\" (index $h.PositiveSpans 0)}}",
-                "{0 2}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%+v\" (index $h.PositiveSpans 0)}}",
-                "{Offset:0 Length:2}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%#v\" (index $h.PositiveSpans 0)}}",
-                "histogram.Span{Offset:0, Length:0x2}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%v\" $h.PositiveSpans}}",
-                "[{0 2}]",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%+v\" $h.PositiveSpans}}",
-                "[{Offset:0 Length:2}]",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%#v\" $h.PositiveSpans}}",
-                "[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%v\" $h.PositiveBuckets}}",
-                "[1 2]",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%+v\" $h.PositiveBuckets}}",
-                "[1 2]",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%#v\" $h.PositiveBuckets}}",
-                "[]float64{1, 2}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%v\" $h.CustomValues}}",
-                "[]",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%+v\" $h.CustomValues}}",
-                "[]",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%#v\" $h.CustomValues}}",
-                "[]float64(nil)",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{printf \"%v\" $i}}",
-                "&{{0 [{0 2}] [1 2] true 0 0 0 0 0 []} 0 0 0 true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{printf \"%+v\" $i}}",
-                "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:0 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{printf \"%#v\" $i}}",
-                "&histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:0, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%v\" $i}}",
-                "&{{0 [{0 2}] [2 4] true 0 1 1 1 0 []} 0 0 0 true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%+v\" $i}}",
-                "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:1 bucketsIdx:1 currCount:1 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%#v\" $i}}",
-                "&histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x1, bucketsIdx:1, currCount:1, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%v\" $i}}",
-                "&{{0 [{0 2}] [2 4] true 0 2 2 4 2 []} 0 0 0 true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%+v\" $i}}",
-                "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:2 bucketsIdx:2 currCount:4 currIdx:2 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%#v\" $i}}",
-                "&histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x2, bucketsIdx:2, currCount:4, currIdx:2, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{printf \"%v\" $i}}",
-                "&{{0 [{0 2}] [1 2] false 0 0 0 0 0 []} 0 0 0 true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{printf \"%+v\" $i}}",
-                "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:0 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{printf \"%#v\" $i}}",
-                "&histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:0, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%v\" $i}}",
-                "&{{0 [{0 2}] [2 4] false 0 1 1 1 0 []} 0 0 0 true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%+v\" $i}}",
-                "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:1 bucketsIdx:1 currCount:1 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%#v\" $i}}",
-                "&histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x1, bucketsIdx:1, currCount:1, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%v\" $i}}",
-                "&{{0 [{0 2}] [2 4] false 0 2 2 4 2 []} 0 0 0 true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%+v\" $i}}",
-                "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:2 bucketsIdx:2 currCount:4 currIdx:2 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%#v\" $i}}",
-                "&histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x2, bucketsIdx:2, currCount:4, currIdx:2, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{printf \"%v\" $i}}",
-                "&{{0 [{0 2}] [1 2] true 0 0 1 0 2 []} 1}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{printf \"%+v\" $i}}",
-                "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:1 currCount:0 currIdx:2 customValues:[]} idxInSpan:1}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{printf \"%#v\" $i}}",
-                "&histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:1, currCount:0, currIdx:2, customValues:[]float64(nil)}, idxInSpan:1}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%v\" $i}}",
-                "&{{0 [{0 2}] [2 4] true 0 0 0 2 1 []} 0}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%+v\" $i}}",
-                "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:2 currIdx:1 customValues:[]} idxInSpan:0}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%#v\" $i}}",
-                "&histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:2, currIdx:1, customValues:[]float64(nil)}, idxInSpan:0}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%v\" $i}}",
-                "&{{0 [{0 2}] [2 4] true 0 0 -1 2 -1 []} -1}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%+v\" $i}}",
-                "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:-1 currCount:2 currIdx:-1 customValues:[]} idxInSpan:-1}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.PositiveReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%#v\" $i}}",
-                "&histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:-1, currCount:2, currIdx:-1, customValues:[]float64(nil)}, idxInSpan:-1}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{printf \"%v\" $i}}",
-                "&{{0 [{0 2}] [1 2] false 0 0 1 0 2 []} 1}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{printf \"%+v\" $i}}",
-                "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:1 currCount:0 currIdx:2 customValues:[]} idxInSpan:1}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{printf \"%#v\" $i}}",
-                "&histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:1, currCount:0, currIdx:2, customValues:[]float64(nil)}, idxInSpan:1}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%v\" $i}}",
-                "&{{0 [{0 2}] [2 4] false 0 0 0 2 1 []} 0}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%+v\" $i}}",
-                "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:2 currIdx:1 customValues:[]} idxInSpan:0}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%#v\" $i}}",
-                "&histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:2, currIdx:1, customValues:[]float64(nil)}, idxInSpan:0}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%v\" $i}}",
-                "&{{0 [{0 2}] [2 4] false 0 0 -1 2 -1 []} -1}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%+v\" $i}}",
-                "&{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:-1 currCount:2 currIdx:-1 customValues:[]} idxInSpan:-1}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.NegativeReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%#v\" $i}}",
-                "&histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:-1, currCount:2, currIdx:-1, customValues:[]float64(nil)}, idxInSpan:-1}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{printf \"%v\" $i}}",
-                "&{$HISTOGRAM_POINTER {{0 [{0 2}] [1 2] false 0 0 1 0 2 []} 1} {{0 [{0 2}] [1 2] true 0 0 0 0 0 []} 0 0 0 true} -1 {0 0 false false 0 0}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{printf \"%+v\" $i}}",
-                "&{h:$HISTOGRAM_POINTER leftIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:1 currCount:0 currIdx:2 customValues:[]} idxInSpan:1} rightIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:0 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true} state:-1 currBucket:{Lower:0 Upper:0 LowerInclusive:false UpperInclusive:false Count:0 Index:0}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{printf \"%#v\" $i}}",
-                "&histogram.allFloatBucketIterator{h:(*histogram.FloatHistogram)($HISTOGRAM_POINTER), leftIter:histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:1, currCount:0, currIdx:2, customValues:[]float64(nil)}, idxInSpan:1}, rightIter:histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:0, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}, state:-1, currBucket:histogram.Bucket[float64]{Lower:0, Upper:0, LowerInclusive:false, UpperInclusive:false, Count:0, Index:0}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%v\" $i}}",
-                "&{$HISTOGRAM_POINTER {{0 [{0 2}] [2 4] false 0 0 0 2 1 []} 0} {{0 [{0 2}] [2 4] true 0 0 0 0 0 []} 0 0 0 true} -1 {-2 -1 true false 2 1}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%+v\" $i}}",
-                "&{h:$HISTOGRAM_POINTER leftIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:2 currIdx:1 customValues:[]} idxInSpan:0} rightIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:0 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true} state:-1 currBucket:{Lower:-2 Upper:-1 LowerInclusive:true UpperInclusive:false Count:2 Index:1}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%#v\" $i}}",
-                "&histogram.allFloatBucketIterator{h:(*histogram.FloatHistogram)($HISTOGRAM_POINTER), leftIter:histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:2, currIdx:1, customValues:[]float64(nil)}, idxInSpan:0}, rightIter:histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:0, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}, state:-1, currBucket:histogram.Bucket[float64]{Lower:-2, Upper:-1, LowerInclusive:true, UpperInclusive:false, Count:2, Index:1}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%v\" $i}}",
-                "&{$HISTOGRAM_POINTER {{0 [{0 2}] [2 4] false 0 0 -1 2 -1 []} -1} {{0 [{0 2}] [2 4] true 0 2 2 4 2 []} 0 0 0 true} 42 {1 2 false true 4 1}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%+v\" $i}}",
-                "&{h:$HISTOGRAM_POINTER leftIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:-1 currCount:2 currIdx:-1 customValues:[]} idxInSpan:-1} rightIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:2 bucketsIdx:2 currCount:4 currIdx:2 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true} state:42 currBucket:{Lower:1 Upper:2 LowerInclusive:false UpperInclusive:true Count:4 Index:1}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%#v\" $i}}",
-                "&histogram.allFloatBucketIterator{h:(*histogram.FloatHistogram)($HISTOGRAM_POINTER), leftIter:histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:-1, currCount:2, currIdx:-1, customValues:[]float64(nil)}, idxInSpan:-1}, rightIter:histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x2, bucketsIdx:2, currCount:4, currIdx:2, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}, state:42, currBucket:histogram.Bucket[float64]{Lower:1, Upper:2, LowerInclusive:false, UpperInclusive:true, Count:4, Index:1}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{printf \"%v\" $i}}",
-                "&{$HISTOGRAM_POINTER {{0 [{0 2}] [1 2] true 0 0 1 0 2 []} 1} {{0 [{0 2}] [1 2] false 0 0 0 0 0 []} 0 0 0 true} -1 {0 0 false false 0 0}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{printf \"%+v\" $i}}",
-                "&{h:$HISTOGRAM_POINTER leftIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:1 currCount:0 currIdx:2 customValues:[]} idxInSpan:1} rightIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[1 2] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:0 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true} state:-1 currBucket:{Lower:0 Upper:0 LowerInclusive:false UpperInclusive:false Count:0 Index:0}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{printf \"%#v\" $i}}",
-                "&histogram.allFloatBucketIterator{h:(*histogram.FloatHistogram)($HISTOGRAM_POINTER), leftIter:histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:1, currCount:0, currIdx:2, customValues:[]float64(nil)}, idxInSpan:1}, rightIter:histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{1, 2}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:0, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}, state:-1, currBucket:histogram.Bucket[float64]{Lower:0, Upper:0, LowerInclusive:false, UpperInclusive:false, Count:0, Index:0}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%v\" $i}}",
-                "&{$HISTOGRAM_POINTER {{0 [{0 2}] [2 4] true 0 0 0 2 1 []} 0} {{0 [{0 2}] [2 4] false 0 0 0 0 0 []} 0 0 0 true} -1 {1 2 false true 2 1}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%+v\" $i}}",
-                "&{h:$HISTOGRAM_POINTER leftIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:2 currIdx:1 customValues:[]} idxInSpan:0} rightIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:0 bucketsIdx:0 currCount:0 currIdx:0 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true} state:-1 currBucket:{Lower:1 Upper:2 LowerInclusive:false UpperInclusive:true Count:2 Index:1}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{printf \"%#v\" $i}}",
-                "&histogram.allFloatBucketIterator{h:(*histogram.FloatHistogram)($HISTOGRAM_POINTER), leftIter:histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:2, currIdx:1, customValues:[]float64(nil)}, idxInSpan:0}, rightIter:histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x0, bucketsIdx:0, currCount:0, currIdx:0, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}, state:-1, currBucket:histogram.Bucket[float64]{Lower:1, Upper:2, LowerInclusive:false, UpperInclusive:true, Count:2, Index:1}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%v\" $i}}",
-                "&{$HISTOGRAM_POINTER {{0 [{0 2}] [2 4] true 0 0 -1 2 -1 []} -1} {{0 [{0 2}] [2 4] false 0 2 2 4 2 []} 0 0 0 true} 42 {-2 -1 true false 4 1}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%+v\" $i}}",
-                "&{h:$HISTOGRAM_POINTER leftIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:true spansIdx:0 idxInSpan:0 bucketsIdx:-1 currCount:2 currIdx:-1 customValues:[]} idxInSpan:-1} rightIter:{baseBucketIterator:{schema:0 spans:[{Offset:0 Length:2}] buckets:[2 4] positive:false spansIdx:0 idxInSpan:2 bucketsIdx:2 currCount:4 currIdx:2 customValues:[]} targetSchema:0 origIdx:0 absoluteStartValue:0 boundReachedStartValue:true} state:42 currBucket:{Lower:-2 Upper:-1 LowerInclusive:true UpperInclusive:false Count:4 Index:1}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{$i:=$h.AllReverseBucketIterator}}{{$n:=$i.Next}}{{$unused:=$h.Mul 2}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{$n:=$i.Next}}{{printf \"%#v\" $i}}",
-                "&histogram.allFloatBucketIterator{h:(*histogram.FloatHistogram)($HISTOGRAM_POINTER), leftIter:histogram.reverseFloatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:true, spansIdx:0, idxInSpan:0x0, bucketsIdx:-1, currCount:2, currIdx:-1, customValues:[]float64(nil)}, idxInSpan:-1}, rightIter:histogram.floatBucketIterator{baseBucketIterator:histogram.baseBucketIterator[float64,float64]{schema:0, spans:[]histogram.Span{histogram.Span{Offset:0, Length:0x2}}, buckets:[]float64{2, 4}, positive:false, spansIdx:0, idxInSpan:0x2, bucketsIdx:2, currCount:4, currIdx:2, customValues:[]float64(nil)}, targetSchema:0, origIdx:0, absoluteStartValue:0, boundReachedStartValue:true}, state:42, currBucket:histogram.Bucket[float64]{Lower:-2, Upper:-1, LowerInclusive:true, UpperInclusive:false, Count:4, Index:1}}",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%v\" $h.Validate}}",
-                "<nil>",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%+v\" $h.Validate}}",
-                "<nil>",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%#v\" $h.Validate}}",
-                "<nil>",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%v\" ($h.ReduceResolution 1)}}",
-                "cannot reduce resolution from schema 0 to 1",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%+v\" ($h.ReduceResolution 1)}}",
-                "cannot reduce resolution from schema 0 to 1",
-            ),
-            (
-                "{{printf \"%p\" $h}}\n{{printf \"%#v\" ($h.ReduceResolution 1)}}",
-                "&errors.errorString{s:\"cannot reduce resolution from schema 0 to 1\"}",
-            ),
-        ];
-        for (text, expected) in cases {
+        for &(text, expected) in HISTOGRAM_FORMATTING_GOLDENS {
             let variables = BTreeMap::from([("h".to_owned(), template_histogram_value(fixture()))]);
             let actual = LineFormat::new_prometheus(text)
                 .unwrap()
@@ -1858,7 +1960,7 @@ mod tests {
                     .to_string()
                     .contains(&format!("{name} has {count} return values"))
             );
-            assert2::assert!(histogram.snapshot().count == 8.0);
+            assert2::assert!(histogram.snapshot().count.to_bits() == 8.0_f64.to_bits());
         }
     }
     #[test]
@@ -1885,107 +1987,6 @@ mod tests {
         let V::FloatHistogram(histogram) = &variables["h"] else {
             panic!("expected histogram");
         };
-        assert2::assert!(histogram.snapshot().count == 8.0);
+        assert2::assert!(histogram.snapshot().count.to_bits() == 8.0_f64.to_bits());
     }
-}
-
-fn spans_from_buckets(buckets: BTreeMap<i32, f64>) -> (Vec<krabka_metrics::BucketSpan>, Vec<f64>) {
-    let mut spans = Vec::new();
-    let mut counts = Vec::new();
-    let mut start = None;
-    let mut end = 0;
-    let mut previous = 0;
-    for (index, count) in buckets {
-        if start.is_some() && index != previous + 1 {
-            let begin = start.take().expect("span started");
-            spans.push(krabka_metrics::BucketSpan {
-                offset: begin - end,
-                length: u32::try_from(previous - begin + 1).expect("span length"),
-            });
-            end = previous + 1;
-        }
-        if start.is_none() {
-            start = Some(index);
-        }
-        counts.push(count);
-        previous = index;
-    }
-    if let Some(begin) = start {
-        spans.push(krabka_metrics::BucketSpan {
-            offset: begin - end,
-            length: u32::try_from(previous - begin + 1).expect("span length"),
-        });
-    }
-    (spans, counts)
-}
-fn template_bound(index: i32, schema: i32) -> f64 {
-    super::standard_histogram_bound::bound(index, schema)
-}
-fn refresh_display(hist: &mut Dto) {
-    let mut buckets = Vec::new();
-    for positive in [false, true] {
-        let (spans, counts) = if positive {
-            (&hist.positive_spans, &hist.positive_buckets)
-        } else {
-            (&hist.negative_spans, &hist.negative_buckets)
-        };
-        let spans = spans
-            .iter()
-            .map(|span| krabka_metrics::BucketSpan {
-                offset: span.offset,
-                length: span.length,
-            })
-            .collect::<Vec<_>>();
-        for (index, count) in spanned_histogram_counts(&spans, counts) {
-            if count == 0.0 {
-                continue;
-            }
-            let (lower, upper, boundary_rule) = if hist.schema == -53 {
-                let bound = |index: i32| {
-                    usize::try_from(index)
-                        .ok()
-                        .and_then(|index| hist.custom_values.get(index))
-                        .copied()
-                        .unwrap_or(if index < 0 {
-                            f64::NEG_INFINITY
-                        } else {
-                            f64::INFINITY
-                        })
-                };
-                (
-                    bound(index - 1),
-                    bound(index),
-                    if index == 0 { 3 } else { 0 },
-                )
-            } else if positive {
-                (
-                    template_bound(index - 1, hist.schema),
-                    template_bound(index, hist.schema),
-                    0,
-                )
-            } else {
-                (
-                    -template_bound(index, hist.schema),
-                    -template_bound(index - 1, hist.schema),
-                    1,
-                )
-            };
-            buckets.push(TemplateHistogramBucket {
-                lower,
-                upper,
-                count,
-                boundary_rule,
-            });
-        }
-    }
-    if hist.schema != -53 && hist.zero_count != 0.0 {
-        buckets.push(TemplateHistogramBucket {
-            lower: -hist.zero_threshold,
-            upper: hist.zero_threshold,
-            count: hist.zero_count,
-            boundary_rule: 3,
-        });
-    }
-    buckets.sort_by(|a, b| a.lower.total_cmp(&b.lower));
-    hist.display_buckets = buckets;
 }
