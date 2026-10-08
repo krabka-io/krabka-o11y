@@ -1,4 +1,7 @@
-use std::{cmp::Reverse, collections::BinaryHeap};
+use std::{
+    cmp::Reverse,
+    collections::{BinaryHeap, HashSet},
+};
 
 use super::{
     BTreeMap, BlockDescriptor, Labels, LokiDirection, LokiStreamEncoding, LokiStreamEntry,
@@ -61,23 +64,31 @@ impl StreamScanOptions {
         hot_streams: &BTreeMap<Labels, Vec<LokiStreamEntry>>,
         next_block: &BlockDescriptor,
     ) -> bool {
-        if !self.allow_limit_short_circuit {
+        if !self.allow_limit_short_circuit || self.encoding != LokiStreamEncoding::Folded {
             return false;
         }
         let Some(limit) = self.limit else {
             return false;
         };
+        // A cold row can still be in the hot tail until the frontier advances.
+        let mut seen = HashSet::new();
         streams
-            .values()
-            .chain(hot_streams.values())
-            .flatten()
-            .filter_map(LokiStreamEntry::parsed_timestamp_ns)
-            .filter(|timestamp| {
-                self.end_exclusive.is_none_or(|end| *timestamp < end)
-                    && match self.direction {
-                        LokiDirection::Forward => *timestamp < next_block.key.time_range.start_ns,
-                        LokiDirection::Backward => *timestamp > next_block.key.time_range.end_ns,
-                    }
+            .iter()
+            .chain(hot_streams.iter())
+            .flat_map(|(labels, entries)| entries.iter().map(move |entry| (labels, entry)))
+            .filter(|(_, entry)| {
+                entry.parsed_timestamp_ns().is_some_and(|timestamp| {
+                    self.end_exclusive.is_none_or(|end| timestamp < end)
+                        && match self.direction {
+                            LokiDirection::Forward => {
+                                timestamp < next_block.key.time_range.start_ns
+                            }
+                            LokiDirection::Backward => timestamp > next_block.key.time_range.end_ns,
+                        }
+                })
+            })
+            .filter(|(labels, entry)| {
+                seen.insert((*labels, entry.timestamp_ns.as_str(), entry.line.as_str()))
             })
             .take(limit)
             .count()
@@ -94,6 +105,18 @@ impl StreamScanOptions {
         let Some(mut remaining) = self.limit else {
             return;
         };
+        // Equal timestamps can interleave cold and hot copies of different lines.
+        for entries in streams.values_mut() {
+            let mut keep = {
+                let mut seen = HashSet::new();
+                entries
+                    .iter()
+                    .map(|entry| seen.insert((entry.timestamp_ns.as_str(), entry.line.as_str())))
+                    .collect::<Vec<_>>()
+            }
+            .into_iter();
+            entries.retain(|_| keep.next().expect("each entry has a retention flag"));
+        }
         if streams.len() > 1 {
             self.trim_multiple_streams_before_encoding(streams, remaining);
             return;
@@ -198,7 +221,7 @@ impl StreamScanOptions {
     }
 
     pub(crate) fn block_fetch_concurrency(self) -> usize {
-        if !self.allow_limit_short_circuit {
+        if !self.allow_limit_short_circuit || self.encoding != LokiStreamEncoding::Folded {
             return self.block_fetch_concurrency.get();
         }
         self.limit
@@ -355,5 +378,40 @@ mod tests {
             options.trim_before_encoding(&mut bounded);
             assert2::check!(bounded == streams());
         }
+    }
+
+    #[test]
+    fn block_fetch_concurrency_keeps_the_configured_bound_for_exhaustive_scans() {
+        for (encoding, limit, interval, configured, expected) in [
+            (LokiStreamEncoding::Folded, Some(1), None, 8, 1),
+            (LokiStreamEncoding::CategorizeLabels, Some(1), None, 8, 8),
+            (LokiStreamEncoding::Folded, Some(0), None, 8, 1),
+            (LokiStreamEncoding::CategorizeLabels, Some(0), None, 8, 8),
+            (LokiStreamEncoding::Folded, Some(3), None, 8, 3),
+            (LokiStreamEncoding::Folded, Some(12), None, 8, 8),
+            (LokiStreamEncoding::Folded, None, None, 8, 8),
+            (LokiStreamEncoding::CategorizeLabels, None, None, 8, 8),
+            (LokiStreamEncoding::Folded, Some(1), Some(2), 8, 8),
+            (LokiStreamEncoding::CategorizeLabels, Some(1), Some(2), 8, 8),
+            (LokiStreamEncoding::Folded, Some(0), Some(0), 8, 8),
+            (LokiStreamEncoding::Folded, Some(1), None, 1, 1),
+            (LokiStreamEncoding::CategorizeLabels, Some(1), None, 1, 1),
+        ] {
+            let options = StreamScanOptions::from_stream_options(
+                LokiDirection::Forward,
+                limit,
+                interval,
+                None,
+            )
+            .with_encoding(encoding)
+            .with_block_fetch_concurrency(NonZeroUsize::new(configured).unwrap());
+            assert2::check!(options.block_fetch_concurrency() == expected);
+        }
+
+        let mut options =
+            StreamScanOptions::from_stream_options(LokiDirection::Forward, Some(1), None, None)
+                .with_block_fetch_concurrency(NonZeroUsize::new(8).unwrap());
+        options.allow_limit_short_circuit = false;
+        assert2::check!(options.block_fetch_concurrency() == 8);
     }
 }

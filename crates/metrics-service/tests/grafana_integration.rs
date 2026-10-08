@@ -1366,6 +1366,8 @@ async fn start_grafana(
             // host.docker.internal -> host gateway lets the container reach the Krabka
             // server running on the host.
             .with_host("host.docker.internal", Host::HostGateway)
+            // Keep the bundled plugins from the pinned image.
+            .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")
             // Anonymous admin so the test drives the API without a login.
             .with_env_var("GF_AUTH_ANONYMOUS_ENABLED", "true")
             .with_env_var("GF_AUTH_ANONYMOUS_ORG_ROLE", "Admin")
