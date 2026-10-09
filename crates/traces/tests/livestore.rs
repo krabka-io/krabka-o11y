@@ -71,6 +71,144 @@ fn evicts_spans_older_than_retention_window() {
     );
 }
 
+type RetentionRow = (&'static str, u8, i64, &'static str);
+
+fn retention_cases() -> [(i64, &'static [RetentionRow], &'static [RetentionRow]); 8] {
+    [
+        (
+            50,
+            &[
+                ("a", 1, 100, "old"),
+                ("a", 2, 151, "new"),
+                ("a", 3, 101, "first"),
+                ("a", 4, 100, "late-old"),
+                ("a", 3, 101, "second"),
+            ][..],
+            &[
+                ("a", 3, 101, "first"),
+                ("a", 3, 101, "second"),
+                ("a", 2, 151, "new"),
+            ][..],
+        ),
+        (
+            50,
+            &[
+                ("a", 1, 100, "old"),
+                ("b", 2, 200, "new"),
+                ("a", 3, 150, "edge"),
+                ("a", 4, 149, "late-old"),
+            ][..],
+            &[("a", 3, 150, "edge"), ("b", 2, 200, "new")][..],
+        ),
+        (
+            0,
+            &[
+                ("a", 1, 10, "old"),
+                ("b", 2, 10, "equal"),
+                ("a", 3, 11, "new"),
+                ("b", 4, 10, "late-old"),
+                ("a", 5, 11, "equal"),
+            ][..],
+            &[("a", 3, 11, "new"), ("a", 5, 11, "equal")][..],
+        ),
+        (
+            -1,
+            &[
+                ("a", 1, i64::MIN, "sentinel"),
+                ("b", 2, i64::MIN, "sentinel"),
+            ][..],
+            &[
+                ("a", 1, i64::MIN, "sentinel"),
+                ("b", 2, i64::MIN, "sentinel"),
+            ][..],
+        ),
+        (
+            -1,
+            &[
+                ("a", 1, i64::MIN, "sentinel"),
+                ("a", 2, i64::MIN + 1, "rejected"),
+                ("b", 3, i64::MIN, "late-old"),
+            ][..],
+            &[][..],
+        ),
+        (
+            i64::MAX,
+            &[
+                ("a", 1, i64::MAX, "new"),
+                ("b", 2, i64::MIN, "old"),
+                ("a", 3, i64::MIN, "old"),
+            ][..],
+            &[
+                ("a", 3, i64::MIN, "old"),
+                ("a", 1, i64::MAX, "new"),
+                ("b", 2, i64::MIN, "old"),
+            ][..],
+        ),
+        (
+            50,
+            &[
+                ("a", 1, i64::MIN + 20, "new"),
+                ("b", 2, i64::MIN, "edge"),
+                ("a", 3, i64::MIN + 10, "older"),
+            ][..],
+            &[
+                ("a", 3, i64::MIN + 10, "older"),
+                ("a", 1, i64::MIN + 20, "new"),
+                ("b", 2, i64::MIN, "edge"),
+            ][..],
+        ),
+        (
+            i64::MIN,
+            &[
+                ("a", 1, 1, "rejected"),
+                ("a", 2, i64::MAX, "edge"),
+                ("b", 3, i64::MAX, "equal"),
+            ][..],
+            &[("a", 2, i64::MAX, "edge"), ("b", 3, i64::MAX, "equal")][..],
+        ),
+    ]
+}
+
+#[test]
+fn wal_retention_keeps_complete_traces_at_timestamp_boundaries() {
+    let make_record = |(tenant, id, start_ns, name): (&str, u8, i64, &str)| {
+        let mut value = span([1; 16], id, start_ns);
+        value.name = name.into();
+        record(tenant, value)
+    };
+    for (retention, inputs, expected) in retention_cases() {
+        for invalid_suffix in [false, true] {
+            let mut store = LiveStore::new(retention);
+            let mut payloads = inputs
+                .iter()
+                .map(|entry| make_record(*entry).encode().unwrap())
+                .collect::<Vec<_>>();
+            if invalid_suffix {
+                payloads.push(Vec::new());
+                payloads.push(
+                    make_record(("a", 9, i64::MAX, "after-error"))
+                        .encode()
+                        .unwrap(),
+                );
+            }
+            let result = ingest_wal_payloads(&mut store, payloads.iter().map(Vec::as_slice));
+            if invalid_suffix {
+                assert2::assert!(matches!(result, Err(krabka_traces::TracesError::Wal(_))));
+            } else {
+                assert2::assert!(result.unwrap() == inputs.len());
+            }
+            for tenant in ["a", "b", "missing"] {
+                let expected_trace = expected
+                    .iter()
+                    .filter(|entry| entry.0 == tenant)
+                    .map(|entry| make_record(*entry).span)
+                    .collect::<Vec<_>>();
+                assert2::assert!(store.trace_by_id(tenant, &[1; 16]) == expected_trace);
+            }
+        }
+    }
+}
+
 #[test]
 fn exposes_recent_spans_as_mem_table_over_span_schema() {
     let mut store = LiveStore::new(i64::MAX);

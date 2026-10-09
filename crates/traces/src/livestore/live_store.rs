@@ -28,17 +28,24 @@ impl LiveStore {
         }
     }
 
-    /// Append a WAL span record, then evict spans older than the retention
-    /// window.
+    /// Append a WAL span record within the latest retention window.
     pub fn ingest(&mut self, rec: SpanRecord) {
-        self.max_start_ns = self.max_start_ns.max(rec.span.start_ns);
+        if rec.span.start_ns > self.max_start_ns {
+            self.max_start_ns = rec.span.start_ns;
+            self.evict_old();
+        }
+        if self.retention_ns != i64::MAX
+            && self.max_start_ns != i64::MIN
+            && rec.span.start_ns < self.max_start_ns.saturating_sub(self.retention_ns)
+        {
+            return;
+        }
         self.by_tenant
             .entry(rec.tenant)
             .or_default()
             .entry(rec.span.trace_id)
             .or_default()
             .push(rec.span);
-        self.evict_old();
     }
 
     /// Return recent spans for one trace, ordered by start time and span id.
