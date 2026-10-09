@@ -30,7 +30,7 @@ class PerfProfileTest(unittest.TestCase):
                     deployment = mock.Mock(admin_ports=dict.fromkeys(roles, 15000),
                                            pids={role: 100 + i for i, role in enumerate(roles)})
                     args = types.SimpleNamespace(signal='metrics', deployment_target=target,
-                        mode='cpu', cpu_profiler='perf', app_call_graph=mode, output=output,
+                        mode='cpu', cpu_profiler='perf', app_call_graph=mode, query_only=False, output=output,
                         phase=phase, cardinality=cardinality,
                         image='diagnostic-image', image_commit='source', image_digest='digest',
                         profile_seconds=1, windows=1)
@@ -54,7 +54,7 @@ class PerfProfileTest(unittest.TestCase):
                     def measure(*positional, **kwargs):
                         kwargs['on_measurement']()
                         return {'ingest': {'error_rate': 0},
-                                'query': {'error_rate': 0, 'empty_queries': 0}}, [], []
+                                'query': {'attempts': 1, 'error_rate': 0, 'empty_queries': 0}}, [], []
 
                     with mock.patch.object(profiler.comparison, 'ComparisonDeployment', return_value=deployment), \
                             mock.patch.object(profiler.env, 'command', side_effect=command) as commands, \
