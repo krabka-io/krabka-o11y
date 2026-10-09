@@ -31,7 +31,7 @@ use krabka_metrics::{
     distributor::{DistributorState, ProduceError, WalSink},
     wire::pb,
 };
-use krabka_promql::WalHead;
+use krabka_promql::{InMemoryMetricStore, MergedMetricStore, WalHead};
 use opentelemetry_proto::tonic::metrics::v1::{
     Gauge, Metric, MetricsData, NumberDataPoint, ResourceMetrics, ScopeMetrics, metric,
     number_data_point,
@@ -456,6 +456,7 @@ struct IngestCase<'a> {
     request_headers: &'a [(&'a str, &'a str)],
     response_headers: &'a [&'a str],
     metric: &'a str,
+    expected_value: &'a str,
 }
 
 impl IngestResponse {
@@ -503,6 +504,7 @@ async fn verify_ingest_contract(
             ],
             response_headers: &[],
             metric: "m11_remote_write_v1",
+            expected_value: "1",
         },
         snappy(&v1.encode_to_vec())?,
         now_ms,
@@ -547,6 +549,7 @@ async fn verify_ingest_contract(
                 "x-prometheus-remote-write-exemplars-written",
             ],
             metric: "m11_remote_write_v2",
+            expected_value: "2",
         },
         snappy(&v2.encode_to_vec())?,
         now_ms,
@@ -582,6 +585,7 @@ async fn verify_ingest_contract(
             request_headers: &[("Content-Type", "application/x-protobuf")],
             response_headers: &["content-type", "content-length", "x-content-type-options"],
             metric: "m11_otlp_gauge",
+            expected_value: "3",
         },
         otlp.encode_to_vec(),
         now_ms,
@@ -597,6 +601,7 @@ async fn verify_ingest_contract(
             request_headers: &[("Content-Type", "text/plain")],
             response_headers: &["content-type", "content-length"],
             metric: "m11_influx",
+            expected_value: "4",
         },
         format!("m11_influx,source=differential value=4 {now_ms}\n").into_bytes(),
         now_ms,
@@ -664,6 +669,37 @@ async fn compare_ingest(
         "{} query differs:\nKrabka: {krabka_query}\nMimir: {mimir_query}",
         case.metric
     );
+    let timestamp: Value = serde_json::from_str(
+        seconds_param(at_ms)
+            .trim_end_matches('0')
+            .trim_end_matches('.'),
+    )?;
+    let expected = serde_json::json!({
+        "status": "success",
+        "data": {
+            "resultType": "vector",
+            "result": [{"metric": {}, "value": [timestamp, case.expected_value]}]
+        }
+    });
+    for query in [
+        format!("sum(last_over_time({}[30m]))", case.metric),
+        format!("avg(last_over_time({}[30m]))", case.metric),
+    ] {
+        let krabka_query =
+            query_instant(client, krabka_base, "/api/v1/query", &query, at_ms).await?;
+        let mimir_query = query_instant(
+            client,
+            mimir_base,
+            "/prometheus/api/v1/query",
+            &query,
+            at_ms,
+        )
+        .await?;
+        assert!(
+            krabka_query == mimir_query && mimir_query == expected,
+            "{query} response differs:\nKrabka: {krabka_query}\nMimir: {mimir_query}\nExpected: {expected}"
+        );
+    }
     Ok(())
 }
 
@@ -878,7 +914,10 @@ fn candidate_engine_opts() -> krabka_promql::EngineOpts {
 async fn start_krabka_query_server() -> TestResult<KrabkaServer> {
     let head = WalHead::new();
     let state = Arc::new(krabka_promql::PrometheusApiState::new(
-        Arc::new(head.clone()),
+        Arc::new(MergedMetricStore::new(
+            InMemoryMetricStore::new(),
+            head.clone(),
+        )),
         candidate_engine_opts(),
     ));
     let query_router = krabka_promql::mimir_ruler_prometheus_router(Arc::clone(&state))

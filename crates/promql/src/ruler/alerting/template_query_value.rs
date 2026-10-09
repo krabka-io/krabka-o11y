@@ -76,7 +76,7 @@ mod tests {
             matches!(first.get("Labels"), Some(TemplateData::ByteLabels(labels)) if labels.is_empty())
         );
         assert2::assert!(
-            matches!(first.get("Value"), Some(TemplateData::Float(value)) if *value == 7.0)
+            matches!(first.get("Value"), Some(TemplateData::Float(value)) if value.to_bits() == 7.0_f64.to_bits())
         );
         assert2::assert!(!Arc::ptr_eq(first, second));
         assert2::assert!(Arc::ptr_eq(first, &Arc::clone(first)));
@@ -146,7 +146,11 @@ mod tests {
         let histogram = histogram.snapshot();
         assert2::assert!(histogram.counter_reset_hint == 3 && histogram.schema == 0);
         assert2::assert!(
-            histogram.count == 8.0 && histogram.sum == 10.0 && histogram.zero_count == 2.0
+            (
+                histogram.count.to_bits(),
+                histogram.sum.to_bits(),
+                histogram.zero_count.to_bits()
+            ) == (8.0_f64.to_bits(), 10.0_f64.to_bits(), 2.0_f64.to_bits())
         );
         assert2::assert!(
             histogram.positive_buckets == [1.0, 2.0] && histogram.negative_buckets == [1.0, 2.0]

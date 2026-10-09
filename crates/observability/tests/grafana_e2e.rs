@@ -713,6 +713,7 @@ async fn start_grafana(datasources_yaml: &str) -> TestResult<ContainerAsync<Gene
         GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
             .with_exposed_port(GRAFANA_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stdout("HTTP Server Listen"))
+            .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")
             .with_copy_to(
                 "/etc/grafana/provisioning/datasources/krabka.yaml",
                 datasources_yaml.as_bytes().to_vec(),

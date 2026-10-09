@@ -50,7 +50,7 @@ async fn cold_label_values_survive_the_merged_instant_scan() {
     hot.push_float("t", up.clone(), 10, 3.0);
     hot.push_float("t", up.clone(), 20, 7.0);
     hot.push_float("other", up.clone(), 30, 99.0);
-    let merged = MergedMetricStore::new(cold, WalHead::from_store(hot));
+    let merged = Arc::new(MergedMetricStore::new(cold, WalHead::from_store(hot)));
     let scan = merged
         .try_latest_float_scan("t", &matcher, 0, 1, 30, 2)
         .await
@@ -58,6 +58,25 @@ async fn cold_label_values_survive_the_merged_instant_scan() {
         .unwrap();
     assert2::assert!(scan.samples == vec![(fp, 20, 7.0, None)]);
     assert2::assert!(scan.labels.len() == 1 && scan.labels[&fp].as_ref() == &up);
+    let engine = PromqlEngine::new(Arc::clone(&merged), EngineOpts::default());
+    for query in [
+        "sum(last_over_time(up[30m]))",
+        "avg(last_over_time(up[30m]))",
+    ] {
+        assert2::assert!(
+            engine
+                .query_instant(&tenant_id("t"), query, 30)
+                .await
+                .unwrap()
+                == QueryResult::InstantVector(vec![InstantSample {
+                    labels: crate::PromqlLabels::new(),
+                    ts_ms: 30,
+                    value: SampleValue::Float(7.0),
+                    drop_name: false,
+                }])
+        );
+    }
+    drop(engine);
     let held = Arc::downgrade(&scan.labels[&fp]);
     drop(merged);
     drop(first);
