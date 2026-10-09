@@ -1,3 +1,5 @@
+use assert2::assert;
+
 use super::*;
 
 #[tokio::test]
@@ -43,14 +45,8 @@ pub(crate) async fn querier_state_with_request_tenant_index_caches_shard_indexes
         .await
         .unwrap();
 
-    assert_eq!(
-        first.label_index.label_names(tenant),
-        BTreeSet::from(["app".to_string()])
-    );
-    assert_eq!(
-        second.label_index.label_names(tenant),
-        BTreeSet::from(["app".to_string()])
-    );
+    assert!(first.label_index == labels_index && first.block_index == block_index);
+    assert!(second.label_index == labels_index && second.block_index == block_index);
 
     let shard_prefix =
         krabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant).to_string();
@@ -60,6 +56,10 @@ pub(crate) async fn querier_state_with_request_tenant_index_caches_shard_indexes
         shard_range,
     )
     .to_string();
+    let shard_snapshot = format!(
+        "{}/00000000000000000000.json",
+        krabka_blockstore::index_snapshot_prefix_for_key(&shard_manifest)
+    );
     let list_count = store
         .list_prefixes()
         .into_iter()
@@ -68,12 +68,12 @@ pub(crate) async fn querier_state_with_request_tenant_index_caches_shard_indexes
     let shard_get_count = store
         .get_paths()
         .into_iter()
-        .filter(|path| path == &shard_manifest)
+        .filter(|path| path == &shard_snapshot)
         .count();
 
     assert!(list_count == 1, "shard prefix should be listed once");
     assert!(
         shard_get_count == 1,
-        "shard manifest should be fetched once"
+        "shard snapshot should be fetched once"
     );
 }

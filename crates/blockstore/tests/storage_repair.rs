@@ -19,10 +19,14 @@ use std::{
 use assert2::{assert, check};
 use futures::{StreamExt as _, stream::BoxStream};
 use krabka_blockstore::{
-    DEFAULT_BLOCK_SWEEP_GRACE, ProfileIndex, RepairAction, RepairLogEntry, RepairLogPhase,
-    RepairLogWriter, RepairOptions, RepairOutcome, RepairReport, StorageAuditError,
-    StorageAuditOptions, StorageFindingKind, StorageSignal, TraceIndex, audit_store,
-    read_tenant_log_index_manifest_from_object_store, reconcile_orphans, repair_store,
+    BlockDescriptor, BlockKey, DEFAULT_BLOCK_SWEEP_GRACE, LabelIndex, LogBlockIndex, ProfileIndex,
+    RepairAction, RepairLogEntry, RepairLogPhase, RepairLogWriter, RepairOptions, RepairOutcome,
+    RepairReport, StorageAuditError, StorageAuditOptions, StorageFindingKind, StorageSignal,
+    TimeRange, TraceIndex, audit_store, index_snapshot_prefix_for_key, labels,
+    log_tenant_index_shard_manifest_object_path, read_tenant_log_index_manifest_from_object_store,
+    read_tenant_log_index_shard_from_object_store, reconcile_orphans, repair_store,
+    write_log_index_manifest_to_object_store, write_tenant_log_index_shard_catalog_to_object_store,
+    write_tenant_log_index_shard_to_object_store,
 };
 use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
@@ -30,7 +34,7 @@ use object_store::{
 };
 use storage_fixtures::{
     PROFILE_INDEX, TRACE_INDEX, block_key, foreign_entry, healthy, later, listed_keys,
-    missing_shard, put_block, put_bytes, sidecar_key, store, upper_case_manifest,
+    missing_shard, publish, put_block, put_bytes, sidecar_key, store, upper_case_manifest,
 };
 
 #[derive(Clone, Debug)]
@@ -659,5 +663,238 @@ async fn after_a_repair_the_indexes_load_and_the_lifecycle_sweep_agrees() {
         check!(audit.findings == Vec::new(), "{signal}");
         check!(under_prefix == live_after, "{signal}");
         check!(swept == [(0, 0), (0, 0)], "{signal}");
+    }
+}
+
+fn log_shard_indexes(first_offset: i64) -> (LabelIndex, LogBlockIndex) {
+    let mut label_index = LabelIndex::default();
+    let fingerprint = label_index.insert_series("t", labels([("app", "api")]));
+    let mut block_index = LogBlockIndex::default();
+    block_index.insert(BlockDescriptor::new(
+        BlockKey::new(
+            "t",
+            0,
+            first_offset,
+            first_offset + 9,
+            TimeRange::new(10, 19).unwrap(),
+        ),
+        BTreeSet::from([fingerprint]),
+    ));
+    (label_index, block_index)
+}
+
+async fn publish_log_shard(store: &Arc<dyn ObjectStore>, first_offset: i64) -> String {
+    let (label_index, block_index) = log_shard_indexes(first_offset);
+    let block = block_index.blocks()[0].key.object_key();
+    put_block(store, StorageSignal::Logs, &block).await;
+    write_tenant_log_index_shard_to_object_store(
+        store.as_ref(),
+        &Path::default(),
+        "t",
+        TimeRange::new(10, 19).unwrap(),
+        &label_index,
+        &block_index,
+    )
+    .await
+    .unwrap();
+    block
+}
+
+fn log_shard_snapshot(file: &str) -> String {
+    let key = log_tenant_index_shard_manifest_object_path(
+        &Path::default(),
+        "t",
+        TimeRange::new(10, 19).unwrap(),
+    );
+    format!("{}/{file}", index_snapshot_prefix_for_key(key.as_ref()))
+}
+
+#[tokio::test]
+async fn a_log_repair_keeps_the_newest_shard_blocks_and_removes_old_generation_orphans() {
+    for layout in [
+        "shard-only",
+        "catalog",
+        "tenant-manifest",
+        "global-manifest",
+    ] {
+        let store = store();
+        let orphan = publish_log_shard(&store, 0).await;
+        let live = publish_log_shard(&store, 10).await;
+        match layout {
+            "catalog" => {
+                write_tenant_log_index_shard_catalog_to_object_store(
+                    store.as_ref(),
+                    &Path::default(),
+                    "t",
+                    &[TimeRange::new(10, 19).unwrap()],
+                )
+                .await
+                .unwrap();
+            }
+            "tenant-manifest" | "global-manifest" => {
+                let full_block = block_key(StorageSignal::Logs, "t", 20, 29);
+                put_block(&store, StorageSignal::Logs, &full_block).await;
+                if layout == "tenant-manifest" {
+                    publish(
+                        &store,
+                        StorageSignal::Logs,
+                        &[("t", &[full_block])],
+                        &BTreeSet::new(),
+                    )
+                    .await;
+                } else {
+                    let (label_index, block_index) = log_shard_indexes(20);
+                    write_log_index_manifest_to_object_store(
+                        store.as_ref(),
+                        &Path::default(),
+                        &label_index,
+                        &block_index,
+                    )
+                    .await
+                    .unwrap();
+                }
+            }
+            _ => {}
+        }
+        let before = listed_keys(&store).await;
+        let options = options("t", StorageSignal::Logs, true);
+        let audit = audit_store(&store, &options.audit_options()).await.unwrap();
+        check!(audit.objects_unclassified == 0, "{layout}");
+
+        let (applied, _) = repair(&store, &options).await;
+
+        assert!(
+            applied
+                == report(
+                    true,
+                    StorageSignal::Logs,
+                    1,
+                    vec![action(
+                        StorageFindingKind::Orphan,
+                        &orphan,
+                        RepairOutcome::Deleted
+                    )],
+                ),
+            "{layout}"
+        );
+        let remaining: Vec<_> = before.into_iter().filter(|key| key != &orphan).collect();
+        check!(listed_keys(&store).await == remaining, "{layout}");
+        check!(store.head(&Path::from(live)).await.is_ok(), "{layout}");
+        check!(
+            read_tenant_log_index_shard_from_object_store(
+                store.as_ref(),
+                &Path::default(),
+                "t",
+                TimeRange::new(10, 19).unwrap(),
+            )
+            .await
+            .unwrap()
+                == log_shard_indexes(10),
+            "{layout}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_unreadable_newest_log_shard_suppresses_orphan_repair() {
+    for (file, bytes, kind) in [
+        (
+            "00000000000000000001.json",
+            b"not json".as_slice(),
+            StorageFindingKind::UnreadableManifest,
+        ),
+        (
+            "00000000000000000001.json",
+            br#"{"format_version":99,"series":[],"blocks":[]}"#.as_slice(),
+            StorageFindingKind::UnsupportedFormat,
+        ),
+        (
+            "invalid.json",
+            b"not json".as_slice(),
+            StorageFindingKind::UnreadableManifest,
+        ),
+        (
+            "invalid.JSON",
+            b"not json".as_slice(),
+            StorageFindingKind::UnreadableManifest,
+        ),
+        (
+            "invalid/nested.json",
+            b"not json".as_slice(),
+            StorageFindingKind::UnreadableManifest,
+        ),
+    ] {
+        let store = store();
+        publish_log_shard(&store, 0).await;
+        publish_log_shard(&store, 10).await;
+        // A valid full manifest does not override an unreadable shard.
+        publish(&store, StorageSignal::Logs, &[("t", &[])], &BTreeSet::new()).await;
+        put_bytes(&store, &log_shard_snapshot(file), bytes).await;
+        let before = listed_keys(&store).await;
+        let options = options("t", StorageSignal::Logs, true);
+        let audit = audit_store(&store, &options.audit_options()).await.unwrap();
+        assert!(audit.objects_unclassified == 0, "{file}");
+        let findings: Vec<_> = audit
+            .findings
+            .iter()
+            .map(|finding| (finding.kind, finding.path.as_str()))
+            .collect();
+        let newest = log_shard_snapshot(file);
+        assert!(findings == vec![(kind, newest.as_str())], "{file}");
+
+        let (applied, _) = repair(&store, &options).await;
+
+        assert!(
+            applied == report(true, StorageSignal::Logs, 1, Vec::new()),
+            "{file}"
+        );
+        check!(listed_keys(&store).await == before, "{file}");
+    }
+}
+
+#[tokio::test]
+async fn an_unreadable_log_shard_range_suppresses_orphan_repair() {
+    for range in ["20-10", "020-029"] {
+        let store = store();
+        publish_log_shard(&store, 0).await;
+        publish_log_shard(&store, 10).await;
+        publish(&store, StorageSignal::Logs, &[("t", &[])], &BTreeSet::new()).await;
+        let shard = format!(
+            "tenant=t/index/logs/shards/time={range}/manifest/snapshots/00000000000000000000.json"
+        );
+        put_bytes(&store, &shard, b"not json").await;
+        let before = listed_keys(&store).await;
+        let options = options("t", StorageSignal::Logs, true);
+        let audit = audit_store(&store, &options.audit_options()).await.unwrap();
+        assert!(audit.objects_unclassified == 0, "{range}");
+        let findings: Vec<_> = audit
+            .findings
+            .iter()
+            .map(|finding| (finding.kind, finding.path.as_str()))
+            .collect();
+        assert!(
+            findings == vec![(StorageFindingKind::UnreadableManifest, shard.as_str())],
+            "{range}"
+        );
+
+        let (applied, _) = repair(&store, &options).await;
+
+        assert!(
+            applied == report(true, StorageSignal::Logs, 1, Vec::new()),
+            "{range}"
+        );
+        check!(listed_keys(&store).await == before, "{range}");
+        check!(
+            read_tenant_log_index_shard_from_object_store(
+                store.as_ref(),
+                &Path::default(),
+                "t",
+                TimeRange::new(10, 19).unwrap(),
+            )
+            .await
+            .unwrap()
+                == log_shard_indexes(10),
+            "{range}"
+        );
     }
 }

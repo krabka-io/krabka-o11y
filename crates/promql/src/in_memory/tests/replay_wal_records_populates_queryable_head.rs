@@ -48,7 +48,7 @@ pub(crate) async fn replay_wal_records_populates_queryable_head() {
         labels: series_labels.clone(),
         payload: SamplePayload::Exemplars,
         exemplars: vec![WalExemplar {
-            labels: vec![("trace_id".to_string(), "abc".to_string().into())],
+            labels: vec![("trace_id".to_string(), "abc".to_string())],
             value: 1.0,
             timestamp_ms: 10_000,
         }],

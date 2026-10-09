@@ -15,12 +15,13 @@ use krabka_logql::{
     JsonExtraction, JsonParserConfig, LabelFormat, LabelFormatAssignment, LabelMatcher,
     LabelSelection, LabelSelectionSet, LineFilter, LineFilterOp, LineFormat, LogfmtExtraction,
     LogfmtParserConfig, MatchOp, MetricQuery, OffsetNanos, ParserStage, PatternParser,
-    PipelineStage, Quantile, QuantileDenominator, QuantileNumerator, RangeAggregation,
-    RegexpParser, SourceLabel, StreamQuery, TemplateData, UnwrapExpression, VectorAggregation,
-    VectorAggregationOp, VectorGrouping, parse_logql_expr, parse_metric_binary_arithmetic_query,
-    parse_metric_binary_comparison_query, parse_metric_binary_set_query,
-    parse_metric_label_join_query, parse_metric_label_replace_query, parse_metric_query,
-    parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query, parse_query,
+    PipelineEvaluation, PipelineStage, Quantile, QuantileDenominator, QuantileNumerator,
+    RangeAggregation, RegexpParser, SourceLabel, StreamQuery, TemplateData, UnwrapExpression,
+    VectorAggregation, VectorAggregationOp, VectorGrouping, parse_logql_expr,
+    parse_metric_binary_arithmetic_query, parse_metric_binary_comparison_query,
+    parse_metric_binary_set_query, parse_metric_label_join_query, parse_metric_label_replace_query,
+    parse_metric_query, parse_metric_scalar_arithmetic_query, parse_metric_scalar_comparison_query,
+    parse_query,
 };
 
 #[test]
@@ -40,6 +41,60 @@ fn parses_selector_with_all_matcher_ops() {
                 pipeline: vec![],
             }
     );
+}
+
+#[test]
+fn empty_pipeline_preserves_complete_metadata_fields_and_matches_original_stream_labels() {
+    let labels = BTreeMap::from([
+        ("app".into(), "api".into()),
+        ("collision".into(), "stream".into()),
+        ("collision_extracted".into(), "base-suffix".into()),
+        ("empty".into(), String::new()),
+        ("__error__".into(), "StreamError".into()),
+        ("__error_details__".into(), "stream-details".into()),
+    ]);
+    let metadata = BTreeMap::from([
+        ("app".into(), "shadow".into()),
+        ("collision".into(), "metadata".into()),
+        ("collision_extracted".into(), "direct".into()),
+        ("empty".into(), "metadata-empty".into()),
+        ("only_metadata".into(), "present".into()),
+        ("__error__".into(), String::new()),
+        ("__error_details__".into(), "metadata-details".into()),
+    ]);
+    let expected_fields = BTreeMap::from([
+        ("app".into(), "api".into()),
+        ("app_extracted".into(), "shadow".into()),
+        ("collision".into(), "stream".into()),
+        ("collision_extracted".into(), "metadata".into()),
+        ("collision_extracted_extracted".into(), "direct".into()),
+        ("empty".into(), "metadata-empty".into()),
+        ("only_metadata".into(), "present".into()),
+        ("__error__".into(), String::new()),
+        ("__error_details__".into(), "metadata-details".into()),
+    ]);
+    let line = "raw \0\u{1b}[31m\n東京";
+    for (selector, matches) in [
+        (r#"{app="api"}"#, true),
+        (r#"{app="shadow"}"#, false),
+        (r#"{only_metadata="present"}"#, false),
+        (r#"{app="api",empty=""}"#, true),
+        (r#"{app="api",empty="metadata-empty"}"#, false),
+        (r#"{app="api",collision_extracted="base-suffix"}"#, true),
+    ] {
+        let query = parse_query(selector).unwrap();
+        let expected = matches.then(|| PipelineEvaluation {
+            fields: expected_fields.clone(),
+            line: line.into(),
+        });
+        assert2::assert!(
+            [
+                query.evaluate_with_fields(&labels, line, &metadata),
+                query.evaluate_with_fields_at(&labels, line, &metadata, 1_234_567_890),
+            ] == [expected.clone(), expected],
+            "{selector}"
+        );
+    }
 }
 
 #[test]
@@ -752,7 +807,7 @@ fn query_evaluator_line_format_applies_go_template_index_and_slice_helpers() {
         )
         .unwrap();
 
-    check!(result.line == r#"worker|200|bcd|[map[name:api]]"#);
+    check!(result.line == r"worker|200|bcd|[map[name:api]]");
 }
 
 #[test]
@@ -3551,7 +3606,7 @@ fn template_logic_preserves_types_and_operand_values() {
             "yes|yes",
         ),
         (
-            r#"{{ if false }}yes{{ else }}no{{ end }}|{{ if true }}yes{{ else }}no{{ end }}"#,
+            r"{{ if false }}yes{{ else }}no{{ end }}|{{ if true }}yes{{ else }}no{{ end }}",
             "no|yes",
         ),
         (
@@ -3575,7 +3630,7 @@ fn template_logic_preserves_types_and_operand_values() {
             "fallback|fallback|0",
         ),
         (
-            r#"{{ if sub 2 2 }}bad{{ else }}zero{{ end }}|{{ if addf 1 -1 }}bad{{ else }}zero{{ end }}"#,
+            r"{{ if sub 2 2 }}bad{{ else }}zero{{ end }}|{{ if addf 1 -1 }}bad{{ else }}zero{{ end }}",
             "zero|zero",
         ),
         (
@@ -3683,15 +3738,15 @@ fn template_variables_reassign_outer_bindings_without_leaking_declarations() {
 fn template_range_supports_integer_counts_and_nested_flow() {
     let cases = [
         (
-            r#"{{ range 3 }}{{ . }}{{ end }}|{{ range 0 }}bad{{ else }}empty{{ end }}"#,
+            r"{{ range 3 }}{{ . }}{{ end }}|{{ range 0 }}bad{{ else }}empty{{ end }}",
             "012|empty",
         ),
         (
-            r#"{{ range 5 }}{{ if eq . 2 }}{{ break }}{{ end }}{{ . }}{{ end }}done"#,
+            r"{{ range 5 }}{{ if eq . 2 }}{{ break }}{{ end }}{{ . }}{{ end }}done",
             "01done",
         ),
         (
-            r#"{{ range 4 }}{{ if eq . 1 }}{{ continue }}{{ end }}{{ . }}{{ end }}done"#,
+            r"{{ range 4 }}{{ if eq . 1 }}{{ continue }}{{ end }}{{ . }}{{ end }}done",
             "023done",
         ),
         (
@@ -3805,7 +3860,7 @@ fn printf_keeps_go_types_through_nested_functions_pipelines_and_json() {
 fn template_action_delimiters_inside_strings_and_comments_are_literal() {
     for (template, expected) in [
         (r#"{{ printf "%s" "}}" }}"#, "}}"),
-        (r#"{{/* }} ignored */}}ok"#, "ok"),
+        (r"{{/* }} ignored */}}ok", "ok"),
         (r#"{{ if true }}{{ printf "%s" "}}" }}{{ end }}"#, "}}"),
     ] {
         let format = LineFormat::new(template).unwrap();
@@ -3991,13 +4046,13 @@ fn template_execution_uses_go_depth_and_range_assignment_semantics() {
             r#"{{$i := 9}}{{$v := "before"}}{{range $i, $v = fromJson "[10,20]"}}{{$i}}={{$v}};{{end}}|{{$i}}:{{$v}}"#,
             "0=10;1=20;|1:20",
         ),
-        (r#"{{$v := 9}}{{range $v = 3}}{{.}}{{end}}|{{$v}}"#, "012|2"),
+        (r"{{$v := 9}}{{range $v = 3}}{{.}}{{end}}|{{$v}}", "012|2"),
         (
             r#"{{range $v := fromJson "[]"}}bad{{else}}{{len $v}}{{end}}|{{range (fromJson "null")}}bad{{else}}nil{{end}}"#,
             "0|nil",
         ),
         (
-            r#"{{range 2}}{{range 0}}bad{{else}}{{continue}}{{end}}bad{{end}}done"#,
+            r"{{range 2}}{{range 0}}bad{{else}}{{continue}}{{end}}bad{{end}}done",
             "done",
         ),
     ] {
@@ -4012,9 +4067,9 @@ fn template_execution_uses_go_depth_and_range_assignment_semantics() {
     }
     for template in [
         r#"{{range "abc"}}bad{{else}}bad{{end}}"#,
-        r#"{{range true}}bad{{end}}"#,
-        r#"{{range $i, $v := 3}}bad{{end}}"#,
-        r#"{{range $missing = 1}}bad{{end}}"#,
+        r"{{range true}}bad{{end}}",
+        r"{{range $i, $v := 3}}bad{{end}}",
+        r"{{range $missing = 1}}bad{{end}}",
     ] {
         check!(
             LineFormat::new(template)
@@ -4064,7 +4119,7 @@ fn typed_time_methods_compose_with_chains_named_values_and_byte_results() {
             "2025-03-27 13:04:05.123456789 UTC",
         ),
         (
-            r#"{{$t.Add 1500000000}}"#,
+            r"{{$t.Add 1500000000}}",
             "2024-02-29 13:04:06.623456789 +0000 UTC",
         ),
         (
@@ -4125,7 +4180,7 @@ fn go_rune_byte_escapes_are_integer_constants_and_multi_escape_runes_fail() {
     let format =
         LineFormat::new(r#"{{printf "%T:%d:%d:%d" '\xff' '\xff' '\377' '\xe2'}}"#).unwrap();
     check!(format.render("", &BTreeMap::new()) == "int:255:255:226");
-    check!(LineFormat::new(r#"{{'\xc3\xa9'}}"#).is_err());
+    check!(LineFormat::new(r"{{'\xc3\xa9'}}").is_err());
     check!(
         LineFormat::new("{{`a\rb`}}")
             .unwrap()
@@ -4166,7 +4221,7 @@ fn prometheus_template_function_profile_matches_pinned_expander() {
             _ => vector.clone(),
         };
         let result =
-            format.render_prometheus_bytes(&variables, &[query.clone(), query], 1709211845123);
+            format.render_prometheus_bytes(&variables, &[query.clone(), query], 1_709_211_845_123);
         if *rejected {
             check!(result.is_err(), "{name}: {expression}");
         } else {
@@ -4236,7 +4291,7 @@ fn template_nested_pipelines_preserve_quotes_and_reject_unbalanced_groups() {
         r#"{{ print (print "x" |) }}"#,
         r#"{{ print ("x" }}"#,
         r#"{{ print "x" | }}"#,
-        r#"{{ print ) }}"#,
+        r"{{ print ) }}",
     ] {
         check!(LineFormat::new_prometheus(template).is_err(), "{template}");
     }

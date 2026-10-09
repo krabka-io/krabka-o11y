@@ -1,6 +1,7 @@
 use super::{
     BTreeSet, HeaderMap, HttpQueryError, QuerierState, RequestSecurity, SeriesParams,
     TenantErrorSurface, authorized_tenant, metadata_index_range, metadata_label_sets,
+    metadata_time_range,
 };
 
 pub(crate) async fn label_values_data(
@@ -16,7 +17,11 @@ pub(crate) async fn label_values_data(
     let state = &state.with_tenant_limits(&tenant);
     let tenant = tenant.as_str();
     let state = state
-        .with_request_tenant_index(tenant, metadata_index_range(state, params)?)
+        .with_request_tenant_index_and_hot_range(
+            tenant,
+            metadata_index_range(state, params)?,
+            metadata_time_range(params)?,
+        )
         .await?;
     let mut values = BTreeSet::new();
     for labels in metadata_label_sets(&state, tenant, params).await? {

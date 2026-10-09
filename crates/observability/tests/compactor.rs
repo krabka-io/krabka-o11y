@@ -1312,15 +1312,16 @@ async fn compactor_runtime_appends_shard_without_loading_historical_shards() {
         .await
         .unwrap();
 
-    let old_shard_manifest =
+    let old_shard_manifest = krabka_blockstore::index_snapshot_prefix_for_key(
         krabka_blockstore::log_tenant_index_shard_manifest_object_path(&prefix, tenant, old_range)
-            .to_string();
+            .as_ref(),
+    );
     assert!(descriptors.len() == 1);
     assert!(
         !store
             .get_paths()
             .into_iter()
-            .any(|path| path == old_shard_manifest),
+            .any(|path| path.starts_with(&old_shard_manifest)),
         "appending a new shard should not load historical shard manifests"
     );
 }
@@ -1473,7 +1474,7 @@ async fn compactor_runtime_retries_shard_manifest_write_errors_before_committing
     let dir = tempfile::tempdir().unwrap();
     let store = FailingPutObjectStore::fail_first_matching_put(
         LocalFileSystem::new_with_prefix(dir.path()).unwrap(),
-        "shards/time=10-10/manifest.json",
+        "shards/time=10-10/manifest/snapshots/",
     );
     let config = compactor_config("observability/logs");
     let dependencies =
@@ -1908,7 +1909,7 @@ async fn compaction_interrupted_between_block_write_and_index_save_loses_nothing
     // exactly the gap between the two: the block is durable, nothing names it.
     let interrupted_store = FailingPutObjectStore::fail_every_matching_put(
         LocalFileSystem::new_with_prefix(dir.path()).unwrap(),
-        "shards/time=10-10/manifest.json",
+        "shards/time=10-10/manifest/snapshots/",
     );
     let interrupted_commits = SharedCommitLog::default();
     let interrupted = ServiceDependencies::default().with_wal_consumer(
@@ -2361,20 +2362,6 @@ async fn list_log_block_paths(store: &dyn ObjectStore, prefix: &ObjectPath) -> V
     paths
 }
 
-/// Every object under `prefix`, whatever its suffix. `list_log_block_paths`
-/// answers for the blocks only, and an index object left behind is not one.
-async fn list_object_paths(store: &dyn ObjectStore, prefix: &ObjectPath) -> Vec<String> {
-    use futures_util::StreamExt as _;
-
-    let mut listing = store.list(Some(prefix));
-    let mut paths = Vec::new();
-    while let Some(meta) = listing.next().await {
-        paths.push(meta.unwrap().location.to_string());
-    }
-    paths.sort();
-    paths
-}
-
 fn wal_record(timestamp_ns: i64, offset: i64, line: &str) -> WalLogRecord {
     WalLogRecord {
         tenant: "tenant-a".to_string(),
@@ -2614,19 +2601,16 @@ async fn the_retention_sweep_drops_an_expired_block_from_every_index_and_deletes
             .collect::<Vec<_>>()
             == vec![kept.clone()]
     );
-    // The emptied shard's manifest is deleted, not rewritten empty. An inert
-    // object per shard that retention ever empties is a leak.
+    // Empty manifests fence concurrent appends without deleting their mutable key.
     let expired_shard = read_tenant_log_index_shard_from_object_store(
         &store,
         &prefix,
         "tenant-a",
         expired.time_range,
     )
-    .await;
-    check!(
-        let Err(LogBlockStoreError::ObjectStore(object_store::Error::NotFound { .. })) =
-            expired_shard
-    );
+    .await
+    .unwrap();
+    check!(expired_shard == (LabelIndex::default(), BlockIndex::default()));
     let (_, shard_blocks) = read_all_tenant_shard_indexes(&store, &prefix, "tenant-a")
         .await
         .unwrap();
@@ -2651,7 +2635,7 @@ async fn the_retention_sweep_drops_an_expired_block_from_every_index_and_deletes
 }
 
 #[tokio::test]
-async fn the_retention_sweep_removes_an_emptied_shard_from_the_catalog() {
+async fn the_retention_sweep_keeps_an_empty_shard_manifest_in_the_catalog() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let config = compactor_config("observability/logs");
@@ -2682,25 +2666,21 @@ async fn the_retention_sweep_removes_an_emptied_shard_from_the_catalog() {
     )
     .await;
 
-    // A catalog entry for a shard that holds nothing sends every reader that
-    // falls back to the catalog on a read for no blocks.
     check!(
         read_tenant_log_index_shard_ranges_from_object_store(&store, &prefix, "tenant-a")
             .await
             .unwrap()
-            == vec![kept.time_range]
+            == vec![expired.time_range, kept.time_range]
     );
-    let manifest_path = krabka_blockstore::log_tenant_index_shard_manifest_object_path(
+    let (empty_labels, empty_blocks) = read_tenant_log_index_shard_from_object_store(
+        &store,
         &prefix,
         "tenant-a",
         expired.time_range,
-    );
-    check!(
-        !list_object_paths(&store, &prefix)
-            .await
-            .contains(&manifest_path.to_string()),
-        "the emptied shard's manifest object is deleted"
-    );
+    )
+    .await
+    .unwrap();
+    check!((empty_labels, empty_blocks) == (LabelIndex::default(), BlockIndex::default()));
 
     // A query that reads the tenant after the sweep still answers, and it
     // answers with the block the window keeps.

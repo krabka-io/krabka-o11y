@@ -774,7 +774,9 @@ mod tests {
                 shard_prefix
                     .clone()
                     .join("time=-10-20")
-                    .join("manifest.json"),
+                    .join("manifest")
+                    .join("snapshots")
+                    .join("00000000000000000000.json"),
                 Some(first),
             ),
             (
@@ -782,7 +784,9 @@ mod tests {
                 shard_prefix
                     .clone()
                     .join("time=20-10")
-                    .join("manifest.json"),
+                    .join("manifest")
+                    .join("snapshots")
+                    .join("00000000000000000000.json"),
                 None,
             ),
             (
@@ -795,13 +799,15 @@ mod tests {
                 shard_prefix
                     .clone()
                     .join("time=10-20")
-                    .join("manifest.json")
+                    .join("manifest")
+                    .join("snapshots")
+                    .join("00000000000000000000.json")
                     .join("extra"),
                 None,
             ),
             (
                 "wrong prefix",
-                ObjectPath::from("other/time=10-20/manifest.json"),
+                ObjectPath::from("other/time=10-20/manifest/snapshots/00000000000000000000.json"),
                 None,
             ),
         ];
@@ -1441,6 +1447,9 @@ pub use read_log_index_manifest::read_log_index_manifest;
 pub use read_log_index_manifest_from_object_store::read_log_index_manifest_from_object_store;
 pub use read_tenant_log_index_manifest_from_object_store::read_tenant_log_index_manifest_from_object_store;
 pub use read_tenant_log_index_shard_from_object_store::read_tenant_log_index_shard_from_object_store;
+use read_tenant_log_index_shard_from_object_store::{
+    log_snapshot_error, read_log_index_shard_snapshot_base,
+};
 pub use read_tenant_log_index_shard_ranges_from_object_store::read_tenant_log_index_shard_ranges_from_object_store;
 pub use read_tenant_log_index_shards_from_object_store::read_tenant_log_index_shards_from_object_store;
 pub use register_log_blocks::register_log_blocks;
@@ -1460,5 +1469,7 @@ pub use write_log_index_manifest::write_log_index_manifest;
 pub use write_log_index_manifest_to_object_store::write_log_index_manifest_to_object_store;
 pub use write_tenant_log_index_manifest_to_object_store::write_tenant_log_index_manifest_to_object_store;
 pub use write_tenant_log_index_shard_catalog_to_object_store::write_tenant_log_index_shard_catalog_to_object_store;
-pub use write_tenant_log_index_shard_to_object_store::write_tenant_log_index_shard_to_object_store;
+pub use write_tenant_log_index_shard_to_object_store::{
+    update_tenant_log_index_shard_to_object_store, write_tenant_log_index_shard_to_object_store,
+};
 pub use write_tenant_log_index_shards_to_object_store::write_tenant_log_index_shards_to_object_store;

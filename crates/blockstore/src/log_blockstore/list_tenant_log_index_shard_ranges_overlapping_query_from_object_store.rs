@@ -1,7 +1,6 @@
 use super::{
     BlockStoreError, ObjectPath, ObjectStore, TimeRange, collect_tenant_log_index_shard_ranges,
-    instrument, log_tenant_index_shard_list_offset_object_path,
-    log_tenant_index_shards_object_prefix,
+    instrument, log_tenant_index_shards_object_prefix,
 };
 
 #[instrument(
@@ -19,13 +18,10 @@ pub async fn list_tenant_log_index_shard_ranges_overlapping_query_from_object_st
     query_range: TimeRange,
 ) -> Result<Vec<TimeRange>, BlockStoreError> {
     let shard_prefix = log_tenant_index_shards_object_prefix(prefix, tenant);
-    let offset = log_tenant_index_shard_list_offset_object_path(prefix, tenant, query_range);
     collect_tenant_log_index_shard_ranges(
-        shard_prefix,
-        store.list_with_offset(
-            Some(&log_tenant_index_shards_object_prefix(prefix, tenant)),
-            &offset,
-        ),
+        shard_prefix.clone(),
+        // Unpadded signed keys and arbitrarily long shards cannot prove an offset.
+        store.list(Some(&shard_prefix)),
         Some(query_range),
     )
     .await

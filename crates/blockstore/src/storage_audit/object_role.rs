@@ -16,7 +16,7 @@ pub enum ObjectRole {
     LogTenantManifest,
     /// `tenant=…/index/logs/shards/manifest.json`.
     LogShardCatalog,
-    /// `tenant=…/index/logs/shards/time=S-E/manifest.json`.
+    /// A JSON generation under `tenant=…/index/logs/shards/time=S-E/manifest/snapshots`.
     LogShardManifest { start_ns: i64, end_ns: i64 },
     /// `tenant=…/index/logs/shards/time=N`, a listing aid with no payload.
     LogShardListOffset,
