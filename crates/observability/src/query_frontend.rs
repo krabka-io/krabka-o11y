@@ -56,7 +56,11 @@ pub(crate) async fn execute_logs_query_frontend(
         prepared.query_frontend_target_bytes,
     )?;
     let adapter = LogsQueryFrontendAdapter {
-        state: prepared.clone(),
+        state: if parse_query(&params.query).is_ok() {
+            prepared.clone()
+        } else {
+            state.clone()
+        },
         tenant,
         encoding,
         time_range,

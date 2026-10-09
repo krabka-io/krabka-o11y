@@ -2,7 +2,7 @@ use super::*;
 
 #[instrument(level = "debug", skip_all, fields(key = %key, retain), err)]
 pub(crate) async fn prune_old_index_snapshots(
-    store: &Arc<dyn ObjectStore>,
+    store: &dyn ObjectStore,
     key: &str,
     retain: usize,
 ) -> Result<()> {

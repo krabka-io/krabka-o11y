@@ -33,10 +33,16 @@ def cpu_profile(port, seconds, output):
     summarize(output)
 
 
-def perf_profile(deployment, role, seconds, output):
+def perf_call_graph(role, app_call_graph):
+    # The broker uses a separate pinned image without app compiler flags.
+    return 'dwarf,16384' if role == 'broker' else app_call_graph
+
+
+def perf_profile(deployment, role, seconds, output, app_call_graph='dwarf,16384'):
     pid = deployment.pids[role]
     result = subprocess.run(['sudo', '-n', 'perf', 'record', '-e', 'cpu-clock:u', '-F', '99',
-                             '--call-graph', 'dwarf,16384', '-p', str(pid), '-o', str(output),
+                             '--call-graph', perf_call_graph(role, app_call_graph),
+                             '-p', str(pid), '-o', str(output),
                              '--', 'sleep', str(seconds)], capture_output=True, text=True, check=True)
     output.with_name(output.name + '.record.txt').write_text(result.stdout + result.stderr)
     env.command('sudo', '-n', 'chown', f'{os.getuid()}:{os.getgid()}', str(output))
@@ -46,7 +52,7 @@ def report_perf(pid, output):
     for kind in ('top', 'cum'):
         report = env.command('sudo', '-n', 'perf', 'report', '--force', '--stdio', '-i', str(output),
                              '--symfs', f'/proc/{pid}/root', '--sort', 'symbol', '--percent-limit', '0.5',
-                             '--call-graph', 'none',
+                             '--call-graph', 'graph,0.5,caller' if kind == 'cum' else 'none',
                              '--children' if kind == 'cum' else '--no-children')
         output.with_name(output.name + '.' + kind + '.txt').write_text(report)
         samples = re.search(r'^# Samples:\s+([0-9.]+[KMG]?)\b', report, re.M)
@@ -66,7 +72,7 @@ def summarize(profile, sample_index=None):
             raise RuntimeError(f'empty CPU profile: {profile}')
 
 
-def capture(deployment, output, seconds, windows, cpu=True, cpu_profiler='perf'):
+def capture(deployment, output, seconds, windows, cpu=True, cpu_profiler='perf', app_call_graph='dwarf,16384'):
     def memory_snapshot(name):
         records = {}
         mappings = {}
@@ -81,7 +87,7 @@ def capture(deployment, output, seconds, windows, cpu=True, cpu_profiler='perf')
         for window in range(windows):
             print('CPU profile', name, window + 1, flush=True)
             if cpu_profiler == 'perf':
-                perf_profile(deployment, name, seconds, output / f'{name}.{window + 1}.cpu.perf.data')
+                perf_profile(deployment, name, seconds, output / f'{name}.{window + 1}.cpu.perf.data', app_call_graph)
             else:
                 cpu_profile(port, seconds, output / f'{name}.{window + 1}.cpu.pb.gz')
 
@@ -185,6 +191,7 @@ def run(args):
     writers = 0 if args.query_only else 2
     env.SIGNALS = (args.signal,)
     env.write_request, env.query_request, env.http = comparison.write_request, comparison.query_request, comparison.http
+    cardinality = args.cardinality or (1000 if args.signal == 'metrics' else 100)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
     report = {'diagnostic_only': True, 'comparison_qualified': False,
@@ -192,6 +199,7 @@ def run(args):
               'image_commit': args.image_commit, 'image_digest': args.image_digest,
               'image_identity': json.loads(env.command('docker', 'inspect', args.image))[0],
               'signal': args.signal, 'deployment_target': args.deployment_target,
+              'phase': args.phase, 'cardinality': cardinality,
               'profile_seconds': args.profile_seconds, 'windows': args.windows if args.mode == 'cpu' else 1,
               'mode': args.mode,
               'cpu_profiler': args.cpu_profiler,
@@ -199,7 +207,8 @@ def run(args):
               'host': {'cpu_count': os.cpu_count(), 'kernel': env.command('uname', '-r'),
                        'lscpu': json.loads(env.command('lscpu', '-J'))},
               'seed': env.SEED, 'writers': writers, 'write_interval_seconds': 1,
-              'query_only': args.query_only, 'query_window_seconds': 1800 if args.query_only else 30,
+              'query_only': args.query_only,
+              'query_window_seconds': 1800 if args.query_only or args.phase == 'high_cardinality' else 30,
               'query_interval_seconds': 0.25, 'warmup_seconds': 15,
               'harness_sha256': {name: hashlib.sha256(pathlib.Path(__file__).with_name(name).read_bytes()).hexdigest()
                                  for name in ('profile-grafana.py', 'compare-grafana.py', 'deployment-envelope.py', 'fuzz-corpus.py')}}
@@ -208,6 +217,8 @@ def run(args):
     allocation_role = configure_allocations(deployment, output) if args.mode == 'allocations' else None
     if args.mode == 'cpu' and args.cpu_profiler == 'perf':
         report['tool_versions']['perf'] = env.command('perf', 'version')
+        report['perf_call_graph_by_role'] = {role: perf_call_graph(role, args.app_call_graph)
+                                            for role in deployment.admin_ports}
     if allocation_role:
         report['instrumented_role'] = allocation_role
         report['tool_versions']['heaptrack'] = env.command('heaptrack', '--version')
@@ -215,7 +226,6 @@ def run(args):
     query_replies = None
     try:
         deployment.start()
-        cardinality = 1000 if args.signal == 'metrics' else 100
         deployment.seed(args.signal, 'soak', cardinality)
         deployment.wait_for_quiet_host(120)
         if args.query_only:
@@ -242,9 +252,10 @@ def run(args):
         seconds = args.profile_seconds * (args.windows if args.mode == 'cpu' else 1) + 15
         report['started_unix'] = time.time()
         result, operations, samples = env.measure(deployment, args.signal, seconds, 15, writers,
-            cardinality, cold=args.query_only, interval=1, check_durability=False,
+            cardinality, cold=args.query_only or args.phase == 'high_cardinality', interval=1, check_durability=False,
             on_measurement=lambda: capture(deployment, output, args.profile_seconds, args.windows,
-                                           cpu=args.mode == 'cpu', cpu_profiler=args.cpu_profiler))
+                                           cpu=args.mode == 'cpu', cpu_profiler=args.cpu_profiler,
+                                           app_call_graph=args.app_call_graph))
         report['workload'] = result
         for name, records in [('operations', operations), ('telemetry', samples)]:
             (output / (name + '.jsonl')).write_text(''.join(json.dumps(record) + '\n' for record in records))
@@ -282,9 +293,13 @@ def run(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--signal', choices=comparison.PRODUCTS, required=True)
+    parser.add_argument('--phase', choices=['steady', 'high_cardinality'], default='steady')
+    parser.add_argument('--cardinality', type=int, default=None)
     parser.add_argument('--mode', choices=['cpu', 'allocations'], default='cpu')
     parser.add_argument('--query-only', action='store_true', help='Profile CPU reads of the complete profiles seed without writers')
     parser.add_argument('--cpu-profiler', choices=['perf', 'pprof'], default='perf')
+    parser.add_argument('--app-call-graph', choices=['dwarf,16384', 'fp'], default='dwarf,16384',
+                        help='perf call graph for rebuilt app roles; the pinned broker always uses DWARF')
     parser.add_argument('--image', required=True)
     parser.add_argument('--image-commit', required=True)
     parser.add_argument('--image-digest', required=True)
@@ -293,4 +308,6 @@ if __name__ == '__main__':
     parser.add_argument('--windows', type=int, choices=range(1, 5), default=3)
     parser.add_argument('--output', type=pathlib.Path, required=True)
     args = parser.parse_args()
+    if args.cardinality is not None and not 1 <= args.cardinality <= 20000:
+        parser.error('--cardinality must be between 1 and 20000')
     run(args)

@@ -1,7 +1,7 @@
 use super::{
     BlockDescriptor, BlockIndex, BlockStoreError, LabelIndex, LogCompactionIndexOutput, ObjectPath,
     ObjectStore, read_tenant_log_index_shard_ranges_from_object_store,
-    write_tenant_log_index_manifest_to_object_store,
+    update_tenant_log_index_shard_to_object_store, write_tenant_log_index_manifest_to_object_store,
     write_tenant_log_index_shard_catalog_to_object_store,
     write_tenant_log_index_shard_to_object_store,
 };
@@ -18,11 +18,12 @@ pub(crate) async fn write_tenant_compaction_indexes_to_object_store(
     if index_output == LogCompactionIndexOutput::ShardManifests {
         let mut shard_block_index = BlockIndex::default();
         shard_block_index.insert(new_descriptor.clone());
-        write_tenant_log_index_shard_to_object_store(
+        update_tenant_log_index_shard_to_object_store(
             store,
             prefix,
             tenant,
             new_descriptor.key.time_range,
+            &BlockIndex::default(),
             label_index,
             &shard_block_index,
         )

@@ -1,0 +1,1 @@
+{app=~"api|web"} | label_format app="same" | distinct method

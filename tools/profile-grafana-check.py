@@ -37,6 +37,7 @@ def check():
             args = argparse.Namespace(signal='profiles', mode='cpu', query_only=query_only,
                                       image='test-image', image_commit='test-commit', image_digest='test-digest',
                                       deployment_target='all', cpu_profiler='perf', profile_seconds=1, windows=1,
+                                      phase='steady', cardinality=None, app_call_graph='dwarf,16384',
                                       output=pathlib.Path(directory) / 'profile')
             deployment = SimpleNamespace(start=lambda: None, close=lambda: closed.append(True),
                                          seed=lambda *values: seeds.append(values), wait_for_quiet_host=lambda _: None,
@@ -74,7 +75,8 @@ def check():
                 assert calls[0][5]['cold'] == query_only and calls[0][5]['interval'] == 1
                 assert calls[0][5]['check_durability'] is False
                 if not fails:
-                    capture.assert_called_once_with(deployment, args.output, 1, 1, cpu=True, cpu_profiler='perf')
+                    capture.assert_called_once_with(deployment, args.output, 1, 1, cpu=True, cpu_profiler='perf',
+                                                   app_call_graph='dwarf,16384')
                 report = json.loads((args.output / 'profile-report.json').read_text())
                 assert report['diagnostic_only'] and not report['comparison_qualified']
                 assert report['writers'] == (0 if query_only else 2)
