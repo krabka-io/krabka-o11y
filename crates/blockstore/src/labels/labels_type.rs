@@ -88,3 +88,13 @@ impl FromIterator<(String, String)> for Labels {
         Self(iter.into_iter().collect())
     }
 }
+
+/// Consumes label names and values in sorted name order.
+impl IntoIterator for Labels {
+    type Item = (String, String);
+    type IntoIter = std::collections::btree_map::IntoIter<String, String>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
