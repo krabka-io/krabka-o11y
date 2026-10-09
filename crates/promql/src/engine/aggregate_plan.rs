@@ -23,6 +23,7 @@ use super::{
         aggregate_grouping, match_over_time_range_call, simple_aggregate_op,
         simple_aggregate_op_to_aggregate_op,
     },
+    range_functions::{over_time_mean, over_time_sum},
     record_queryable_samples, selector_duration,
     step_vectors::RANGE_STEP_VECTORS,
 };
@@ -35,7 +36,7 @@ use crate::{
         aggregate::{Grouping, SimpleAggregateOp, plan_simple_aggregate},
         over_time_range::{TIME_COLUMN, VALUE_COLUMN},
     },
-    result::InstantSample,
+    result::{InstantSample, SampleValue},
     store::MetricStore,
 };
 
@@ -249,29 +250,48 @@ impl<S: MetricStore> PromqlEngine<S> {
         let (total, rows) = self
             .last_float_rows(tenant, matchers, from_ms, end_ms)
             .await?;
-        let mut state = AggregateState::new(Labels::new());
+        // Keep the shared aggregate kernel's NaN sign and payload selection.
+        let has_non_finite = rows.iter().any(|last| !last.value.is_finite());
+        let mut invalid_columns = false;
         // The label index uses canonical fingerprints. These matched runs have
         // the same order as the existing over-time result's fingerprint map.
-        for last in rows {
-            let Some(labels) = labels_by_fp.get(&last.fp) else {
-                continue;
-            };
-            // Keep the existing Arrow column-name validation on these inputs.
-            if labels.iter().any(|(name, _)| {
-                let column = name.strip_suffix(RANGE_SUFFIX).unwrap_or(name);
-                column == TIME_COLUMN
-                    || column == VALUE_COLUMN
-                    || matches!(quote_identifier(name), Cow::Owned(_))
-            }) {
-                return Ok(None);
+        let mut values = rows
+            .into_iter()
+            .filter_map(|last| {
+                let labels = labels_by_fp.get(&last.fp)?;
+                // Keep the existing Arrow column-name validation on these inputs.
+                invalid_columns |= labels.iter().any(|(name, _)| {
+                    let column = name.strip_suffix(RANGE_SUFFIX).unwrap_or(name);
+                    column == TIME_COLUMN
+                        || column == VALUE_COLUMN
+                        || matches!(quote_identifier(name), Cow::Owned(_))
+                });
+                Some(last.value)
+            })
+            .peekable();
+        let value = if has_non_finite {
+            let mut state = AggregateState::new(Labels::new());
+            for value in values {
+                state.push_float(value);
             }
-            state.push_float(last.value);
+            simple_aggregate_op_to_aggregate_op(op).finish(&state)
+        } else if values.peek().is_some() {
+            Some(SampleValue::Float(match op {
+                SimpleAggregateOp::Sum => over_time_sum(values),
+                SimpleAggregateOp::Avg => over_time_mean(values),
+                _ => return Ok(None),
+            }))
+        } else {
+            None
+        };
+        // The fold drains every matched value before the column-name fallback.
+        if invalid_columns {
+            return Ok(None);
         }
         record_queryable_samples(total);
-        let samples = simple_aggregate_op_to_aggregate_op(op)
-            .finish(&state)
+        let samples = value
             .map(|value| InstantSample {
-                labels: state.labels,
+                labels: Labels::new(),
                 ts_ms: time_ms,
                 value,
                 drop_name: false,
