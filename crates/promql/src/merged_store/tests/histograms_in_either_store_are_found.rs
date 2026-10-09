@@ -85,7 +85,7 @@ pub(crate) async fn histograms_in_either_store_are_found() {
     check!(
         result
             == QueryResult::InstantVector(vec![InstantSample {
-                labels: labels(&[("job", "api")]).into(),
+                labels: labels(&[("job", "api")]),
                 ts_ms: 120_000,
                 value: SampleValue::Float(2.0),
                 drop_name: false,
