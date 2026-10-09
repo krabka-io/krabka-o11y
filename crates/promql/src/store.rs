@@ -6,16 +6,52 @@ use crate::{PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher};
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::{
+        collections::BTreeMap,
+        sync::{Arc, Mutex},
+    };
 
+    use assert2::assert;
     use datafusion::prelude::SessionContext;
 
     use super::*;
 
-    struct Empty;
+    #[derive(Default)]
+    struct Empty {
+        labels: Vec<Arc<Labels>>,
+        samples: Option<Vec<krabka_metrics::FloatSampleRow>>,
+        failure: Option<&'static str>,
+        name: &'static str,
+        calls: Arc<Mutex<Vec<&'static str>>>,
+    }
 
     #[async_trait::async_trait]
     impl MetricStore for Empty {
+        async fn try_latest_float_samples(
+            &self,
+            _tenant: &str,
+            _matchers: &[LabelMatcher],
+            _start_ms: i64,
+            _end_ms: i64,
+            _max_samples: usize,
+        ) -> Result<Option<Vec<krabka_metrics::FloatSampleRow>>, PromqlError> {
+            Ok(self.samples.clone())
+        }
+
+        async fn series_shared(
+            &self,
+            _tenant: &str,
+            _matchers: &[LabelMatcher],
+            _start_ms: i64,
+            _end_ms: i64,
+        ) -> Result<Vec<Arc<Labels>>, PromqlError> {
+            self.calls.lock().unwrap().push(self.name);
+            if let Some(failure) = self.failure {
+                return Err(PromqlError::Store(failure.into()));
+            }
+            Ok(self.labels.clone())
+        }
+
         async fn scan(
             &self,
             _tenant: &str,
@@ -123,8 +159,111 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn canonical_shared_map_keeps_default_last_and_merged_first_owners() {
+        let first = Arc::new(Labels::from_pairs([("__name__", "up"), ("job", "api")]));
+        let last = Arc::new(first.as_ref().clone());
+        let mut raw = first.as_ref().clone();
+        raw.insert("job", vec![0xff]);
+        let raw = Arc::new(raw);
+        let store = Empty {
+            labels: vec![Arc::clone(&first), Arc::clone(&raw), Arc::clone(&last)],
+            ..Empty::default()
+        };
+        let generic: &dyn MetricStore = &store;
+        let map = generic
+            .series_shared_by_fingerprint("t", &[], 0, 1)
+            .await
+            .unwrap();
+        assert!(
+            map == BTreeMap::from([
+                (first.fingerprint(), Arc::clone(&last)),
+                (raw.fingerprint(), Arc::clone(&raw)),
+            ])
+        );
+        assert!(Arc::ptr_eq(&map[&first.fingerprint()], &last));
+        assert!(Arc::ptr_eq(&map[&raw.fingerprint()], &raw));
+        let hot = Arc::new(first.as_ref().clone());
+        let merged = crate::MergedMetricStore::new(
+            store,
+            Empty {
+                labels: vec![hot],
+                ..Empty::default()
+            },
+        );
+        let map = merged
+            .series_shared_by_fingerprint("t", &[], 0, 1)
+            .await
+            .unwrap();
+        assert!(
+            map == BTreeMap::from([
+                (first.fingerprint(), Arc::clone(&first)),
+                (raw.fingerprint(), raw),
+            ])
+        );
+        assert!(Arc::ptr_eq(&map[&first.fingerprint()], &first));
+        let shared = merged.series_shared("t", &[], 0, 1).await.unwrap();
+        assert!(shared.len() == map.len());
+        for (actual, expected) in shared.iter().zip(map.values()) {
+            assert!(Arc::ptr_eq(actual, expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn canonical_shared_map_preserves_cold_then_hot_errors() {
+        for (cold_failure, hot_failure, expected_calls, expected_error) in [
+            (Some("cold"), Some("hot"), vec!["cold"], "cold"),
+            (None, Some("hot"), vec!["cold", "hot"], "hot"),
+        ] {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let store = crate::MergedMetricStore::new(
+                Empty {
+                    failure: cold_failure,
+                    name: "cold",
+                    calls: Arc::clone(&calls),
+                    ..Empty::default()
+                },
+                Empty {
+                    failure: hot_failure,
+                    name: "hot",
+                    calls: Arc::clone(&calls),
+                    ..Empty::default()
+                },
+            );
+            let error = store
+                .series_shared_by_fingerprint("t", &[], 0, 1)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, PromqlError::Store(message) if message == expected_error));
+            assert!(*calls.lock().unwrap() == expected_calls);
+        }
+    }
+
+    #[tokio::test]
+    async fn latest_scan_keeps_sample_limit_before_label_errors() {
+        let store = Empty {
+            samples: Some(vec![(7, 0, 1.0, None), (7, 1, 2.0, None)]),
+            failure: Some("labels"),
+            ..Empty::default()
+        };
+        let scan = store
+            .try_latest_float_scan("t", &[], 0, 0, 1, 1)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            scan.samples == vec![(7, 0, 1.0, None), (7, 1, 2.0, None)] && scan.labels.is_empty()
+        );
+        assert!(store.calls.lock().unwrap().is_empty());
+        assert!(
+            matches!(store.try_latest_float_scan("t", &[], 0, 0, 1, 2).await,
+            Err(PromqlError::Store(message)) if message == "labels")
+        );
+        assert!(*store.calls.lock().unwrap() == vec![""]);
+    }
+
+    #[tokio::test]
     async fn trait_is_object_safe_and_default_returns_none_tables() {
-        let store: Arc<dyn MetricStore> = Arc::new(Empty);
+        let store: Arc<dyn MetricStore> = Arc::new(Empty::default());
         let result = store.scan("t", &[], 0, 1).await.unwrap();
         assert2::assert!(result.float_table.is_none());
         assert2::assert!(result.histogram_table.is_none());

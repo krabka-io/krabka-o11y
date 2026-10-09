@@ -137,13 +137,9 @@ impl<S: MetricStore> PromqlEngine<S> {
         start_ms: i64,
         end_ms: i64,
     ) -> Result<BTreeMap<SeriesFingerprint, Arc<Labels>>> {
-        Ok(self
-            .store
-            .series_shared(tenant, matchers, start_ms, end_ms)
-            .await?
-            .into_iter()
-            .map(|labels| (labels.fingerprint(), labels))
-            .collect())
+        self.store
+            .series_shared_by_fingerprint(tenant, matchers, start_ms, end_ms)
+            .await
     }
 
     /// Resolves every matcher set's series to one `fingerprint -> labels` map.
