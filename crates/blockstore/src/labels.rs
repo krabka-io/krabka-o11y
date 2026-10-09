@@ -83,6 +83,29 @@ mod tests {
     }
 
     #[test]
+    fn owned_iteration_keeps_sorted_pairs_and_duplicate_replacement() {
+        for (pairs, expected) in [
+            (vec![], vec![]),
+            (
+                vec![("z", "discard"), ("a", "first"), ("z", "last")],
+                vec![("a", "first"), ("z", "last")],
+            ),
+            (
+                vec![("α", "v\0x"), ("", ""), ("a=b", "c\nd")],
+                vec![("", ""), ("a=b", "c\nd"), ("α", "v\0x")],
+            ),
+        ] {
+            let labels = Labels::from_pairs(pairs);
+            let actual = labels.into_iter().collect::<Vec<_>>();
+            let expected = expected
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect::<Vec<_>>();
+            assert2::assert!(actual == expected);
+        }
+    }
+
+    #[test]
     fn from_iterator_preserves_pairs() {
         let labels = vec![
             ("app".to_string(), "api".to_string()),
