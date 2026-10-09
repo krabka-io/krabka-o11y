@@ -18,6 +18,7 @@
 #![recursion_limit = "512"]
 
 use std::{
+    collections::BTreeMap,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -36,7 +37,7 @@ use opentelemetry_proto::tonic::metrics::v1::{
     Gauge, Metric, MetricsData, NumberDataPoint, ResourceMetrics, ScopeMetrics, metric,
     number_data_point,
 };
-use promql_corpus::{CorpusCase, KnownDivergence, PromqlCorpus, QueryKind};
+use promql_corpus::{CorpusCase, CorpusSeries, KnownDivergence, PromqlCorpus, QueryKind};
 use prost::Message as _;
 use reqwest::StatusCode;
 use serde_json::Value;
@@ -188,6 +189,10 @@ const MIMIR_DIVERGENCES: &[KnownDivergence] = &[
             "native_histograms.test:1797",
         ],
     },
+    KnownDivergence {
+        reason: "Mimir 3.2.1 query sharding rewrites AVG as SUM/COUNT, so two finite maxima overflow before division. Krabka, unsharded Mimir and Prometheus 3.14 retain the finite average; separate response guards check these exact values.",
+        cases: &["last_operation_numeric:overflow:avg"],
+    },
 ];
 
 const MIMIR_AGREES_WITH_KRABKA: &[KnownDivergence] = &[];
@@ -267,7 +272,7 @@ api:
 #[tokio::test]
 #[ignore = "requires Docker"]
 async fn mimir_compliance_corpus_matches_krabka() -> TestResult {
-    let corpus = promql_corpus::promql_corpus();
+    let mut corpus = promql_corpus::promql_corpus();
     let client = reqwest::Client::new();
 
     // Real Mimir in monolithic mode.
@@ -290,7 +295,17 @@ async fn mimir_compliance_corpus_matches_krabka() -> TestResult {
     seed_both(&client, &krabka.base_url, &mimir_base, &corpus).await?;
     verify_ingest_contract(&client, &krabka.base_url, &mimir_base).await?;
 
-    let mismatches = run_corpus(&client, &krabka.base_url, &mimir_base, &corpus).await?;
+    let mut mismatches = run_corpus(&client, &krabka.base_url, &mimir_base, &corpus).await?;
+    // Seed these after the vendored cases, whose broad selectors must not see
+    // additional extreme-valued series.
+    let at_ms = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())? - 1_000;
+    let numeric = last_operation_numeric_corpus(at_ms);
+    seed_both(&client, &krabka.base_url, &mimir_base, &numeric).await?;
+    verify_numeric_seed(&client, &krabka.base_url, &mimir_base, &numeric).await?;
+    verify_numeric_overflow(&client, &krabka.base_url, &mimir_base, &numeric).await?;
+    mismatches.extend(run_corpus(&client, &krabka.base_url, &mimir_base, &numeric).await?);
+    corpus.series.extend(numeric.series);
+    corpus.cases.extend(numeric.cases);
     promql_corpus::write_report(
         "diff_mimir",
         &corpus,
@@ -316,6 +331,165 @@ async fn mimir_compliance_corpus_matches_krabka() -> TestResult {
         verdict.is_none(),
         "the differential and the known-divergence list disagree:\n{}",
         verdict.unwrap_or_default()
+    );
+    Ok(())
+}
+
+fn last_operation_numeric_corpus(at_ms: i64) -> PromqlCorpus {
+    let mut corpus = PromqlCorpus::default();
+    for (scenario, values, operations) in [
+        ("overflow", vec![f64::MAX, f64::MAX], &["avg"][..]),
+        (
+            "cancellation",
+            vec![f64::MAX, -f64::MAX],
+            &["sum", "avg"][..],
+        ),
+        ("compensation", vec![1e16, 1.0, 1.0], &["sum", "avg"][..]),
+    ] {
+        for (index, value) in values.into_iter().enumerate() {
+            corpus.series.push(CorpusSeries {
+                labels: vec![
+                    ("__name__".into(), "mimir_last_operation_fold".into()),
+                    ("scenario".into(), scenario.into()),
+                    ("series".into(), index.to_string()),
+                ],
+                floats: vec![(at_ms, value)],
+                ..Default::default()
+            });
+        }
+        for operation in operations {
+            corpus.cases.push(CorpusCase {
+                name: format!("last_operation_numeric:{scenario}:{operation}"),
+                promql: format!(
+                    "{operation}(last_over_time(mimir_last_operation_fold{{scenario={}}}[30m]))",
+                    quoted(scenario)
+                ),
+                kind: QueryKind::Instant { time: at_ms },
+                expects_failure: false,
+            });
+        }
+    }
+    corpus
+}
+
+async fn verify_numeric_seed(
+    client: &reqwest::Client,
+    krabka_base: &str,
+    mimir_base: &str,
+    corpus: &PromqlCorpus,
+) -> TestResult {
+    // Comparing an aggregate alone could hide missing cancelling samples.
+    // Each full selector must return its exact identity, timestamp and value.
+    for series in &corpus.series {
+        let selector = series
+            .labels
+            .iter()
+            .map(|(name, value)| format!("{name}={}", quoted(value)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let (at_ms, value) = series.floats[0];
+        let case = CorpusCase {
+            name: format!("last_operation_numeric:seed:{{{selector}}}"),
+            promql: format!("{{{selector}}}"),
+            kind: QueryKind::Instant { time: at_ms },
+            expects_failure: false,
+        };
+        let timestamp: Value = serde_json::from_str(
+            seconds_param(at_ms)
+                .trim_end_matches('0')
+                .trim_end_matches('.'),
+        )?;
+        let labels: BTreeMap<_, _> = series.labels.iter().cloned().collect();
+        let expected = serde_json::json!({
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": [{"metric": labels, "value": [timestamp, value.to_string()]}]
+            }
+        });
+        for (base, prefix) in [(krabka_base, ""), (mimir_base, "/prometheus")] {
+            wait_for_query_ready(
+                client,
+                base,
+                &format!("{prefix}/api/v1/query"),
+                &case.promql,
+                at_ms,
+            )
+            .await?;
+            let response = query_case(client, base, prefix, &case).await?;
+            let mismatch = promql_corpus::compare_case(&case, &response, &expected);
+            assert!(
+                mismatch.is_none(),
+                "{base}: {}",
+                mismatch.unwrap_or_default()
+            );
+        }
+    }
+    println!(
+        "diff_mimir: verified all {} numeric seed identities on both engines",
+        corpus.series.len()
+    );
+    Ok(())
+}
+
+async fn verify_numeric_overflow(
+    client: &reqwest::Client,
+    krabka_base: &str,
+    mimir_base: &str,
+    corpus: &PromqlCorpus,
+) -> TestResult {
+    let case = corpus
+        .cases
+        .iter()
+        .find(|case| case.name == "last_operation_numeric:overflow:avg")
+        .ok_or("numeric corpus has no overflow average")?;
+    let QueryKind::Instant { time } = case.kind else {
+        return Err("numeric overflow average is not an instant query".into());
+    };
+    let timestamp: Value = serde_json::from_str(
+        seconds_param(time)
+            .trim_end_matches('0')
+            .trim_end_matches('.'),
+    )?;
+    // Keep the default sharded disagreement, but do not let its exemption hide
+    // an incorrect finite result or an unrelated upstream error.
+    for (base, prefix, shards, value) in [
+        (krabka_base, "", None, f64::MAX.to_string()),
+        (mimir_base, "/prometheus", Some("0"), f64::MAX.to_string()),
+        (mimir_base, "/prometheus", None, "+Inf".into()),
+    ] {
+        let mut request = client
+            .get(query_url(
+                base,
+                &format!("{prefix}/api/v1/query"),
+                &[
+                    ("query", case.promql.clone()),
+                    ("time", seconds_param(time)),
+                ],
+            ))
+            .header("X-Scope-OrgID", TENANT);
+        if let Some(shards) = shards {
+            request = request.header("Sharding-Control", shards);
+        }
+        let response = request.send().await?;
+        assert!(
+            response.status() == StatusCode::OK,
+            "{base}, shards={shards:?}"
+        );
+        let response: Value = response.json().await?;
+        let expected = serde_json::json!({
+            "status": "success",
+            "data": {"resultType": "vector", "result": [{"metric": {}, "value": [timestamp, value]}]}
+        });
+        let mismatch = promql_corpus::compare_case(case, &response, &expected);
+        assert!(
+            mismatch.is_none(),
+            "{base}, shards={shards:?}: {}",
+            mismatch.unwrap_or_default()
+        );
+    }
+    println!(
+        "diff_mimir: verified overflow average: Krabka MAX, unsharded Mimir MAX, default Mimir +Inf"
     );
     Ok(())
 }

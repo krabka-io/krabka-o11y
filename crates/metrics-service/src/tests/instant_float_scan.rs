@@ -103,6 +103,23 @@ async fn refreshing_store_preserves_shared_labels_and_tenant_deletion() {
     assert!(shared.len() == 1);
     assert!(shared[0].as_ref() == &labels());
     assert!(Arc::ptr_eq(&shared[0], &hot[0]));
+    let mapped = fixture
+        .store
+        .series_shared_by_fingerprint("tenant-a", &matchers, 5_000, 12_000)
+        .await
+        .unwrap();
+    assert!(mapped == BTreeMap::from([(labels().fingerprint(), Arc::clone(&hot[0]))]));
+    assert!(Arc::ptr_eq(&mapped[&labels().fingerprint()], &hot[0]));
+    for (tenant, start, end) in [("other", 5_000, 12_000), ("tenant-a", 12_001, 13_000)] {
+        assert!(
+            fixture
+                .store
+                .series_shared_by_fingerprint(tenant, &matchers, start, end)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
     let tenant = TenantId::new("tenant-a").unwrap();
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
     let expected: QueryResult = serde_json::from_value(serde_json::json!({
@@ -151,6 +168,17 @@ async fn refreshing_store_preserves_shared_labels_and_tenant_deletion() {
     assert!(published[0].as_ref() == &labels());
     assert!(!Arc::ptr_eq(&published[0], &hot[0]));
     assert!(Arc::ptr_eq(&shared[0], &hot[0]));
+    let published_map = fixture
+        .store
+        .series_shared_by_fingerprint("tenant-a", &matchers, 5_000, 12_000)
+        .await
+        .unwrap();
+    assert!(published_map == BTreeMap::from([(labels().fingerprint(), Arc::new(labels()))]));
+    assert!(!Arc::ptr_eq(
+        &published_map[&labels().fingerprint()],
+        &hot[0]
+    ));
+    assert!(Arc::ptr_eq(&mapped[&labels().fingerprint()], &hot[0]));
     let repeated = fixture
         .store
         .series_shared("tenant-a", &matchers, 5_000, 12_000)
@@ -195,6 +223,15 @@ async fn refreshing_store_preserves_shared_labels_and_tenant_deletion() {
             .unwrap()
             .is_empty()
     );
+    assert!(
+        fixture
+            .store
+            .series_shared_by_fingerprint("tenant-a", &matchers, 5_000, 12_000)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(mapped == BTreeMap::from([(labels().fingerprint(), Arc::clone(&hot[0]))]));
     assert!(shared[0].as_ref() == &labels());
     assert!(fixture.reads.load(Ordering::Relaxed) == 0);
 }
