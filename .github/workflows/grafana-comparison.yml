@@ -49,6 +49,10 @@ on:
         type: choice
         options: [none, cpu, allocations]
         default: none
+      profile_query_only:
+        description: CPU reads of the complete profiles seed without writers
+        type: boolean
+        default: false
       profiles_target:
         description: Profiles layout (both compares split and all on the same VM)
         type: choice
@@ -76,17 +80,22 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
-      - name: Validate revision comparison inputs
+      - name: Validate comparison and profiling inputs
         env:
           BASELINE_RUN: ${{ inputs.baseline_image_artifact_run }}
           BASELINE_NAME: ${{ inputs.baseline_image_artifact_name }}
           PROFILING: ${{ inputs.profiling }}
+          PROFILE_QUERY_ONLY: ${{ inputs.profile_query_only }}
+          SIGNAL: ${{ inputs.signal }}
           PHASES: ${{ inputs.phases }}
           MAX_CARDINALITY: ${{ inputs.max_cardinality }}
           DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
           PROFILES_TARGET: ${{ inputs.profiles_target }}
         run: |
           set -euo pipefail
+          if [[ "${PROFILE_QUERY_ONLY}" == true ]]; then
+            [[ "${PROFILING}" == cpu && "${SIGNAL}" == profiles ]]
+          fi
           if [[ -n "${BASELINE_RUN}" || -n "${BASELINE_NAME}" ]]; then
             [[ "${BASELINE_RUN}" =~ ^[1-9][0-9]*$ && -n "${BASELINE_NAME}" ]]
             [[ "${PROFILING}" == none ]]
@@ -270,15 +279,19 @@ jobs:
           SIGNAL: ${{ matrix.signal }}
           DEPLOYMENT_TARGET: ${{ inputs.deployment_target }}
           PROFILE_MODE: ${{ inputs.profiling }}
+          PROFILE_QUERY_ONLY: ${{ inputs.profile_query_only }}
         run: |
           set -euo pipefail
+          python3 tools/profile-grafana-check.py
           target="${DEPLOYMENT_TARGET}"
           [[ "${target}" != both ]]
+          query_args=()
+          if [[ "${PROFILE_QUERY_ONLY}" == true ]]; then query_args=(--query-only); fi
           python3 -u tools/profile-grafana.py --signal "${SIGNAL}" --mode "${PROFILE_MODE}" \
             --image "$(cat qualification/image/tag)" \
             --image-digest "$(cat qualification/image/manifest-digest)" \
             --image-commit "$(cat qualification/image/commit)" \
-            --deployment-target "${target}" \
+            --deployment-target "${target}" "${query_args[@]}" \
             --output qualification/evidence/comparison/profiles
       - name: Hash evidence
         if: always()

@@ -1,7 +1,7 @@
 use super::{
     Arc, BTreeSet, LabelMatcher, MemTable, ProfileError, ProfileScan, ProfileStats, ProfileStore,
-    RecordBatch, UnionSymbols, collect_and_remap, max_option, min_option, profile_samples_schema,
-    sorted_union,
+    RecordBatch, UnionSymbols, collect_and_remap, filter_hot_samples, max_option, min_option,
+    profile_samples_schema, sorted_union,
 };
 
 #[derive(Clone)]
@@ -44,6 +44,22 @@ where
         let hot = collect_and_remap(hot, 1, &mut symbols).await?;
         let cold = collect_and_remap(cold, 2, &mut symbols).await?;
         let ctx = crate::profile_session_context();
+        let samples_table = "samples".to_string();
+        if let Some(mut batches) = filter_hot_samples(&hot, &cold)? {
+            batches.extend(cold);
+            if batches.is_empty() {
+                batches.push(RecordBatch::new_empty(profile_samples_schema()));
+            }
+            let table = MemTable::try_new(profile_samples_schema(), vec![batches])
+                .map_err(|err| ProfileError::Store(err.to_string()))?;
+            ctx.register_table(&samples_table, Arc::new(table))
+                .map_err(|err| ProfileError::Store(err.to_string()))?;
+            return Ok(ProfileScan {
+                ctx,
+                samples_table,
+                symbols: Arc::new(symbols),
+            });
+        }
         for (name, mut batches) in [("hot_samples", hot), ("cold_samples", cold)] {
             if batches.is_empty() {
                 batches.push(RecordBatch::new_empty(profile_samples_schema()));
@@ -65,7 +81,6 @@ where
             )
             .await
             .map_err(|err| ProfileError::Store(err.to_string()))?;
-        let samples_table = "samples".to_string();
         ctx.register_table(&samples_table, samples.into_view())
             .map_err(|err| ProfileError::Store(err.to_string()))?;
         Ok(ProfileScan {

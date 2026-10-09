@@ -5,6 +5,7 @@ API acknowledgements have different durability contracts. This experiment
 reports accepted throughput, not equivalent durable throughput.
 """
 import argparse
+import base64
 from decimal import Decimal, InvalidOperation
 import functools
 import hashlib
@@ -178,6 +179,118 @@ def metrics_seed_ledger(records, response, evaluation_ms):
     except (KeyError, TypeError, ValueError, IndexError, InvalidOperation) as error:
         ledger['error'] = f'metrics seed matrix mismatch: {type(error).__name__}: {error}'
     return ledger
+
+
+def profile_seed_expected(records):
+    if not records:
+        raise ValueError('no profile seed receipts')
+    tenant, cardinality, age = (records[0][key] for key in ('tenant', 'cardinality', 'age_seconds'))
+    if type(cardinality) is not int or cardinality < 1 or len(records) != cardinality:
+        raise ValueError('invalid profile seed cardinality or receipt count')
+    sequences, expected = [], {}
+    for record in records:
+        sequence = record['sequence']
+        if (type(sequence) is not int or sequence < 0 or type(record['cardinality']) is not int
+                or (record['tenant'], record['cardinality'], record['age_seconds']) != (tenant, cardinality, age)
+                or type(record['status']) is not int or not 200 <= record['status'] < 300
+                or type(record['rows']) is not int or record['rows'] != env.POINTS
+                or not isinstance(record['request_path'], str)):
+            raise ValueError('invalid profile seed receipt')
+        sequences.append(sequence)
+        series = str(sequence % cardinality)
+        request = env.urllib.parse.urlsplit(record['request_path'])
+        query = env.urllib.parse.parse_qs(request.query, keep_blank_values=True)
+        if (request.path != '/ingest' or request.scheme or request.netloc or request.fragment
+                or set(query) != {'name', 'format', 'units', 'sampleRate', 'from', 'until'}
+                or any(len(values) != 1 for values in query.values())
+                or query['name'] != [f'envelope{{service_name=envelope,series={series}}}']
+                or query['format'] != ['groups'] or query['units'] != ['nanoseconds']
+                or query['sampleRate'] != ['1000000000'] or query['from'] != query['until']
+                or not re.fullmatch('[0-9]+', query['until'][0])):
+            raise ValueError('profile receipt differs from the encoded seed')
+        stamp = int(query['until'][0])
+        if stamp > 2**63 - 2 or series in expected:
+            raise ValueError('invalid timestamp or duplicate profile seed series')
+        expected[series] = stamp
+    sequences.sort()
+    if sequences != list(range(sequences[0], sequences[0] + cardinality)):
+        raise ValueError('seed sequences are not distinct and consecutive')
+    return expected
+
+
+def profile_seed_series(response):
+    if not isinstance(response, dict) or set(response) != {'labelsSet'} or not isinstance(response['labelsSet'], list):
+        raise ValueError('invalid profile Series response')
+    result = []
+    for entry in response['labelsSet']:
+        if not isinstance(entry, dict) or set(entry) != {'labels'} or not isinstance(entry['labels'], list):
+            raise ValueError('invalid profile Series labels')
+        labels = []
+        for pair in entry['labels']:
+            if (not isinstance(pair, dict) or set(pair) - {'name', 'value'}
+                    or not isinstance(pair.get('name'), str) or not isinstance(pair.get('value', ''), str)):
+                raise ValueError('invalid profile Series label')
+            labels.append((pair['name'], pair.get('value', '')))
+        if len({name for name, _ in labels}) != len(labels):
+            raise ValueError('duplicate profile Series label')
+        result.append(tuple(sorted(labels)))
+    return sorted(result)
+
+
+def profile_seed_stacks(response):
+    # The seed has one root, one envelope parent and ten positive leaf stacks.
+    # Decode name indexes and delta bars; their ordering is not an identity.
+    if not isinstance(response, dict) or set(response) != {'flamegraph'}:
+        raise ValueError('invalid profile stack response')
+    graph = response['flamegraph']
+    if not isinstance(graph, dict) or set(graph) - {'names', 'levels', 'total', 'maxSelf'}:
+        raise ValueError('unexpected profile flamegraph fields')
+    names, levels = graph['names'], graph['levels']
+    if (not isinstance(names, list) or not all(isinstance(name, str) for name in names)
+            or len(names) != len(set(names)) or not isinstance(levels, list) or len(levels) != 3):
+        raise ValueError('invalid profile flamegraph names or levels')
+    def integer(value):
+        if type(value) is not int and not (isinstance(value, str) and re.fullmatch('-?(0|[1-9][0-9]*)', value)):
+            raise ValueError('invalid profile flamegraph integer')
+        number = int(value)
+        if not 0 <= number <= 2**63 - 1:
+            raise ValueError('invalid profile flamegraph integer range')
+        return number
+    parents, stacks, used_names, max_self = [], [], set(), 0
+    total = integer(graph.get('total', 0))
+    for depth, level in enumerate(levels):
+        if not isinstance(level, dict) or set(level) != {'values'} or not isinstance(level['values'], list) or len(level['values']) % 4:
+            raise ValueError('malformed profile flamegraph bars')
+        values = [integer(value) for value in level['values']]
+        current, x = [], 0
+        for index in range(0, len(values), 4):
+            delta, width, self_value, name_index = values[index:index + 4]
+            x += delta
+            end = x + width
+            if name_index >= len(names) or width == 0 or self_value > width or end > total:
+                raise ValueError('invalid profile flamegraph bar')
+            name = names[name_index]
+            used_names.add(name_index)
+            if depth == 0:
+                if name != 'total' or x != 0 or width != total or self_value != 0:
+                    raise ValueError('invalid profile flamegraph root')
+                path = ()
+            else:
+                owners = [path for left, right, path in parents if left <= x and end <= right]
+                if len(owners) != 1:
+                    raise ValueError('profile flamegraph bar has no unique parent')
+                path = owners[0] + (name,)
+            if self_value:
+                stacks.append((path, self_value))
+            max_self = max(max_self, self_value)
+            current.append((x, end, path))
+            x = end
+        if x != total or depth < 2 and len(current) != 1 or depth == 2 and len(current) != env.POINTS:
+            raise ValueError('incomplete profile flamegraph level')
+        parents = current
+    if used_names != set(range(len(names))) or integer(graph.get('maxSelf', 0)) != max_self:
+        raise ValueError('unused profile names or wrong maximum self value')
+    return {'total': total, 'max_self': max_self, 'stacks': sorted(stacks)}
 
 
 def log_seed_ledger(records, response, limit):
@@ -476,6 +589,8 @@ class ComparisonDeployment(env.Deployment):
             record.update(status=status, rows=rows, seconds=time.monotonic() - started)
             if signal == 'logs':
                 record['request'] = body
+            elif signal == 'profiles':
+                record['request_path'] = path
             records.append(record)
             if not 200 <= status < 300:
                 raise RuntimeError(f'seed failed: {status} {response[:200]!r}')
@@ -559,6 +674,41 @@ class ComparisonDeployment(env.Deployment):
             observed = float(json.loads(response)['flamegraph']['total'])
             if observed != expected:
                 raise RuntimeError(f'seed value mismatch after cold handoff: expected {expected}, observed {observed}')
+            ledger = {'verified': False, 'complete_seed': False, 'verified_series_count': 0,
+                      'scope': 'Untimed per-series seed reads warm both backends; timed queries and writers are unchanged.'}
+            try:
+                expected_series = profile_seed_expected(records)
+                ledger['expected_series_count'] = len(expected_series)
+                query = {**body, 'start': min(body['start'], min(expected_series.values()) - 1),
+                         'end': max(body['end'], max(expected_series.values()) + 1)}
+                series_request = {'matchers': [query['labelSelector']],
+                                  'labelNames': ['__profile_type__', 'service_name', 'series'],
+                                  'start': query['start'], 'end': query['end']}
+                status, response = http(env.QUERY[signal], '/querier.v1.QuerierService/Series', tenant, series_request)
+                (self.evidence / f'{tenant}.seed-series.json').write_bytes(response)
+                ledger.update(series_request=series_request, series_status=status)
+                identities = sorted(tuple(sorted((('__profile_type__', query['profileTypeID']),
+                                                    ('service_name', 'envelope'), ('series', series))))
+                                    for series in expected_series)
+                if status != 200 or profile_seed_series(json.loads(response)) != identities:
+                    raise ValueError('profile seed series identities differ')
+                expected_stacks = {'total': env.POINTS, 'max_self': 1,
+                                   'stacks': sorted((('envelope', f'frame_{point}'), 1) for point in range(env.POINTS))}
+                with (self.evidence / f'{tenant}.seed-stacks.jsonl').open('w') as output:
+                    for series in sorted(expected_series):
+                        request = {**query, 'labelSelector': f'{{service_name="envelope",series="{series}"}}'}
+                        status, response = http(env.QUERY[signal], path, tenant, request)
+                        output.write(json.dumps({'series': series, 'request': request, 'status': status,
+                                                 'response_base64': base64.b64encode(response).decode()}) + '\n')
+                        if status != 200 or profile_seed_stacks(json.loads(response)) != expected_stacks:
+                            raise ValueError(f'profile seed stacks differ: {series} ({status})')
+                        ledger['verified_series_count'] += 1
+                ledger.update(verified=True, complete_seed=True)
+            except (ValueError, TypeError, KeyError, IndexError) as error:
+                ledger['error'] = str(error)
+                raise RuntimeError(f'profile seed mismatch: {error}') from error
+            finally:
+                (self.evidence / f'{tenant}.seed-ledger.json').write_text(json.dumps(ledger, indent=2) + '\n')
 
 
 
@@ -660,7 +810,164 @@ def run(args):
     (args.output / 'SHA256SUMS').write_text(''.join(checksums))
 
 
+def profile_seed_self_test():
+    from unittest.mock import patch
+    # The literal API shape comes from the captured pinned native seed reply.
+    captured = {'flamegraph': {'names': ['total', 'envelope', 'frame_9', 'frame_8', 'frame_7', 'frame_6',
+                                        'frame_5', 'frame_4', 'frame_3', 'frame_2', 'frame_1', 'frame_0'],
+                'levels': [{'values': ['0', '1000', '0', '0']}, {'values': ['0', '1000', '0', '1']},
+                           {'values': sum((['0', '100', '100', str(index)] for index in range(11, 1, -1)), [])}],
+                'total': '1000', 'maxSelf': '100'}}
+    assert profile_seed_stacks(captured) == {'total': 1000, 'max_self': 100,
+        'stacks': sorted((('envelope', f'frame_{point}'), 100) for point in range(10))}
+    with patch.object(time, 'time_ns', return_value=1700000000000000000):
+        request = write_request('profiles', 37, 100, 'seed-test')
+    expected_path = '/ingest?' + env.urllib.parse.urlencode({
+        'name': 'envelope{service_name=envelope,series=37}', 'format': 'groups', 'units': 'nanoseconds',
+        'until': 1700000000000, 'sampleRate': 1000000000, 'from': 1700000000000})
+    assert request == (expected_path, '\n'.join(f'envelope;frame_{point} 1' for point in range(10)), 'text/plain', 10)
+    cases = [(1, None), (3, None), (11, None), (100, None), (1100, None), (1100, 'last_missing')]
+    cases += [(100, failure) for failure in ('missing_series_compensated', 'wrong_frame_same_total',
+        'cross_series_frames_compensated', 'duplicate_series', 'wrong_series_same_count', 'duplicate_label',
+        'empty_series', 'series_error', 'duplicate_stack', 'malformed_bar', 'invalid_index', 'orphan_bar',
+        'wrong_root', 'wrong_self', 'boolean_counter', 'unknown_field', 'unknown_response', 'stack_error', 'malformed_json')]
+    for case_index, (cardinality, failure) in enumerate(cases):
+        with tempfile.TemporaryDirectory() as directory:
+            deployment = object.__new__(ComparisonDeployment)
+            deployment.evidence = pathlib.Path(directory)
+            deployment.native = case_index % 2 == 0
+            deployment.sequence = iter(range(37, 37 + cardinality))
+            deployment.wait_query = lambda *_: None
+            events, submitted, queried = [], [], []
+            deployment.drain = lambda _: events.append('drain') or {'recovered': True}
+            # This is an independent model of submitted profiles, including
+            # corruptions that keep both the old total and all series labels.
+            model = {str(series): {f'frame_{point}': 1 for point in range(10)} for series in range(cardinality)}
+            if failure == 'missing_series_compensated':
+                del model[str(cardinality - 1)]
+                model['0'] = {frame: 2 for frame in model['0']}
+            elif failure == 'wrong_frame_same_total':
+                for frames in model.values():
+                    frames['substituted_frame'] = frames.pop('frame_9')
+            elif failure == 'cross_series_frames_compensated':
+                del model['0']['frame_0']
+                model['1']['frame_0'] = 2
+            elif failure == 'wrong_series_same_count':
+                model[str(cardinality)] = model.pop('0')
+            def graph(frames):
+                names = ['total', 'envelope', *sorted(frames, reverse=True)]
+                total = sum(frames.values())
+                # Reverse table/sibling order and vary JSON integer spelling.
+                number = str if case_index % 2 else int
+                leaf = sum(([number(0), number(weight), number(weight), number(names.index(frame))]
+                            for frame, weight in sorted(frames.items())), [])
+                return {'flamegraph': {'names': names,
+                    'levels': [{'values': list(map(number, [0, total, 0, 0]))},
+                               {'values': list(map(number, [0, total, 0, 1]))}, {'values': leaf}],
+                    'total': number(total), 'maxSelf': number(max(frames.values()))}}
+            def profiles_http(_port, path, _tenant, body=None, *_content):
+                if path.startswith('/ingest?'):
+                    submitted.append(path)
+                    return 204, b''
+                if path.endswith('/Series'):
+                    events.append('series')
+                    assert body['matchers'] == ['{service_name="envelope"}']
+                    assert body['labelNames'] == ['__profile_type__', 'service_name', 'series']
+                    sets = [{'labels': [{'name': 'series', 'value': series}, {'name': 'service_name', 'value': 'envelope'},
+                                        {'name': '__profile_type__', 'value': 'process_cpu:cpu:nanoseconds:cpu:nanoseconds'}]}
+                            for series in reversed(sorted(model))]
+                    if failure == 'duplicate_series':
+                        sets.append(sets[0])
+                    elif failure == 'duplicate_label':
+                        sets[0]['labels'].append(sets[0]['labels'][0])
+                    elif failure == 'empty_series':
+                        sets.append({'labels': []})
+                    return (503 if failure == 'series_error' else 200), json.dumps({'labelsSet': sets}).encode()
+                assert path == '/querier.v1.QuerierService/SelectMergeStacktraces'
+                selected = re.fullmatch(r'\{service_name="envelope",series="([0-9]+)"\}', body['labelSelector'])
+                if not selected:
+                    aggregate = {}
+                    for frames in model.values():
+                        for frame, weight in frames.items():
+                            aggregate[frame] = aggregate.get(frame, 0) + weight
+                    assert sum(aggregate.values()) == cardinality * 10
+                    return 200, json.dumps(graph(aggregate)).encode()
+                series = selected[1]
+                queried.append(series)
+                if failure == 'last_missing' and series == sorted(model)[-1]:
+                    return 404, b'not found'
+                reply = graph(model[series])
+                values = reply['flamegraph']['levels'][2]['values']
+                if failure == 'duplicate_stack':
+                    values[7] = values[3]
+                elif failure == 'malformed_bar':
+                    values.pop()
+                elif failure == 'invalid_index':
+                    values[3] = 99
+                elif failure == 'orphan_bar':
+                    values[0] = 1
+                elif failure == 'wrong_root':
+                    reply['flamegraph']['names'][0] = 'wrong'
+                elif failure == 'wrong_self':
+                    reply['flamegraph']['maxSelf'] = 2
+                elif failure == 'boolean_counter':
+                    values[0] = False
+                elif failure == 'unknown_field':
+                    reply['flamegraph']['unexpected'] = 0
+                elif failure == 'unknown_response':
+                    reply['error'] = 'failed'
+                elif failure == 'malformed_json':
+                    return 200, b'not-json'
+                return (503 if failure == 'stack_error' else 200), json.dumps(reply).encode()
+            with patch.dict(globals(), {'http': profiles_http}), patch.object(time, 'sleep', side_effect=lambda n: events.append(('sleep', n))), \
+                    patch.object(time, 'time_ns', return_value=1700000000000000000), patch.object(time, 'time', return_value=1700000000):
+                try:
+                    deployment.seed('profiles', 'seed-test', cardinality)
+                except RuntimeError as error:
+                    assert failure is not None and 'profile seed mismatch' in str(error)
+                else:
+                    assert failure is None
+            ledger = json.loads((deployment.evidence / 'seed-test.seed-ledger.json').read_text())
+            assert len(submitted) == cardinality and ledger['verified'] == (failure is None)
+            assert events == ([] if deployment.native else ['drain']) + [('sleep', 20), 'series']
+            records = [json.loads(line) for line in (deployment.evidence / 'seed-test.seed.jsonl').read_text().splitlines()]
+            assert sorted(record['request_path'] for record in records) == sorted(submitted)
+            if failure is None:
+                assert len(queried) == len(set(queried)) == ledger['verified_series_count'] == cardinality
+            elif failure == 'last_missing':
+                assert len(queried) == cardinality and ledger['verified_series_count'] == cardinality - 1
+            if queried:
+                raw = [json.loads(line) for line in (deployment.evidence / 'seed-test.seed-stacks.jsonl').read_text().splitlines()]
+                assert [entry['series'] for entry in raw] == queried
+                assert all(base64.b64decode(entry['response_base64'], validate=True) for entry in raw)
+    def receipts(sequences, cardinality):
+        with patch.object(time, 'time_ns', return_value=1700000000000000000):
+            return [{'sequence': sequence, 'tenant': 'seed-test', 'cardinality': cardinality, 'age_seconds': 0,
+                     'status': 204, 'rows': 10, 'request_path': write_request('profiles', sequence, cardinality, 'seed-test')[0]}
+                    for sequence in sequences]
+    assert len(profile_seed_expected(receipts(range(37, 20037), 20000))) == 20000
+    invalid = [receipts([0, 2], 3), receipts([0, 1, 5], 3), receipts([0, 0, 2], 3)]
+    for key, value in [('sequence', True), ('cardinality', True), ('cardinality', 0), ('rows', 10.0), ('status', 204.0),
+                       ('request_path', None), ('request_path', expected_path + '&units=nanoseconds')]:
+        records = receipts([37], 1)
+        records[0][key] = value
+        invalid.append(records)
+    for suffix in ('&unexpected=', '&until=', '&format='):
+        records = receipts([37], 1)
+        records[0]['request_path'] += suffix
+        invalid.append(records)
+    for records in invalid:
+        try:
+            profile_seed_expected(records)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('invalid profile seed receipts accepted')
+    print('profile seed controls passed: captured shape, five full fixtures, 20 API negatives, thirteen receipt negatives')
+
+
 def self_test():
+    profile_seed_self_test()
     from unittest.mock import patch
 
     records = [{'request': {'streams': [
