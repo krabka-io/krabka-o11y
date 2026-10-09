@@ -7,12 +7,9 @@
 //! [`krabka_blockstore::CompactionCandidate`] rather than holding a second
 //! copy of the rule.
 //!
-//! A log index write is a whole-object put with last-writer-wins semantics,
-//! and the compactor holds the index in memory between batches. The sweep
-//! therefore runs inside the compactor loop and not in a task of its own. A
-//! sweeper in another process would rewrite a manifest from a snapshot taken
-//! before the compactor's last put, and the block that put had just published
-//! would be gone from the index with nothing to say so.
+//! The sweep runs inside the compactor loop. Shard changes use conditional
+//! writes to retain blocks published by other builders after the sweep read
+//! its indexes. Legacy full manifests remain whole-object replacements.
 //!
 //! The index comes first and the objects come second. A reader that lists
 //! after the rewrite never learns of the block, so it never asks for the
@@ -21,9 +18,8 @@
 
 use krabka_blockstore::{
     BlockDeletion, BlockLevel, BlockTimestampUnit, CompactionCandidate, RetentionWindows,
-    delete_blocks, delete_tenant_log_index_shard_from_object_store,
-    list_tenant_log_index_shard_ranges_from_object_store, plan_expired_blocks,
-    unescape_object_path_segment,
+    delete_blocks, list_tenant_log_index_shard_ranges_from_object_store, plan_expired_blocks,
+    unescape_object_path_segment, update_tenant_log_index_shard_to_object_store,
 };
 
 use crate::{
@@ -33,8 +29,6 @@ use crate::{
     read_tenant_log_index_shard_from_object_store,
     read_tenant_log_index_shard_ranges_from_object_store,
     write_tenant_log_index_manifest_to_object_store,
-    write_tenant_log_index_shard_catalog_to_object_store,
-    write_tenant_log_index_shard_to_object_store,
 };
 
 mod list_log_index_tenants;

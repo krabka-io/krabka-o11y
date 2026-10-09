@@ -1,5 +1,24 @@
 use super::*;
-use crate::{ByteSize, Time};
+use crate::{ByteSize, Time, WalLogRecord};
+
+struct SnapshotLogHotTail(Vec<Arc<WalLogRecord>>);
+
+impl LogHotTail for SnapshotLogHotTail {
+    fn records(&self) -> Vec<WalLogRecord> {
+        self.0
+            .iter()
+            .map(|record| record.as_ref().clone())
+            .collect()
+    }
+
+    fn records_shared_in_range(&self, start_ns: i64, end_ns: i64) -> Vec<Arc<WalLogRecord>> {
+        self.0
+            .iter()
+            .filter(|record| record.timestamp_ns >= start_ns && record.timestamp_ns <= end_ns)
+            .cloned()
+            .collect()
+    }
+}
 
 impl QuerierState {
     #[must_use]
@@ -265,6 +284,66 @@ impl QuerierState {
         tenant: &str,
         query_range: TimeRange,
     ) -> Result<Self, BlockStoreError> {
+        self.with_request_tenant_index_and_hot_range(tenant, query_range, Some(query_range))
+            .await
+    }
+
+    pub(crate) async fn with_request_tenant_index_and_hot_range(
+        &self,
+        tenant: &str,
+        query_range: TimeRange,
+        hot_range: Option<TimeRange>,
+    ) -> Result<Self, BlockStoreError> {
+        if self.dynamic_index.is_none() {
+            return Ok(self.clone());
+        }
+        loop {
+            let mut request = self.clone();
+            let captured = self.hot_tail.as_ref().map(|hot_tail| {
+                let (version, frontier) = match &hot_tail.frontier {
+                    CompactionFrontierSource::Shared(shared) => {
+                        let (version, frontier) = shared.snapshot_with_version();
+                        request.dynamic_index_cache =
+                            self.dynamic_index_cache.for_frontier(shared, version);
+                        (Some(version), frontier)
+                    }
+                    CompactionFrontierSource::Snapshot(frontier) => (None, frontier.clone()),
+                };
+                (hot_tail, version, frontier)
+            });
+            let loaded = request.with_loaded_tenant_index(tenant, query_range).await;
+            let records = captured.as_ref().map(|(hot_tail, _, _)| {
+                let range = hot_range.unwrap_or(TimeRange {
+                    start_ns: i64::MIN,
+                    end_ns: i64::MAX,
+                });
+                hot_tail
+                    .source
+                    .records_shared_in_range(range.start_ns, range.end_ns)
+            });
+            if let Some((hot_tail, Some(version), _)) = &captured
+                && let CompactionFrontierSource::Shared(shared) = &hot_tail.frontier
+                && shared.snapshot_with_version().0 != *version
+            {
+                continue;
+            }
+            let mut request = loaded?;
+            if let Some((_, _, frontier)) = captured {
+                request = request.with_hot_tail_frontier(
+                    SnapshotLogHotTail(records.expect("hot tail snapshot exists")),
+                    frontier,
+                );
+            }
+            request.dynamic_index = None;
+            return Ok(request);
+        }
+    }
+
+    async fn with_loaded_tenant_index(
+        &self,
+        tenant: &str,
+        query_range: TimeRange,
+    ) -> Result<Self, BlockStoreError> {
         let Some(dynamic_index) = &self.dynamic_index else {
             return Ok(self.clone());
         };
@@ -339,26 +418,21 @@ impl QuerierState {
         store: &dyn ObjectStore,
         prefix: &ObjectPath,
         tenant: &str,
-        query_range: TimeRange,
     ) -> Result<Vec<TimeRange>, BlockStoreError> {
-        let required_from_ns =
-            krabka_blockstore::log_tenant_index_shard_list_offset_start_ns(query_range);
         let cache_key = DynamicShardRangesCacheKey {
             tenant: tenant.to_string(),
         };
         if let Some(ranges) = self
             .dynamic_index_cache
-            .get_shard_ranges(&cache_key, required_from_ns)
+            .get_shard_ranges(&cache_key, i64::MIN)
         {
             return Ok(ranges);
         }
 
+        // A later query can extend either bound, so cache all tenant ranges.
         let mut shard_ranges =
-            krabka_blockstore::list_tenant_log_index_shard_ranges_overlapping_query_from_object_store(
-                store,
-                prefix,
-                tenant,
-                query_range,
+            krabka_blockstore::list_tenant_log_index_shard_ranges_from_object_store(
+                store, prefix, tenant,
             )
             .await?;
         if shard_ranges.is_empty() {
@@ -374,11 +448,8 @@ impl QuerierState {
                 };
         }
 
-        self.dynamic_index_cache.insert_shard_ranges(
-            cache_key,
-            required_from_ns,
-            shard_ranges.clone(),
-        );
+        self.dynamic_index_cache
+            .insert_shard_ranges(cache_key, i64::MIN, shard_ranges.clone());
         Ok(shard_ranges)
     }
 
@@ -390,7 +461,7 @@ impl QuerierState {
         query_range: TimeRange,
     ) -> Result<(LabelIndex, BlockIndex), BlockStoreError> {
         let shard_ranges = self
-            .cached_tenant_shard_ranges(store, prefix, tenant, query_range)
+            .cached_tenant_shard_ranges(store, prefix, tenant)
             .await?;
         let mut indexes = Vec::new();
         let mut misses = Vec::new();

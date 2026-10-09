@@ -17,7 +17,7 @@ Each format has one current version. Writers stamp it. Readers reject a missing,
 | blockstore | profile index and symbol shards | binary shard version 1 | exact version; symbol data is immutable per block |
 | blockstore | index snapshot manifests | JSON version 1 | exact version; snapshots are replaceable from shards |
 | blockstore | storage audit report, repair report, and repair audit log (JSONL of `intent` and `outcome` lines) | JSON `schema_version: 1` | exact version; readers reject another version before a repair acts |
-| logs | block/index manifests, shard catalogs, and compaction frontier | JSON version 1 | exact version; atomic replacement |
+| logs | block/index manifests, shard catalogs, and compaction frontier | JSON version 1 | exact version; index shards use immutable numbered snapshots and conditional create; other log metadata uses atomic replacement |
 | metrics | compaction index manifests and block-kind keys | JSON/versioned key version 1 | exact version; source blocks and WAL remain authoritative |
 | metrics | Prometheus TSDB import records and block-ULID bindings | JSON `version: 1`, required | exact version; another or absent version stops the import before it writes |
 | metrics | Prometheus TSDB import publication markers (`uploaded/<ULID>-<hash>/_published`) | empty object; its presence is the state | readers read no `.index` manifest in an import directory without the marker |

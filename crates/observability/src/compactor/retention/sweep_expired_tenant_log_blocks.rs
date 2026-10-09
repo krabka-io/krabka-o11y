@@ -1,12 +1,11 @@
 use super::{
     BTreeMap, BTreeSet, BlockDeletion, BlockDescriptor, BlockStoreError, BlockTimestampUnit,
-    CompactorRunError, ObjectPath, ObjectStore, RetentionWindows, TimeRange,
-    delete_tenant_log_index_shard_from_object_store, log_block_deletion, log_retention_candidates,
-    plan_expired_blocks, read_tenant_log_index_manifest_from_object_store,
+    CompactorRunError, ObjectPath, ObjectStore, RetentionWindows, log_block_deletion,
+    log_retention_candidates, plan_expired_blocks,
+    read_tenant_log_index_manifest_from_object_store,
     read_tenant_log_index_shard_from_object_store, retire_blocks_from_index,
-    tenant_log_index_shard_ranges, write_tenant_log_index_manifest_to_object_store,
-    write_tenant_log_index_shard_catalog_to_object_store,
-    write_tenant_log_index_shard_to_object_store,
+    tenant_log_index_shard_ranges, update_tenant_log_index_shard_to_object_store,
+    write_tenant_log_index_manifest_to_object_store,
 };
 
 /// Drops one tenant's expired blocks from every index that names them, and
@@ -17,14 +16,9 @@ use super::{
 /// two steps sees an index that does not name the block, so it never asks for
 /// the object.
 ///
-/// A shard that keeps no block leaves the catalog, and its manifest object is
-/// deleted. The catalog is rewritten first, so the two steps keep the same
-/// order as the rest of the sweep: index before object.
-/// [`read_tenant_log_index_shards_from_object_store`] reads an absent shard
-/// manifest as an empty shard, so a query that read the catalog before the
-/// rewrite still succeeds.
-///
-/// [`read_tenant_log_index_shards_from_object_store`]: krabka_blockstore::read_tenant_log_index_shards_from_object_store
+/// Empty shards retain an empty manifest. Deleting their generation keys can
+/// remove a concurrent append. Pruning keeps the newest eight generations per
+/// range; empty ranges continue to accumulate.
 ///
 /// # Errors
 /// Returns the block-store error when an index cannot be read or written.
@@ -87,38 +81,22 @@ pub(crate) async fn sweep_expired_tenant_log_blocks(
         .await?;
     }
 
-    let mut emptied: Vec<TimeRange> = Vec::new();
     for (shard_range, (label_index, block_index)) in &shards {
         let Some((next_label_index, next_block_index)) =
             retire_blocks_from_index(tenant, label_index, block_index, &expired)?
         else {
             continue;
         };
-        if next_block_index.blocks().is_empty() {
-            emptied.push(*shard_range);
-            continue;
-        }
-        write_tenant_log_index_shard_to_object_store(
+        update_tenant_log_index_shard_to_object_store(
             store,
             prefix,
             tenant,
             *shard_range,
+            block_index,
             &next_label_index,
             &next_block_index,
         )
         .await?;
-    }
-    if !emptied.is_empty() {
-        let kept: Vec<TimeRange> = shards
-            .iter()
-            .map(|(shard_range, _)| *shard_range)
-            .filter(|shard_range| !emptied.contains(shard_range))
-            .collect();
-        write_tenant_log_index_shard_catalog_to_object_store(store, prefix, tenant, &kept).await?;
-        for shard_range in &emptied {
-            delete_tenant_log_index_shard_from_object_store(store, prefix, tenant, *shard_range)
-                .await?;
-        }
     }
 
     Ok(expired

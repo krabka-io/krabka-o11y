@@ -594,8 +594,12 @@ proptest! {
         let format = LineFormat::new(template).unwrap();
         let actual = format.render_bytes_with_variables_and_queries(&variables, &queries).unwrap();
         let selected = &bytes[lower..upper];
-        let hex = selected.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-        let ranged = selected.iter().map(|byte| format!("uint8:{byte:02x};")).collect::<String>();
+        let mut hex = String::new();
+        let mut ranged = String::new();
+        for byte in selected {
+            write!(hex, "{byte:02x}").expect("write to String");
+            write!(ranged, "uint8:{byte:02x};").expect("write to String");
+        }
         prop_assert_eq!(actual, format!("[]uint8|{hex}|{ranged}").into_bytes());
         for (index, byte) in bytes.iter().enumerate() {
             let template = format!(r#"{{{{printf "%T:%d" (index $b {index}) (index $b {index})}}}}"#);

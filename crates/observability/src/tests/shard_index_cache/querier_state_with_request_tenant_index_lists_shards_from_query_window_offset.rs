@@ -1,8 +1,9 @@
+use assert2::assert;
+
 use super::*;
 
 #[tokio::test]
-pub(crate) async fn querier_state_with_request_tenant_index_lists_shards_from_query_window_offset()
-{
+pub(crate) async fn querier_state_lists_full_shard_prefix_and_filters_before_fetch() {
     let store = RecordingObjectStore::new();
     let prefix = ObjectPath::from("observability/logs");
     let tenant = "tenant-a";
@@ -20,10 +21,11 @@ pub(crate) async fn querier_state_with_request_tenant_index_lists_shards_from_qu
         BlockKey::new(tenant, 0, 40, 41, old_shard_range),
         BTreeSet::from([api]),
     ));
-    block_index.insert(BlockDescriptor::new(
+    let matching_block = BlockDescriptor::new(
         BlockKey::new(tenant, 0, 42, 43, matching_shard_range),
         BTreeSet::from([api]),
-    ));
+    );
+    block_index.insert(matching_block.clone());
     krabka_blockstore::write_tenant_log_index_shards_to_object_store(
         &store,
         &prefix,
@@ -48,16 +50,44 @@ pub(crate) async fn querier_state_with_request_tenant_index_lists_shards_from_qu
         .await
         .unwrap();
 
-    assert_eq!(
-        state.label_index.label_names(tenant),
-        BTreeSet::from(["app".to_string()])
-    );
-    let expected_offset = krabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant)
-        .join(format!("time={}", query_start - (query_end - query_start)))
-        .to_string();
+    let mut expected_blocks = BlockIndex::default();
+    expected_blocks.insert(matching_block);
+    assert!(state.label_index == labels_index && state.block_index == expected_blocks);
+
+    let shard_prefix =
+        krabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant).to_string();
+    let snapshot_paths = [old_shard_range, matching_shard_range].map(|range| {
+        let key =
+            krabka_blockstore::log_tenant_index_shard_manifest_object_path(&prefix, tenant, range);
+        format!(
+            "{}/00000000000000000000.json",
+            krabka_blockstore::index_snapshot_prefix_for_key(key.as_ref())
+        )
+    });
+    let gets = store.get_paths();
     assert!(
-        store.list_offsets().contains(&expected_offset),
-        "shard listing should start near the query window; offsets={:?}",
-        store.list_offsets()
+        gets.iter()
+            .filter(|path| *path == &snapshot_paths[0])
+            .count()
+            == 0
+    );
+    assert!(
+        gets.iter()
+            .filter(|path| *path == &snapshot_paths[1])
+            .count()
+            == 1
+    );
+    assert!(
+        store
+            .list_prefixes()
+            .iter()
+            .filter(|prefix| *prefix == &shard_prefix)
+            .count()
+            == 1,
+        "list the complete tenant prefix once"
+    );
+    assert!(
+        store.list_offsets().is_empty(),
+        "no offset can prove overlap coverage"
     );
 }

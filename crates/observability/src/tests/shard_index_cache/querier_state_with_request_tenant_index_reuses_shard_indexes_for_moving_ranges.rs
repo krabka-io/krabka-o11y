@@ -54,8 +54,7 @@ pub(crate) async fn querier_state_with_request_tenant_index_reuses_shard_indexes
         .unwrap();
 
     for state in [&first, &second] {
-        check!(state.label_index.label_names(tenant) == BTreeSet::from(["app".to_string()]));
-        check!(state.block_index.blocks().len() == 2);
+        check!(state.label_index == labels_index && state.block_index == block_index);
     }
 
     // A rolling query never repeats its exact cache key. Expired merged
@@ -104,6 +103,14 @@ pub(crate) async fn querier_state_with_request_tenant_index_reuses_shard_indexes
         shard_range_b,
     )
     .to_string();
+    let shard_snapshot_a = format!(
+        "{}/00000000000000000000.json",
+        krabka_blockstore::index_snapshot_prefix_for_key(&shard_manifest_a)
+    );
+    let shard_snapshot_b = format!(
+        "{}/00000000000000000000.json",
+        krabka_blockstore::index_snapshot_prefix_for_key(&shard_manifest_b)
+    );
     let list_count = store
         .list_prefixes()
         .into_iter()
@@ -112,21 +119,21 @@ pub(crate) async fn querier_state_with_request_tenant_index_reuses_shard_indexes
     let shard_get_count_a = store
         .get_paths()
         .into_iter()
-        .filter(|path| path == &shard_manifest_a)
+        .filter(|path| path == &shard_snapshot_a)
         .count();
     let shard_get_count_b = store
         .get_paths()
         .into_iter()
-        .filter(|path| path == &shard_manifest_b)
+        .filter(|path| path == &shard_snapshot_b)
         .count();
 
     check!(list_count == 1, "shard prefix should be listed once");
     check!(
         shard_get_count_a == 1,
-        "shard manifest A should be fetched once"
+        "shard snapshot A should be fetched once"
     );
     check!(
         shard_get_count_b == 1,
-        "shard manifest B should be fetched once"
+        "shard snapshot B should be fetched once"
     );
 }
