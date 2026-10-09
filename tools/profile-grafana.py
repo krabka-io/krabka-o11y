@@ -5,6 +5,7 @@ Instrumentation affects timing and RSS. These results do not qualify a
 performance comparison. MinIO profiles use only the local admin API.
 """
 import argparse
+import base64
 import concurrent.futures
 import hashlib
 import importlib.util
@@ -185,6 +186,9 @@ def analyze_allocations(deployment, output, role):
 
 
 def run(args):
+    if args.query_only and (args.mode != 'cpu' or args.signal != 'profiles'):
+        raise ValueError('query-only profiling supports profiles CPU capture only')
+    writers = 0 if args.query_only else 2
     env.SIGNALS = (args.signal,)
     env.write_request, env.query_request, env.http = comparison.write_request, comparison.query_request, comparison.http
     cardinality = args.cardinality or (1000 if args.signal == 'metrics' else 100)
@@ -202,7 +206,9 @@ def run(args):
               'tool_versions': {'go': env.command('go', 'version'), 'curl': env.command('curl', '--version')},
               'host': {'cpu_count': os.cpu_count(), 'kernel': env.command('uname', '-r'),
                        'lscpu': json.loads(env.command('lscpu', '-J'))},
-              'seed': env.SEED, 'writers': 2, 'write_interval_seconds': 1,
+              'seed': env.SEED, 'writers': writers, 'write_interval_seconds': 1,
+              'query_only': args.query_only,
+              'query_window_seconds': 1800 if args.query_only or args.phase == 'high_cardinality' else 30,
               'query_interval_seconds': 0.25, 'warmup_seconds': 15,
               'harness_sha256': {name: hashlib.sha256(pathlib.Path(__file__).with_name(name).read_bytes()).hexdigest()
                                  for name in ('profile-grafana.py', 'compare-grafana.py', 'deployment-envelope.py', 'fuzz-corpus.py')}}
@@ -216,21 +222,49 @@ def run(args):
     if allocation_role:
         report['instrumented_role'] = allocation_role
         report['tool_versions']['heaptrack'] = env.command('heaptrack', '--version')
+    original_http = env.http
+    query_replies = None
     try:
         deployment.start()
         deployment.seed(args.signal, 'soak', cardinality)
         deployment.wait_for_quiet_host(120)
+        if args.query_only:
+            expected = {'total': cardinality * env.POINTS, 'max_self': cardinality,
+                        'stacks': sorted((('envelope', f'frame_{point}'), cardinality)
+                                         for point in range(env.POINTS))}
+            report['expected_query_stacks'] = expected
+            report['verified_queries'] = 0
+            query_replies = (output / 'query-replies.jsonl').open('w')
+            def checked_query(port, path, tenant='soak', body=None, content_type='application/json'):
+                started = time.time()
+                status, response = original_http(port, path, tenant, body, content_type)
+                if port == env.QUERY['profiles'] and path == '/querier.v1.QuerierService/SelectMergeStacktraces':
+                    query_replies.write(json.dumps({'started_unix': started, 'completed_unix': time.time(),
+                                                    'port': port, 'path': path, 'tenant': tenant,
+                                                    'request': body, 'status': status,
+                                                    'response_base64': base64.b64encode(response).decode()}) + '\n')
+                    query_replies.flush()
+                    if status != 200 or comparison.profile_seed_stacks(json.loads(response)) != expected:
+                        raise RuntimeError('query-only profile stacks differ from the complete seed')
+                    report['verified_queries'] += 1
+                return status, response
+            env.http = checked_query
         seconds = args.profile_seconds * (args.windows if args.mode == 'cpu' else 1) + 15
         report['started_unix'] = time.time()
-        result, operations, samples = env.measure(deployment, args.signal, seconds, 15, 2,
-            cardinality, cold=args.phase == 'high_cardinality', interval=1, check_durability=False,
+        result, operations, samples = env.measure(deployment, args.signal, seconds, 15, writers,
+            cardinality, cold=args.query_only or args.phase == 'high_cardinality', interval=1, check_durability=False,
             on_measurement=lambda: capture(deployment, output, args.profile_seconds, args.windows,
                                            cpu=args.mode == 'cpu', cpu_profiler=args.cpu_profiler,
                                            app_call_graph=args.app_call_graph))
         report['workload'] = result
         for name, records in [('operations', operations), ('telemetry', samples)]:
             (output / (name + '.jsonl')).write_text(''.join(json.dumps(record) + '\n' for record in records))
-        if result['ingest']['error_rate'] or result['query']['error_rate'] or result['query']['empty_queries']:
+        if args.query_only and (result['ingest']['attempts']
+                                or any(record['kind'] == 'write' for record in operations)
+                                or report['verified_queries'] < result['query']['attempts']):
+            raise RuntimeError('query-only profile wrote data or missed query validation')
+        if (result['ingest']['error_rate'] or result['query']['attempts'] <= 0
+                or result['query']['error_rate'] != 0 or result['query']['empty_queries']):
             raise RuntimeError('profiling workload failed or returned empty queries')
         if args.mode == 'cpu' and args.cpu_profiler == 'perf':
             # Unwinding and symbol analysis can consume substantial CPU. Keep
@@ -243,6 +277,9 @@ def run(args):
         if allocation_role:
             analyze_allocations(deployment, output, allocation_role)
     finally:
+        env.http = original_http
+        if query_replies is not None:
+            query_replies.close()
         deployment.close()
         (output / 'profile-report.json').write_text(json.dumps(report, indent=2) + '\n')
         checksums = []
@@ -259,6 +296,7 @@ if __name__ == '__main__':
     parser.add_argument('--phase', choices=['steady', 'high_cardinality'], default='steady')
     parser.add_argument('--cardinality', type=int, default=None)
     parser.add_argument('--mode', choices=['cpu', 'allocations'], default='cpu')
+    parser.add_argument('--query-only', action='store_true', help='Profile CPU reads of the complete profiles seed without writers')
     parser.add_argument('--cpu-profiler', choices=['perf', 'pprof'], default='perf')
     parser.add_argument('--app-call-graph', choices=['dwarf,16384', 'fp'], default='dwarf,16384',
                         help='perf call graph for rebuilt app roles; the pinned broker always uses DWARF')
