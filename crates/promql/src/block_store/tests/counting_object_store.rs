@@ -5,6 +5,7 @@ use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta,
     PutMultipartOptions, PutOptions, PutResult,
 };
+use tokio::sync::Notify;
 
 use super::*;
 
@@ -17,6 +18,7 @@ use super::*;
 pub(crate) struct CountingObjectStore {
     inner: Arc<dyn ObjectStore>,
     counts: Arc<Mutex<RequestCounts>>,
+    read_pause: Mutex<Option<[Arc<Notify>; 2]>>,
 }
 
 impl CountingObjectStore {
@@ -27,8 +29,21 @@ impl CountingObjectStore {
         let store = Arc::new(Self {
             inner,
             counts: Arc::clone(&counts),
+            read_pause: Mutex::new(None),
         });
         (store, counts)
+    }
+
+    pub(crate) fn wrap_paused(
+        inner: Arc<dyn ObjectStore>,
+    ) -> (Arc<dyn ObjectStore>, [Arc<Notify>; 2]) {
+        let signals = [Arc::new(Notify::new()), Arc::new(Notify::new())];
+        let store = Arc::new(Self {
+            inner,
+            counts: Arc::new(Mutex::new(RequestCounts::default())),
+            read_pause: Mutex::new(Some(signals.clone())),
+        });
+        (store, signals)
     }
 
     fn count(&self, bump: impl FnOnce(&mut RequestCounts)) {
@@ -68,6 +83,11 @@ impl ObjectStore for CountingObjectStore {
         location: &ObjectPath,
         options: GetOptions,
     ) -> object_store::Result<GetResult> {
+        let pause = self.read_pause.lock().unwrap().take();
+        if let Some([started, resumed]) = pause {
+            started.notify_one();
+            resumed.notified().await;
+        }
         if options.head {
             self.count(|counts| counts.heads += 1);
         } else if options.range.is_some() {

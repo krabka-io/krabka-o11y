@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use krabka_blockstore::MatchOp;
 
 use super::*;
@@ -83,4 +85,58 @@ async fn cold_label_values_survive_the_merged_instant_scan() {
     assert2::assert!(held.upgrade().is_some());
     drop(scan);
     assert2::assert!(held.upgrade().is_none());
+}
+
+#[tokio::test]
+async fn instant_cold_read_releases_hot_rows_and_keeps_captured_values() {
+    let (backing, [started, resumed]) = CountingObjectStore::wrap_paused(Arc::new(InMemory::new()));
+    let mut floats = BlockStore::new(backing, url::Url::parse("memory:///").unwrap());
+    let up = labels(&[("__name__", "up"), ("job", "api")]);
+    let fp = up.fingerprint();
+    write_float_block(&mut floats, "cold.parquet", &up, 2_048, 20.0).await;
+
+    let mut store = InMemoryMetricStore::new();
+    for ts in 0..1_024 {
+        store.push_float("tenant-a", up.clone(), ts, 10.0);
+    }
+    let head = WalHead::from_store(store);
+    let rows = {
+        let snapshot = head.snapshot();
+        Arc::downgrade(snapshot.floats["tenant-a"].sealed_chunks().next().unwrap())
+    };
+    assert2::assert!(rows.upgrade().is_some());
+    let merged = Arc::new(MergedMetricStore::new(
+        MetricBlockStore::new(floats),
+        head.clone(),
+    ));
+    let querying = Arc::clone(&merged);
+    let query = tokio::spawn(async move {
+        querying
+            .try_latest_float_scan("tenant-a", &[], 0, 0, 8_192, 2_048)
+            .await
+            .unwrap()
+            .unwrap()
+    });
+    tokio::time::timeout(Duration::from_secs(30), started.notified())
+        .await
+        .unwrap();
+    // Replace the current head while the captured query waits on cold I/O.
+    head.update(|store| {
+        store.delete_tenant("tenant-a");
+        store.push_float("tenant-a", up.clone(), 4_096, 100.0);
+    });
+    assert2::assert!(rows.upgrade().is_none());
+    resumed.notify_one();
+
+    let captured = query.await.unwrap();
+    let current = merged
+        .try_latest_float_scan("tenant-a", &[], 0, 0, 8_192, 2_048)
+        .await
+        .unwrap()
+        .unwrap();
+    assert2::assert!(captured.samples == vec![(fp, 2_048, 20.0, None)]);
+    assert2::assert!(current.samples == vec![(fp, 4_096, 100.0, None)]);
+    let expected_labels = std::collections::BTreeMap::from([(fp, Arc::new(up.into()))]);
+    assert2::assert!(captured.labels == expected_labels);
+    assert2::assert!(current.labels == expected_labels);
 }
