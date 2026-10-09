@@ -1,6 +1,12 @@
 use krabka_metrics::LimitError;
 
-use super::*;
+use super::{
+    super::{
+        aggregation::{AggregateOp, AggregateState},
+        range_functions::{over_time_mean, over_time_sum},
+    },
+    *,
+};
 use crate::{Annotations, InstantSample, MergedMetricStore, PromqlLabels, RangeSeries, WalHead};
 
 fn vector(time_ms: i64, rows: &[(&[(&str, &str)], f64)]) -> QueryResult {
@@ -14,6 +20,223 @@ fn vector(time_ms: i64, rows: &[(&[(&str, &str)], f64)]) -> QueryResult {
             })
             .collect(),
     )
+}
+
+#[test]
+fn last_over_time_operation_folds_match_finite_aggregate_bits() {
+    let tiny = f64::from_bits(1);
+    let mut cases = vec![
+        vec![0.0],
+        vec![-0.0],
+        vec![-0.0, -0.0],
+        vec![0.0, -0.0],
+        vec![tiny, tiny, -tiny],
+        vec![f64::MIN_POSITIVE, tiny, -f64::MIN_POSITIVE],
+        vec![1e16, 1.0, -1e16],
+        vec![1e16, -1e16, 1.0],
+        vec![f64::MAX, f64::MAX, -f64::MAX],
+        vec![f64::MAX, -f64::MAX, f64::MAX],
+        vec![f64::MAX, f64::MAX, -f64::MAX, -f64::MAX],
+        vec![f64::MAX, f64::MAX, 1.0, -f64::MAX],
+    ];
+    for first in [0.0, -0.0, tiny, -tiny, 1.0, -1.0, f64::MAX, -f64::MAX] {
+        for second in [0.0, -0.0, tiny, -tiny, 1.0, -1.0, f64::MAX, -f64::MAX] {
+            cases.push(vec![first, second]);
+        }
+    }
+    for values in cases {
+        let mut state = AggregateState::new(PromqlLabels::new());
+        for &value in &values {
+            state.push_float(value);
+        }
+        for (op, actual) in [
+            (AggregateOp::Sum, over_time_sum(values.iter().copied())),
+            (AggregateOp::Avg, over_time_mean(values.iter().copied())),
+        ] {
+            let Some(SampleValue::Float(expected)) = op.finish(&state) else {
+                panic!("expected float")
+            };
+            assert2::assert!(actual.to_bits() == expected.to_bits(), "{values:?}");
+        }
+    }
+    // These inputs distinguish compensation and canonical accumulation order.
+    assert2::assert!(over_time_sum([1e16, 1.0, -1e16].into_iter()) == 1.0);
+    assert2::assert!(over_time_sum([f64::MAX, f64::MAX, -f64::MAX].into_iter()).is_infinite());
+    assert2::assert!(over_time_sum([f64::MAX, -f64::MAX, f64::MAX].into_iter()) == f64::MAX);
+}
+
+#[tokio::test]
+async fn last_over_time_aggregate_keeps_nonfinite_sign_and_payload_bits() {
+    let positive_nan = f64::from_bits(0x7ff8_0000_0000_0042);
+    let negative_nan = f64::from_bits(0xfff8_0000_0000_0042);
+    let other_nan = f64::from_bits(0x7ff8_0000_0000_0011);
+    for values in [
+        vec![positive_nan],
+        vec![negative_nan],
+        vec![positive_nan, negative_nan, other_nan],
+        vec![negative_nan, positive_nan, 0.0],
+        vec![0.0, positive_nan, negative_nan],
+        vec![1.0, other_nan, positive_nan],
+        vec![f64::INFINITY],
+        vec![f64::NEG_INFINITY],
+        vec![f64::INFINITY, f64::INFINITY, 1.0],
+        vec![f64::INFINITY, f64::NEG_INFINITY, 0.0],
+        vec![f64::NEG_INFINITY, f64::INFINITY, -0.0],
+    ] {
+        let mut store = InMemoryMetricStore::new();
+        for (index, value) in values.iter().enumerate() {
+            store.push_float(
+                "t",
+                labels(&[("__name__", "m"), ("instance", &index.to_string())]),
+                10_000,
+                *value,
+            );
+        }
+        let engine = PromqlEngine::new(
+            Arc::new(MergedMetricStore::new(InMemoryMetricStore::new(), store)),
+            EngineOpts::default(),
+        );
+        for query in ["sum(last_over_time(m[30m]))", "avg(last_over_time(m[30m]))"] {
+            let expr = promql_parser::parser::parse(query).unwrap();
+            let (actual, annotations) = engine
+                .query_instant_with_annotations(&tenant_id("t"), query, 10_000)
+                .await
+                .unwrap();
+            let expected = engine.eval_instant_expr("t", &expr, 10_000).await.unwrap();
+            let QueryResult::InstantVector(mut actual) = actual else {
+                panic!("expected vector")
+            };
+            let QueryResult::InstantVector(mut expected) = expected else {
+                panic!("expected vector")
+            };
+            assert2::assert!(actual.len() == 1 && expected.len() == 1);
+            let SampleValue::Float(actual_value) = &actual[0].value else {
+                panic!("expected float")
+            };
+            let SampleValue::Float(expected_value) = &expected[0].value else {
+                panic!("expected float")
+            };
+            assert2::assert!(
+                actual_value.to_bits() == expected_value.to_bits(),
+                "{query}: {values:?}"
+            );
+            actual[0].value = SampleValue::Float(0.0);
+            expected[0].value = SampleValue::Float(0.0);
+            assert2::assert!((actual, annotations) == (expected, Annotations::default()));
+        }
+    }
+}
+
+#[tokio::test]
+async fn last_over_time_aggregate_keeps_finite_interpreter_bits_in_both_insertion_orders() {
+    for values in [
+        vec![f64::MAX, f64::MAX, -f64::MAX],
+        vec![f64::MAX, -f64::MAX, f64::MAX],
+        vec![f64::MAX, f64::MAX, -f64::MAX, -f64::MAX],
+        vec![1e16, 1.0, -1e16],
+        vec![1e16, -1e16, 1.0],
+    ] {
+        for reverse in [false, true] {
+            let mut rows = values.iter().enumerate().collect::<Vec<_>>();
+            if reverse {
+                rows.reverse();
+            }
+            let mut store = InMemoryMetricStore::new();
+            for (index, &value) in rows {
+                store.push_float(
+                    "t",
+                    labels(&[("__name__", "m"), ("instance", &index.to_string())]),
+                    10_000,
+                    value,
+                );
+            }
+            let engine = PromqlEngine::new(
+                Arc::new(MergedMetricStore::new(
+                    InMemoryMetricStore::new(),
+                    WalHead::from_store(store),
+                )),
+                EngineOpts::default(),
+            );
+            for query in ["sum(last_over_time(m[30m]))", "avg(last_over_time(m[30m]))"] {
+                let expr = promql_parser::parser::parse(query).unwrap();
+                let (actual, annotations) = engine
+                    .query_instant_with_annotations(&tenant_id("t"), query, 10_000)
+                    .await
+                    .unwrap();
+                let expected = engine.eval_instant_expr("t", &expr, 10_000).await.unwrap();
+                let QueryResult::InstantVector(mut actual) = actual else {
+                    panic!("expected vector")
+                };
+                let QueryResult::InstantVector(mut expected) = expected else {
+                    panic!("expected vector")
+                };
+                assert2::assert!(actual.len() == 1 && expected.len() == 1);
+                let SampleValue::Float(actual_value) = &actual[0].value else {
+                    panic!("expected float")
+                };
+                let SampleValue::Float(expected_value) = &expected[0].value else {
+                    panic!("expected float")
+                };
+                assert2::assert!(
+                    actual_value.to_bits() == expected_value.to_bits(),
+                    "{query}: {values:?}, reverse={reverse}"
+                );
+                actual[0].value = SampleValue::Float(0.0);
+                expected[0].value = SampleValue::Float(0.0);
+                assert2::assert!((actual, annotations) == (expected, Annotations::default()));
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn last_over_time_aggregate_keeps_empty_vectors_with_nonfinite_orphans() {
+    for value in [0.0, f64::INFINITY, f64::from_bits(0xfff8_0000_0000_0042)] {
+        let mut store = InMemoryMetricStore::new();
+        store.push_float("t", labels(&[("__name__", "m")]), 1_000, value);
+        let mut orphan = store.floats["t"].iter().next().unwrap().clone();
+        orphan.fp = 0;
+        let canonical_labels = Arc::clone(&orphan.labels);
+        let canonical_fp = canonical_labels.fingerprint();
+        let stored_rows = store.floats.get_mut("t").unwrap();
+        stored_rows.retain(|_| false);
+        stored_rows.push(orphan);
+        let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
+        let matchers = vec![crate::PromqlMatcher::new(
+            "__name__",
+            krabka_blockstore::MatchOp::Eq,
+            "m",
+        )];
+        let (total, rows) = engine
+            .last_float_rows("t", &matchers, 1, 3_000)
+            .await
+            .unwrap();
+        let raw_rows = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.fp,
+                    row.ts_ms,
+                    row.value.to_bits(),
+                    row.start_timestamp_ms,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert2::assert!((total, raw_rows) == (1, vec![(0, 1_000, value.to_bits(), None)]));
+        let canonical = engine
+            .labels_by_fingerprint_sets("t", &[matchers], 0, 3_000)
+            .await
+            .unwrap();
+        assert2::assert!(canonical.as_ref() == &BTreeMap::from([(canonical_fp, canonical_labels)]));
+        assert2::assert!(!canonical.contains_key(&0));
+        for query in ["sum(last_over_time(m[3s]))", "avg(last_over_time(m[3s]))"] {
+            let actual = engine
+                .query_instant_with_annotations(&tenant_id("t"), query, 3_000)
+                .await
+                .unwrap();
+            assert2::assert!(actual == (vector(3_000, &[]), Annotations::default()));
+        }
+    }
 }
 
 #[tokio::test]
