@@ -1,0 +1,1 @@
+count_over_time({{app="api"}}{pipeline}[1m])
