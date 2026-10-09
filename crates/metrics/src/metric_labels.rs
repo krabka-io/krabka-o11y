@@ -113,16 +113,20 @@ impl MetricLabels {
     /// Computes the storage-compatible FNV-1a fingerprint over original label bytes.
     #[must_use]
     pub fn fingerprint(&self) -> krabka_blockstore::SeriesFingerprint {
-        self.byte_key()
-            .into_iter()
-            .fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-                (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-            })
+        let mut hash = 0xcbf2_9ce4_8422_2325;
+        for (name, value) in self.iter() {
+            for bytes in [name.as_bytes(), value.as_bytes()] {
+                for byte in (bytes.len() as u64).to_le_bytes().iter().chain(bytes) {
+                    hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
+                }
+            }
+        }
+        hash
     }
 }
 impl From<krabka_blockstore::Labels> for MetricLabels {
     fn from(labels: krabka_blockstore::Labels) -> Self {
-        Self::from(&labels)
+        Self::from_pairs(labels)
     }
 }
 impl From<&krabka_blockstore::Labels> for MetricLabels {
@@ -196,5 +200,73 @@ impl<'a> IntoIterator for &'a MetricLabels {
     type IntoIter = std::collections::btree_map::Iter<'a, String, MetricString>;
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use assert2::assert;
+
+    use super::*;
+
+    #[test]
+    fn owned_storage_labels_keep_values_wire_identity_and_string_buffers() {
+        for (pairs, expected, fingerprint) in [
+            (vec![], serde_json::json!({}), 0xcbf2_9ce4_8422_2325),
+            (
+                vec![("z", "discard"), ("a", "first"), ("z", "last")],
+                serde_json::json!({"a": "first", "z": "last"}),
+                0x787e_8a04_6823_a559,
+            ),
+            (
+                vec![("", "")],
+                serde_json::json!({"": ""}),
+                0x8820_1fb9_60ff_6465,
+            ),
+            (
+                vec![("region", "東京"), ("α", "snow ☃")],
+                serde_json::json!({"region": "東京", "α": "snow ☃"}),
+                0xdaf3_0222_8f67_fbd8,
+            ),
+            (
+                vec![("a\0", "v\0x")],
+                serde_json::json!({"a\0": "v\0x"}),
+                0x0a08_c93e_4600_3999,
+            ),
+            (
+                vec![("a=b", "c\nd"), ("x", "y=z\n")],
+                serde_json::json!({"a=b": "c\nd", "x": "y=z\n"}),
+                0xdf65_4ec5_30f1_30f1,
+            ),
+        ] {
+            let storage = krabka_blockstore::Labels::from_pairs(pairs);
+            assert!(storage.fingerprint() == fingerprint);
+            let buffers = storage
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.clone(),
+                        name.as_ptr(),
+                        value.as_ptr(),
+                        !value.is_empty(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let borrowed = MetricLabels::from(&storage);
+            let owned = MetricLabels::from(storage);
+            assert!(owned == borrowed);
+            assert!(serde_json::to_value(&owned).unwrap() == expected);
+            assert!(owned.fingerprint() == fingerprint);
+            for (name, name_buffer, value_buffer, nonempty_value) in buffers {
+                let (actual_name, value) = owned.iter().find(|(key, _)| **key == name).unwrap();
+                assert!(value.as_bytes() == value.as_str().as_bytes());
+                if !name.is_empty() {
+                    assert!(actual_name.as_ptr() == name_buffer);
+                }
+                if nonempty_value {
+                    assert!(value.as_str().as_ptr() == value_buffer);
+                }
+            }
+        }
     }
 }

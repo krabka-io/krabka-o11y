@@ -42,6 +42,11 @@ where
     C: MetricStore,
     H: MetricStore,
 {
+    fn float_samples_are_unique(&self) -> bool {
+        // Every scan uses the merged store's fingerprint/timestamp deduplication.
+        true
+    }
+
     #[tracing::instrument(
         name = "promql.merged_scan",
         level = "debug",
@@ -179,6 +184,20 @@ where
         start_ms: i64,
         end_ms: i64,
     ) -> Result<Vec<Arc<Labels>>, PromqlError> {
+        Ok(self
+            .series_shared_by_fingerprint(tenant, matchers, start_ms, end_ms)
+            .await?
+            .into_values()
+            .collect())
+    }
+
+    async fn series_shared_by_fingerprint(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<BTreeMap<SeriesFingerprint, Arc<Labels>>, PromqlError> {
         let mut by_fp = BTreeMap::<SeriesFingerprint, Arc<Labels>>::new();
         for labels in self
             .cold
@@ -193,7 +212,7 @@ where
         {
             by_fp.entry(labels.fingerprint()).or_insert(labels);
         }
-        Ok(by_fp.into_values().collect())
+        Ok(by_fp)
     }
 
     async fn exemplars(

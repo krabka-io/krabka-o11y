@@ -1,5 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
+use krabka_blockstore::SeriesFingerprint;
+
 use super::{
     ExemplarScan, LabelMatcher, LabelNameCardinality, LabelValueCardinality, Labels,
     LatestFloatScan, MetadataScan, PromqlError, ScanResult, TsdbBlock, TsdbStats,
@@ -8,6 +10,14 @@ use super::{
 /// Resolves `PromQL` matchers to `DataFusion` tables over the metric data of a tenant.
 #[async_trait::async_trait]
 pub trait MetricStore: Send + Sync {
+    /// Whether every float scan has at most one row per fingerprint and timestamp.
+    ///
+    /// This includes duplicates within one source and between sources. The
+    /// default keeps the engine's stable last-row deduplication.
+    fn float_samples_are_unique(&self) -> bool {
+        false
+    }
+
     /// Latest float sample per series for one instant, or `None` to use a full scan.
     ///
     /// An implementation must prove that its complete scan would stay within
@@ -50,11 +60,8 @@ pub trait MetricStore: Send + Sync {
         let labels = if samples.len() > max_samples {
             BTreeMap::default()
         } else {
-            self.series_shared(tenant, matchers, label_start_ms, end_ms)
+            self.series_shared_by_fingerprint(tenant, matchers, label_start_ms, end_ms)
                 .await?
-                .into_iter()
-                .map(|labels| (labels.fingerprint(), labels))
-                .collect()
         };
         Ok(Some(LatestFloatScan { samples, labels }))
     }
@@ -128,6 +135,27 @@ pub trait MetricStore: Send + Sync {
             .await?
             .into_iter()
             .map(Arc::new)
+            .collect())
+    }
+
+    /// Shared matched labels keyed by their canonical label fingerprint.
+    ///
+    /// Implementations return the same map as collecting
+    /// [`Self::series_shared`] by
+    /// `labels.fingerprint()`, including its duplicate-key winner and shared
+    /// label ownership. Row and posting identities are not canonical keys.
+    async fn series_shared_by_fingerprint(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<BTreeMap<SeriesFingerprint, Arc<Labels>>, PromqlError> {
+        Ok(self
+            .series_shared(tenant, matchers, start_ms, end_ms)
+            .await?
+            .into_iter()
+            .map(|labels| (labels.fingerprint(), labels))
             .collect())
     }
 

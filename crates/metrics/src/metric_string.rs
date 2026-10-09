@@ -6,9 +6,10 @@ use std::{
 };
 
 /// A Go string: arbitrary bytes whose identity is independent of JSON rendering.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct MetricString {
-    bytes: Vec<u8>,
+    // Valid UTF-8 uses the JSON buffer for both views.
+    bytes: Option<Vec<u8>>,
     json: String,
 }
 
@@ -16,7 +17,7 @@ impl MetricString {
     /// Returns the original bytes, including invalid UTF-8 sequences.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
+        self.bytes.as_deref().unwrap_or(self.json.as_bytes())
     }
 
     /// Returns the string representation used by Go's JSON encoder.
@@ -31,17 +32,18 @@ impl MetricString {
     /// Returns the original UTF-8 string, when the bytes are valid UTF-8.
     #[must_use]
     pub fn utf8(&self) -> Option<&str> {
-        std::str::from_utf8(&self.bytes).ok()
+        self.bytes.is_none().then_some(self.json.as_str())
     }
 
     #[must_use]
     pub fn bytes_for_json_range(&self, start: usize, end: usize) -> Option<&[u8]> {
+        let bytes = self.as_bytes();
         let offset = |target: usize| {
             let mut raw = 0;
             let mut json = 0;
-            while raw < self.bytes.len() {
-                let valid = match std::str::from_utf8(&self.bytes[raw..]) {
-                    Ok(_) => self.bytes.len() - raw,
+            while raw < bytes.len() {
+                let valid = match std::str::from_utf8(&bytes[raw..]) {
+                    Ok(_) => bytes.len() - raw,
                     Err(error) => error.valid_up_to(),
                 };
                 if target <= json + valid {
@@ -49,7 +51,7 @@ impl MetricString {
                 }
                 raw += valid;
                 json += valid;
-                if raw == self.bytes.len() {
+                if raw == bytes.len() {
                     break;
                 }
                 if target < json + 3 {
@@ -60,14 +62,14 @@ impl MetricString {
             }
             (target == json).then_some(raw)
         };
-        self.bytes.get(offset(start)?..offset(end)?)
+        bytes.get(offset(start)?..offset(end)?)
     }
 
     /// Quotes the original bytes as a reparsable `PromQL` string literal.
     #[must_use]
     pub fn quoted(&self) -> String {
         let mut result = String::from("\"");
-        for &byte in &self.bytes {
+        for &byte in self.as_bytes() {
             match byte {
                 b'"' => result.push_str("\\\""),
                 b'\\' => result.push_str("\\\\"),
@@ -100,6 +102,10 @@ impl AsRef<str> for MetricString {
 
 impl From<Vec<u8>> for MetricString {
     fn from(bytes: Vec<u8>) -> Self {
+        let bytes = match String::from_utf8(bytes) {
+            Ok(json) => return Self { bytes: None, json },
+            Err(error) => error.into_bytes(),
+        };
         let mut json = String::new();
         let mut remaining = bytes.as_slice();
         while !remaining.is_empty() {
@@ -118,16 +124,16 @@ impl From<Vec<u8>> for MetricString {
                 }
             }
         }
-        Self { bytes, json }
+        Self {
+            bytes: Some(bytes),
+            json,
+        }
     }
 }
 
 impl From<String> for MetricString {
     fn from(json: String) -> Self {
-        Self {
-            bytes: json.as_bytes().to_vec(),
-            json,
-        }
+        Self { bytes: None, json }
     }
 }
 impl From<&str> for MetricString {
@@ -161,9 +167,17 @@ impl fmt::Display for MetricString {
         self.as_str().fmt(f)
     }
 }
+impl fmt::Debug for MetricString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MetricString")
+            .field("bytes", &self.as_bytes())
+            .field("json", &self.json)
+            .finish()
+    }
+}
 impl PartialEq for MetricString {
     fn eq(&self, other: &Self) -> bool {
-        self.bytes == other.bytes
+        self.as_bytes() == other.as_bytes()
     }
 }
 impl Eq for MetricString {}
@@ -189,12 +203,12 @@ impl PartialOrd for MetricString {
 }
 impl Ord for MetricString {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.bytes.cmp(&other.bytes)
+        self.as_bytes().cmp(other.as_bytes())
     }
 }
 impl Hash for MetricString {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.bytes.hash(state);
+        self.as_bytes().hash(state);
     }
 }
 
@@ -206,7 +220,7 @@ impl serde::Serialize for MetricString {
         {
             serializer.serialize_str(value)
         } else {
-            serde::Serialize::serialize(&self.bytes, serializer)
+            serde::Serialize::serialize(self.as_bytes(), serializer)
         }
     }
 }

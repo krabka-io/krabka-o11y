@@ -110,13 +110,24 @@ impl InMemoryMetricStore {
         let matchers = prepare_matchers(matchers)?;
         let mut by_fp: BTreeMap<SeriesFingerprint, Arc<Labels>> = BTreeMap::new();
         if let Some(rows) = self.floats.get(tenant) {
-            for row in rows.iter() {
-                if !by_fp.contains_key(&row.fp)
-                    && row_matches(row.fp, &row.labels, row.ts_ms, &matchers, start_ms, end_ms)
-                {
-                    by_fp
-                        .entry(row.fp)
-                        .or_insert_with(|| Arc::clone(&row.labels));
+            let selected = self.float_head_summaries.get(tenant).and_then(|summary| {
+                summary.matching_series(rows.len(), &matchers, start_ms, start_ms, end_ms)
+            });
+            if let Some((series, _)) = selected {
+                by_fp.extend(
+                    series
+                        .into_iter()
+                        .map(|entry| (entry.latest.0, Arc::clone(&entry.labels))),
+                );
+            } else {
+                for row in rows.iter() {
+                    if !by_fp.contains_key(&row.fp)
+                        && row_matches(row.fp, &row.labels, row.ts_ms, &matchers, start_ms, end_ms)
+                    {
+                        by_fp
+                            .entry(row.fp)
+                            .or_insert_with(|| Arc::clone(&row.labels));
+                    }
                 }
             }
         }

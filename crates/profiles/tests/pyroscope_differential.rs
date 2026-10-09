@@ -909,6 +909,7 @@ async fn start_grafana() -> TestResult<testcontainers::ContainerAsync<GenericIma
         GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
             .with_exposed_port(3000.tcp())
             .with_wait_for(WaitFor::seconds(5))
+            .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")
             .with_env_var("GF_SECURITY_ADMIN_PASSWORD", "admin")
             // Let the container reach the in-process Krabka querier on the host via
             // host.docker.internal (host-gateway mapping; works on Docker Desktop + Linux).

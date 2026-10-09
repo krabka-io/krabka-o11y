@@ -1,4 +1,4 @@
-use krabka_blockstore::escape_object_path_segment;
+use krabka_blockstore::{SeriesFingerprint, escape_object_path_segment};
 use krabka_promql::PromqlLabels as Labels;
 use object_store::{ObjectStoreExt, path::Path};
 
@@ -175,6 +175,11 @@ impl RefreshingMetricBlockStore {
 
 #[async_trait::async_trait]
 impl MetricStore for RefreshingMetricBlockStore {
+    fn float_samples_are_unique(&self) -> bool {
+        // Every scan uses the merged store's fingerprint/timestamp deduplication.
+        true
+    }
+
     async fn try_latest_float_scan(
         &self,
         tenant: &str,
@@ -319,6 +324,19 @@ impl MetricStore for RefreshingMetricBlockStore {
         self.current_store_for_tenant(tenant, start_ms, end_ms)
             .await?
             .series_shared(tenant, matchers, start_ms, end_ms)
+            .await
+    }
+
+    async fn series_shared_by_fingerprint(
+        &self,
+        tenant: &str,
+        matchers: &[LabelMatcher],
+        start_ms: i64,
+        end_ms: i64,
+    ) -> Result<BTreeMap<SeriesFingerprint, Arc<Labels>>, krabka_promql::PromqlError> {
+        self.current_store_for_tenant(tenant, start_ms, end_ms)
+            .await?
+            .series_shared_by_fingerprint(tenant, matchers, start_ms, end_ms)
             .await
     }
 
