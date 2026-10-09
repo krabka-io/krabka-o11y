@@ -711,6 +711,7 @@ async fn start_grafana(datasources_yaml: &str) -> TestResult<ContainerAsync<Gene
     Ok(tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
+            .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")
             .with_exposed_port(GRAFANA_PORT.tcp())
             .with_wait_for(WaitFor::message_on_stdout("HTTP Server Listen"))
             .with_copy_to(
