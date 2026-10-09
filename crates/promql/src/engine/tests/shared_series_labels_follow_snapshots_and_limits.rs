@@ -28,7 +28,7 @@ async fn shared_series_labels_follow_snapshots_and_limits() {
     let engine = PromqlEngine::new(Arc::clone(&store), EngineOpts::default());
     let matchers = vec![LabelMatcher::new("job", MatchOp::Eq, "api")];
     let resolved = engine
-        .labels_by_fingerprint_sets("t", &[matchers.clone()], 1_000, 2_000)
+        .labels_by_fingerprint_sets("t", std::slice::from_ref(&matchers), 1_000, 2_000)
         .await
         .unwrap();
     let expected: BTreeMap<_, crate::PromqlLabels> = BTreeMap::from([
@@ -69,7 +69,7 @@ async fn shared_series_labels_follow_snapshots_and_limits() {
     );
     check!(
         limited
-            .labels_by_fingerprint_sets("t", &[matchers.clone()], 1_000, 2_000)
+            .labels_by_fingerprint_sets("t", std::slice::from_ref(&matchers), 1_000, 2_000)
             .await
             .is_err()
     );

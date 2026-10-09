@@ -114,7 +114,7 @@ def verdicts(report):
 
 
 PINNED_COUNTS = {
-    "diff_mimir-report.json": 1795,
+    "diff_mimir-report.json": 1800,  # Includes five numeric last-operation cases.
     "diff_prometheus-report.json": 1795,
     "promql-3.14.0-qualification.json": 2195,
     "promql-http-compliance-summary.json": 539,
@@ -1186,20 +1186,20 @@ def self_check():
     assert valid_execution_evidence(dict(bound, missing_suites=["other-suite"]), allow_partial=True)
     for status in ("failed", "mismatch", "not_run", "uncovered", "invalid-rejection", "skipped"):
         assert not valid_execution_evidence(dict(bound, artifacts=[{"counts": {"matched": 88, status: 1}}]), allow_partial=True)
-    curated = {"suite": "diff_mimir", "run": 1777, "skipped": 18, "cases": [
-        *[{"id": f"executed:{ordinal}", "status": "matched"} for ordinal in range(1776)],
+    curated = {"suite": "diff_mimir", "run": 1782, "skipped": 18, "cases": [
+        *[{"id": f"executed:{ordinal}", "status": "matched"} for ordinal in range(1781)],
         {"id": "declared-version-difference", "status": "expected_divergence"},
         *[{"id": case_id, "status": "skipped", "detail": "declared adapter exclusion"} for case_id in sorted(CURATED_ADAPTER_EXCLUSIONS)],
     ]}
     counts, errors = qualification_counts("diff_mimir-report.json", curated)
-    assert not errors and counts == {"matched": 1776, "expected-divergence": 1, "adapter-excluded": 18}
+    assert not errors and counts == {"matched": 1781, "expected-divergence": 1, "adapter-excluded": 18}
     assert not is_complete(counts)
     assert valid_execution_evidence(dict(bound, artifacts=[{"counts": counts}]), allow_partial=True)
     for change in ("extra-exclusion", "missing-case", "duplicate-case", "missing-reason"):
         altered = copy.deepcopy(curated)
         if change == "extra-exclusion":
             altered["cases"][0].update(status="skipped", detail="unexpected omission")
-            altered.update(run=1776, skipped=19)
+            altered.update(run=1781, skipped=19)
         elif change == "missing-case":
             altered["cases"].pop(0)
             altered["run"] -= 1

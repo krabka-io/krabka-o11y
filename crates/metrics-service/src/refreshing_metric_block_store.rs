@@ -175,6 +175,11 @@ impl RefreshingMetricBlockStore {
 
 #[async_trait::async_trait]
 impl MetricStore for RefreshingMetricBlockStore {
+    fn float_samples_are_unique(&self) -> bool {
+        // Every scan uses the merged store's fingerprint/timestamp deduplication.
+        true
+    }
+
     async fn try_latest_float_scan(
         &self,
         tenant: &str,

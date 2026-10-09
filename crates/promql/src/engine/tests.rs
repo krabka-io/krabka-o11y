@@ -163,6 +163,7 @@ mod instant_unary_numeric_functions_transform_vector_values;
 mod kahan_sum_inc_recovers_lost_bits_on_both_branches;
 mod label_ops_planner_path_matches_interpreter;
 mod labels;
+mod last_over_time_aggregate;
 mod limit_ratio_over_bound_emits_capping_warning;
 mod matching_on_a_metadata_label_keeps_it_out_of_the_result;
 mod mixed_histogram_store;

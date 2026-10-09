@@ -19,7 +19,12 @@ async fn counter_warning_composed_paths_preserve_origin_and_position() {
             if let Some(metric_type) = metric_type {
                 labels.insert("__type__", metric_type);
             }
-            store.push_float("t", labels, seconds * 1_000, seconds as f64 * scale);
+            store.push_float(
+                "t",
+                labels,
+                seconds * 1_000,
+                f64::from(i32::try_from(seconds).unwrap()) * scale,
+            );
         }
     }
     let store = Arc::new(store);
@@ -155,13 +160,17 @@ async fn counter_warning_composed_paths_preserve_origin_and_position() {
             assert2::assert!(!series[0].drop_name);
             assert2::assert!(series[0].samples.len() == 3);
             for (index, (timestamp, value)) in series[0].samples.iter().enumerate() {
-                let expected_timestamp = 120_000 + index as i64 * 10_000;
+                let expected_timestamp = 120_000 + i64::try_from(index).unwrap() * 10_000;
                 let SampleValue::Float(value) = value else {
                     panic!("float ledger")
                 };
                 assert2::assert!(*timestamp == expected_timestamp);
                 assert2::assert!(
-                    (*value - (intercept + slope * expected_timestamp as f64 / 1_000.0)).abs()
+                    (*value
+                        - (intercept
+                            + slope * f64::from(i32::try_from(expected_timestamp).unwrap())
+                                / 1_000.0))
+                        .abs()
                         < 1e-12
                 );
             }

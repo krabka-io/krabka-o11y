@@ -120,6 +120,176 @@ fn a_fingerprint_collision_does_not_intern_different_labels_together() {
     check!(!Arc::ptr_eq(&row.labels, &other));
 }
 
+#[test]
+fn wal_replay_keeps_byte_labels_tenants_and_snapshots_with_shared_series() {
+    for bytes in [
+        b"api".to_vec(),
+        vec![0xff],
+        vec![0xfe],
+        "\u{fffd}".as_bytes().to_vec(),
+        vec![0, 0xff, 0],
+    ] {
+        let labels = Labels::from_pairs([("__name__", b"up".to_vec()), ("job", bytes.clone())]);
+        let fp = labels.fingerprint();
+        let sorted = vec![
+            ("__name__".to_owned(), b"up".to_vec().into()),
+            ("job".to_owned(), bytes.clone().into()),
+        ];
+        let mut reversed = sorted.clone();
+        reversed.reverse();
+        let duplicate = vec![
+            ("job".to_owned(), b"old".to_vec().into()),
+            ("__name__".to_owned(), b"up".to_vec().into()),
+            ("job".to_owned(), bytes.into()),
+        ];
+        for input in [sorted, reversed, duplicate] {
+            let mut store = InMemoryMetricStore::new();
+            store.push_float_with_start_timestamp("t", labels.clone(), 10, 1.0, Some(5));
+            let snapshot = store.clone();
+            let mut record = WalRecord {
+                tenant: "t".to_owned(),
+                labels: input,
+                payload: SamplePayload::Float {
+                    timestamp_ms: 20,
+                    value: 3.0,
+                    start_timestamp_ms: Some(7),
+                },
+                exemplars: vec![WalExemplar {
+                    labels: vec![("trace_id".to_owned(), "abc".to_owned())],
+                    timestamp_ms: 21,
+                    value: 4.0,
+                }],
+            };
+            store.apply_wal_record(&record);
+            record.payload = SamplePayload::Hist {
+                timestamp_ms: 30,
+                hist: native_histogram(),
+            };
+            record.exemplars.clear();
+            store.apply_wal_record(&record);
+            record.tenant = "other".to_owned();
+            store.apply_wal_record(&record);
+
+            let floats = store.floats["t"].iter().collect::<Vec<_>>();
+            let histogram = store.hists["t"].iter().next().unwrap();
+            let exemplar = store.exemplars["t"].iter().next().unwrap();
+            let other = store.hists["other"].iter().next().unwrap();
+            assert!(
+                floats
+                    .iter()
+                    .map(|row| (
+                        row.fp,
+                        row.labels.as_ref().clone(),
+                        row.ts_ms,
+                        row.value.to_bits(),
+                        row.start_timestamp_ms,
+                    ))
+                    .collect::<Vec<_>>()
+                    == vec![
+                        (fp, labels.clone(), 10, 1.0_f64.to_bits(), Some(5)),
+                        (fp, labels.clone(), 20, 3.0_f64.to_bits(), Some(7)),
+                    ]
+            );
+            assert!(
+                (
+                    histogram.fp,
+                    histogram.labels.as_ref(),
+                    histogram.ts_ms,
+                    histogram.hist.as_ref()
+                ) == (fp, &labels, 30, &native_histogram())
+            );
+            assert!(
+                (
+                    exemplar.series_labels.as_ref(),
+                    exemplar.labels.as_ref(),
+                    exemplar.ts_ms,
+                    exemplar.value.to_bits(),
+                ) == (
+                    &labels,
+                    &lbls(&[("trace_id", "abc")]),
+                    21,
+                    4.0_f64.to_bits()
+                )
+            );
+            assert!(Arc::ptr_eq(&floats[0].labels, &floats[1].labels));
+            assert!(Arc::ptr_eq(&floats[0].labels, &histogram.labels));
+            assert!(Arc::ptr_eq(&floats[0].labels, &exemplar.series_labels));
+            assert!(!Arc::ptr_eq(&floats[0].labels, &other.labels));
+            assert!(Arc::ptr_eq(
+                &store.series_labels["t"],
+                &snapshot.series_labels["t"]
+            ));
+            assert!(snapshot.floats["t"].len() == 1);
+            assert!(snapshot.hists.is_empty() && snapshot.exemplars.is_empty());
+        }
+    }
+}
+
+#[test]
+fn wal_label_hits_keep_collisions_and_clean_dead_entries_without_changing_snapshots() {
+    let labels = Labels::from_pairs([("__name__", b"up".to_vec()), ("job", vec![0xff])]);
+    let fp = labels.fingerprint();
+    let wrong = Arc::new(Labels::from_pairs([
+        ("__name__", b"up".to_vec()),
+        ("job", vec![0xfe]),
+    ]));
+    let mut store = InMemoryMetricStore::new();
+    // These byte values have the same JSON view. Full byte equality still
+    // distinguishes them when their cache keys collide.
+    store.series_labels.insert(
+        "t".to_owned(),
+        Arc::new(HashMap::from([(fp, vec![Arc::downgrade(&wrong)])])),
+    );
+    let mut record = WalRecord {
+        tenant: "t".to_owned(),
+        labels: vec![
+            ("__name__".to_owned(), b"up".to_vec().into()),
+            ("job".to_owned(), vec![0xff].into()),
+        ],
+        payload: SamplePayload::Float {
+            timestamp_ms: 10,
+            value: 1.0,
+            start_timestamp_ms: Some(5),
+        },
+        exemplars: Vec::new(),
+    };
+    store.apply_wal_record(&record);
+    let snapshot = store.clone();
+    let dead = Arc::new(labels.clone());
+    Arc::make_mut(store.series_labels.get_mut("t").unwrap())
+        .get_mut(&fp)
+        .unwrap()
+        .push(Arc::downgrade(&dead));
+    drop(dead);
+    let dirty_snapshot = store.clone();
+    record.payload = SamplePayload::Float {
+        timestamp_ms: 20,
+        value: 3.0,
+        start_timestamp_ms: Some(7),
+    };
+    store.apply_wal_record(&record);
+    let rows = store.floats["t"].iter().collect::<Vec<_>>();
+    assert!(
+        rows.iter()
+            .all(|row| row.fp == fp && row.labels.as_ref() == &labels)
+    );
+    assert!(Arc::ptr_eq(&rows[0].labels, &rows[1].labels));
+    assert!(!Arc::ptr_eq(&rows[1].labels, &wrong));
+    assert!(store.series_labels["t"][&fp].len() == 2);
+    assert!(dirty_snapshot.series_labels["t"][&fp].len() == 3);
+    assert!(!Arc::ptr_eq(
+        &store.series_labels["t"],
+        &dirty_snapshot.series_labels["t"]
+    ));
+    assert!(snapshot.floats["t"].len() == 1 && dirty_snapshot.floats["t"].len() == 1);
+    let held = Arc::downgrade(&rows[0].labels);
+    store.delete_tenant("t");
+    assert!(held.upgrade().is_some());
+    drop(snapshot);
+    drop(dirty_snapshot);
+    assert!(held.upgrade().is_none());
+}
+
 #[tokio::test]
 async fn equal_fingerprints_do_not_reuse_matchers_for_different_labels() {
     let wanted = Arc::new(Labels::from_pairs([("__name__", "up"), ("job", "api")]));
