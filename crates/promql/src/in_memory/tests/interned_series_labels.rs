@@ -8,6 +8,171 @@ use super::*;
 use crate::{MergedMetricStore, MetricBlockStore};
 
 #[test]
+fn shared_series_summary_keeps_row_keys_and_histogram_owners() {
+    let first = Arc::new(lbls(&[("__name__", "up"), ("job", "first")]));
+    let second = Arc::new(lbls(&[("__name__", "up"), ("job", "second")]));
+    let histogram = Arc::new(lbls(&[("__name__", "up"), ("job", "histogram")]));
+    let mut raw = Vec::new();
+    for bytes in [vec![0xff], vec![0xfe], "\u{fffd}".as_bytes().to_vec()] {
+        let mut labels = lbls(&[("__name__", "up")]);
+        labels.insert("raw", bytes);
+        raw.push(Arc::new(labels));
+    }
+    let mut store = InMemoryMetricStore::new();
+    let mut summary = FloatHeadSummary::default();
+    for (fp, labels, timestamp, value) in [
+        (3, &first, 10, f64::from_bits(0x7ff0_0000_0000_0002)),
+        (1, &second, 10, 1.0),
+        (1, &second, 20, 2.0),
+        (2, &raw[0], 20, f64::NAN),
+        (6, &raw[1], 20, f64::INFINITY),
+        (7, &raw[2], 20, -0.0),
+        (5, &first, 0, 3.0),
+    ] {
+        assert!(fp != labels.fingerprint());
+        let row = FloatRow {
+            fp,
+            labels: Arc::clone(labels),
+            ts_ms: timestamp,
+            value,
+            start_timestamp_ms: None,
+        };
+        summary.observe(&row);
+        store.floats.entry("t".into()).or_default().push(row);
+    }
+    store
+        .float_head_summaries
+        .insert("t".into(), Arc::new(summary));
+    for (fp, labels) in [(1, &histogram), (4, &histogram), (5, &histogram)] {
+        store.hists.entry("t".into()).or_default().push(HistRow {
+            fp,
+            labels: Arc::clone(labels),
+            ts_ms: 15,
+            hist: Arc::new(native_histogram()),
+        });
+    }
+    let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
+    assert!(summary_ledger(&store, "t", &matchers, 10, 10, 20).is_some());
+    let expected = BTreeMap::from([
+        (1, Arc::clone(&second)),
+        (2, Arc::clone(&raw[0])),
+        (3, Arc::clone(&first)),
+        (4, Arc::clone(&histogram)),
+        (5, Arc::clone(&histogram)),
+        (6, Arc::clone(&raw[1])),
+        (7, Arc::clone(&raw[2])),
+    ])
+    .into_values()
+    .collect::<Vec<_>>();
+    let actual = store.matched_series_shared("t", &matchers, 10, 20).unwrap();
+    assert!(actual == expected);
+    for (actual, expected) in actual.iter().zip(&expected) {
+        assert!(Arc::ptr_eq(actual, expected));
+    }
+    let shard = [LabelMatcher::new("__query_shard__", MatchOp::Eq, "1_of_2")];
+    assert!(summary_ledger(&store, "t", &shard, 10, 10, 20).is_some());
+    assert!(
+        store.matched_series_shared("t", &shard, 10, 20).unwrap()
+            == vec![
+                Arc::clone(&raw[0]),
+                Arc::clone(&histogram),
+                Arc::clone(&raw[1])
+            ]
+    );
+    let selected = [LabelMatcher::new("raw", MatchOp::Eq, vec![0xff])];
+    assert!(
+        store.matched_series_shared("t", &selected, 10, 20).unwrap() == vec![Arc::clone(&raw[0])]
+    );
+}
+
+#[test]
+fn shared_series_summary_preserves_window_fallback_and_snapshot_owners() {
+    for (case, start, end, eligible, count) in [
+        ("shared", 10, 20, true, 1),
+        ("boundary", 20, 20, true, 1),
+        ("empty", 21, 30, true, 0),
+        ("past", 10, 10, false, 1),
+        ("future", 10, 20, false, 1),
+        ("ambiguous", 20, 20, false, 1),
+        ("missing", 10, 20, false, 1),
+        ("count", 10, 20, false, 1),
+        ("pruned", 20, 20, true, 1),
+    ] {
+        let first = Arc::new(lbls(&[("__name__", "up")]));
+        let mut expected = Arc::clone(&first);
+        let mut store = InMemoryMetricStore::with_retention(millis(5));
+        store.push_float("t", Arc::clone(&first), 10, 1.0);
+        if case == "ambiguous" {
+            expected = Arc::new(first.as_ref().clone());
+            let row = FloatRow {
+                fp: first.fingerprint(),
+                labels: Arc::clone(&expected),
+                ts_ms: 20,
+                value: 2.0,
+                start_timestamp_ms: None,
+            };
+            Arc::make_mut(store.float_head_summaries.get_mut("t").unwrap()).observe(&row);
+            store.floats.get_mut("t").unwrap().push(row);
+        } else {
+            store.push_float("t", Arc::clone(&first), 20, 2.0);
+        }
+        match case {
+            "future" => store.push_float("t", Arc::clone(&first), 30, 3.0),
+            "missing" => {
+                store.float_head_summaries.remove("t");
+            }
+            "count" => store.floats.get_mut("t").unwrap().push(FloatRow {
+                fp: first.fingerprint(),
+                labels: Arc::clone(&first),
+                ts_ms: 25,
+                value: 3.0,
+                start_timestamp_ms: None,
+            }),
+            "pruned" => {
+                assert!(store.prune(25).samples_dropped == 1);
+            }
+            _ => {}
+        }
+        assert!(
+            summary_ledger(&store, "t", &[], start, start, end).is_some() == eligible,
+            "{case}"
+        );
+        let snapshot = store.clone();
+        let actual = snapshot
+            .matched_series_shared("t", &[], start, end)
+            .unwrap();
+        let expected = if count == 0 {
+            Vec::new()
+        } else {
+            vec![expected]
+        };
+        assert!(actual == expected, "{case}");
+        for (actual, expected) in actual.iter().zip(&expected) {
+            assert!(Arc::ptr_eq(actual, expected), "{case}");
+        }
+        store.delete_tenant("t");
+        assert!(
+            store
+                .matched_series_shared("t", &[], start, end)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            snapshot
+                .matched_series_shared("t", &[], start, end)
+                .unwrap()
+                == expected
+        );
+    }
+    let empty = InMemoryMetricStore::new();
+    let invalid = [LabelMatcher::new("__name__", MatchOp::Re, "[")];
+    assert!(matches!(
+        empty.matched_series_shared("missing", &invalid, 0, 20),
+        Err(PromqlError::Plan(_))
+    ));
+}
+
+#[test]
 fn labels_are_shared_across_records_and_sample_types_within_one_tenant() {
     let mut store = InMemoryMetricStore::new();
     let labels = lbls(&[("__name__", "up"), ("job", "api")]);
