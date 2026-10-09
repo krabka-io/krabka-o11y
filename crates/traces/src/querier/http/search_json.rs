@@ -188,7 +188,7 @@ mod tests {
                                     }}
                                 ]
                             }],
-                            "matched": 4294967295_u64,
+                            "matched": 4_294_967_295_u64,
                             "attributes": [
                                 {"key":"z","value":{"arrayValue":{"values":[
                                     {"intValue":"7"}, {"intValue":"8"}
