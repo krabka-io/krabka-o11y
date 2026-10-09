@@ -17,7 +17,7 @@ use flate2::{Compression, write::GzEncoder};
 use generated_differential::{LabelMatcher, MatchOp, TypedConstructor, TypedExpr};
 use krabka_blockstore::TenantPolicy;
 use krabka_observability::server_security::ServerSecurity;
-use krabka_pprof::{PprofProfile, proto};
+use krabka_pprof::{PprofProfile, UnionProfileStore, proto};
 use krabka_profiles::{
     ProfileRecord, ProfilesError,
     distributor::{self, DistributorState, WalSink},
@@ -67,6 +67,7 @@ const CONTAINER_START_TIMEOUT: Duration = Duration::from_mins(2);
 #[derive(Clone, Default)]
 struct CapturingSink {
     records: Arc<Mutex<Vec<ProfileRecord>>>,
+    cold: WalTailProfileStore,
 }
 
 #[async_trait::async_trait]
@@ -171,14 +172,7 @@ async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestRe
         &gzipped_pprof,
     )
     .await?;
-    for record in sink
-        .records
-        .lock()
-        .map_err(|_| "capturing sink lock poisoned")?
-        .clone()
-    {
-        store.append_record(record)?;
-    }
+    drain_sink_into_cold_store(&sink)?;
 
     let pyroscope_render = render_until_non_empty(
         &client,
@@ -313,14 +307,7 @@ async fn real_pyroscope_series_and_stats_match_krabka_after_identical_ingest() -
         &gzipped_pprof,
     )
     .await?;
-    for record in sink
-        .records
-        .lock()
-        .map_err(|_| "capturing sink lock poisoned")?
-        .clone()
-    {
-        store.append_record(record)?;
-    }
+    drain_sink_into_cold_store(&sink)?;
 
     // (a) GetProfileStats — empty (all-default) request body. Pyroscope ingests
     // asynchronously, so poll until it reports data, then compare.
@@ -987,6 +974,7 @@ async fn start_krabka_pair_with_query_options(
     async_enabled: bool,
     analysis_enabled: bool,
 ) -> TestResult<KrabkaPair> {
+    let cold = sink.cold.clone();
     let (distributor_shutdown, distributor_rx) = oneshot::channel();
     let distributor_state = Arc::new(DistributorState {
         sink: Arc::new(sink),
@@ -1016,7 +1004,7 @@ async fn start_krabka_pair_with_query_options(
     // range to compare against real Pyroscope, so disable the per-query range cap.
     let querier_state = Arc::new(
         QuerierState::new_with_limits(
-            Arc::new(store),
+            Arc::new(UnionProfileStore::new(Arc::new(store), Arc::new(cold))),
             krabka_profiles::limits::Limits {
                 max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
                 ..Default::default()
@@ -2877,14 +2865,7 @@ async fn grafana_renders_krabka_profiles_end_to_end() -> TestResult {
     let store = WalTailProfileStore::new();
     let krabka = start_krabka_public(sink.clone(), store.clone()).await?;
     post_cpu_profile(&client, &krabka.distributor_base, Some(TENANT), &gzipped).await?;
-    for record in sink
-        .records
-        .lock()
-        .map_err(|_| "capturing sink lock poisoned")?
-        .clone()
-    {
-        store.append_record(record)?;
-    }
+    drain_sink_into_cold_store(&sink)?;
 
     // 2. Real Grafana + its built-in Pyroscope datasource, one per tenant. Each datasource
     //    injects its own X-Scope-OrgID via the standard custom-HTTP-header mechanism, so the
@@ -3128,6 +3109,7 @@ async fn start_krabka_public(
     sink: CapturingSink,
     store: WalTailProfileStore,
 ) -> TestResult<KrabkaPublic> {
+    let cold = sink.cold.clone();
     let (distributor_shutdown, distributor_rx) = oneshot::channel();
     let distributor_state = Arc::new(DistributorState {
         sink: Arc::new(sink),
@@ -3156,7 +3138,7 @@ async fn start_krabka_public(
     // The differential / e2e corpus intentionally queries the full `[0, i64::MAX]`
     // range to compare against real Pyroscope, so disable the per-query range cap.
     let querier_state = Arc::new(QuerierState::new_with_limits(
-        Arc::new(store),
+        Arc::new(UnionProfileStore::new(Arc::new(store), Arc::new(cold))),
         krabka_profiles::limits::Limits {
             max_query_length: <krabka_units::Time as krabka_units::convert::TimeExt>::ZERO,
             ..Default::default()
@@ -3680,17 +3662,24 @@ async fn assert_legacy_failure_statuses_match(
     Ok(())
 }
 
-/// Move everything the distributor appended into the querier's hot store, the
-/// way the WAL tail would.
-fn drain_sink_into_store(sink: &CapturingSink, store: &WalTailProfileStore) -> TestResult {
+/// Replay each captured record once into the cold head.
+///
+/// One head preserves the original fixture's global time bounds for v1 query
+/// analysis. The capture has no Kafka positions, so these rows have no WAL
+/// identities. Positioned overlap and mixed hot/cold downsample contributors
+/// are checked by the real WAL and compaction tests; this corpus checks the
+/// canonical cold-only union against the native API.
+fn drain_sink_into_cold_store(sink: &CapturingSink) -> TestResult {
     let records = sink
         .records
         .lock()
         .map_err(|_| "capturing sink lock poisoned")?
         .clone();
+    let count = records.len();
     for record in records {
-        store.append_record(record)?;
+        sink.cold.append_record(record)?;
     }
+    eprintln!("native union replay: hot=0 cold={count}");
     Ok(())
 }
 
@@ -3724,7 +3713,7 @@ async fn real_pyroscope_legacy_ingest_formats_match_krabka() -> TestResult {
         post_ingest(&client, &pyroscope_base, None, case).await?;
         post_ingest(&client, &krabka.distributor_base, Some(TENANT), case).await?;
     }
-    drain_sink_into_store(&sink, &store)?;
+    drain_sink_into_cold_store(&sink)?;
 
     for case in &cases {
         let selector = if case.format == "jfr" {
@@ -3863,7 +3852,7 @@ async fn real_pyroscope_profile_types_match_krabka() -> TestResult {
         post_push_typed(&client, &pyroscope_base, None, case).await?;
         post_push_typed(&client, &krabka.distributor_base, Some(TENANT), case).await?;
     }
-    drain_sink_into_store(&sink, &store)?;
+    drain_sink_into_cold_store(&sink)?;
 
     for case in &cases {
         let query = format!(r#"{}{{service_name="{}"}}"#, case.profile_type, case.app);
@@ -4007,7 +3996,7 @@ async fn real_pyroscope_otlp_export_matches_krabka() -> TestResult {
         )
         .await?;
     }
-    drain_sink_into_store(&sink, &store)?;
+    drain_sink_into_cold_store(&sink)?;
 
     for (service, _, _, _) in &cases {
         // Pyroscope names an OTLP series after the profile's own sample type,
@@ -4270,7 +4259,7 @@ async fn populated_profile_rpc_comparisons(evidence: &mut Value) -> TestResult {
         )
         .await?;
     }
-    drain_sink_into_store(&sink, &store)?;
+    drain_sink_into_cold_store(&sink)?;
 
     assert_v1_heatmap_capability(
         evidence,
@@ -4312,6 +4301,8 @@ async fn populated_profile_rpc_comparisons(evidence: &mut Value) -> TestResult {
         fixture_timestamp,
     )
     .await?;
+
+    let store = UnionProfileStore::new(Arc::new(store), Arc::new(sink.cold.clone()));
 
     compare_populated_diffs(
         evidence,
@@ -4364,7 +4355,7 @@ async fn compare_populated_diffs(
     client: &reqwest::Client,
     oracle_base: &str,
     krabka_base: &str,
-    store: &WalTailProfileStore,
+    store: &UnionProfileStore<WalTailProfileStore, WalTailProfileStore>,
     fixture_timestamp: i64,
 ) -> TestResult {
     use pb::querier::v1::{DiffRequest, DiffResponse, SelectMergeStacktracesRequest};
@@ -4816,7 +4807,7 @@ async fn compare_generated_populated_profiles(
     client: &reqwest::Client,
     oracle_base: &str,
     krabka_base: &str,
-    store: &WalTailProfileStore,
+    store: &UnionProfileStore<WalTailProfileStore, WalTailProfileStore>,
     fixture_timestamp: i64,
 ) -> TestResult {
     let cpu_request = pb::querier::v1::SelectMergeStacktracesRequest {
@@ -4907,7 +4898,7 @@ async fn run_generated_profile_rejections(
     client: &reqwest::Client,
     oracle_base: &str,
     krabka_base: &str,
-    store: &WalTailProfileStore,
+    store: &UnionProfileStore<WalTailProfileStore, WalTailProfileStore>,
     time_ms: i64,
     output: &std::path::Path,
 ) -> TestResult {
@@ -5693,7 +5684,7 @@ async fn real_pyroscope_v2_request_fields_match_krabka() -> TestResult {
     .await?;
     let time = i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())? - 60_000;
     let (profile_id, identity) =
-        profile_v2_fixtures(&client, &oracle_base, &candidate, &sink, &store, time).await?;
+        profile_v2_fixtures(&client, &oracle_base, &candidate, &sink, time).await?;
 
     let selector = r#"{service_name="v2-matrix"}"#;
     let base = json!({"profileTypeID": OTLP_PROFILE_TYPE, "labelSelector": selector, "start": time-1000, "end": time+1000});
@@ -6018,7 +6009,7 @@ async fn profile_architecture_controls(client: &reqwest::Client, time: i64) -> T
                 .await?;
             }
         }
-        drain_sink_into_store(&sink, &store)?;
+        drain_sink_into_cold_store(&sink)?;
         let base = json!({"profileTypeID":OTLP_PROFILE_TYPE,"labelSelector":"{service_name=~\"architecture-.*\"}","start":time-1000,"end":time+1000});
         connect_json_until(
             client,
@@ -6160,7 +6151,6 @@ async fn profile_v2_fixtures(
     oracle_base: &str,
     candidate: &KrabkaPair,
     sink: &CapturingSink,
-    store: &WalTailProfileStore,
     time: i64,
 ) -> TestResult<(String, Value)> {
     use pb::otlp_profiles::{ExportProfilesServiceRequest, Link};
@@ -6249,7 +6239,7 @@ async fn profile_v2_fixtures(
         &profile_id,
     )
     .await?;
-    drain_sink_into_store(sink, store)?;
+    drain_sink_into_cold_store(sink)?;
     Ok((profile_id, identity))
 }
 
