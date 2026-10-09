@@ -205,6 +205,9 @@ impl MergedMetricStore<MetricBlockStore, WalHead> {
                 }
             }
         }
+        // Selected values and labels retain the captured head's result.
+        // Release its rows before the cold read can wait on object storage.
+        drop(hot);
         let (fps, keys, blocks, cold_labels) = cold_candidates?;
         let mut covered_blocks = 0;
         let mut uncovered = Vec::new();
