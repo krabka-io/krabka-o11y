@@ -684,3 +684,227 @@ The [pinned upstream source audit](grafana-upstream-source-comparison.md) separa
 
 
 After the backup/restore test recursion repair, all 385 ordinary Bazel targets pass with one code generation unit and retries disabled. Ignored Rust container cases are catalogued in the full-scope proof; the separately executed ten native wrappers contain 67 cases and zero ignored cases. This completes the ordinary scope on source `502ab8f4`, not qualification of the historical compiler image or of a new cache candidate. The global setting remains off because of the Loki query regression.
+
+## Large selective matcher workloads
+
+The 2026-10-09 investigation targets queries that select one series from a
+large tenant index. The original metrics resolver constructs complete matcher
+sets in input order. A negative matcher can construct almost every tenant
+fingerprint before a later equality keeps one. The original logs resolver
+clones the first equality posting, even when a later posting contains one
+fingerprint.
+
+The pinned Mimir source intersects restrictive postings before it subtracts
+negative postings. Loki scans distinct label values and has a finite regex
+posting shortcut. These are different algorithms, not timing measurements of
+the native services. The [source audit](grafana-upstream-source-comparison.md#postings-and-streaming-operators)
+records their commits and links.
+
+Both Krabka resolvers now start from the smallest exact posting. Metrics
+evaluates the remaining matchers within that set. Broad regex selectors keep
+the distinct-value scan when the candidate set exceeds the distinct-value
+count. Invalid matchers use sequential resolution. This preserves errors
+that an earlier empty intersection can skip. Logs keeps its own predicate
+semantics and intersects borrowed exact postings. Nested tenant/name/value
+dictionaries remove temporary owned tuple keys and full posting scans for
+label names.
+
+The benchmarks cover 1,000, 10,000, 100,000 and one million series.
+Single equalities, broad negatives, broad regexes and two broad equalities
+act as controls. Fixture construction is outside the measured query loop.
+The profiling driver uses separate, non-inlined query functions. Heaptrack
+stack filters exclude fixture allocations from the per-query counts.
+
+| Workload | Series | Original allocations per query | Candidate allocations per query |
+| --- | ---: | ---: | ---: |
+| Metrics: negative matcher before selective equality | 100,000 | 9,113 | 1 |
+| Metrics: negative matcher before selective equality | 1,000,000 | 90,936 | 1 |
+| Logs: broad equality before selective equality | 100,000 | 13,394 | 4 |
+| Logs: broad equality before selective equality | 1,000,000 | 133,523 | 4 |
+
+The first logs candidate reduced allocations to 14 but increased
+`broad_equality_last` time in all three pairs at 100,000 and one million
+streams. Median paired ratios were 1.246 and 1.227. That implementation was
+replaced with borrowed posting references and nested dictionaries. That
+refinement reduced allocations to six and improved the selective controls in
+all three pairs, but broad negative controls remained mixed. The initial
+measurements remain preserved as rejected evidence.
+
+A dedicated broad-negative capture at 100,000 streams records 3,479 CPU
+samples with none lost. About 55% land in `LabelPredicate::matches`; the
+percentage covers the whole capture, including construction. This selector
+excludes a value absent from the postings, yet still looks up every series
+and rebuilds its unchanged result. The final guard returns the posting result
+for all-equality selectors and absent negative values. Present negative
+values and regexes retain their label checks. Query allocations for this
+control fall from 22,494 to 13,384. Full-result cloning still scales with the
+number of returned fingerprints.
+
+Three final alternating logs pairs have lower means for all 28 cases. At
+one million streams, median run means are:
+
+| Logs query | Original | Final |
+| --- | ---: | ---: |
+| Broad equality before selective equality | 41.8 ms | 272 ns |
+| Selective equality before broad equality | 584 ns | 280 ns |
+| Broad negative | 630 ms | 40.1 ms |
+| Two broad equalities | 80.1 ms | 23.9 ms |
+
+The earlier three metrics pairs reduce the one-million-series negative-first
+selector from 62.7 ms to 158 ns. The final binary completes all 48 metrics
+cases; its single sanity pass measures that selector at 155 ns. Metrics
+resolver and query workloads are unchanged by the independent logs
+refinements. The combined harness was split into two Cargo targets. Broad
+regex timings remain mixed in the paired metrics evidence, with a median
+candidate/baseline ratio of 1.063; no broad-regex improvement is qualified.
+The regex posting investigation below uses that final binary as its baseline.
+
+Final correctness checks pass 338 blockstore unit tests, five public matcher
+regressions, 584 Loki corpus comparisons, the Mimir corpus wrapper and two
+Pyroscope native tests. Mimir records 1,782 cases, 18 skipped cases and 75
+existing divergences. The final unit executable uses cached Cargo dependency
+fingerprints and Rust optimization level 1; the public and native suites use
+Cargo release binaries. Both scoped Clippy runs pass. These are scoped checks,
+not a full Bazel-suite result.
+
+Metrics counts include the driver's one verification query. Logs has no
+verification query before the loop. Each fingerprint-set result is consumed
+through `black_box`. Fixture memory remains part of process RSS; these
+counts establish no resident-memory reduction.
+
+The comparison and profile tools now accept workloads through one million
+series or streams. The comparison ramp includes the requested maximum,
+including values between standard levels. Tests exercise the real phase
+loop with deployment and measurement stubs for all four signals. Defaults
+remain at 20,000. Arbitrary trace capacity tenants receive the same unlimited
+ingestion rate as predefined ramp tenants, in split and all-target roles.
+The explicit noisy-tenant override remains in place. The 76 new benchmark
+budgets remain unseeded until a run
+on the recorded BuildBuddy hardware.
+
+Build and run the workloads with:
+
+```bash
+tools/bench.sh --quick index_matchers log_index_matchers
+CARGO_PROFILE_RELEASE_DEBUG=line-tables-only cargo build \
+  --manifest-path benches/Cargo.toml --locked --release \
+  --example index_matchers_profile
+perf record -e cpu-clock:u -F 199 --call-graph dwarf,16384 -- \
+  benches/target/release/examples/index_matchers_profile 100000 2000 negative_first
+heaptrack benches/target/release/examples/index_matchers_profile \
+  1000000 20 logs_broad_equality_first
+```
+
+Use separate timing runs without a profiler. Preserve both release binaries
+and alternate their order on the same host. A fast candidate needs more
+iterations for a useful CPU profile; record that count before normalization.
+The local evidence lives under `qualification/evidence/large-index-2026-10-09/`.
+It includes raw perf and heaptrack files, Criterion estimates, binary hashes
+and the measured harness. Sampled periods attributed to the query wrappers
+are lower-bound diagnostics: incomplete recovered stacks prevent exact query
+CPU-cost attribution. This shared four-CPU host does not supply native service
+performance qualification on GCP. The
+[investigation record](../qualification/large-index-matchers-2026-10-09.json)
+pins source hashes, rejected evidence and verification scope.
+
+## Regex posting unions
+
+The follow-up capture uses the same five-label fixture and selects
+`{__name__="http_requests_total",job=~"job-(1|2|3)"}`. At one million series,
+the result contains 187,546 fingerprints. Three literal equality queries
+verify that count outside the profiling wrapper.
+
+The baseline CPU capture records 4,562 samples with none lost. Tree cloning
+accounts for 20.04% and tree insertion for 13.20% of the whole capture,
+including fixture construction and drop. Recovered stacks contain the query
+wrapper in 2,882 samples. These are attribution diagnostics; incomplete
+stacks and merged generic symbols prevent exact query CPU accounting.
+
+Two changes remove that work. Regex resolution collects matching postings
+and absent-label fingerprints into one bulk-built tree. When the smallest
+exact posting covers every tenant series and there is one broad regex, the
+resolver starts from the regex result. That exact posting cannot remove any
+of its fingerprints. Other broad selectors keep sequential resolution.
+Invalid matchers also use that path to preserve skipped-error behavior.
+
+The first regex candidate adds checks to the ordinary selective loop and
+slows several small controls by 10–17% in two clean timing pairs. A third
+diagnostic pair overlaps the cached formatter during refinement and is
+excluded from that decision. The refinement restores the original selective
+loop and moves tenant-wide regex planning into a separate non-inlined
+function. The rejected candidate's source, driver archive and timings remain
+preserved.
+
+The pinned Mimir implementation streams sorted posting iterators through a
+loser tree. Krabka still returns an owned set and sorts the collected values
+before bulk construction. This change does not implement Mimir's iterator API
+or finite-alternative regex parser shortcut.
+
+Three final alternating pairs complete all 48 metrics cases. Each case uses
+ten samples, a 0.3-second warmup and a one-second measurement target.
+The baseline is the final selective resolver from the preceding investigation.
+Median run means and median paired candidate/baseline ratios are:
+
+| Broad regex series | Baseline | Final | Paired ratio |
+| --- | ---: | ---: | ---: |
+| 1,000 | 53.0 µs | 34.5 µs | 0.665 |
+| 10,000 | 311 µs | 60.5 µs | 0.195 |
+| 100,000 | 4.08 ms | 0.422 ms | 0.105 |
+| 1,000,000 | 88.7 ms | 6.04 ms | 0.0687 |
+
+All three pairs improve this query at each size. The million-series
+`job_regex` control also improves in every pair, from 6.02 ms to 3.29 ms.
+Other controls are mixed. Of the remaining 44 IDs, 24 have higher median
+paired ratios. Three smaller absent-label controls have 12–18% higher ratios.
+Their median run means increase by about 8–19 ns. The million-series
+absent-label control has a ratio of 1.077. The change retains the large regex
+gain and accepts this measured small-selector cost. It establishes no native
+service performance gain or process RSS reduction.
+
+The final million-series CPU capture records 3,166 samples with none lost,
+using 1,500 timed queries and one verification query. Recovered stacks contain
+the query wrapper in 1,643 samples. Its sampled period per query is a 5.50 ms
+lower bound. Whole-process samples also cover fixture construction and drop.
+This diagnostic does not replace the separate unprofiled timings.
+
+| Broad regex workload | Baseline allocations per query | Candidate allocations per query |
+| --- | ---: | ---: |
+| 100,000 series | 17,870.1 | 1,991.1 |
+| 1,000,000 series | 175,908.4 | 17,325.4 |
+
+Allocation counts include one verification query, followed by 30 queries at
+100,000 series or 10 at one million. The wrapper stack filter excludes the
+literal equality checks and fixture construction. The averages include
+initial regex allocations. Initial captures overlap native Pyroscope checks;
+the refinement's allocation recaptures overlap a Cargo rebuild. Allocation
+counts are separate from unprofiled timing measurements. CPU captures and
+final paired timings wait for compiler jobs and native tests to finish.
+
+The regression ledger covers standalone regexes and both matcher orders with
+a tenant-wide exact posting. It checks absent and empty labels, Unicode, NUL,
+multiline values, complements and inline dot-all flags. No regex pattern is
+rewritten to an unconditional match.
+
+Final validation passes 338 blockstore unit tests, six Cargo release matcher
+regressions, both scoped Clippy checks and the repository formatter.
+The native Mimir wrapper passes with 1,782 cases, 18 skips and 75 existing
+divergences. All 584 native Loki comparisons and seven native Pyroscope tests
+pass before the final metrics-only planner refinement. Native Tempo and the
+full Bazel suite are outside this check. The final inventory check finds all
+48 metrics IDs; the 76 new metrics and logs budgets remain unseeded.
+The final fetch finds no difference from `origin/main` at `9e630202`.
+
+The [regex investigation record](../qualification/regex-postings-2026-10-09.json)
+preserves source and binary hashes, verification scope and raw evidence under
+`qualification/evidence/regex-postings-2026-10-09/`. The prior record keeps its
+original source hashes and points to snapshots for the files changed in this
+follow-up.
+
+Use the profiling driver with the `broad_regex` case:
+
+```bash
+perf record -e cpu-clock:u -F 199 --call-graph dwarf,16384 -- \
+  benches/target/release/examples/index_matchers_profile 1000000 1500 broad_regex
+heaptrack benches/target/release/examples/index_matchers_profile \
+  1000000 10 broad_regex
+```

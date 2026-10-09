@@ -161,18 +161,34 @@ comparison; only a paired measurement can establish a gain. See the
 
 Mimir first intersects restrictive postings, then subtracts negative postings.
 It handles missing labels and empty-matching regexes explicitly. Some regexes
-have direct postings fast paths. Krabka's
+have direct postings fast paths. Its posting union streams sorted inputs
+through a [loser tree](https://github.com/grafana/mimir/blob/e49585d43c6e852225e114bd1ddd98da58a4c060/vendor/github.com/prometheus/prometheus/tsdb/index/postings.go#L678-L747).
+Krabka's sequential fallback in
 [`Index::resolve`](../crates/blockstore/src/index/index_type.rs) intersects
-matcher results in input order. Its
+owned matcher results in input order. Its
 [`resolve_one`](../crates/blockstore/src/index/tenant_index.rs) can build a
 nearly tenant-wide set for a negative matcher before intersection.
 See Mimir's [postings algorithm](https://github.com/grafana/mimir/blob/e49585d43c6e852225e114bd1ddd98da58a4c060/vendor/github.com/prometheus/prometheus/tsdb/querier.go#L295-L440).
 
-A small candidate can start with a restrictive positive posting and test
-remaining matchers against that candidate set. It must preserve anchored
-regex semantics, absent-label behavior, shard matcher validation and errors.
-Measure multi-matcher and high-cardinality workloads; do not assume a gain
-for `up` alone.
+Krabka now starts multi-matcher selectors from the smallest non-empty-value
+equality posting. It tests other matchers within that set. Broad regex
+selectors keep the distinct-value posting scan. If the exact posting covers
+the whole tenant, a single broad regex supplies the result without cloning
+that exact posting. Regex unions use one bulk tree construction. They still
+materialize an owned set; Mimir's union remains an iterator. Invalid matchers
+use the original sequential path, so an empty intersection skips the same
+later errors. The logs label index also intersects exact postings from the
+smallest posting. Its tenant/name/value dictionaries permit borrowed key
+lookups, as Loki's nested label dictionaries do. Label names no longer require scanning
+every value posting. Pure equalities and absent negative postings return the
+already resolved set directly. Other predicates retain their label checks.
+It preserves its separate predicate semantics.
+
+The new `index_matchers` and `log_index_matchers` benchmarks cover 1,000 to
+one million series. CPU and allocation profiles select this change. See the
+[large matcher investigation](grafana-performance-profiling.md#large-selective-matcher-workloads).
+These index measurements do not establish a service-level gain over an
+upstream system. Single-matcher and broad selectors remain separate controls.
 
 Mimir's default query engine processes each series through reusable iterators.
 It obtains result slices from bounded pools with explicit memory accounting.

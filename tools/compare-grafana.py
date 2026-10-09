@@ -32,6 +32,11 @@ PRODUCTS = {
 }
 RESOURCE_ACCOUNTING_SCOPE = 'application_and_broker_excluding_object_store'
 
+
+def cardinality_levels(maximum):
+    """Include the requested maximum, even between standard ramp levels."""
+    return [n for n in (1000, 5000, 20000, 100000, 500000, 1000000) if n < maximum] + [maximum]
+
 _original_write = env.write_request
 _original_query = env.query_request
 _original_http = env.http
@@ -560,6 +565,13 @@ def configure_all(services, roles, admin_ports, signal):
     return {'broker': admin_ports['broker'], signal + '-all': port}
 
 
+def configure_trace_capacity(roles, target):
+    """Give arbitrary ramp tenants the same unlimited rate as predefined ones."""
+    role = 'all' if target == 'all' else 'distributor'
+    config = roles / f'traces-{role}.yaml'
+    config.write_text(config.read_text() + '\nmax-ingest-spans-per-second: 0\n')
+
+
 class ComparisonDeployment(env.Deployment):
     def __init__(self, evidence, image, signal, native, profiles_target='split', deployment_target='split'):
         super().__init__(evidence, image)
@@ -609,6 +621,8 @@ class ComparisonDeployment(env.Deployment):
                 self.admin_ports = configure_all(services, self.evidence / 'roles', self.admin_ports, signal)
                 self.role_locks = {name: threading.Lock() for name in self.admin_ports}
                 env.QUERY[signal] = {'metrics': 9090, 'logs': 3100, 'traces': 3200, 'profiles': 4040}[signal]
+            if signal == 'traces':
+                configure_trace_capacity(self.evidence / 'roles', self.target)
         self.file.write_text(json.dumps(data, indent=2))
 
     def drain(self, signal, timeout=180):
@@ -888,7 +902,7 @@ def run(args):
               'host': {'cpu_count': os.cpu_count(), 'kernel': env.command('uname', '-r'), 'lscpu': json.loads(env.command('lscpu', '-J'))},
               'phases': args.phases, 'backends': args.backends,
               'entries': [], 'workload': {'writers': [n for n in env.WRITERS if n <= args.max_writers],
-                         'cardinalities': [n for n in (1000, 5000, 20000) if n <= args.max_cardinality]}}
+                         'cardinalities': cardinality_levels(args.max_cardinality)}}
     args.output.mkdir(parents=True, exist_ok=True)
     if (args.output / "comparison-report.json").exists():
         raise RuntimeError("output already contains a comparison report; choose a fresh directory")
@@ -1609,13 +1623,26 @@ def self_test():
                 assert 'runtime-overrides: /etc/krabka/metrics-limits.yaml' in (roles / 'metrics-writer.yaml').read_text()
             if signal == 'logs':
                 assert services['logs-all']['volumes'][0]['source'] == 'logs-data'
+        for target, role in [('split', 'distributor'), ('all', 'all')]:
+            config = roles / f'traces-{role}.yaml'
+            initial = f'target: {role}\ntraces-limits-overrides-config: /etc/krabka/traces-limits.yaml\n'
+            config.write_text(initial)
+            configure_trace_capacity(roles, target)
+            assert config.read_text() == initial + '\nmax-ingest-spans-per-second: 0\n'
     # Run the real phase loop with external deployment and measurement stubbed.
-    for phase, seconds, maximum, levels, duration in [
-        ('steady', 60, 20000, [1000], 60),
-        ('high_cardinality', 60, 20000, [1000, 5000, 20000], 30),
-        ('high_cardinality', 120, 20000, [1000, 5000, 20000], 60),
-        ('high_cardinality', 120, 5000, [1000, 5000], 60),
-        ('high_cardinality', 120, 1000, [1000], 60),
+    for signal, phase, seconds, maximum, levels, duration in [
+        ('metrics', 'steady', 60, 20000, [1000], 60),
+        ('metrics', 'high_cardinality', 60, 20000, [1000, 5000, 20000], 30),
+        ('metrics', 'high_cardinality', 120, 20000, [1000, 5000, 20000], 60),
+        ('metrics', 'high_cardinality', 120, 5000, [1000, 5000], 60),
+        ('metrics', 'high_cardinality', 120, 1000, [1000], 60),
+        ('metrics', 'high_cardinality', 120, 10000, [1000, 5000, 10000], 60),
+        ('metrics', 'high_cardinality', 120, 500, [500], 60),
+        *[(signal, 'high_cardinality', 120, 100000, [1000, 5000, 20000, 100000], 60)
+          for signal in PRODUCTS],
+        *[(signal, 'high_cardinality', 120, 1000000,
+           [1000, 5000, 20000, 100000, 500000, 1000000], 60)
+          for signal in PRODUCTS],
     ]:
         with tempfile.TemporaryDirectory() as directory:
             calls, seeded = [], []
@@ -1638,7 +1665,7 @@ def self_test():
                 return ({'duration_seconds': measured, 'objectives_met': True,
                          'ingest': {'accepted_rows': 1000 * writers * measured}, 'query': {}},
                         [], [{'time_unix': 0}, {'time_unix': measured}])
-            args = argparse.Namespace(signal='metrics', profiles_target='all', deployment_target='all',
+            args = argparse.Namespace(signal=signal, profiles_target='all', deployment_target='all',
                                       image='test-image', image_digest='sha256:' + '0' * 64,
                                       image_commit='test-source', seconds=seconds, repetitions=1,
                                       phases=[phase], backends=['krabka'], max_writers=256,
@@ -1649,7 +1676,7 @@ def self_test():
                     patch.object(env, 'command', return_value='[{}]'), patch.object(env, 'measure', phase_measure):
                 run(args)
             assert calls == [
-                ('metrics', duration, duration / 4, 2, level,
+                (signal, duration, duration / 4, 2, level,
                  {'cold': phase == 'high_cardinality', 'interval': 1,
                   'tenant': f'cardinality-{level}' if phase == 'high_cardinality' else 'soak',
                   'check_durability': False}) for level in levels]

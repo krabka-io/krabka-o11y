@@ -110,6 +110,14 @@ name = "index_prune"
 harness = false
 
 [[bench]]
+name = "index_matchers"
+harness = false
+
+[[bench]]
+name = "log_index_matchers"
+harness = false
+
+[[bench]]
 name = "promql_range"
 harness = false
 

@@ -23,7 +23,9 @@ class PerfProfileTest(unittest.TestCase):
             for mode, phase, cardinality in [('dwarf,16384', 'steady', None),
                                               ('fp', 'steady', None),
                                               ('dwarf,16384', 'high_cardinality', 20000),
-                                              ('fp', 'high_cardinality', 20000)]:
+                                              ('fp', 'high_cardinality', 20000),
+                                              ('fp', 'high_cardinality', 100000),
+                                              ('fp', 'high_cardinality', 1000000)]:
                 with self.subTest(target=target, mode=mode, phase=phase), tempfile.TemporaryDirectory() as directory:
                     output = pathlib.Path(directory) / 'profile'
                     roles = ['broker', *apps]

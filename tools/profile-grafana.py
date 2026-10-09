@@ -308,6 +308,6 @@ if __name__ == '__main__':
     parser.add_argument('--windows', type=int, choices=range(1, 5), default=3)
     parser.add_argument('--output', type=pathlib.Path, required=True)
     args = parser.parse_args()
-    if args.cardinality is not None and not 1 <= args.cardinality <= 20000:
-        parser.error('--cardinality must be between 1 and 20000')
+    if args.cardinality is not None and not 1 <= args.cardinality <= 1000000:
+        parser.error('--cardinality must be between 1 and 1000000')
     run(args)
