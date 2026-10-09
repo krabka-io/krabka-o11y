@@ -5784,7 +5784,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectMergeStacktraces/root prefix",
@@ -5866,7 +5866,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectMergeStacktraces/hot prefix",
@@ -5933,7 +5933,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectMergeStacktraces/leaf is not root",
@@ -5973,7 +5973,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectMergeStacktraces/reordered prefix",
@@ -6016,7 +6016,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectMergeStacktraces/hot trace",
@@ -6076,7 +6076,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectMergeStacktraces/both traces",
@@ -6155,7 +6155,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectMergeStacktraces/hot modern span",
@@ -6215,7 +6215,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectMergeStacktraces/missing modern span",
@@ -6251,7 +6251,7 @@
       "report": "pyroscope-v1-aggregation.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectSeries/SUM",
@@ -6291,7 +6291,7 @@
       "report": "pyroscope-v1-aggregation.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectSeries/AVERAGE",
@@ -6331,7 +6331,7 @@
       "report": "pyroscope-v2-async-disabled.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectMergeStacktraces/FORCE falls through",
@@ -6377,7 +6377,7 @@
       "report": "pyroscope-v2-async-disabled.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectMergeStacktraces/DISABLED falls through",
@@ -6423,7 +6423,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectSeries/grouping",
@@ -6468,7 +6468,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectSeries/limit",
@@ -6513,7 +6513,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectHeatmap/two groups",
@@ -6559,7 +6559,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectHeatmap/top group limit",
@@ -6833,7 +6833,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "ceae2ff036295d5e9e4b0d8e831d4325ed84e2d8e0b8c5a6ab7d1e16b4f7b1d0"
+        "sha256": "cd78a043076349a85967addf3443370bf39711439d499cdaea0854fa752ddfd6"
       },
       "identity": {
         "id": "SelectSeries/empty span exemplars",
