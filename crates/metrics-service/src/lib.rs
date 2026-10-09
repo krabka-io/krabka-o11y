@@ -402,6 +402,10 @@ mod tests {
         ) -> Result<Vec<ConsumerRecord>, super::WalHeadConsumerError> {
             Ok(self.batches.remove(0))
         }
+
+        async fn close(self) -> Result<(), super::WalHeadConsumerError> {
+            Ok(())
+        }
     }
 
     #[async_trait::async_trait]

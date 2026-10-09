@@ -129,7 +129,7 @@ impl MetricsCompactorConfig {
             WalRebalanceListener::new(self.wal_topic.clone()).rewinding_fenced_partitions();
         let consumer = Consumer::builder()
             .bootstrap(self.bootstrap.clone())
-            .maybe_security(security)
+            .maybe_security(security.clone())
             .dispatch_queue_capacity(self.client_dispatch_queue_capacity.get())
             .frame_max(self.client_frame_max.size())
             .group_id(self.group_id.clone())
@@ -152,7 +152,7 @@ impl MetricsCompactorConfig {
             None => WalAssignmentConsumer::new(consumer, wal_consumer_metrics, rebalance),
         };
         Ok(DurableCompactionConsumer::new(
-            consumer,
+            consumer.with_drain(self, security),
             self.wal_topic.clone(),
         ))
     }

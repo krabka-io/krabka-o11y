@@ -1,6 +1,6 @@
 use krabka_observability::topic_contract::TopicContractError;
 
-use super::{Cli, ClientSecurity, METRICS_TOPICS, require_topics};
+use super::{ClientSecurity, METRICS_TOPICS, Target, WriterConfig, require_topics};
 
 /// Refuses to let this role start on topics that do not meet the contract.
 ///
@@ -24,10 +24,11 @@ use super::{Cli, ClientSecurity, METRICS_TOPICS, require_topics};
 /// Returns [`TopicContractError`] when no bootstrap address answers, or when a
 /// topic is absent or not compacted.
 pub(crate) async fn require_role_topics(
-    cli: &Cli,
+    cli: &WriterConfig,
+    target: Target,
     security: Option<ClientSecurity>,
 ) -> Result<(), TopicContractError> {
-    if !cli.target.touches_the_wal() {
+    if !target.touches_the_wal() {
         return Ok(());
     }
     require_topics(&cli.bootstrap, &METRICS_TOPICS, security).await?;

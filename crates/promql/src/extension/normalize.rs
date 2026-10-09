@@ -28,7 +28,7 @@ mod tests {
     use assert2::check;
     use datafusion::{
         catalog::MemTable,
-        common::tree_node::TreeNodeRecursion,
+        common::{plan_err, tree_node::TreeNodeRecursion},
         datasource::memory::MemorySourceConfig,
         logical_expr::{Extension, UserDefinedLogicalNodeCore, col},
         physical_plan::{
@@ -143,16 +143,9 @@ mod tests {
             ) == "PromSeriesNormalizeExec: time=timestamp, offset_ms=123, filter_nan=true\n  DataSourceExec: partitions=1, partition_sizes=[1]\n"
         );
         check!(exec.maintains_input_order() == vec![false]);
-        let mut visited = 0;
-        check!(
-            exec.apply_expressions(&mut |_| {
-                visited += 1;
-                Ok(TreeNodeRecursion::Continue)
-            })
-            .expect("expression walk")
-                == TreeNodeRecursion::Continue
-        );
-        check!(visited == 0);
+        // The plan owns no expression, so a visitor that fails must never run.
+        let walk = exec.apply_expressions(&mut |_| plan_err!("visited an expression"));
+        check!(let Ok(TreeNodeRecursion::Continue) = walk);
         check!(
             Arc::clone(&exec)
                 .replace_children(

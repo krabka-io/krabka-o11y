@@ -99,7 +99,7 @@ rather than four.
 | `ruler` | Evaluates recording and alerting rules | metrics |
 | `metrics-generator` | Derives metrics from spans and remote-writes them | traces |
 | `symbolizer` | Resolves profile addresses to function names | profiles |
-| `all` | Every role of that signal, in one process | logs, traces, profiles |
+| `all` | Ingest, storage, and query roles in one process | all four |
 
 The table's `metrics` column means the two metrics binaries together.
 
@@ -117,9 +117,9 @@ four upstreams reserve `compactor` for the merger.
 
 ### One process
 
-`--target all` runs every role of a signal in one process, the way Loki's,
-Mimir's, Tempo's and Pyroscope's single binaries do. It is the shape to
-evaluate the stack in.
+`--target all` runs a signal's ingest, storage, and query roles in one process,
+the way Loki's, Mimir's, Tempo's and Pyroscope's single binaries do. It is the
+shape to evaluate the stack in.
 
 There are no new ports to configure. Logs and profiles serve push and query on
 one listener, as `Loki` and `Pyroscope` do. Traces gives `--listen` to the
@@ -135,9 +135,11 @@ nothing new enters the WAL, and only then does the block builder flush what is
 behind it; the read path and the compactor go last, because neither holds
 anything a stop could lose. Stopping them together would leave the last
 acknowledged push in a WAL that, in a one-process stack, nothing restarts to
-read. `--all-drain-stage-timeout` bounds each stage, and should sit under the
-pod's `terminationGracePeriodSeconds`.
+read. `--drain-timeout` bounds each stage for metrics; the other signals use
+`--all-drain-stage-timeout`. The timeout should sit under the pod's
+`terminationGracePeriodSeconds`.
 
+[`roles/metrics-all.yaml`](roles/metrics-all.yaml),
 [`roles/logs-all.yaml`](roles/logs-all.yaml),
 [`roles/traces-all.yaml`](roles/traces-all.yaml) and
 [`roles/profiles-all.yaml`](roles/profiles-all.yaml) are worked examples, and
@@ -145,10 +147,9 @@ pod's `terminationGracePeriodSeconds`.
 stack and the kustomize base run the roles separately on purpose: that is the
 topology a chart has to describe.
 
-Metrics has no `all`, and the reason is structural rather than an omission: it
-is the one signal whose roles are split across two binaries, `krabka-metrics`
-for the write path and `krabka-metrics-service` for the read path, so no single
-process holds them.
+`krabka-metrics-service --target all` owns the metrics distributor, block
+builder, querier and compactor in one process. Its `writer-config` file loads
+the standalone writer options; service options stay in the service configuration.
 
 ## Configuration
 

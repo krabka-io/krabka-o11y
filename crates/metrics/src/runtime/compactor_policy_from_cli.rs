@@ -1,4 +1,4 @@
-use super::{BlockLevel, BlockTimestampUnit, Cli, CompactionPolicy};
+use super::{BlockLevel, BlockTimestampUnit, CompactionPolicy, WriterConfig};
 
 /// Reads the compaction policy the operator configured.
 ///
@@ -6,7 +6,7 @@ use super::{BlockLevel, BlockTimestampUnit, Cli, CompactionPolicy};
 /// milliseconds, so that is the unit the policy converts its window into. A
 /// nanosecond window over millisecond timestamps would put every block in one
 /// bucket, and it would do so silently.
-pub(crate) fn compactor_policy_from_cli(cli: &Cli) -> CompactionPolicy {
+pub(crate) fn compactor_policy_from_cli(cli: &WriterConfig) -> CompactionPolicy {
     CompactionPolicy::new(
         cli.compactor_max_blocks_per_job,
         cli.compactor_target_rows,

@@ -9,17 +9,15 @@ use super::ValueEnum;
 /// API, the query-frontend and the ruler -- is `krabka-metrics-service`, a
 /// separate binary with its own `--target`. This binary once carried those three
 /// names too, over a router that served `/api/v1/status/buildinfo` and nothing
-/// else; [`retired_role_message`] is what an operator who still asks for one of
+/// else; `retired_role_message` is what an operator who still asks for one of
 /// them now gets.
 ///
 /// Metrics has no `live-store`. A metrics querier reads the recent window from
 /// the WAL itself rather than from a separate hot tier. That is a real gap
 /// rather than a difference in naming.
-///
-/// [`retired_role_message`]: super::retired_role_message
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
-pub(crate) enum Target {
+pub enum Target {
     /// Accepts remote-write and OTLP pushes and writes the metrics WAL.
     Distributor,
     /// Consumes the metrics WAL and writes blocks to object storage.
@@ -48,7 +46,8 @@ impl Target {
     /// The enum above is the subset `krabka-metrics` implements;
     /// [`RoleKind`] is where the names live, so that a stage is spelled the
     /// same way in every binary and in every manifest.
-    pub(crate) const fn kind(self) -> RoleKind {
+    #[must_use]
+    pub const fn kind(self) -> RoleKind {
         match self {
             Self::Distributor => RoleKind::Distributor,
             Self::BlockBuilder => RoleKind::BlockBuilder,

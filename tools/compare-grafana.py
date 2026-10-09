@@ -5,6 +5,8 @@ API acknowledgements have different durability contracts. This experiment
 reports accepted throughput, not equivalent durable throughput.
 """
 import argparse
+import base64
+from decimal import Decimal, InvalidOperation
 import functools
 import hashlib
 import importlib.util
@@ -37,7 +39,7 @@ _timestamp_lock = threading.Lock()
 _last_ms = {}
 
 
-def write_request(signal, sequence, cardinality, tenant='soak', age_seconds=0):
+def write_request(signal, sequence, cardinality, tenant='soak', age_seconds=0, *, seed_record=None):
     if signal != 'metrics':
         path, body, content, rows = _original_write(signal, sequence, cardinality, tenant, age_seconds)
         if signal == 'profiles':
@@ -54,6 +56,8 @@ def write_request(signal, sequence, cardinality, tenant='soak', age_seconds=0):
     with _timestamp_lock:
         stamp = max(now, _last_ms.get((tenant, age_seconds), 0) + 1)
         _last_ms[tenant, age_seconds] = stamp
+    if seed_record is not None:
+        seed_record['timestamp_ms'] = stamp
     timestamp = env.wire.pb_int64_field(2, stamp)
     prefixes = metric_prefixes(cardinality, len(timestamp))
     start = sequence * 1000 % cardinality
@@ -99,6 +103,245 @@ def query_request(signal, window_seconds=30):
     if signal == 'metrics' and env.QUERY[signal] == 9009:
         path = '/prometheus' + path
     return path, body
+
+
+def metrics_seed_ledger(records, response, evaluation_ms):
+    ledger = {'verified': False, 'complete_seed': False}
+    try:
+        cardinality = records[0]['cardinality']
+        if cardinality <= 0 or len(records) != math.ceil(cardinality / 1000):
+            raise ValueError('wrong seed request count')
+        sequences = sorted(record['sequence'] for record in records)
+        if sequences != list(range(sequences[0], sequences[0] + len(records))):
+            raise ValueError('seed sequences are not distinct and consecutive')
+        expected, timestamps = {}, set()
+        for record in records:
+            if not (200 <= record['status'] < 300 and record['rows'] == 1000
+                    and record['tenant'] == records[0]['tenant'] and record['cardinality'] == cardinality
+                    and record['age_seconds'] == records[0]['age_seconds']):
+                raise ValueError('wrong seed admission or dataset')
+            timestamp = record['timestamp_ms']
+            if not isinstance(timestamp, int) or isinstance(timestamp, bool) or timestamp in timestamps:
+                raise ValueError('seed receipt timestamps are not distinct integer milliseconds')
+            timestamps.add(timestamp)
+            if not evaluation_ms - 1800000 < timestamp <= evaluation_ms:
+                raise ValueError('seed timestamp is outside the matrix window')
+            if record['age_seconds'] == 0 and timestamp <= evaluation_ms - 300000:
+                raise ValueError('fresh seed is outside instant lookback')
+            for index in range(1000):
+                series = (record['sequence'] * 1000 + index) % cardinality
+                key = (('__name__', 'envelope_samples'), ('series', str(series)))
+                expected.setdefault(key, set()).add((timestamp, (env.SEED + series) % 97))
+        expected = {key: sorted(values) for key, values in expected.items()}
+        ledger.update(seed_request_rows=sum(record['rows'] for record in records),
+                      seed_unique_rows=sum(len(values) for values in expected.values()),
+                      expected_series=[{'metric': dict(key), 'values': values}
+                                       for key, values in sorted(expected.items())],
+                      expected_series_count=cardinality, evaluation_ms=evaluation_ms)
+        if not (len(expected) == cardinality and response['status'] == 'success'
+                and response['data']['resultType'] == 'matrix'
+                and not any(key in response for key in ('warnings', 'infos', 'error', 'errorType'))):
+            raise ValueError('incomplete seed identities or wrong response envelope')
+        series = response['data']['result']
+        if not isinstance(series, list):
+            raise ValueError('matrix result is not a list')
+        actual = {}
+        for item in series:
+            if set(item) != {'metric', 'values'} or not isinstance(item['metric'], dict):
+                raise ValueError('wrong matrix series shape')
+            key = tuple(sorted(item['metric'].items()))
+            if key in actual or key not in expected:
+                raise ValueError('duplicate or unexpected series labels')
+            values = item['values']
+            if not isinstance(values, list) or not values:
+                raise ValueError('series has no sample rows')
+            points = []
+            for point in values:
+                if not isinstance(point, list) or len(point) != 2:
+                    raise ValueError('wrong matrix sample shape')
+                timestamp, value = point
+                if not (isinstance(timestamp, (int, float, Decimal)) and not isinstance(timestamp, bool)
+                        and isinstance(value, str)):
+                    raise ValueError('wrong timestamp or value type')
+                millis = Decimal(str(timestamp)) * 1000
+                value = Decimal(value)
+                if not (millis.is_finite() and millis == millis.to_integral_value() and value.is_finite()):
+                    raise ValueError('nonfinite sample or fractional millisecond')
+                points.append((int(millis), value))
+            if not all(right[0] > left[0] for left, right in zip(points, points[1:])):
+                raise ValueError('sample timestamps are duplicated or unordered')
+            actual[key] = points
+        ledger.update(observed_series_count=len(actual),
+                      observed_unique_rows=sum(len(points) for points in actual.values()))
+        if actual != expected:
+            raise ValueError('matrix identities, timestamps or values differ from seed')
+        ledger.update(verified=True, complete_seed=True)
+    except (KeyError, TypeError, ValueError, IndexError, InvalidOperation) as error:
+        ledger['error'] = f'metrics seed matrix mismatch: {type(error).__name__}: {error}'
+    return ledger
+
+
+def profile_seed_expected(records):
+    if not records:
+        raise ValueError('no profile seed receipts')
+    tenant, cardinality, age = (records[0][key] for key in ('tenant', 'cardinality', 'age_seconds'))
+    if type(cardinality) is not int or cardinality < 1 or len(records) != cardinality:
+        raise ValueError('invalid profile seed cardinality or receipt count')
+    sequences, expected = [], {}
+    for record in records:
+        sequence = record['sequence']
+        if (type(sequence) is not int or sequence < 0 or type(record['cardinality']) is not int
+                or (record['tenant'], record['cardinality'], record['age_seconds']) != (tenant, cardinality, age)
+                or type(record['status']) is not int or not 200 <= record['status'] < 300
+                or type(record['rows']) is not int or record['rows'] != env.POINTS
+                or not isinstance(record['request_path'], str)):
+            raise ValueError('invalid profile seed receipt')
+        sequences.append(sequence)
+        series = str(sequence % cardinality)
+        request = env.urllib.parse.urlsplit(record['request_path'])
+        query = env.urllib.parse.parse_qs(request.query, keep_blank_values=True)
+        if (request.path != '/ingest' or request.scheme or request.netloc or request.fragment
+                or set(query) != {'name', 'format', 'units', 'sampleRate', 'from', 'until'}
+                or any(len(values) != 1 for values in query.values())
+                or query['name'] != [f'envelope{{service_name=envelope,series={series}}}']
+                or query['format'] != ['groups'] or query['units'] != ['nanoseconds']
+                or query['sampleRate'] != ['1000000000'] or query['from'] != query['until']
+                or not re.fullmatch('[0-9]+', query['until'][0])):
+            raise ValueError('profile receipt differs from the encoded seed')
+        stamp = int(query['until'][0])
+        if stamp > 2**63 - 2 or series in expected:
+            raise ValueError('invalid timestamp or duplicate profile seed series')
+        expected[series] = stamp
+    sequences.sort()
+    if sequences != list(range(sequences[0], sequences[0] + cardinality)):
+        raise ValueError('seed sequences are not distinct and consecutive')
+    return expected
+
+
+def profile_seed_series(response):
+    if not isinstance(response, dict) or set(response) != {'labelsSet'} or not isinstance(response['labelsSet'], list):
+        raise ValueError('invalid profile Series response')
+    result = []
+    for entry in response['labelsSet']:
+        if not isinstance(entry, dict) or set(entry) != {'labels'} or not isinstance(entry['labels'], list):
+            raise ValueError('invalid profile Series labels')
+        labels = []
+        for pair in entry['labels']:
+            if (not isinstance(pair, dict) or set(pair) - {'name', 'value'}
+                    or not isinstance(pair.get('name'), str) or not isinstance(pair.get('value', ''), str)):
+                raise ValueError('invalid profile Series label')
+            labels.append((pair['name'], pair.get('value', '')))
+        if len({name for name, _ in labels}) != len(labels):
+            raise ValueError('duplicate profile Series label')
+        result.append(tuple(sorted(labels)))
+    return sorted(result)
+
+
+def profile_seed_stacks(response):
+    # The seed has one root, one envelope parent and ten positive leaf stacks.
+    # Decode name indexes and delta bars; their ordering is not an identity.
+    if not isinstance(response, dict) or set(response) != {'flamegraph'}:
+        raise ValueError('invalid profile stack response')
+    graph = response['flamegraph']
+    if not isinstance(graph, dict) or set(graph) - {'names', 'levels', 'total', 'maxSelf'}:
+        raise ValueError('unexpected profile flamegraph fields')
+    names, levels = graph['names'], graph['levels']
+    if (not isinstance(names, list) or not all(isinstance(name, str) for name in names)
+            or len(names) != len(set(names)) or not isinstance(levels, list) or len(levels) != 3):
+        raise ValueError('invalid profile flamegraph names or levels')
+    def integer(value):
+        if type(value) is not int and not (isinstance(value, str) and re.fullmatch('-?(0|[1-9][0-9]*)', value)):
+            raise ValueError('invalid profile flamegraph integer')
+        number = int(value)
+        if not 0 <= number <= 2**63 - 1:
+            raise ValueError('invalid profile flamegraph integer range')
+        return number
+    parents, stacks, used_names, max_self = [], [], set(), 0
+    total = integer(graph.get('total', 0))
+    for depth, level in enumerate(levels):
+        if not isinstance(level, dict) or set(level) != {'values'} or not isinstance(level['values'], list) or len(level['values']) % 4:
+            raise ValueError('malformed profile flamegraph bars')
+        values = [integer(value) for value in level['values']]
+        current, x = [], 0
+        for index in range(0, len(values), 4):
+            delta, width, self_value, name_index = values[index:index + 4]
+            x += delta
+            end = x + width
+            if name_index >= len(names) or width == 0 or self_value > width or end > total:
+                raise ValueError('invalid profile flamegraph bar')
+            name = names[name_index]
+            used_names.add(name_index)
+            if depth == 0:
+                if name != 'total' or x != 0 or width != total or self_value != 0:
+                    raise ValueError('invalid profile flamegraph root')
+                path = ()
+            else:
+                owners = [path for left, right, path in parents if left <= x and end <= right]
+                if len(owners) != 1:
+                    raise ValueError('profile flamegraph bar has no unique parent')
+                path = owners[0] + (name,)
+            if self_value:
+                stacks.append((path, self_value))
+            max_self = max(max_self, self_value)
+            current.append((x, end, path))
+            x = end
+        if x != total or depth < 2 and len(current) != 1 or depth == 2 and len(current) != env.POINTS:
+            raise ValueError('incomplete profile flamegraph level')
+        parents = current
+    if used_names != set(range(len(names))) or integer(graph.get('maxSelf', 0)) != max_self:
+        raise ValueError('unused profile names or wrong maximum self value')
+    return {'total': total, 'max_self': max_self, 'stacks': sorted(stacks)}
+
+
+def log_seed_ledger(records, response, limit):
+    # Both pinned backends discover these labels for the envelope log lines.
+    expected = {
+        (tuple(sorted({**stream['stream'], 'service_name': 'envelope',
+                       'detected_level': 'unknown'}.items())), *entry)
+        for record in records for stream in record['request']['streams']
+        for entry in stream['values']}
+    streams = response['data']['result']
+    keys = [tuple(sorted(stream['stream'].items())) for stream in streams]
+    actual = [(key, *entry) for key, stream in zip(keys, streams) for entry in stream['values']]
+    unique = set(actual)
+    complete = 0 < len(expected) <= limit
+    verified = (response['status'] == 'success' and response['data']['resultType'] == 'streams'
+                and complete and len(keys) == len(set(keys))
+                and all(stream['values'] for stream in streams)
+                and len(actual) == len(unique) and unique == expected
+                and all([int(entry[0]) for entry in stream['values']]
+                        == sorted((int(entry[0]) for entry in stream['values']), reverse=True)
+                        for stream in streams))
+    return {'seed_unique_rows': len(expected), 'query_limit': limit,
+            'expected_query_rows': len(expected), 'observed_query_rows': len(actual),
+            'complete_seed': complete, 'verified': verified}
+
+
+def log_seed_queries(records, limit):
+    # Keep each series in one query, including rows from repeated seed requests.
+    series = {}
+    for record in records:
+        for stream in record['request']['streams']:
+            series.setdefault(stream['stream']['series'], []).append(stream)
+    groups, streams, rows = [], [], 0
+    for _, seeded in sorted(series.items()):
+        count = len({tuple(entry) for stream in seeded for entry in stream['values']})
+        if count > limit:
+            raise RuntimeError('seed series exceeds the bounded query limit')
+        if rows + count > limit:
+            groups.append(streams)
+            streams, rows = [], 0
+        streams.extend(seeded)
+        rows += count
+    if streams:
+        groups.append(streams)
+    for streams in groups:
+        labels = sorted({stream['stream']['series'] for stream in streams})
+        stamps = [int(entry[0]) for stream in streams for entry in stream['values']]
+        selector = '{job="envelope",series=~' + json.dumps('^(' + '|'.join(re.escape(label) for label in labels) + ')$') + '}'
+        query = env.urllib.parse.urlencode({'query': selector, 'limit': limit, 'direction': 'backward',
+                                          'start': min(stamps), 'end': max(stamps) + 1})
+        yield [{'request': {'streams': streams}}], '/loki/api/v1/query_range?' + query
 
 
 def resource_sample(deployment, sample):
@@ -183,16 +426,17 @@ def configure_all(services, roles, admin_ports, signal):
                                   if volume['target'] == '/var/lib/krabka')
     for name in names:
         del services[name]
-    binary = 'krabka-observability' if signal == 'logs' else 'krabka-' + signal
+    binary = {'logs': 'krabka-observability', 'metrics': 'krabka-metrics-service'}.get(signal, 'krabka-' + signal)
     service.update(command=[binary, f'--config.file=/etc/krabka/{signal}-all.yaml'],
                    cpus=application_cpu, mem_limit=f'{application_cpu:g}g',
                    stop_grace_period='180s')
-    query_port = {'logs': 3100, 'traces': 3200, 'profiles': 4040}[signal]
+    query_port = {'metrics': 9090, 'logs': 3100, 'traces': 3200, 'profiles': 4040}[signal]
     if not any(p['target'] == query_port for p in service['ports']):
         service['ports'].append({'target': query_port, 'published': str(query_port),
                                  'host_ip': '127.0.0.1'})
     services[signal + '-all'] = service
     overrides = {
+        'metrics': 'runtime-overrides: /etc/krabka/metrics-limits.yaml\n',
         'logs': 'compactor-retention-sweep-interval: 2s\n'
                 'logs-limits-overrides-config: /etc/krabka/logs-limits.yaml\n',
         'traces': 'block-builder-window: 5s\nblock-builder-flush-max-records: 50000\n'
@@ -203,6 +447,11 @@ def configure_all(services, roles, admin_ports, signal):
                     'hot-store-max-age: 30s\nquery-frontend-shard-width: 1h\n'
                     'profiles-limits-overrides-config: /etc/krabka/profiles-limits.yaml\n',
     }
+    if signal == 'metrics':
+        writer = roles / 'metrics-writer.yaml'
+        writer.write_text(writer.read_text() + '\nblock-builder-flush-max-age: 2s\n'
+                          'block-builder-retention-sweep-interval: 2s\ncompactor-interval: 2s\n'
+                          'runtime-overrides: /etc/krabka/metrics-limits.yaml\n')
     config = roles / (signal + '-all.yaml')
     config.write_text(config.read_text() + '\n' + overrides[signal])
     return {'broker': admin_ports['broker'], signal + '-all': port}
@@ -256,7 +505,7 @@ class ComparisonDeployment(env.Deployment):
             if self.target == 'all':
                 self.admin_ports = configure_all(services, self.evidence / 'roles', self.admin_ports, signal)
                 self.role_locks = {name: threading.Lock() for name in self.admin_ports}
-                env.QUERY[signal] = {'logs': 3100, 'traces': 3200, 'profiles': 4040}[signal]
+                env.QUERY[signal] = {'metrics': 9090, 'logs': 3100, 'traces': 3200, 'profiles': 4040}[signal]
         self.file.write_text(json.dumps(data, indent=2))
 
     def drain(self, signal, timeout=180):
@@ -264,7 +513,7 @@ class ComparisonDeployment(env.Deployment):
         # querier bundle in build_service_dependencies_with_client_resource_policy.
         # Require that writer's committed frontier, even while it is still null;
         # selecting whichever consumers currently have commits could hide lag.
-        writer = 0 if signal == 'logs' and self.target == 'all' else None
+        writer = 0 if signal in ('logs', 'metrics') and self.target == 'all' else None
         return super().drain(signal, timeout, admin_port=self.admin_ports.get(f'{signal}-all'),
                              durable_consumer_index=writer)
 
@@ -330,10 +579,19 @@ class ComparisonDeployment(env.Deployment):
         records = []
         def write(_):
             sequence = next(self.sequence)
-            path, body, content, rows = write_request(signal, sequence, cardinality, tenant, age_seconds)
+            record = {'sequence': sequence, 'tenant': tenant, 'cardinality': cardinality, 'age_seconds': age_seconds}
+            if signal == 'metrics':
+                path, body, content, rows = write_request(signal, sequence, cardinality, tenant, age_seconds, seed_record=record)
+            else:
+                path, body, content, rows = write_request(signal, sequence, cardinality, tenant, age_seconds)
             started = time.monotonic()
             status, response = http(env.INGEST[signal], path, tenant, body, content)
-            records.append({'sequence': sequence, 'status': status, 'rows': rows, 'seconds': time.monotonic() - started, 'tenant': tenant, 'cardinality': cardinality, 'age_seconds': age_seconds})
+            record.update(status=status, rows=rows, seconds=time.monotonic() - started)
+            if signal == 'logs':
+                record['request'] = body
+            elif signal == 'profiles':
+                record['request_path'] = path
+            records.append(record)
             if not 200 <= status < 300:
                 raise RuntimeError(f'seed failed: {status} {response[:200]!r}')
         try:
@@ -347,6 +605,23 @@ class ComparisonDeployment(env.Deployment):
             if not recovery['recovered']:
                 raise RuntimeError('seed WAL did not drain')
         self.wait_query(signal, tenant, True)
+        if signal == 'metrics':
+            evaluation_ms = max(time.time_ns() // 1000000, max(record['timestamp_ms'] for record in records))
+            path, _ = query_request(signal, 1800)
+            path = path.split('?', 1)[0] + '?' + env.urllib.parse.urlencode({
+                'query': 'envelope_samples[30m]', 'time': str(Decimal(evaluation_ms) / 1000)})
+            status, response = http(env.QUERY[signal], path, tenant)
+            response_file = f'{tenant}.seed-matrix.json'
+            (self.evidence / response_file).write_bytes(response)
+            try:
+                data = json.loads(response, parse_float=Decimal)
+                ledger = metrics_seed_ledger(records, data, evaluation_ms) if status == 200 else {'verified': False}
+            except (ValueError, InvalidOperation):
+                ledger = {'verified': False}
+            ledger.update(path=path, status=status, response_file=response_file)
+            (self.evidence / f'{tenant}.seed-ledger.json').write_text(json.dumps(ledger, indent=2) + '\n')
+            if not ledger['verified']:
+                raise RuntimeError(f'metrics seed matrix mismatch: {response_file}: {ledger.get("error", status)}')
         path, body = query_request(signal, 1800)
         status, response = http(env.QUERY[signal], path, tenant, body)
         (self.evidence / f'{tenant}.seed-query.json').write_bytes(response)
@@ -356,6 +631,30 @@ class ComparisonDeployment(env.Deployment):
         if signal == 'metrics':
             observed = float(data['data']['result'][0]['value'][1])
             expected = sum((env.SEED + label) % 97 for label in range(cardinality))
+        elif signal == 'logs':
+            limit = int(env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(path).query)['limit'][0])
+            groups = list(log_seed_queries(records, limit))
+            expected = len({(tuple(sorted(stream['stream'].items())), *entry)
+                            for record in records for stream in record['request']['streams']
+                            for entry in stream['values']})
+            queries = []
+            for index, (selected, path) in enumerate(groups):
+                status, response = http(env.QUERY[signal], path, tenant)
+                evidence = f'{tenant}.seed-query-{index}.json'
+                (self.evidence / evidence).write_bytes(response)
+                check = log_seed_ledger(selected, json.loads(response), limit) if status == 200 else {
+                    'complete_seed': False, 'verified': False}
+                queries.append({'path': path, 'status': status, 'response_file': evidence, **check})
+                ledger = {'seed_unique_rows': expected, 'query_limit': limit,
+                          'expected_query_rows': expected,
+                          'observed_query_rows': sum(query.get('observed_query_rows', 0) for query in queries),
+                          'query_count': len(queries), 'expected_query_count': len(groups), 'queries': queries,
+                          'complete_seed': len(queries) == len(groups) and all(query['complete_seed'] for query in queries),
+                          'verified': len(queries) == len(groups) and all(query['verified'] for query in queries)}
+                (self.evidence / f'{tenant}.seed-ledger.json').write_text(json.dumps(ledger, indent=2))
+                if not check['complete_seed'] or not check['verified']:
+                    raise RuntimeError(f'seed log ledger mismatch: {ledger}')
+            return
         elif signal == 'profiles':
             observed = float(data['flamegraph']['total'])
             expected = len(records) * env.POINTS
@@ -375,6 +674,41 @@ class ComparisonDeployment(env.Deployment):
             observed = float(json.loads(response)['flamegraph']['total'])
             if observed != expected:
                 raise RuntimeError(f'seed value mismatch after cold handoff: expected {expected}, observed {observed}')
+            ledger = {'verified': False, 'complete_seed': False, 'verified_series_count': 0,
+                      'scope': 'Untimed per-series seed reads warm both backends; timed queries and writers are unchanged.'}
+            try:
+                expected_series = profile_seed_expected(records)
+                ledger['expected_series_count'] = len(expected_series)
+                query = {**body, 'start': min(body['start'], min(expected_series.values()) - 1),
+                         'end': max(body['end'], max(expected_series.values()) + 1)}
+                series_request = {'matchers': [query['labelSelector']],
+                                  'labelNames': ['__profile_type__', 'service_name', 'series'],
+                                  'start': query['start'], 'end': query['end']}
+                status, response = http(env.QUERY[signal], '/querier.v1.QuerierService/Series', tenant, series_request)
+                (self.evidence / f'{tenant}.seed-series.json').write_bytes(response)
+                ledger.update(series_request=series_request, series_status=status)
+                identities = sorted(tuple(sorted((('__profile_type__', query['profileTypeID']),
+                                                    ('service_name', 'envelope'), ('series', series))))
+                                    for series in expected_series)
+                if status != 200 or profile_seed_series(json.loads(response)) != identities:
+                    raise ValueError('profile seed series identities differ')
+                expected_stacks = {'total': env.POINTS, 'max_self': 1,
+                                   'stacks': sorted((('envelope', f'frame_{point}'), 1) for point in range(env.POINTS))}
+                with (self.evidence / f'{tenant}.seed-stacks.jsonl').open('w') as output:
+                    for series in sorted(expected_series):
+                        request = {**query, 'labelSelector': f'{{service_name="envelope",series="{series}"}}'}
+                        status, response = http(env.QUERY[signal], path, tenant, request)
+                        output.write(json.dumps({'series': series, 'request': request, 'status': status,
+                                                 'response_base64': base64.b64encode(response).decode()}) + '\n')
+                        if status != 200 or profile_seed_stacks(json.loads(response)) != expected_stacks:
+                            raise ValueError(f'profile seed stacks differ: {series} ({status})')
+                        ledger['verified_series_count'] += 1
+                ledger.update(verified=True, complete_seed=True)
+            except (ValueError, TypeError, KeyError, IndexError) as error:
+                ledger['error'] = str(error)
+                raise RuntimeError(f'profile seed mismatch: {error}') from error
+            finally:
+                (self.evidence / f'{tenant}.seed-ledger.json').write_text(json.dumps(ledger, indent=2) + '\n')
 
 
 
@@ -435,6 +769,9 @@ def run(args):
                             deployment.seed(args.signal, tenant, cardinality)
                             if args.host_wait_seconds:
                                 deployment.wait_for_quiet_host(args.host_wait_seconds)
+                                if phase == 'high_cardinality':
+                                    (output / f'{level}.host-preflight.jsonl').write_bytes(
+                                        (output / 'host-preflight.jsonl').read_bytes())
                             duration = args.seconds if phase == 'steady' else args.seconds / 2
                             result, operations, samples = env.measure(deployment, args.signal, duration, duration / 4,
                                 writers, cardinality, cold=phase == 'high_cardinality', interval=1, tenant=tenant, check_durability=False)
@@ -473,7 +810,387 @@ def run(args):
     (args.output / 'SHA256SUMS').write_text(''.join(checksums))
 
 
+def profile_seed_self_test():
+    from unittest.mock import patch
+    # The literal API shape comes from the captured pinned native seed reply.
+    captured = {'flamegraph': {'names': ['total', 'envelope', 'frame_9', 'frame_8', 'frame_7', 'frame_6',
+                                        'frame_5', 'frame_4', 'frame_3', 'frame_2', 'frame_1', 'frame_0'],
+                'levels': [{'values': ['0', '1000', '0', '0']}, {'values': ['0', '1000', '0', '1']},
+                           {'values': sum((['0', '100', '100', str(index)] for index in range(11, 1, -1)), [])}],
+                'total': '1000', 'maxSelf': '100'}}
+    assert profile_seed_stacks(captured) == {'total': 1000, 'max_self': 100,
+        'stacks': sorted((('envelope', f'frame_{point}'), 100) for point in range(10))}
+    with patch.object(time, 'time_ns', return_value=1700000000000000000):
+        request = write_request('profiles', 37, 100, 'seed-test')
+    expected_path = '/ingest?' + env.urllib.parse.urlencode({
+        'name': 'envelope{service_name=envelope,series=37}', 'format': 'groups', 'units': 'nanoseconds',
+        'until': 1700000000000, 'sampleRate': 1000000000, 'from': 1700000000000})
+    assert request == (expected_path, '\n'.join(f'envelope;frame_{point} 1' for point in range(10)), 'text/plain', 10)
+    cases = [(1, None), (3, None), (11, None), (100, None), (1100, None), (1100, 'last_missing')]
+    cases += [(100, failure) for failure in ('missing_series_compensated', 'wrong_frame_same_total',
+        'cross_series_frames_compensated', 'duplicate_series', 'wrong_series_same_count', 'duplicate_label',
+        'empty_series', 'series_error', 'duplicate_stack', 'malformed_bar', 'invalid_index', 'orphan_bar',
+        'wrong_root', 'wrong_self', 'boolean_counter', 'unknown_field', 'unknown_response', 'stack_error', 'malformed_json')]
+    for case_index, (cardinality, failure) in enumerate(cases):
+        with tempfile.TemporaryDirectory() as directory:
+            deployment = object.__new__(ComparisonDeployment)
+            deployment.evidence = pathlib.Path(directory)
+            deployment.native = case_index % 2 == 0
+            deployment.sequence = iter(range(37, 37 + cardinality))
+            deployment.wait_query = lambda *_: None
+            events, submitted, queried = [], [], []
+            deployment.drain = lambda _: events.append('drain') or {'recovered': True}
+            # This is an independent model of submitted profiles, including
+            # corruptions that keep both the old total and all series labels.
+            model = {str(series): {f'frame_{point}': 1 for point in range(10)} for series in range(cardinality)}
+            if failure == 'missing_series_compensated':
+                del model[str(cardinality - 1)]
+                model['0'] = {frame: 2 for frame in model['0']}
+            elif failure == 'wrong_frame_same_total':
+                for frames in model.values():
+                    frames['substituted_frame'] = frames.pop('frame_9')
+            elif failure == 'cross_series_frames_compensated':
+                del model['0']['frame_0']
+                model['1']['frame_0'] = 2
+            elif failure == 'wrong_series_same_count':
+                model[str(cardinality)] = model.pop('0')
+            def graph(frames):
+                names = ['total', 'envelope', *sorted(frames, reverse=True)]
+                total = sum(frames.values())
+                # Reverse table/sibling order and vary JSON integer spelling.
+                number = str if case_index % 2 else int
+                leaf = sum(([number(0), number(weight), number(weight), number(names.index(frame))]
+                            for frame, weight in sorted(frames.items())), [])
+                return {'flamegraph': {'names': names,
+                    'levels': [{'values': list(map(number, [0, total, 0, 0]))},
+                               {'values': list(map(number, [0, total, 0, 1]))}, {'values': leaf}],
+                    'total': number(total), 'maxSelf': number(max(frames.values()))}}
+            def profiles_http(_port, path, _tenant, body=None, *_content):
+                if path.startswith('/ingest?'):
+                    submitted.append(path)
+                    return 204, b''
+                if path.endswith('/Series'):
+                    events.append('series')
+                    assert body['matchers'] == ['{service_name="envelope"}']
+                    assert body['labelNames'] == ['__profile_type__', 'service_name', 'series']
+                    sets = [{'labels': [{'name': 'series', 'value': series}, {'name': 'service_name', 'value': 'envelope'},
+                                        {'name': '__profile_type__', 'value': 'process_cpu:cpu:nanoseconds:cpu:nanoseconds'}]}
+                            for series in reversed(sorted(model))]
+                    if failure == 'duplicate_series':
+                        sets.append(sets[0])
+                    elif failure == 'duplicate_label':
+                        sets[0]['labels'].append(sets[0]['labels'][0])
+                    elif failure == 'empty_series':
+                        sets.append({'labels': []})
+                    return (503 if failure == 'series_error' else 200), json.dumps({'labelsSet': sets}).encode()
+                assert path == '/querier.v1.QuerierService/SelectMergeStacktraces'
+                selected = re.fullmatch(r'\{service_name="envelope",series="([0-9]+)"\}', body['labelSelector'])
+                if not selected:
+                    aggregate = {}
+                    for frames in model.values():
+                        for frame, weight in frames.items():
+                            aggregate[frame] = aggregate.get(frame, 0) + weight
+                    assert sum(aggregate.values()) == cardinality * 10
+                    return 200, json.dumps(graph(aggregate)).encode()
+                series = selected[1]
+                queried.append(series)
+                if failure == 'last_missing' and series == sorted(model)[-1]:
+                    return 404, b'not found'
+                reply = graph(model[series])
+                values = reply['flamegraph']['levels'][2]['values']
+                if failure == 'duplicate_stack':
+                    values[7] = values[3]
+                elif failure == 'malformed_bar':
+                    values.pop()
+                elif failure == 'invalid_index':
+                    values[3] = 99
+                elif failure == 'orphan_bar':
+                    values[0] = 1
+                elif failure == 'wrong_root':
+                    reply['flamegraph']['names'][0] = 'wrong'
+                elif failure == 'wrong_self':
+                    reply['flamegraph']['maxSelf'] = 2
+                elif failure == 'boolean_counter':
+                    values[0] = False
+                elif failure == 'unknown_field':
+                    reply['flamegraph']['unexpected'] = 0
+                elif failure == 'unknown_response':
+                    reply['error'] = 'failed'
+                elif failure == 'malformed_json':
+                    return 200, b'not-json'
+                return (503 if failure == 'stack_error' else 200), json.dumps(reply).encode()
+            with patch.dict(globals(), {'http': profiles_http}), patch.object(time, 'sleep', side_effect=lambda n: events.append(('sleep', n))), \
+                    patch.object(time, 'time_ns', return_value=1700000000000000000), patch.object(time, 'time', return_value=1700000000):
+                try:
+                    deployment.seed('profiles', 'seed-test', cardinality)
+                except RuntimeError as error:
+                    assert failure is not None and 'profile seed mismatch' in str(error)
+                else:
+                    assert failure is None
+            ledger = json.loads((deployment.evidence / 'seed-test.seed-ledger.json').read_text())
+            assert len(submitted) == cardinality and ledger['verified'] == (failure is None)
+            assert events == ([] if deployment.native else ['drain']) + [('sleep', 20), 'series']
+            records = [json.loads(line) for line in (deployment.evidence / 'seed-test.seed.jsonl').read_text().splitlines()]
+            assert sorted(record['request_path'] for record in records) == sorted(submitted)
+            if failure is None:
+                assert len(queried) == len(set(queried)) == ledger['verified_series_count'] == cardinality
+            elif failure == 'last_missing':
+                assert len(queried) == cardinality and ledger['verified_series_count'] == cardinality - 1
+            if queried:
+                raw = [json.loads(line) for line in (deployment.evidence / 'seed-test.seed-stacks.jsonl').read_text().splitlines()]
+                assert [entry['series'] for entry in raw] == queried
+                assert all(base64.b64decode(entry['response_base64'], validate=True) for entry in raw)
+    def receipts(sequences, cardinality):
+        with patch.object(time, 'time_ns', return_value=1700000000000000000):
+            return [{'sequence': sequence, 'tenant': 'seed-test', 'cardinality': cardinality, 'age_seconds': 0,
+                     'status': 204, 'rows': 10, 'request_path': write_request('profiles', sequence, cardinality, 'seed-test')[0]}
+                    for sequence in sequences]
+    assert len(profile_seed_expected(receipts(range(37, 20037), 20000))) == 20000
+    invalid = [receipts([0, 2], 3), receipts([0, 1, 5], 3), receipts([0, 0, 2], 3)]
+    for key, value in [('sequence', True), ('cardinality', True), ('cardinality', 0), ('rows', 10.0), ('status', 204.0),
+                       ('request_path', None), ('request_path', expected_path + '&units=nanoseconds')]:
+        records = receipts([37], 1)
+        records[0][key] = value
+        invalid.append(records)
+    for suffix in ('&unexpected=', '&until=', '&format='):
+        records = receipts([37], 1)
+        records[0]['request_path'] += suffix
+        invalid.append(records)
+    for records in invalid:
+        try:
+            profile_seed_expected(records)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('invalid profile seed receipts accepted')
+    print('profile seed controls passed: captured shape, five full fixtures, 20 API negatives, thirteen receipt negatives')
+
+
 def self_test():
+    profile_seed_self_test()
+    from unittest.mock import patch
+
+    records = [{'request': {'streams': [
+        {'stream': {'job': 'envelope', 'series': series},
+         'values': [['1', 'older'], ['2', 'newer']]} for series in ('a', 'b')]}}]
+    response = {'status': 'success', 'data': {'resultType': 'streams', 'result': [
+        {'stream': {'job': 'envelope', 'series': series, 'service_name': 'envelope', 'detected_level': 'unknown'},
+         'values': [['2', 'newer'], ['1', 'older']]} for series in ('a', 'b')]}}
+    assert log_seed_ledger(records, response, 1000) == {
+        'seed_unique_rows': 4, 'query_limit': 1000, 'expected_query_rows': 4,
+        'observed_query_rows': 4, 'complete_seed': True, 'verified': True}
+    for corruption in ('missing', 'duplicate', 'stream', 'empty_stream', 'line', 'timestamp', 'labels', 'ordering'):
+        bad = json.loads(json.dumps(response))
+        streams = bad['data']['result']
+        if corruption == 'missing':
+            streams[0]['values'].pop()
+        elif corruption == 'duplicate':
+            streams[0]['values'].append(streams[0]['values'][0])
+        elif corruption == 'stream':
+            streams.append(streams[0])
+        elif corruption == 'empty_stream':
+            streams.append({'stream': {'job': 'envelope', 'series': 'unseeded'}, 'values': []})
+        elif corruption == 'line':
+            streams[0]['values'][0][1] = 'unseeded'
+        elif corruption == 'timestamp':
+            streams[0]['values'][0][0] = '3'
+        elif corruption == 'labels':
+            streams[0]['stream']['series'] = 'unseeded'
+        else:
+            streams[0]['values'].reverse()
+        assert not log_seed_ledger(records, bad, 1000)['verified']
+    limited = json.loads(json.dumps(response))
+    for stream in limited['data']['result']:
+        stream['values'] = stream['values'][:1]
+    assert log_seed_ledger(records, limited, 2) == {
+        'seed_unique_rows': 4, 'query_limit': 2, 'expected_query_rows': 4,
+        'observed_query_rows': 2, 'complete_seed': False, 'verified': False}
+    for selected in limited['data']['result']:
+        tied = {'status': 'success', 'data': {'resultType': 'streams', 'result': [selected]}}
+        assert not log_seed_ledger(records, tied, 1)['verified']
+    wrong_boundary = json.loads(json.dumps(limited))
+    wrong_boundary['data']['result'][0]['values'] = [['1', 'older']]
+    assert not log_seed_ledger(records, wrong_boundary, 2)['verified']
+    missing_newer = json.loads(json.dumps(response))
+    missing_newer['data']['result'][1]['values'].pop(0)
+    assert not log_seed_ledger(records, missing_newer, 3)['verified']
+
+    # Exercise seed's real guard, including 200,000 rows and missing older rows.
+    for cardinality, incomplete in ((100, False), (100, True), (151, False),
+                                    (20000, False), (20000, True)):
+        with tempfile.TemporaryDirectory() as directory:
+            deployment = object.__new__(ComparisonDeployment)
+            deployment.evidence = pathlib.Path(directory)
+            deployment.native = True
+            deployment.sequence = iter(range(math.ceil(cardinality / 100)))
+            deployment.wait_query = lambda *_: None
+            pushed, requests, available, observed = [], [], [], []
+            def seed_http(_port, path, _tenant, body=None, *_content):
+                if path == '/loki/api/v1/push':
+                    pushed.append(body)
+                    return 204, b''
+                query = env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(path).query)
+                requests.append(query)
+                limit = int(query['limit'][0])
+                assert limit <= 1000
+                if not available:
+                    available.extend((stream['stream'], entry) for request in pushed
+                                     for stream in request['streams'] for entry in stream['values'])
+                    available.sort(key=lambda row: int(row[1][0]), reverse=True)
+                    if incomplete:
+                        # This still satisfies the old global latest-1,000 check.
+                        del available[500 if cardinality == 100 else 1000:]
+                selector = query['query'][0]
+                pattern = re.compile(json.loads(selector.split('series=~', 1)[1][:-1])) if 'series=~' in selector else None
+                selected = [(labels, entry) for labels, entry in available
+                            if (pattern is None or pattern.fullmatch(labels['series']))
+                            and int(query['start'][0]) <= int(entry[0]) < int(query['end'][0])][:limit]
+                observed.append(len(selected))
+                streams = {}
+                for labels, entry in selected:
+                    stream = streams.setdefault(labels['series'], {
+                        'stream': {**labels, 'service_name': 'envelope', 'detected_level': 'unknown'}, 'values': []})
+                    stream['values'].append(entry)
+                return 200, json.dumps({'status': 'success', 'data': {
+                    'resultType': 'streams', 'result': list(streams.values())}}).encode()
+            with patch.dict(globals(), {'http': seed_http}), patch.object(env.time, 'time_ns', return_value=time.time_ns() - 1000000):
+                try:
+                    deployment.seed('logs', 'soak', cardinality)
+                except RuntimeError as error:
+                    assert incomplete and 'seed log ledger mismatch' in str(error)
+                else:
+                    assert not incomplete
+            ledger = json.loads((deployment.evidence / 'soak.seed-ledger.json').read_text())
+            assert ledger['seed_unique_rows'] == math.ceil(cardinality / 100) * 1000
+            assert ledger['verified'] == (not incomplete)
+            assert len(requests) == ledger['query_count'] + 1
+            if cardinality == 20000:
+                assert observed[0] == 1000
+            assert ledger['complete_seed'] == (ledger['query_count'] == ledger['expected_query_count'])
+            if not incomplete:
+                assert ledger['observed_query_rows'] == ledger['expected_query_rows'] == ledger['seed_unique_rows']
+                assert ledger['query_count'] == ledger['expected_query_count']
+                if cardinality == 20000:
+                    assert ledger['query_count'] == 200
+            for query in ledger['queries']:
+                raw = json.loads((deployment.evidence / query['response_file']).read_text())
+                assert raw['status'] == 'success' and query['path'].startswith('/loki/api/v1/query_range?')
+            recorded = [json.loads(line)['request'] for line in
+                        (deployment.evidence / 'soak.seed.jsonl').read_text().splitlines()]
+            assert sorted(json.dumps(request, sort_keys=True) for request in recorded) == sorted(
+                json.dumps(request, sort_keys=True) for request in pushed)
+
+    # Check the real metrics seed path against independent outgoing receipts.
+    seed_cases = [(n, None) for n in (100, 1000, 1501, 5000, 20000)] + [
+        (1501 if failure in ('missing_older', 'older_value', 'ordering', 'duplicate_point') else 1000, failure)
+        for failure in ('zero_missing', 'canceling_values', 'missing_older', 'older_value', 'duplicate_series',
+                        'extra_series', 'renamed', 'extra_label', 'timestamp', 'fractional_ms',
+                        'ordering', 'duplicate_point', 'histogram', 'wrong_shape', 'warning', 'info', 'error', 'http_error')]
+    encoder = write_request
+    for case_index, (cardinality, failure) in enumerate(seed_cases):
+        with tempfile.TemporaryDirectory() as directory:
+            deployment = object.__new__(ComparisonDeployment)
+            deployment.evidence = pathlib.Path(directory)
+            deployment.native = case_index % 2 == 0
+            deployment.sequence = iter(range(37, 37 + math.ceil(cardinality / 1000)))
+            deployment.wait_query = lambda *_: None
+            events, receipts = [], []
+            def drain(_signal):
+                events.append('drain')
+                return {'recovered': True}
+            deployment.drain = drain
+            def receipt_request(signal, sequence, size, tenant, age, *, seed_record):
+                request = encoder(signal, sequence, size, tenant, age, seed_record=seed_record)
+                receipts.append((sequence, seed_record['timestamp_ms']))
+                return request
+            def metrics_http(_port, path, tenant, body=None, *_content):
+                if path == '/api/v1/push':
+                    return 204, b''
+                query = env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(path).query)
+                if query['query'] != ['envelope_samples[30m]']:
+                    return 200, json.dumps({'status': 'success', 'data': {'resultType': 'vector',
+                        'result': [{'metric': {}, 'value': [1791120000, str(sum((267 + i) % 97 for i in range(cardinality)))]}]}}).encode()
+                events.append('matrix')
+                assert path.startswith('/prometheus/api/v1/query?' if deployment.native else '/api/v1/query?')
+                assert Decimal(query['time'][0]) * 1000 >= max(stamp for _, stamp in receipts)
+                expected = {}
+                for sequence, stamp in reversed(receipts):
+                    for index in range(1000):
+                        series = (sequence * 1000 + index) % cardinality
+                        expected.setdefault(series, set()).add((stamp, (267 + series) % 97))
+                matrix = [{'metric': {'__name__': 'envelope_samples', 'series': str(series)},
+                           'values': [[float(Decimal(stamp) / 1000), str(value)] for stamp, value in sorted(points)]}
+                          for series, points in sorted(expected.items(), reverse=True)]
+                historical = next((item for item in matrix if len(item['values']) > 1), None)
+                if failure == 'zero_missing':
+                    matrix = [item for item in matrix if item['values'][-1][1] != '0']
+                elif failure == 'canceling_values':
+                    matrix[0]['values'][0][1] = str(int(matrix[0]['values'][0][1]) + 1)
+                    matrix[1]['values'][0][1] = str(int(matrix[1]['values'][0][1]) - 1)
+                elif failure == 'missing_older':
+                    historical['values'].pop(0)
+                elif failure == 'older_value':
+                    historical['values'][0][1] = '999'
+                elif failure == 'duplicate_series':
+                    matrix.append(matrix[0])
+                elif failure == 'extra_series':
+                    matrix.append({'metric': {'__name__': 'envelope_samples', 'series': 'unexpected'}, 'values': matrix[0]['values']})
+                elif failure == 'renamed':
+                    matrix[0]['metric']['__name__'] = 'renamed'
+                elif failure == 'extra_label':
+                    matrix[0]['metric']['extra'] = 'unexpected'
+                elif failure == 'timestamp':
+                    matrix[0]['values'][0][0] += 0.001
+                elif failure == 'fractional_ms':
+                    matrix[0]['values'][0][0] += 0.0001
+                elif failure == 'ordering':
+                    historical['values'].reverse()
+                elif failure == 'duplicate_point':
+                    historical['values'].append(historical['values'][-1])
+                elif failure == 'histogram':
+                    matrix[0]['histograms'] = []
+                reply = {'status': 'success', 'data': {'resultType': 'matrix', 'result': matrix}}
+                if failure == 'wrong_shape':
+                    reply['data']['resultType'] = 'vector'
+                elif failure == 'warning':
+                    reply['warnings'] = ['short result']
+                elif failure == 'info':
+                    reply['infos'] = []
+                elif failure == 'error':
+                    reply = {'status': 'error', 'error': 'query failed'}
+                return (500 if failure == 'http_error' else 200), json.dumps(reply).encode()
+            with patch.dict(globals(), {'write_request': receipt_request, 'http': metrics_http}), \
+                    patch.dict(env.QUERY, {'metrics': 9009 if deployment.native else 9090}), \
+                    patch.dict(_last_ms, {}, clear=True), patch.object(time, 'time_ns', return_value=1791120000000000000):
+                try:
+                    deployment.seed('metrics', 'seed-test', cardinality)
+                except RuntimeError as error:
+                    assert failure is not None and 'metrics seed matrix mismatch' in str(error)
+                else:
+                    assert failure is None
+            ledger = json.loads((deployment.evidence / 'seed-test.seed-ledger.json').read_text())
+            assert ledger['verified'] == (failure is None)
+            assert events == (['matrix'] if deployment.native else ['drain', 'matrix'])
+            if failure is None:
+                assert ledger['complete_seed'] and ledger['expected_series_count'] == cardinality
+                assert ledger['observed_series_count'] == cardinality
+                assert ledger['seed_request_rows'] == math.ceil(cardinality / 1000) * 1000
+                assert ledger['observed_unique_rows'] == ledger['seed_unique_rows'] == min(1000, cardinality) * math.ceil(cardinality / 1000)
+            recorded = [json.loads(line) for line in (deployment.evidence / 'seed-test.seed.jsonl').read_text().splitlines()]
+            assert sorted((record['sequence'], record['timestamp_ms']) for record in recorded) == sorted(receipts)
+
+    # Even a matching API response cannot validate a corrupt emission receipt.
+    for timestamps in ([True], [1791120000000.0], [1791120000000, 1791120000000]):
+        records = [{'sequence': i, 'timestamp_ms': stamp, 'cardinality': len(timestamps) * 1000,
+                    'status': 204, 'rows': 1000, 'tenant': 'receipt-test', 'age_seconds': 0}
+                   for i, stamp in enumerate(timestamps)]
+        reply = {'status': 'success', 'data': {'resultType': 'matrix', 'result': [
+            {'metric': {'__name__': 'envelope_samples', 'series': str(i)},
+             'values': [[timestamps[i // 1000] / 1000, str((267 + i) % 97)]]}
+            for i in range(len(timestamps) * 1000)]}}
+        ledger = metrics_seed_ledger(records, reply, max(timestamps))
+        assert not ledger['verified'] and 'distinct integer milliseconds' in ledger['error']
+
     assert write_request('metrics', 1, 1000)[3] == 1000
     query = env.urllib.parse.parse_qs(env.urllib.parse.urlsplit(write_request('profiles', 1, 100)[0]).query)
     assert query['units'] == ['nanoseconds'] and query['sampleRate'] == ['1000000000']
@@ -557,12 +1274,15 @@ def self_test():
         assert services['profiles-all']['mem_limit'] == '4g'
         assert selected['profiles-all'] == 15001
         assert 'query-frontend-shard-width: 1h' in (roles / 'profiles-all.yaml').read_text()
-        for signal, query_port, role_count in [('logs', 3100, 3), ('traces', 3200, 5)]:
+        for signal, query_port, role_count in [('logs', 3100, 3), ('traces', 3200, 5), ('metrics', 9090, 4)]:
             (roles / (signal + '-all.yaml')).write_text('target: all\n')
             services = {'broker': {'cpus': 2, 'mem_limit': '2g'},
                         **{f'{signal}-{n}': {'cpus': 1, 'mem_limit': '1g', 'ports': [], 'volumes': []}
                            for n in ['distributor', 'block-builder', 'querier']
                            + (['compactor', 'live-store'] if signal == 'traces' else [])}}
+            if signal == 'metrics':
+                services['metrics-compactor'] = {'cpus': 1, 'mem_limit': '1g', 'ports': [], 'volumes': []}
+                (roles / 'metrics-writer.yaml').write_text('bootstrap: broker:9092\n')
             if signal == 'logs':
                 services['logs-block-builder']['volumes'] = [
                     {'source': 'logs-data', 'target': '/var/lib/krabka'}]
@@ -572,8 +1292,62 @@ def self_test():
             assert sum(float(s['cpus']) for s in services.values()) == role_count + 2
             assert services[signal + '-all']['mem_limit'] == f'{role_count}g'
             assert services[signal + '-all']['ports'][0]['target'] == query_port
+            if signal == 'metrics':
+                assert services['metrics-all']['command'][0] == 'krabka-metrics-service'
+                assert 'runtime-overrides: /etc/krabka/metrics-limits.yaml' in (roles / 'metrics-writer.yaml').read_text()
             if signal == 'logs':
                 assert services['logs-all']['volumes'][0]['source'] == 'logs-data'
+    # Run the real phase loop with external deployment and measurement stubbed.
+    for phase, seconds, maximum, levels, duration in [
+        ('steady', 60, 20000, [1000], 60),
+        ('high_cardinality', 60, 20000, [1000, 5000, 20000], 30),
+        ('high_cardinality', 120, 20000, [1000, 5000, 20000], 60),
+        ('high_cardinality', 120, 5000, [1000, 5000], 60),
+        ('high_cardinality', 120, 1000, [1000], 60),
+    ]:
+        with tempfile.TemporaryDirectory() as directory:
+            calls, seeded = [], []
+            deployment_type = ComparisonDeployment
+            def deployment_for_phase(evidence, *_args):
+                deployment = object.__new__(deployment_type)
+                deployment.evidence = evidence
+                deployment.target = 'all'
+                deployment.service_cpu = deployment.service_memory_gib = 6
+                deployment.ids = {}
+                deployment.start = lambda: evidence.mkdir(parents=True)
+                deployment.seed = lambda signal, tenant, cardinality: seeded.append((tenant, cardinality))
+                def quiet_host(_timeout):
+                    (evidence / 'host-preflight.jsonl').write_text(json.dumps(seeded[-1]) + '\n')
+                deployment.wait_for_quiet_host = quiet_host
+                deployment.close = lambda: None
+                return deployment
+            def phase_measure(_deployment, signal, measured, warmup, writers, cardinality, **options):
+                calls.append((signal, measured, warmup, writers, cardinality, options))
+                return ({'duration_seconds': measured, 'objectives_met': True,
+                         'ingest': {'accepted_rows': 1000 * writers * measured}, 'query': {}},
+                        [], [{'time_unix': 0}, {'time_unix': measured}])
+            args = argparse.Namespace(signal='metrics', profiles_target='all', deployment_target='all',
+                                      image='test-image', image_digest='sha256:' + '0' * 64,
+                                      image_commit='test-source', seconds=seconds, repetitions=1,
+                                      phases=[phase], backends=['krabka'], max_writers=256,
+                                      max_cardinality=maximum, host_wait_seconds=120,
+                                      output=pathlib.Path(directory))
+            with patch.dict(globals(), {'ComparisonDeployment': deployment_for_phase,
+                                        'cost': lambda _: {'cpu_seconds_total': 1, 'host_activity_qualified': True}}), \
+                    patch.object(env, 'command', return_value='[{}]'), patch.object(env, 'measure', phase_measure):
+                run(args)
+            assert calls == [
+                ('metrics', duration, duration / 4, 2, level,
+                 {'cold': phase == 'high_cardinality', 'interval': 1,
+                  'tenant': f'cardinality-{level}' if phase == 'high_cardinality' else 'soak',
+                  'check_durability': False}) for level in levels]
+            output = args.output / f'1-krabka-{phase}'
+            if phase == 'high_cardinality':
+                assert [json.loads((output / f'{level}.host-preflight.jsonl').read_text())
+                        for level in levels] == [[f'cardinality-{level}', level] for level in levels]
+                assert json.loads((output / 'host-preflight.jsonl').read_text()) == [f'cardinality-{levels[-1]}', levels[-1]]
+            else:
+                assert not list(output.glob('*.host-preflight.jsonl'))
     print('compare-grafana self-test passed')
 
 
@@ -586,7 +1360,7 @@ if __name__ == '__main__':
     p.add_argument('--profiles-target', choices=('split', 'all'), default='split',
                    help='Separate profiles role containers or the existing all target; same aggregate budget')
     p.add_argument('--deployment-target', choices=('split', 'all'), default='split',
-                   help='Separate roles or the existing all target for logs, traces and profiles; metrics stays split')
+                   help='Separate roles or the all target for every signal; same aggregate budget')
     p.add_argument('--host-wait-seconds', type=int, default=0,
                    help='Wait for ten host sample intervals without excessive external CPU before warm-up')
     p.add_argument('--seconds', type=int, default=60)
@@ -607,8 +1381,6 @@ if __name__ == '__main__':
             p.error('signal, image, image digest, image commit and positive load/duration values are required')
         if not re.fullmatch(r'sha256:[0-9a-f]{64}', options.image_digest):
             p.error('image digest must be sha256 followed by exactly 64 lowercase hexadecimal digits')
-        if options.signal == 'metrics' and options.deployment_target == 'all':
-            p.error('metrics has no all target; use split')
         if options.host_wait_seconds < 0:
             p.error('host wait must be nonnegative')
         if len(set(options.phases)) != len(options.phases) or len(set(options.backends)) != len(options.backends):

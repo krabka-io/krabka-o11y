@@ -26,7 +26,7 @@ ahash = { workspace = true }
 assert2 = { workspace = true }
 base64 = { workspace = true }
 krabka-blockstore = { path = "../blockstore", version = "0.4.0" }
-krabka-ids = { version = "0.5.0" }
+krabka-ids = { version = "0.6.0" }
 krabka-logql = { path = "../logql", version = "0.4.0" }
 krabka-metrics = { path = "../metrics", version = "0.4.0" }
 krabka-observability = { path = "../observability", version = "0.4.0" }
@@ -58,7 +58,7 @@ time = { version = "0.3", default-features = false, features = ["parsing", "form
 crc32c = { workspace = true }
 axum = { workspace = true, features = ["json", "query"] }
 datatest-stable = { workspace = true }
-krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "82fea7dc8de3b2122011103c892572f6774634d0", version = "0.7.0" }
+krabka-audit = { git = "https://github.com/krabka-io/krabka-broker", rev = "ada8e3adeab153dd2aa92a7459673519ad3e167a", version = "1.0.0" }
 krabka-units = { workspace = true }
 proptest = { workspace = true }
 reqwest = { workspace = true }

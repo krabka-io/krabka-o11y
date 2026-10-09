@@ -3,10 +3,7 @@ use krabka_observability::{
     audit::{AuditService, krabka_product},
 };
 
-use super::{
-    Arc, Cli, RoleReadiness, ServiceMetrics, Target, readiness_router, require_role_topics,
-    run_block_builder, run_compactor, run_distributor,
-};
+use super::{Arc, Cli, RoleReadiness, ServiceMetrics, readiness_router, serve};
 
 /// Starts the role `cli` selects and serves until it stops.
 ///
@@ -18,7 +15,7 @@ use super::{
 /// Returns an error when a security flag set cannot work, when the topic
 /// contract does not hold, when the admin port cannot bind, when the audit
 /// layer cannot start, or when the role itself fails.
-pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // The role in the vocabulary every signal shares, not this binary's own
     // spelling of it. An operator reading four services' logs should see one
     // word for one stage.
@@ -38,19 +35,13 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     readiness.track_object_store(metrics.object_store.clone());
     let admin = krabka_telemetry::profiling::spawn_admin_with_config(
         cli.admin_listen_addr,
-        krabka_metrics::metrics::metrics_router(metrics.registry.clone())
+        crate::metrics::metrics_router(metrics.registry.clone())
             .merge(readiness_router(readiness.clone())),
         cli.profiling.clone(),
     )
     .await?;
 
     let role = async {
-        // Before any producer or consumer exists. A WAL topic's partition
-        // count is the write-path shard count, so a role that started against
-        // the wrong one would re-map every key it routes and report nothing;
-        // this is where it refuses instead. A role that opens no WAL client is
-        // asked nothing.
-        require_role_topics(&cli, wal_security.clone()).await?;
         // With no `--audit-topic` this spawns nothing and reaches no broker.
         let audit_stop = CancellationToken::new();
         let (audit, audit_writer) = AuditService::start(
@@ -67,23 +58,30 @@ pub(crate) async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             audit_tasks.adopt("audit writer", writer);
         }
         let server_security = server_security.with_security_events(Arc::new(audit));
-        // Boxed, so the start-up future stays small: the role's own future
-        // holds its whole serving state.
-        let serve_role = Box::pin(async {
-            match cli.target {
-                Target::Distributor => {
-                    run_distributor(cli, metrics, readiness, &server_security, wal_security).await
-                }
-                Target::BlockBuilder => {
-                    Box::pin(run_block_builder(cli, metrics, readiness, wal_security)).await
-                }
-                Target::Compactor => run_compactor(cli, metrics, readiness).await,
-            }
+        let stopping = CancellationToken::new();
+        let signal = stopping.clone();
+        let signal_task = tokio::spawn(async move {
+            krabka_observability::shutdown_signal().await;
+            signal.cancel();
         });
+        let serve_role = serve(
+            cli,
+            metrics,
+            readiness,
+            server_security,
+            wal_security,
+            stopping.clone(),
+        );
+        tokio::pin!(serve_role);
         let outcome: Result<(), Box<dyn std::error::Error>> = tokio::select! {
-            result = serve_role => result,
-            name = audit_tasks.first_unexpected_exit() => Err(CriticalTaskError(name).into()),
+            result = &mut serve_role => result.map_err(|error| error as Box<dyn std::error::Error>),
+            name = audit_tasks.first_unexpected_exit() => {
+                stopping.cancel();
+                let _ = serve_role.await;
+                Err(CriticalTaskError(name).into())
+            }
         };
+        signal_task.abort();
         // The role has stopped its listener, so no request emits an audit
         // event after the writer closes its queue.
         audit_tasks.shutdown().await;

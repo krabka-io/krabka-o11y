@@ -14,6 +14,16 @@ pub(crate) struct Cli {
     pub(crate) profiling: krabka_telemetry::profiling::ProfilingConfig,
     #[arg(long, env = "KRABKA_METRICS_SERVICE_TARGET")]
     pub(crate) target: Target,
+    /// Writer option file for `--target all`. Process options stay on this CLI.
+    #[arg(
+        long,
+        env = "KRABKA_METRICS_WRITER_CONFIG",
+        required_if_eq("target", "all")
+    )]
+    pub(crate) writer_config: Option<PathBuf>,
+    /// Maximum time to drain each all-in-one role. Default: `30s`.
+    #[arg(long, env = "KRABKA_METRICS_DRAIN_TIMEOUT", default_value = "30s", value_parser = parse::positive_time)]
+    pub(crate) drain_timeout: Time,
     /// Address for the admin port: pprof, Prometheus metrics and `/ready`. Default: `0.0.0.0:9404`.
     ///
     /// The admin port always serves plain HTTP with no authentication. The

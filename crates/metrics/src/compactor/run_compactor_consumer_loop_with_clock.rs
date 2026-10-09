@@ -32,6 +32,7 @@ where
 {
     let mut summary = CompactionLoopResult::default();
     let mut buffer = CompactionBuffer::new();
+    let mut draining = false;
     loop {
         let records = consumer
             .poll(config.poll_timeout)
@@ -84,8 +85,9 @@ where
             },
         };
 
-        if should_stop(&result) {
-            // Shutdown: flush whatever is still buffered so no records are lost.
+        draining |= should_stop(&result);
+        if draining {
+            // Flush before checking the frozen boundary. A single poll can leave a WAL backlog.
             let buffered = buffer.take();
             flush_buffer_with_consumer(
                 block_writer,
@@ -96,7 +98,9 @@ where
                 context.metrics,
             )
             .await?;
-            break;
+            if consumer.drain_complete().await? {
+                break;
+            }
         }
     }
     Ok(summary)
