@@ -193,7 +193,26 @@ async fn cold_labels_do_not_hide_different_hot_labels_with_the_same_row_id() {
             value: 7.0,
             start_timestamp_ms: None,
         });
+    let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
+    let generic = hot
+        .series_shared_by_fingerprint("tenant-a", &matchers, 9_000, 11_000)
+        .await
+        .unwrap();
+    assert!(generic == BTreeMap::from([(hot_fp, Arc::clone(&hot_labels))]));
+    assert!(Arc::ptr_eq(&generic[&hot_fp], &hot_labels));
     let store = MergedMetricStore::new(MetricBlockStore::new(blocks), WalHead::from_store(hot));
+    let mapped = store
+        .series_shared_by_fingerprint("tenant-a", &matchers, 9_000, 11_000)
+        .await
+        .unwrap();
+    assert!(
+        mapped
+            == BTreeMap::from([
+                (cold_fp, Arc::clone(&cold_labels)),
+                (hot_fp, Arc::clone(&hot_labels)),
+            ])
+    );
+    assert!(Arc::ptr_eq(&mapped[&hot_fp], &hot_labels));
     let scan = store
         .try_latest_float_scan(
             "tenant-a",
@@ -525,11 +544,20 @@ async fn byte_labels_remain_distinct_in_interning_and_latest_scan_snapshots() {
         .unwrap()
         .unwrap();
     assert!(captured.samples.len() == 3 && captured.labels.len() == 3);
+    let mapped = store
+        .series_shared_by_fingerprint("tenant-a", &[], 9_000, 11_000)
+        .await
+        .unwrap();
+    assert!(mapped.len() == 3);
+    for row in rows.as_chunks::<2>().0.iter().map(|pair| pair[0]) {
+        assert!(Arc::ptr_eq(&mapped[&row.labels.fingerprint()], &row.labels));
+    }
     for (index, bytes) in values.iter().enumerate() {
         let mut labels = lbls(&[("__name__", "up")]);
         labels.insert("raw", bytes.clone());
         let fp = labels.fingerprint();
         assert!(captured.labels[&fp].get_value("raw").unwrap().as_bytes() == bytes);
+        assert!(mapped[&fp].get_value("raw").unwrap().as_bytes() == bytes);
         assert!(captured.samples.contains(&(
             fp,
             11_000,
@@ -537,6 +565,11 @@ async fn byte_labels_remain_distinct_in_interning_and_latest_scan_snapshots() {
             None
         )));
         let matcher = LabelMatcher::new("raw", MatchOp::Eq, bytes.clone());
+        let selected_map = store
+            .series_shared_by_fingerprint("tenant-a", std::slice::from_ref(&matcher), 9_000, 11_000)
+            .await
+            .unwrap();
+        assert!(selected_map == BTreeMap::from([(fp, Arc::clone(&mapped[&fp]))]));
         let selected = store
             .try_latest_float_scan("tenant-a", &[matcher], 9_000, 9_001, 11_000, 2)
             .await
