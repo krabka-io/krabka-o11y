@@ -19,7 +19,7 @@ pub(crate) async fn merge_scan_table<const N: usize>(
     // with the same fingerprint and timestamp, including stale markers.
     // One set spans every source and batch, so duplicates within a source
     // also appear only once. No SQL window sort or source aliases are needed.
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::<(u64, i64), ahash::RandomState>::default();
     let mut batches = Vec::new();
     for (scan_ctx, table) in scans.into_iter().rev() {
         let Some(table) = table else {

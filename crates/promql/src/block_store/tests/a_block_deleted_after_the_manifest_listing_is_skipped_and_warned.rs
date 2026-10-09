@@ -39,7 +39,14 @@ async fn write_blocks(object_store: &Arc<dyn ObjectStore>, offsets: &[i64]) {
 pub(crate) async fn a_block_deleted_after_the_manifest_listing_is_skipped_and_warned() {
     // `warm` runs one query before the delete, so the deleted block's footer
     // is in the footer cache when the second query reads it.
-    for warm in [false, true] {
+    for (query, warm) in [
+        "count(count_over_time(soak_metric[60s]))",
+        "sum(last_over_time(soak_metric[60s]))",
+        "avg(last_over_time(soak_metric[60s]))",
+    ]
+    .into_iter()
+    .flat_map(|query| [false, true].map(|warm| (query, warm)))
+    {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         write_blocks(&object_store, &[1, 2]).await;
         let manifests = list_compaction_manifests(&object_store).await.unwrap();
@@ -56,7 +63,6 @@ pub(crate) async fn a_block_deleted_after_the_manifest_listing_is_skipped_and_wa
             &manifests,
         );
         let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-        let query = "count(count_over_time(soak_metric[60s]))";
         if warm {
             engine
                 .query_instant(&tenant_id("tenant-a"), query, 100_000)
@@ -93,7 +99,7 @@ pub(crate) async fn a_block_deleted_after_the_manifest_listing_is_skipped_and_wa
                         ..crate::Annotations::default()
                     }
                 ),
-            "warm={warm}"
+            "query={query}, warm={warm}"
         );
     }
 }

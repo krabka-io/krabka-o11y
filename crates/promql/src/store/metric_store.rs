@@ -8,6 +8,14 @@ use super::{
 /// Resolves `PromQL` matchers to `DataFusion` tables over the metric data of a tenant.
 #[async_trait::async_trait]
 pub trait MetricStore: Send + Sync {
+    /// Whether every float scan has at most one row per fingerprint and timestamp.
+    ///
+    /// This includes duplicates within one source and between sources. The
+    /// default keeps the engine's stable last-row deduplication.
+    fn float_samples_are_unique(&self) -> bool {
+        false
+    }
+
     /// Latest float sample per series for one instant, or `None` to use a full scan.
     ///
     /// An implementation must prove that its complete scan would stay within
