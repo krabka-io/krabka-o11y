@@ -76,7 +76,7 @@ mod tests {
     use axum::{Json, response::IntoResponse};
     use http_body_util::BodyExt as _;
     use krabka_traceql::{AttrValue, SearchResponse, SpanRef, SpanSet, TraceResult};
-    use krabka_units::{bytes, nanos};
+    use krabka_units::{Time, bytes, convert::TimeExt as _};
     use serde_json::{Value, json};
 
     use super::search_json;
@@ -91,7 +91,7 @@ mod tests {
             nested_set_right: 2,
             nested_set_parent: -1,
             start_time_unix_nano: u64::MAX,
-            duration: nanos(i64::MAX),
+            duration: Time::from_nanos(i64::MAX),
             status_code: 0,
             status_message: String::new(),
             instrumentation_name: String::new(),
@@ -110,7 +110,7 @@ mod tests {
                 root_service_name: "svc\"\\\n".to_owned(),
                 root_trace_name: "root-λ".to_owned(),
                 start_time_unix_nano: u64::MAX,
-                duration: nanos(1_999_999),
+                duration: Time::from_nanos(1_999_999),
                 span_sets: vec![
                     SpanSet {
                         spans: vec![span(vec![
@@ -237,8 +237,8 @@ mod tests {
     fn search_trace_milliseconds_truncate_while_span_nanos_stay_strings() {
         for (duration, expected_ms) in [(-1_999_999, -1), (999_999, 0), (1_000_000, 1)] {
             let mut response = response();
-            response.traces[0].duration = nanos(duration);
-            response.traces[0].span_sets[0].spans[0].duration = nanos(duration);
+            response.traces[0].duration = Time::from_nanos(duration);
+            response.traces[0].span_sets[0].spans[0].duration = Time::from_nanos(duration);
             let actual = serde_json::to_value(search_json(response)).unwrap();
             assert!(actual["traces"][0]["durationMs"] == json!(expected_ms));
             assert!(
