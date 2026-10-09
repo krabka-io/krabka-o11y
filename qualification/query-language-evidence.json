@@ -1519,7 +1519,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "query": "{ name = \"ancestor1\" } >> { .kind = \"descendant\" }",
@@ -1543,7 +1543,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "query": "{ name = \"ancestor2\" } > { .kind = \"descendant\" }",
@@ -1567,7 +1567,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "query": "{ name = \"ancestor2\" } >> { .kind = \"descendant\" }",
@@ -1592,7 +1592,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "query": "{ name = \"ancestor1\" } !>> { .kind = \"descendant\" }",
@@ -1617,7 +1617,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "query": "{ name = \"ancestor1\" } &>> { .kind = \"descendant\" }",
@@ -1642,7 +1642,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "query": "{ name = \"descendant2a\" } ~ { .kind = \"descendant\" }",
@@ -1665,7 +1665,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "query": "{ resource.service.name = \"forest\" && .kind = \"missing\" }",
@@ -4385,7 +4385,7 @@
       "report": "tempo-numeric-metric-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-metric-avg-duration",
@@ -4413,7 +4413,7 @@
       "report": "tempo-numeric-metric-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-metric-min-duration",
@@ -4441,7 +4441,7 @@
       "report": "tempo-numeric-metric-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-metric-max-duration",
@@ -4469,7 +4469,7 @@
       "report": "tempo-numeric-metric-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-metric-sum-duration",
@@ -4497,7 +4497,7 @@
       "report": "tempo-numeric-metric-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-metric-quantile-duration",
@@ -4525,7 +4525,7 @@
       "report": "tempo-numeric-metric-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-metric-histogram-duration",
@@ -5761,7 +5761,7 @@
       "report": "tempo-forest-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "query": "{ .foo = .bar }",
@@ -5784,7 +5784,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectMergeStacktraces/root prefix",
@@ -5866,7 +5866,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectMergeStacktraces/hot prefix",
@@ -5933,7 +5933,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectMergeStacktraces/leaf is not root",
@@ -5973,7 +5973,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectMergeStacktraces/reordered prefix",
@@ -6016,7 +6016,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectMergeStacktraces/hot trace",
@@ -6076,7 +6076,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectMergeStacktraces/both traces",
@@ -6155,7 +6155,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectMergeStacktraces/hot modern span",
@@ -6215,7 +6215,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectMergeStacktraces/missing modern span",
@@ -6251,7 +6251,7 @@
       "report": "pyroscope-v1-aggregation.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectSeries/SUM",
@@ -6291,7 +6291,7 @@
       "report": "pyroscope-v1-aggregation.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectSeries/AVERAGE",
@@ -6331,7 +6331,7 @@
       "report": "pyroscope-v2-async-disabled.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectMergeStacktraces/FORCE falls through",
@@ -6377,7 +6377,7 @@
       "report": "pyroscope-v2-async-disabled.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectMergeStacktraces/DISABLED falls through",
@@ -6423,7 +6423,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectSeries/grouping",
@@ -6468,7 +6468,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectSeries/limit",
@@ -6513,7 +6513,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectHeatmap/two groups",
@@ -6559,7 +6559,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectHeatmap/top group limit",
@@ -6605,7 +6605,7 @@
       "report": "tempo-typed-group-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-group-heterogeneous-scalars",
@@ -6654,7 +6654,7 @@
       "report": "tempo-typed-group-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-group-heterogeneous-and-missing",
@@ -6703,7 +6703,7 @@
       "report": "tempo-field-arithmetic-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-arithmetic-multiply-duration",
@@ -6736,7 +6736,7 @@
       "report": "tempo-field-arithmetic-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-arithmetic-divide-duration",
@@ -6768,7 +6768,7 @@
       "report": "tempo-field-arithmetic-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-arithmetic-add-duration",
@@ -6801,7 +6801,7 @@
       "report": "tempo-field-arithmetic-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-arithmetic-negate-duration",
@@ -6833,7 +6833,7 @@
       "report": "pyroscope-v2-fields.json",
       "source": {
         "path": "crates/profiles/tests/pyroscope_differential.rs",
-        "sha256": "6b13e35926f84b36b860b342fb465d507d2f26af4e2f0038f7eaa62e6256fa1c"
+        "sha256": "d97c9e3f2bd7aa904c10619502cf3e9af66f376770e09924dcceb1ec4b15a85d"
       },
       "identity": {
         "id": "SelectSeries/empty span exemplars",
@@ -6879,7 +6879,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-supported-event-arithmetic-types",
@@ -6921,7 +6921,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-supported-event-field-comparison",
@@ -6967,7 +6967,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-supported-instrumentation-event-composition",
@@ -7011,7 +7011,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-supported-instrumentation-intrinsic",
@@ -7057,7 +7057,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-supported-event-time-intrinsic",
@@ -7103,7 +7103,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-supported-link-arithmetic",
@@ -7145,7 +7145,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-supported-id-intrinsic-composition",
@@ -7189,7 +7189,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-supported-trace-child-intrinsic",
@@ -7231,7 +7231,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-supported-trace-root-intrinsic",
@@ -7273,7 +7273,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-supported-integer-power-outside-range",
@@ -7317,7 +7317,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-supported-array-scalar-ordering",
@@ -7361,7 +7361,7 @@
       "report": "tempo-supported-scopes-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-supported-scalar-array-ordering",
@@ -7403,7 +7403,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-output-aggregate-arithmetic",
@@ -7427,7 +7427,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-output-aggregate-average",
@@ -7451,7 +7451,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-output-boolean-group-filter",
@@ -7475,7 +7475,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-output-boolean-group-coalesce",
@@ -7499,7 +7499,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-output-array-group-attributes",
@@ -7523,7 +7523,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-output-bare-name-label",
@@ -7551,7 +7551,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-output-scoped-name-label",
@@ -7579,7 +7579,7 @@
       "report": "tempo-expression-output-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-output-array-metric-label",
@@ -10834,7 +10834,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-ordered-ranks",
@@ -10867,7 +10867,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-chained-filters",
@@ -10900,7 +10900,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-scalar-before-metrics",
@@ -10933,7 +10933,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-scalar-before-metrics-negative",
@@ -10966,7 +10966,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-group-filter-before-metrics",
@@ -10999,7 +10999,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-group-filter-before-metrics-negative",
@@ -11032,7 +11032,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-typed-unknown-hints",
@@ -11065,7 +11065,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-typed-float-hint",
@@ -11098,7 +11098,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-scalar-rank-filter-composition",
@@ -11131,7 +11131,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-aggregate-result-arithmetic-rejected",
@@ -11180,7 +11180,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-aggregate-result-comparison-rejected",
@@ -11229,7 +11229,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-dynamic-hint-rejected",
@@ -11278,7 +11278,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-fractional-span-sampling",
@@ -11324,7 +11324,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-fractional-trace-sampling",
@@ -13181,7 +13181,7 @@
       "report": "tempo-pipeline-hint-conformance.json",
       "source": {
         "path": "crates/traces/tests/tempo_differential.rs",
-        "sha256": "bdffc39596a3432cc570b3d5cf9869bc633b34ec8d106d824fe0e1649e317a21"
+        "sha256": "1cb92b4fdb1fe7aa8eaa025a7efd1e268e9df07316a20996aef07b2e772798ab"
       },
       "identity": {
         "stableid": "tempo-live-pipeline-fractional-span-average",

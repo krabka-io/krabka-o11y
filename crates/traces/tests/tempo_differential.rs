@@ -2890,9 +2890,9 @@ async fn start_grafana() -> TestResult<testcontainers::ContainerAsync<GenericIma
     let container = tokio::time::timeout(
         CONTAINER_START_TIMEOUT,
         GenericImage::new("mirror.gcr.io/grafana/grafana".to_string(), tag)
-            .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")
             .with_exposed_port(GRAFANA_HTTP_PORT.tcp())
             .with_wait_for(WaitFor::seconds(5))
+            .with_env_var("GF_PLUGINS_PREINSTALL_DISABLED", "true")
             .with_env_var("GF_SECURITY_ADMIN_PASSWORD", "admin")
             .with_host(DOCKER_HOST_ALIAS, Host::HostGateway)
             .start(),
