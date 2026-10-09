@@ -3,6 +3,20 @@ use super::{
     DynamicShardIndexCacheKey, DynamicShardRangesCacheKey, Instant, LabelIndex, Mutex,
     NonZeroUsize, StdDurationExt, Time, TimeRange, minutes, secs,
 };
+use crate::SharedCompactionFrontier;
+
+#[derive(Clone, Default)]
+struct IndexCacheMaps {
+    entries: Arc<Mutex<BTreeMap<DynamicIndexCacheKey, CachedDynamicIndex>>>,
+    shard_ranges: Arc<Mutex<BTreeMap<DynamicShardRangesCacheKey, CachedShardRanges>>>,
+    shard_indexes: Arc<Mutex<BTreeMap<DynamicShardIndexCacheKey, CachedDynamicIndex>>>,
+}
+
+pub(crate) struct FrontierIndexCache {
+    owner: SharedCompactionFrontier,
+    version: u64,
+    maps: IndexCacheMaps,
+}
 
 #[derive(Clone)]
 pub(crate) struct DynamicIndexCache {
@@ -12,10 +26,54 @@ pub(crate) struct DynamicIndexCache {
     pub(crate) entries: Arc<Mutex<BTreeMap<DynamicIndexCacheKey, CachedDynamicIndex>>>,
     pub(crate) shard_ranges: Arc<Mutex<BTreeMap<DynamicShardRangesCacheKey, CachedShardRanges>>>,
     pub(crate) shard_indexes: Arc<Mutex<BTreeMap<DynamicShardIndexCacheKey, CachedDynamicIndex>>>,
+    pub(crate) frontier_generation: Arc<Mutex<Option<FrontierIndexCache>>>,
 }
 
 impl DynamicIndexCache {
+    pub(crate) fn for_frontier(&self, owner: &SharedCompactionFrontier, version: u64) -> Self {
+        let mut current = self
+            .frontier_generation
+            .lock()
+            .expect("index generation lock poisoned");
+        let same_owner = current
+            .as_ref()
+            .is_some_and(|cache| Arc::ptr_eq(&cache.owner.frontier, &owner.frontier));
+        let maps = if same_owner
+            && current
+                .as_ref()
+                .is_some_and(|cache| cache.version == version)
+        {
+            current.as_ref().expect("generation exists").maps.clone()
+        } else {
+            let maps = IndexCacheMaps::default();
+            // An old request can finish after a newer generation starts. Its loads
+            // stay detached and cannot refill or replace the current cache.
+            if !same_owner || current.as_ref().is_none_or(|cache| cache.version < version) {
+                let retired = current.replace(FrontierIndexCache {
+                    owner: owner.clone(),
+                    version,
+                    maps: maps.clone(),
+                });
+                drop(current);
+                drop(retired);
+            }
+            maps
+        };
+        Self {
+            entries: maps.entries,
+            shard_ranges: maps.shard_ranges,
+            shard_indexes: maps.shard_indexes,
+            ..self.clone()
+        }
+    }
+
     pub(crate) fn clear(&self) {
+        let retired = self
+            .frontier_generation
+            .lock()
+            .expect("index generation lock poisoned")
+            .take();
+        drop(retired);
         self.entries
             .lock()
             .expect("dynamic index cache lock poisoned")
@@ -165,6 +223,7 @@ impl Default for DynamicIndexCache {
             entries: Arc::default(),
             shard_ranges: Arc::default(),
             shard_indexes: Arc::default(),
+            frontier_generation: Arc::default(),
         }
     }
 }

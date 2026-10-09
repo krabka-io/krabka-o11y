@@ -1,5 +1,6 @@
 use super::{ObjectPath, TimeRange, log_tenant_index_shards_object_prefix};
 
+/// The logical key whose sibling `manifest/snapshots/` prefix holds this shard's generations.
 #[must_use]
 pub fn log_tenant_index_shard_manifest_object_path(
     prefix: &ObjectPath,

@@ -80,7 +80,7 @@ pub async fn serve_all_service_listener(
         Arc::clone(&overrides),
     )?;
     let querier_token = CancellationToken::new();
-    let (app, background_tasks) = all_in_one_router(
+    let (app, background_tasks) = Box::pin(all_in_one_router(
         &config,
         dependencies.clone(),
         object_store,
@@ -88,7 +88,7 @@ pub async fn serve_all_service_listener(
         metrics,
         readiness.clone(),
         distributor_state,
-    )
+    ))
     .await?;
     let app = with_service_audit(app, service_audit_for_config(&config, &dependencies));
     let mut querier_tasks = SupervisedTasks::new(querier_token);

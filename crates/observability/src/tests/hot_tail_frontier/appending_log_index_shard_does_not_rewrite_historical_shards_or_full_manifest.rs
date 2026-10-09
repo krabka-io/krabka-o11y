@@ -58,14 +58,16 @@ pub(crate) async fn appending_log_index_shard_does_not_rewrite_historical_shards
     // tenant manifest, the shard catalog, and the old shard manifests
     // must not be rewritten.
     let put_paths = store.put_paths();
-    assert_eq!(
-        put_paths,
-        vec![
-            krabka_blockstore::log_tenant_index_shard_manifest_object_path(
-                &prefix, tenant, new_range
-            )
-            .to_string()
-        ],
-        "only the new shard manifest should be written"
+    let key =
+        krabka_blockstore::log_tenant_index_shard_manifest_object_path(&prefix, tenant, new_range);
+    assert2::assert!(
+        put_paths
+            == vec![
+                ObjectPath::from(krabka_blockstore::index_snapshot_prefix_for_key(
+                    key.as_ref()
+                ))
+                .join("00000000000000000000.json")
+                .to_string()
+            ]
     );
 }

@@ -10,7 +10,11 @@ pub(crate) fn parse_log_tenant_index_shard_range_from_object_path(
         .trim_start_matches('/');
     let mut parts = rest.split('/');
     let range_part = parts.next()?.strip_prefix("time=")?;
-    if parts.next()? != "manifest.json" || parts.next().is_some() {
+    if parts.next()? != "manifest"
+        || parts.next()? != "snapshots"
+        || parts.next()?.strip_suffix(".json").is_none()
+        || parts.next().is_some()
+    {
         return None;
     }
 

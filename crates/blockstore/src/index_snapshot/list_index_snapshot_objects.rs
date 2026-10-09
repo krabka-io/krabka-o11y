@@ -2,7 +2,7 @@ use super::*;
 
 #[instrument(level = "debug", skip_all, fields(key = %key), err)]
 pub async fn list_index_snapshot_objects(
-    store: &Arc<dyn ObjectStore>,
+    store: &dyn ObjectStore,
     key: &str,
 ) -> Result<Vec<ObjectMeta>> {
     let prefix = Path::from(index_snapshot_prefix_for_key(key));

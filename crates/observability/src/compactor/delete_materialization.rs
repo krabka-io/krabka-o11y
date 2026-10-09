@@ -1,3 +1,4 @@
+use krabka_blockstore::update_tenant_log_index_shard_to_object_store;
 use krabka_units::convert::StdDurationExt;
 
 use crate::{

@@ -240,7 +240,22 @@ fn logs_object(tenant: &str, rest: &[&str]) -> Option<ClassifiedObject> {
     let role = match rest {
         ["index", "logs", "manifest.json"] => ObjectRole::LogTenantManifest,
         ["index", "logs", "shards", "manifest.json"] => ObjectRole::LogShardCatalog,
-        ["index", "logs", "shards", time, "manifest.json"] => {
+        [
+            "index",
+            "logs",
+            "shards",
+            time,
+            "manifest",
+            "snapshots",
+            files @ ..,
+        ] if files.last().is_some_and(|file| {
+            std::path::Path::new(file)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+        }) =>
+        {
+            // Match every JSON object the snapshot reader can select. Invalid
+            // generation names make the tenant unknown when the reader fails.
             let (start_ns, end_ns) = offset_range(time.strip_prefix("time=")?)?;
             ObjectRole::LogShardManifest { start_ns, end_ns }
         }

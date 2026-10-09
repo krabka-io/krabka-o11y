@@ -365,6 +365,10 @@ async fn a_present_shard_manifest_that_is_malformed_or_of_another_version_fails_
     .unwrap();
     let manifest_path =
         log_tenant_index_shard_manifest_object_path(&prefix, "tenant-a", shard_range);
+    let manifest_path = ObjectPath::from(format!(
+        "{}/00000000000000000000.json",
+        krabka_blockstore::index_snapshot_prefix_for_key(manifest_path.as_ref())
+    ));
     let query_range = TimeRange::new(0, 1_000).unwrap();
 
     let written = store
