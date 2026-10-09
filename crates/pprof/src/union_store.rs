@@ -222,7 +222,7 @@ mod sorted_union;
 mod union_profile_store;
 mod union_symbols;
 
-use collect_and_remap::collect_and_remap;
+use collect_and_remap::{collect_and_remap, filter_hot_samples};
 use max_option::max_option;
 use min_option::min_option;
 use remap_partitions::remap_partitions;

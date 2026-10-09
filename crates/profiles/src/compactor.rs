@@ -36,7 +36,7 @@ mod tests {
 
     use assert2::{assert, check};
     use krabka_blockstore::{BlockIndex, BlockLevel, BlockTimestampUnit, Labels};
-    use krabka_pprof::{EngineOpts, FlameEngine};
+    use krabka_pprof::{EngineOpts, FlameEngine, ProfileStore};
     use krabka_units::{days, hours};
     use object_store::{ObjectStore, memory::InMemory};
 
@@ -114,6 +114,40 @@ mod tests {
     };
 
     const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
+
+    async fn selected_profile_batches(store: &impl ProfileStore) -> Vec<RecordBatch> {
+        let scan = store.select("t", PT, &[], 0, i64::MAX).await.unwrap();
+        scan.ctx
+            .sql(&format!("SELECT * FROM {}", scan.samples_table))
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
+    }
+
+    fn retained_wal_ids(batches: &[RecordBatch]) -> BTreeSet<Vec<u8>> {
+        batches
+            .iter()
+            .flat_map(|batch| {
+                let identities = batch
+                    .column_by_name(krabka_blockstore::PCOL_WAL_SAMPLE_IDS)
+                    .unwrap()
+                    .as_list::<i32>();
+                (0..batch.num_rows())
+                    .flat_map(|row| {
+                        identities
+                            .value(row)
+                            .as_binary::<i32>()
+                            .iter()
+                            .flatten()
+                            .map(<[u8]>::to_vec)
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
 
     #[tokio::test]
     async fn compact_blocks_rewrites_blocks_and_preserves_query_results() {
@@ -406,7 +440,49 @@ mod tests {
             ),
         ])
         .unwrap();
+        // The real Parquet/downsample path must retain canonical batches, so
+        // the union can filter their WAL contributors without the SQL plan.
+        let hot_batches = selected_profile_batches(&hot).await;
+        let cold_batches = selected_profile_batches(cold.as_ref()).await;
+        assert!(hot_batches.iter().map(RecordBatch::num_rows).sum::<usize>() == 3);
+        assert!(
+            cold_batches
+                .iter()
+                .map(RecordBatch::num_rows)
+                .sum::<usize>()
+                == 2
+        );
+        assert!(
+            hot_batches
+                .iter()
+                .chain(&cold_batches)
+                .all(|batch| batch.schema() == krabka_pprof::profile_samples_schema())
+        );
+        let cold_ids = retained_wal_ids(&cold_batches);
+        assert!(cold_ids.len() == 3 && cold_ids == retained_wal_ids(&hot_batches));
+        let expected = cold_batches
+            .iter()
+            .map(|batch| {
+                let mut columns = batch.columns().to_vec();
+                let partitions = batch.column(5).as_primitive::<UInt64Type>();
+                columns[5] = Arc::new(UInt64Array::from_iter_values(
+                    partitions
+                        .values()
+                        .iter()
+                        .map(|partition| (2 << 56) | partition),
+                ));
+                RecordBatch::try_new(krabka_pprof::profile_samples_schema(), columns).unwrap()
+            })
+            .collect::<Vec<_>>();
         let union = krabka_pprof::UnionProfileStore::new(Arc::new(hot), cold);
+        assert!(
+            concat_batches(
+                &krabka_pprof::profile_samples_schema(),
+                selected_profile_batches(&union).await.iter()
+            )
+            .unwrap()
+                == concat_batches(&krabka_pprof::profile_samples_schema(), &expected).unwrap()
+        );
         let engine = FlameEngine::new(Arc::new(union), EngineOpts::default());
         let fg = engine
             .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
