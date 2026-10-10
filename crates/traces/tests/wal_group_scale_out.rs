@@ -13,6 +13,7 @@
 //!   again, so its next commit does not move past them.
 
 mod support;
+mod wal_group;
 
 use std::{
     collections::BTreeSet,
@@ -20,21 +21,18 @@ use std::{
 };
 
 use assert2::{assert, check};
-use bytes::Bytes;
 use krabka_client_consumer::{AutoOffsetReset, Consumer, IsolationLevel};
-use krabka_client_producer::{Producer, ProducerRecord};
 use krabka_observability::{
     ReadinessGate, RoleReadiness, wal_consumer_metrics::WalConsumerMetrics,
     wal_group_assignment::WalRebalanceListener,
 };
-use krabka_protocol::owned::create_topics_request::{CreatableTopic, CreateTopicsRequest};
 use krabka_traces::blockbuilder::{
     BlockBuilderConsumer, WalConsumerCommit as _, WalConsumerPoll as _,
 };
 use krabka_units::millis;
 
-const PARTITIONS: i32 = 2;
-const RECORDS_PER_PARTITION: i64 = 4;
+use self::wal_group::{PARTITIONS, RECORDS_PER_PARTITION, create_topic, fill};
+
 const DEADLINE: Duration = Duration::from_mins(1);
 
 /// One member's view of the group: the consumer the role drives, its
@@ -111,7 +109,7 @@ async fn scale_out(name: &str, flushed_before_join: bool) -> Outcome {
     let proc = support::start().await;
     let topic = format!("__traces_scale_out_{name}");
     create_topic(&proc.client, &topic).await;
-    fill(&proc.bootstrap, &topic).await;
+    fill(&proc.bootstrap, &topic, "krabka-traces-scale-out-producer").await;
 
     let mut first = Member::join(&proc.bootstrap, &topic, name).await;
     let deadline = Instant::now() + DEADLINE;
@@ -181,46 +179,4 @@ async fn both_members_are_caught_up_and_every_record_is_written_after_a_scale_ou
 fn all_records() -> usize {
     usize::try_from(i64::from(PARTITIONS) * RECORDS_PER_PARTITION)
         .expect("the record count fits a usize")
-}
-
-async fn create_topic(client: &krabka_client_core::Client, name: &str) {
-    let resp = client
-        .send(CreateTopicsRequest {
-            topics: vec![CreatableTopic {
-                name: name.into(),
-                num_partitions: PARTITIONS,
-                replication_factor: 1,
-                ..Default::default()
-            }],
-            timeout_ms: 5_000,
-            ..Default::default()
-        })
-        .await
-        .expect("CreateTopics");
-    assert!(let Some(created) = resp.topics.first());
-    check!(created.error_code == 0);
-}
-
-/// Writes the same record count to every partition, pinned by index so the
-/// assertions do not depend on the producer's partitioner.
-async fn fill(bootstrap: &str, topic: &str) {
-    let producer = Producer::builder()
-        .bootstrap(bootstrap.to_owned())
-        .client_id("krabka-traces-scale-out-producer")
-        .build()
-        .await
-        .expect("producer build");
-    for partition in 0..PARTITIONS {
-        for index in 0..RECORDS_PER_PARTITION {
-            let ack = producer
-                .send(ProducerRecord {
-                    topic: topic.to_owned(),
-                    partition: Some(partition),
-                    value: Some(Bytes::from(format!("{partition}:{index}"))),
-                    ..ProducerRecord::default()
-                })
-                .await;
-            assert!(let Ok(_) = ack);
-        }
-    }
 }

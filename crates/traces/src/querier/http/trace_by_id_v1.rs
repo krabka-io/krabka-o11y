@@ -1,6 +1,6 @@
 use super::{
     AppState, Extension, HeaderMap, Path, Principal, Response, SpanStore, State, Uri,
-    trace_by_id_v1_inner,
+    trace_by_id_inner, trace_protobuf, wants_json,
 };
 
 /// Tempo v1 trace-by-id, at `/api/traces/{id}`.
@@ -20,7 +20,17 @@ where
     S: SpanStore + 'static,
 {
     let start = std::time::Instant::now();
-    let resp = trace_by_id_v1_inner(&state, &principal, headers, trace_id, uri).await;
+    let protobuf = !wants_json(&headers);
+    let resp = trace_by_id_inner(
+        &state,
+        &principal,
+        headers,
+        trace_id,
+        uri,
+        protobuf,
+        trace_protobuf,
+    )
+    .await;
     state.record_query("trace_by_id", resp.status().is_success(), start);
     resp
 }

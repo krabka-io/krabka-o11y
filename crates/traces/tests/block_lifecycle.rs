@@ -54,22 +54,17 @@ fn span_record(tenant: &str, trace: u8, start_ns: i64) -> SpanRecord {
         span: Span {
             trace_id: [trace; 16],
             span_id: [trace; 8],
-            parent_span_id: None,
             name: "GET /".into(),
             kind: SpanKind::Server,
             start_ns,
             duration_ns: 5,
             status: StatusCode::Ok,
-            status_message: String::new(),
             resource_attrs: vec![KeyValue {
                 key: "service.name".into(),
                 value: AttrValue::Str("api".into()),
             }],
-            span_attrs: Vec::new(),
-            events: Vec::new(),
-            links: Vec::new(),
             instrumentation_scope: "test".into(),
-            instrumentation_version: String::new(),
+            ..Span::default()
         },
     }
 }

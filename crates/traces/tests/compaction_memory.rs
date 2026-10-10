@@ -73,7 +73,6 @@ fn span(trace: u32, span_id: u64, start_ns: i64) -> Span {
         start_ns,
         duration_ns: 100,
         status: StatusCode::Ok,
-        status_message: String::new(),
         resource_attrs: vec![KeyValue {
             key: "service.name".into(),
             value: AttrValue::Str("api".into()),
@@ -82,10 +81,9 @@ fn span(trace: u32, span_id: u64, start_ns: i64) -> Span {
             key: "http.method".into(),
             value: AttrValue::Str("GET".into()),
         }],
-        events: Vec::new(),
-        links: Vec::new(),
         instrumentation_scope: "test".into(),
         instrumentation_version: "1".into(),
+        ..Span::default()
     }
 }
 

@@ -1,6 +1,6 @@
 use super::{
     AppState, Extension, HeaderMap, Path, Principal, Response, SpanStore, State, Uri,
-    search_tag_values_inner,
+    search_tag_values_inner, search_tag_values_json,
 };
 
 pub(crate) async fn search_tag_values<S>(
@@ -14,7 +14,15 @@ where
     S: SpanStore + 'static,
 {
     let start = std::time::Instant::now();
-    let resp = search_tag_values_inner(&state, &principal, headers, tag, uri).await;
+    let resp = search_tag_values_inner(
+        &state,
+        &principal,
+        headers,
+        tag,
+        uri,
+        search_tag_values_json,
+    )
+    .await;
     state.record_query("tag_values", resp.status().is_success(), start);
     resp
 }

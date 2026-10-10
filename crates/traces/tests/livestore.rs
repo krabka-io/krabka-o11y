@@ -14,13 +14,11 @@ fn span(trace_id: [u8; 16], span_id: u8, start_ns: i64) -> Span {
     Span {
         trace_id,
         span_id: [span_id; 8],
-        parent_span_id: None,
         name: format!("span-{span_id}"),
         kind: SpanKind::Server,
         start_ns,
         duration_ns: 10,
         status: StatusCode::Ok,
-        status_message: String::new(),
         resource_attrs: vec![KeyValue {
             key: "service.name".into(),
             value: AttrValue::Str("api".into()),
@@ -29,10 +27,8 @@ fn span(trace_id: [u8; 16], span_id: u8, start_ns: i64) -> Span {
             key: "http.method".into(),
             value: AttrValue::Str("GET".into()),
         }],
-        events: Vec::new(),
-        links: Vec::new(),
         instrumentation_scope: "test".into(),
-        instrumentation_version: String::new(),
+        ..Span::default()
     }
 }
 

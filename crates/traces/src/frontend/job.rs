@@ -22,21 +22,7 @@ mod tests {
     use super::*;
 
     fn block(id: &str, start: i64, end: i64, rgs: &[u64]) -> BlockMetaInfo {
-        let row_groups = rgs
-            .iter()
-            .enumerate()
-            .map(|(i, &b)| RowGroupInfo {
-                index: u32::try_from(i).unwrap(),
-                compressed: ByteSize::from_bytes(b),
-            })
-            .collect();
-        BlockMetaInfo {
-            block_id: id.to_string(),
-            start_ns: start,
-            end_ns: end,
-            size: ByteSize::from_bytes(rgs.iter().sum()),
-            row_groups,
-        }
+        BlockMetaInfo::with_row_groups(id, start, end, rgs)
     }
 
     #[test]

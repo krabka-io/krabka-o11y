@@ -15,7 +15,7 @@ use clap::Parser as _;
 use futures::StreamExt as _;
 use krabka_blockstore::{BlockWriter, DEFAULT_INDEX_SNAPSHOT_MAX, TraceIndex};
 use krabka_traces::{
-    AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode,
+    AttrValue, KeyValue, Span, SpanRecord,
     blockbuilder::{TRACE_BLOCK_OBJECT_PREFIX, build_blocks},
 };
 use object_store::{ObjectStore, memory::InMemory, path::Path};
@@ -64,27 +64,20 @@ fn configured(store: Arc<dyn ObjectStore>) -> ConfiguredObjectStore {
 }
 
 fn span_record(trace: u8, start_ns: i64) -> SpanRecord {
+    // A pass only moves whole blocks, so the span carries just what a block
+    // needs: its ids, its time, and the service that names its trace.
     SpanRecord {
         tenant: "tenant-a".into(),
         span: Span {
             trace_id: [trace; 16],
             span_id: [trace; 8],
-            parent_span_id: None,
-            name: "GET /".into(),
-            kind: SpanKind::Server,
             start_ns,
             duration_ns: 5,
-            status: StatusCode::Ok,
-            status_message: String::new(),
             resource_attrs: vec![KeyValue {
                 key: "service.name".into(),
                 value: AttrValue::Str("api".into()),
             }],
-            span_attrs: Vec::new(),
-            events: Vec::new(),
-            links: Vec::new(),
-            instrumentation_scope: "test".into(),
-            instrumentation_version: String::new(),
+            ..Span::default()
         },
     }
 }

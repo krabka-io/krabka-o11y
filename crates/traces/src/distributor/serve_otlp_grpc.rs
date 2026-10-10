@@ -1,12 +1,13 @@
 use super::{
     Arc, CancellationToken, DistributorState, GrpcAuthenticationLayer, GrpcServer, OtlpGrpcService,
-    ServerListener, ServerSecurity, SocketAddr, TraceServiceServer, grpc_incoming,
+    ServerSecurity, SocketAddr, TraceServiceServer, bind_listener, grpc_incoming, spawn_server,
 };
 
 /// Serve the OTLP/gRPC trace receiver until cancelled, returning the bound
 /// address and the server's handle.
 ///
-/// The server accepts connections through a [`ServerListener`], so it gets the
+/// The server accepts connections through a
+/// [`ServerListener`](krabka_observability::server_security::ServerListener), so it gets the
 /// TLS of `security`, and it authenticates each call with a
 /// [`GrpcAuthenticationLayer`]. It does not use tonic's own
 /// `ServerTlsConfig`, which panics in a process that compiles in two rustls
@@ -23,17 +24,14 @@ pub async fn serve_otlp_grpc(
     security: &ServerSecurity,
     shutdown: CancellationToken,
 ) -> std::io::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
-    let tcp = tokio::net::TcpListener::bind(addr).await?;
-    let listener = ServerListener::bind(tcp, security).map_err(std::io::Error::other)?;
+    let listener = bind_listener(addr, security).await?;
     let bound = listener.local_addr();
     let server = GrpcServer::builder()
         .layer(GrpcAuthenticationLayer::new(security))
         .add_service(TraceServiceServer::new(OtlpGrpcService::new(state)))
         .serve_with_incoming_shutdown(grpc_incoming(listener), shutdown.cancelled_owned());
-    let handle = tokio::spawn(async move {
-        if let Err(err) = server.await {
-            tracing::error!(error = %err, "traces distributor OTLP/gRPC server stopped");
-        }
-    });
-    Ok((bound, handle))
+    Ok((
+        bound,
+        spawn_server(server, "traces distributor OTLP/gRPC server"),
+    ))
 }

@@ -1,6 +1,6 @@
 use super::{
     AppState, Extension, HeaderMap, Path, Principal, Response, SpanStore, State, Uri,
-    trace_by_id_inner,
+    trace_by_id_inner, trace_by_id_response_protobuf, wants_protobuf,
 };
 
 pub(crate) async fn trace_by_id<S>(
@@ -14,7 +14,17 @@ where
     S: SpanStore + 'static,
 {
     let start = std::time::Instant::now();
-    let resp = trace_by_id_inner(&state, &principal, headers, trace_id, uri).await;
+    let protobuf = wants_protobuf(&headers);
+    let resp = trace_by_id_inner(
+        &state,
+        &principal,
+        headers,
+        trace_id,
+        uri,
+        protobuf,
+        trace_by_id_response_protobuf,
+    )
+    .await;
     state.record_query("trace_by_id", resp.status().is_success(), start);
     resp
 }

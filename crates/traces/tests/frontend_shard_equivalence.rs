@@ -13,27 +13,13 @@ use krabka_traces::frontend::{
     MembershipView, QueryFrontend,
     backend::{MockQuerier, SearchPartial},
     config::FrontendConfig,
-    job::{BlockMetaInfo, MockCatalog, RowGroupInfo},
+    job::{BlockMetaInfo, MockCatalog},
     wire::{Metrics, SpanJson, SpanSetJson, TraceJson},
 };
 use krabka_units::{ByteSize, convert::ByteSizeExt as _, millis};
 
 fn block(id: &str, start: i64, end: i64, rgs: &[u64]) -> BlockMetaInfo {
-    let row_groups = rgs
-        .iter()
-        .enumerate()
-        .map(|(i, &b)| RowGroupInfo {
-            index: u32::try_from(i).unwrap(),
-            compressed: ByteSize::from_bytes(b),
-        })
-        .collect();
-    BlockMetaInfo {
-        block_id: id.to_string(),
-        start_ns: start,
-        end_ns: end,
-        size: ByteSize::from_bytes(rgs.iter().sum()),
-        row_groups,
-    }
+    BlockMetaInfo::with_row_groups(id, start, end, rgs)
 }
 
 fn trace_with_spans(tid: &str, start: u64, span_ids: &[&str]) -> TraceJson {

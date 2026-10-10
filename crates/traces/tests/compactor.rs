@@ -1,3 +1,5 @@
+mod span_fixture;
+
 use std::sync::Arc;
 
 use arrow::{
@@ -11,37 +13,13 @@ use krabka_blockstore::{
     SCOL_TRACE_ID, TraceIndex, level_above, read_block, unescape_object_path_segment,
 };
 use krabka_traces::{
-    AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode,
+    AttrValue, KeyValue, SpanRecord,
     blockbuilder::{build_blocks, build_blocks_with_promoted_attrs},
     compactor::{compact_block_keys, planned_compacted_object_key},
 };
 use object_store::{ObjectStore, memory::InMemory, path::Path};
 
-fn span(trace_id: [u8; 16], span_id: u8, parent: Option<u8>, start_ns: i64) -> Span {
-    Span {
-        trace_id,
-        span_id: [span_id; 8],
-        parent_span_id: parent.map(|id| [id; 8]),
-        name: format!("span-{span_id}"),
-        kind: SpanKind::Server,
-        start_ns,
-        duration_ns: 5,
-        status: StatusCode::Ok,
-        status_message: String::new(),
-        resource_attrs: vec![KeyValue {
-            key: "service.name".into(),
-            value: AttrValue::Str("api".into()),
-        }],
-        span_attrs: vec![KeyValue {
-            key: "http.method".into(),
-            value: AttrValue::Str("GET".into()),
-        }],
-        events: Vec::new(),
-        links: Vec::new(),
-        instrumentation_scope: "test".into(),
-        instrumentation_version: String::new(),
-    }
-}
+use self::span_fixture::span;
 
 /// The input keys and the output key of the compaction production would plan
 /// over `inputs`.
@@ -118,8 +96,10 @@ fn rec(trace_id: [u8; 16], span_id: u8, parent: Option<u8>, start_ns: i64) -> Sp
     }
 }
 
-#[tokio::test]
-async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
+// Write a root span's block and then a block of its late child, and compact
+// the two. Returns the store, the index after the compaction, the planned
+// output key, and the output block's metadata.
+async fn compact_root_and_late_child() -> (Arc<dyn ObjectStore>, TraceIndex, String, BlockMeta) {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
@@ -156,6 +136,12 @@ async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
     )
     .await
     .unwrap();
+    (store, index, output_key, meta)
+}
+
+#[tokio::test]
+async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
+    let (store, index, output_key, meta) = compact_root_and_late_child().await;
 
     check!((meta.row_count, meta.min_ts, meta.max_ts) == (2, 100, 200));
     check!(
@@ -184,42 +170,7 @@ async fn compact_block_keys_merges_late_spans_and_replaces_index_entries() {
 
 #[tokio::test]
 async fn compact_block_keys_recomputes_nested_sets_for_late_children() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
-    let mut index = TraceIndex::new();
-
-    let first = build_blocks(
-        &writer,
-        &mut index,
-        "tenant-a",
-        7,
-        &[rec([1; 16], 1, None, 100)],
-        (10, 10),
-    )
-    .await
-    .unwrap();
-    let late = build_blocks(
-        &writer,
-        &mut index,
-        "tenant-a",
-        7,
-        &[rec([1; 16], 2, Some(1), 200)],
-        (20, 20),
-    )
-    .await
-    .unwrap();
-    let (input_keys, output_key) = planned_job_keys("tenant-a", &[&first[0], &late[0]]);
-
-    let meta = compact_block_keys(
-        store.clone(),
-        &writer,
-        &mut index,
-        "tenant-a",
-        &input_keys,
-        &output_key,
-    )
-    .await
-    .unwrap();
+    let (store, _, _, meta) = compact_root_and_late_child().await;
 
     let batches = read_block(store, &meta.object_key).await.unwrap();
     let batch = &batches[0];

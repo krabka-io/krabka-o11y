@@ -1,7 +1,6 @@
 use super::{
     AppState, HeaderMap, IntoResponse, Json, Principal, Response, SpanStore, StatusCode, Uri,
-    instant_metric_bounds, metrics_query_param, request_tenant, scan_options_param,
-    trace_metrics_instant_json,
+    instant_metric_bounds, metrics_request, scan_options_param, trace_metrics_instant_json,
 };
 
 pub(crate) async fn query_instant_inner<S>(
@@ -13,12 +12,10 @@ pub(crate) async fn query_instant_inner<S>(
 where
     S: SpanStore + 'static,
 {
-    let tenant = match request_tenant(&headers, principal, &state.cfg.tenant_policy) {
-        Ok(tenant) => tenant,
+    let (tenant, query) = match metrics_request(&headers, principal, &state.cfg.tenant_policy, &uri)
+    {
+        Ok(request) => request,
         Err(rejection) => return *rejection,
-    };
-    let Some(query) = metrics_query_param(&uri) else {
-        return (StatusCode::BAD_REQUEST, "missing query parameter q").into_response();
     };
     let (start_ns, end_ns, step_ns, _) = match instant_metric_bounds(&uri) {
         Ok(bounds) => bounds,

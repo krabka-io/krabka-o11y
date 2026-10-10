@@ -111,18 +111,15 @@ mod tests {
         Span {
             trace_id: [1; 16],
             span_id: [2; 8],
-            parent_span_id: None,
             name: "GET /".into(),
             kind: SpanKind::Server,
             start_ns: 1_000,
             duration_ns: 100,
             status: StatusCode::Ok,
-            status_message: String::new(),
             resource_attrs: vec![KeyValue {
                 key: "service.name".into(),
                 value: AttrValue::Str("api".into()),
             }],
-            span_attrs: Vec::new(),
             events: vec![EventRecord {
                 time_unix_nano: 1_050,
                 name: "exception".into(),
@@ -133,8 +130,7 @@ mod tests {
                 span_id: [8; 8],
                 attrs: Vec::new(),
             }],
-            instrumentation_scope: String::new(),
-            instrumentation_version: String::new(),
+            ..Span::default()
         }
     }
 
@@ -331,7 +327,7 @@ mod traceparent_header;
 mod wal_consumer_commit;
 mod wal_consumer_poll;
 
-use attr_value_string::attr_value_string;
+pub(crate) use attr_value_string::attr_value_string;
 use block_build_options::BlockBuildOptions;
 pub use block_builder_config::BlockBuilderConfig;
 pub use build_blocks::build_blocks;

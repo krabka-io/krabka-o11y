@@ -103,7 +103,9 @@ mod tests {
 }
 
 mod assign_nested_set;
+mod batch_nested_sets;
 mod nested_set_type;
 
 pub use assign_nested_set::assign_nested_set;
+pub(crate) use batch_nested_sets::{BatchNestedSets, batch_nested_sets};
 pub use nested_set_type::NestedSet;

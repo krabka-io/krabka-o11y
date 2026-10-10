@@ -54,9 +54,11 @@ crate_tests(
             },
         },
     },
-    # The shared lifecycle store, reached with `#[path]` from //crates/blockstore.
+    # The shared lifecycle store, reached with `#[path]` from //crates/blockstore,
+    # and the Jaeger thrift fixture the library's unit tests also use.
     extra_srcs = {
         "block_lifecycle": ["//crates/blockstore:tests/support/lifecycle_store.rs"],
+        "grafana_e2e": ["src/wire/jaeger/thrift_fixture.rs"],
         "tempo_deployment": ["//crates/metrics-service:tests/support/container_deployment.rs"],
         "tempo_differential": ["//crates/metrics-service:tests/support/generated_differential.rs"],
     },

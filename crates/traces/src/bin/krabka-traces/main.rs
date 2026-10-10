@@ -1181,12 +1181,16 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn remote_live_source_reads_batches_from_live_store_router() {
+    // Serve a live-store router holding one `tenant-a` span on an ephemeral
+    // port.
+    async fn serve_live_store_with_span(
+        trace_id: [u8; 16],
+        span_id: [u8; 8],
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
         let store = Arc::new(RwLock::new(LiveStore::new(i64::MAX)));
         store.write().await.ingest(krabka_traces::SpanRecord {
             tenant: "tenant-a".into(),
-            span: test_span([8; 16], [4; 8]),
+            span: test_span(trace_id, span_id),
         });
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
         let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
@@ -1195,6 +1199,24 @@ mod tests {
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });
+        (addr, server)
+    }
+
+    fn remote_live_source(
+        addr: std::net::SocketAddr,
+        index: TraceIndex,
+    ) -> trace_querier::live::RemoteLiveSource {
+        trace_querier::live::RemoteLiveSource::new(
+            Url::parse(&format!("http://{addr}")).unwrap(),
+            Arc::new(ArcSwap::from_pointee(index)),
+            &InternalClient::default(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn remote_live_source_reads_batches_from_live_store_router() {
+        let (addr, server) = serve_live_store_with_span([8; 16], [4; 8]).await;
         let mut index = TraceIndex::new();
         index.add_trace_block(
             "tenant-a",
@@ -1209,12 +1231,7 @@ mod tests {
                 level: BlockLevel::INGESTED,
             },
         );
-        let source = trace_querier::live::RemoteLiveSource::new(
-            Url::parse(&format!("http://{addr}")).unwrap(),
-            Arc::new(ArcSwap::from_pointee(index)),
-            &InternalClient::default(),
-        )
-        .unwrap();
+        let source = remote_live_source(addr, index);
 
         let batches = source.span_batches("tenant-a", 1_000, 2_000).await.unwrap();
 
@@ -1231,24 +1248,8 @@ mod tests {
 
     #[tokio::test]
     async fn remote_live_source_reads_trace_by_id_from_live_store_router() {
-        let store = Arc::new(RwLock::new(LiveStore::new(i64::MAX)));
-        store.write().await.ingest(krabka_traces::SpanRecord {
-            tenant: "tenant-a".into(),
-            span: test_span([9; 16], [5; 8]),
-        });
-        let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        });
-        let source = trace_querier::live::RemoteLiveSource::new(
-            Url::parse(&format!("http://{addr}")).unwrap(),
-            Arc::new(ArcSwap::from_pointee(TraceIndex::new())),
-            &InternalClient::default(),
-        )
-        .unwrap();
+        let (addr, server) = serve_live_store_with_span([9; 16], [5; 8]).await;
+        let source = remote_live_source(addr, TraceIndex::new());
 
         let trace = source
             .trace_spans("tenant-a", &[9; 16])
@@ -1265,24 +1266,8 @@ mod tests {
 
     #[tokio::test]
     async fn remote_live_source_reads_tags_and_values_from_live_store_router() {
-        let store = Arc::new(RwLock::new(LiveStore::new(i64::MAX)));
-        store.write().await.ingest(krabka_traces::SpanRecord {
-            tenant: "tenant-a".into(),
-            span: test_span([11; 16], [7; 8]),
-        });
-        let cli = Cli::try_parse_from(["krabka-traces", "--target", "live-store"]).unwrap();
-        let router = build_live_store_router(&cli, store, RoleReadiness::new()).unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, router).await.unwrap();
-        });
-        let source = trace_querier::live::RemoteLiveSource::new(
-            Url::parse(&format!("http://{addr}")).unwrap(),
-            Arc::new(ArcSwap::from_pointee(TraceIndex::new())),
-            &InternalClient::default(),
-        )
-        .unwrap();
+        let (addr, server) = serve_live_store_with_span([11; 16], [7; 8]).await;
+        let source = remote_live_source(addr, TraceIndex::new());
 
         let tags = source
             .tag_names(
@@ -2497,6 +2482,7 @@ mod run_live_store;
 mod run_metrics_generator;
 mod run_querier;
 mod run_query_frontend;
+mod serve_role_router;
 mod shared_object_store;
 mod target;
 mod u64_limit_from_usize;
@@ -2569,6 +2555,7 @@ use run_live_store::run_live_store;
 use run_metrics_generator::run_metrics_generator;
 use run_querier::run_querier;
 use run_query_frontend::run_query_frontend;
+use serve_role_router::serve_role_router;
 use shared_object_store::SharedObjectStore;
 use target::Target;
 use u64_limit_from_usize::u64_limit_from_usize;

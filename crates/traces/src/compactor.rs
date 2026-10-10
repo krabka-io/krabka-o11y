@@ -1,7 +1,7 @@
 //! Compactor helpers for merging late-span blocks into replacement span blocks.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     sync::Arc,
     time::SystemTime,
 };
@@ -284,13 +284,11 @@ mod tests {
         Span {
             trace_id: [1; 16],
             span_id: [2; 8],
-            parent_span_id: None,
             name: "GET /".into(),
             kind: SpanKind::Server,
             start_ns: 1_000,
             duration_ns: 100,
             status: StatusCode::Ok,
-            status_message: String::new(),
             resource_attrs: vec![KeyValue {
                 key: "service.name".into(),
                 value: AttrValue::Str("api".into()),
@@ -317,6 +315,7 @@ mod tests {
             }],
             instrumentation_scope: "otel-rust".into(),
             instrumentation_version: "1.2.3".into(),
+            ..Span::default()
         }
     }
 

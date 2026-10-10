@@ -97,7 +97,7 @@ mod tests {
     /// value differ, hence the ".05" case beside the ".5" one.
     #[test]
     fn a_duration_component_scales_its_fraction_by_length() {
-        let parse = super::parse_duration_component_ns;
+        let parse = crate::querier::http::parse_duration_component_ns;
         let second = 1_000_000_000_u128;
 
         check!(parse("1", second) == Ok(second));
@@ -155,7 +155,7 @@ mod tests {
     /// which the value itself cannot show.
     #[test]
     fn a_logfmt_value_reports_what_it_consumed() {
-        let parse = super::parse_logfmt_value;
+        let parse = crate::querier::http::parse_logfmt_value;
 
         // Bare values run to the first whitespace.
         check!(parse("abc") == Some(("abc".to_string(), 3)));
@@ -328,20 +328,14 @@ mod buildinfo;
 mod echo;
 mod exemplar_limit;
 mod key_is_safe_attribute;
-mod metrics_query_param;
+mod metrics_query;
+mod ndjson_search_stream;
 mod optional_seconds;
 mod optional_time_bounds;
 mod overrides;
-mod parse_duration_component_ns;
-mod parse_go_duration_ns;
-mod parse_logfmt_tags;
-mod parse_logfmt_value;
 mod parse_scope;
-mod parse_seconds_to_ns;
 mod parse_step_to_ns;
-mod query_instant;
 mod query_param;
-mod query_range;
 mod request_tenant;
 mod required_seconds;
 mod required_step;
@@ -351,14 +345,14 @@ mod scope_name;
 mod scope_param;
 mod search;
 mod search_query;
-mod search_stream;
+mod search_request;
 mod search_tag_values;
-mod search_tag_values_v2;
 mod search_tags;
-mod search_tags_v2;
 mod tags_to_traceql;
+mod tenant_and_bounds;
 mod trace_by_id;
-mod trace_by_id_v1;
+mod trace_v1_response;
+mod with_warnings;
 
 use backend_error_response::backend_error_response;
 use bounded_count::bounded_count;
@@ -366,20 +360,14 @@ use buildinfo::buildinfo;
 use echo::echo;
 use exemplar_limit::exemplar_limit;
 use key_is_safe_attribute::key_is_safe_attribute;
-use metrics_query_param::metrics_query_param;
+use metrics_query::metrics_query;
+use ndjson_search_stream::ndjson_search_stream;
 use optional_seconds::optional_seconds;
 use optional_time_bounds::optional_time_bounds;
 use overrides::overrides;
-use parse_duration_component_ns::parse_duration_component_ns;
-use parse_go_duration_ns::parse_go_duration_ns;
-use parse_logfmt_tags::parse_logfmt_tags;
-use parse_logfmt_value::parse_logfmt_value;
 use parse_scope::parse_scope;
-use parse_seconds_to_ns::parse_seconds_to_ns;
 use parse_step_to_ns::parse_step_to_ns;
-use query_instant::query_instant;
 use query_param::query_param;
-use query_range::query_range;
 use request_tenant::request_tenant;
 use required_seconds::required_seconds;
 use required_step::required_step;
@@ -389,11 +377,15 @@ use scope_name::scope_name;
 use scope_param::scope_param;
 use search::search;
 use search_query::search_query;
-use search_stream::search_stream;
+use search_request::search_request;
 use search_tag_values::search_tag_values;
-use search_tag_values_v2::search_tag_values_v2;
 use search_tags::search_tags;
-use search_tags_v2::search_tags_v2;
 use tags_to_traceql::tags_to_traceql;
+use tenant_and_bounds::tenant_and_bounds;
 use trace_by_id::trace_by_id;
-use trace_by_id_v1::trace_by_id_v1;
+use trace_v1_response::trace_v1_response;
+use with_warnings::with_warnings;
+
+use crate::querier::http::{
+    metrics_request, parse_go_duration_ns, parse_logfmt_tags, parse_seconds_to_ns,
+};

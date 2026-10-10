@@ -1,4 +1,4 @@
-use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
+use krabka_observability::{RoleReadiness, SupervisedTasks};
 
 use super::*;
 
@@ -43,17 +43,13 @@ pub(crate) async fn run_live_store(
         wal_consumer_gate.mark_unready();
     });
 
-    let listener = ServerListener::bind(listener, &security.server)?;
-    let bound = listener.local_addr();
-    tracing::info!(%bound, "traces live-store listening");
-    let server = serve_router(listener, router, &security.server)
-        .with_graceful_shutdown(shutdown.clone().cancelled_owned());
-    let outcome = tokio::select! {
-        result = server => result.map_err(Into::into),
-        name = tasks.first_unexpected_exit() => Err(
-            Box::<dyn std::error::Error + Send + Sync>::from(CriticalTaskError(name)),
-        ),
-    };
-    tasks.shutdown().await;
-    outcome
+    serve_role_router(
+        "traces live-store",
+        listener,
+        router,
+        security,
+        tasks,
+        shutdown,
+    )
+    .await
 }

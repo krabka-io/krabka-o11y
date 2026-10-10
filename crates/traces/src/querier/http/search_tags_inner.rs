@@ -1,15 +1,17 @@
 use super::{
-    AppState, HeaderMap, IntoResponse, Json, Principal, Response, SpanStore, StatusCode, Uri,
-    is_match_all_query, matching_traces, optional_time_bounds, q_filter_limit, query_param,
-    request_tenant, scan_options_param, scope_param, scoped_tags_from_traces, search_tags_json,
-    traceql_query_error_response,
+    AppState, HeaderMap, IntoResponse, Json, Principal, Response, ScopedTag, SpanStore, StatusCode,
+    TagScope, Uri, Value, is_match_all_query, optional_time_bounds, query_param, request_tenant,
+    scope_param, scoped_tags_from_traces, traces_matching_filter,
 };
 
+/// Answer a tag-names request, rendering the scoped tags with `render`, which
+/// is where the v1 and v2 endpoints differ.
 pub(crate) async fn search_tags_inner<S>(
     state: &AppState<S>,
     principal: &Principal,
     headers: HeaderMap,
     uri: Uri,
+    render: fn(Vec<ScopedTag>, Option<TagScope>) -> Value,
 ) -> Response
 where
     S: SpanStore + 'static,
@@ -26,53 +28,24 @@ where
         Ok(scope) => scope,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    if let Some(query) = query_param(&uri, "q") {
-        if is_match_all_query(&query) {
-            return match state
-                .engine
-                .tag_names(tenant.as_str(), scope, start_ns, end_ns)
-                .await
-            {
-                Ok(tags) => Json(search_tags_json(&tags)).into_response(),
-                Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-            };
-        }
-        let scan_options = match scan_options_param(&uri) {
-            Ok(value) => value,
-            Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-        };
-        let limit = match q_filter_limit(
-            &uri,
-            state.engine.max_traces(),
-            state.cfg.tag_query_filter_autocomplete_limit,
-        ) {
-            Ok(value) => value,
-            Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-        };
-        match matching_traces(
-            state.engine.as_ref(),
-            tenant.as_str(),
-            &query,
-            start_ns,
-            end_ns,
-            scan_options,
-            limit,
-        )
-        .await
-        {
-            Ok(traces) => {
-                Json(search_tags_json(&scoped_tags_from_traces(&traces, scope))).into_response()
-            }
-            Err(err) => traceql_query_error_response(&err),
-        }
-    } else {
-        match state
-            .engine
-            .tag_names(tenant.as_str(), scope, start_ns, end_ns)
+    if let Some(query) = query_param(&uri, "q")
+        && !is_match_all_query(&query)
+    {
+        return match traces_matching_filter(state, tenant.as_str(), &query, &uri, start_ns, end_ns)
             .await
         {
-            Ok(tags) => Json(search_tags_json(&tags)).into_response(),
-            Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-        }
+            Ok(traces) => {
+                Json(render(scoped_tags_from_traces(&traces, scope), scope)).into_response()
+            }
+            Err(rejection) => *rejection,
+        };
+    }
+    match state
+        .engine
+        .tag_names(tenant.as_str(), scope, start_ns, end_ns)
+        .await
+    {
+        Ok(tags) => Json(render(tags, scope)).into_response(),
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     }
 }

@@ -9,7 +9,14 @@ use crate::{
 };
 
 #[cfg(test)]
+pub(crate) mod thrift_fixture;
+
+#[cfg(test)]
 pub(crate) mod test_support {
+    use super::thrift_fixture::{
+        write_field_header, write_i32_field, write_i64_field, write_key_value_bool,
+        write_key_value_string, write_list_header, write_string_field,
+    };
     use crate::ids::{TraceIdHigh, TraceIdLow};
 
     pub fn encode_sample_batch() -> Vec<u8> {
@@ -20,7 +27,7 @@ pub(crate) mod test_support {
         out
     }
 
-    fn write_process(out: &mut Vec<u8>, field_id: i16, service: &str) {
+    pub fn write_process(out: &mut Vec<u8>, field_id: i16, service: &str) {
         write_field_header(out, 12, field_id, &mut 0);
         let mut last = 0;
         write_string_field(out, 1, service, &mut last);
@@ -30,7 +37,7 @@ pub(crate) mod test_support {
         out.push(0);
     }
 
-    fn write_span_list(out: &mut Vec<u8>, field_id: i16) {
+    pub fn write_span_list(out: &mut Vec<u8>, field_id: i16) {
         write_field_header(out, 9, field_id, &mut 1);
         write_list_header(out, 12, 1);
         let mut last = 0;
@@ -80,78 +87,6 @@ pub(crate) mod test_support {
         write_key_value_string(out, "event", "cache.miss");
         write_key_value_string(out, "cache.key", "users");
         out.push(0);
-    }
-
-    fn write_key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-        let mut last = 0;
-        write_string_field(out, 1, key, &mut last);
-        write_i32_field(out, 2, 0, &mut last);
-        write_string_field(out, 3, value, &mut last);
-        out.push(0);
-    }
-
-    fn write_key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
-        let mut last = 0;
-        write_string_field(out, 1, key, &mut last);
-        write_i32_field(out, 2, 3, &mut last);
-        write_bool_field(out, 5, value, &mut last);
-        out.push(0);
-    }
-
-    fn write_i32_field(out: &mut Vec<u8>, id: i16, value: i32, last: &mut i16) {
-        write_field_header(out, 5, id, last);
-        write_varint(out, zigzag_i32(value));
-    }
-
-    pub fn write_i64_field(out: &mut Vec<u8>, id: i16, value: i64, last: &mut i16) {
-        write_field_header(out, 6, id, last);
-        write_varint(out, zigzag_i64(value));
-    }
-
-    pub fn write_string_field(out: &mut Vec<u8>, id: i16, value: &str, last: &mut i16) {
-        write_field_header(out, 8, id, last);
-        write_varint(out, u64::try_from(value.len()).unwrap());
-        out.extend_from_slice(value.as_bytes());
-    }
-
-    fn write_bool_field(out: &mut Vec<u8>, id: i16, value: bool, last: &mut i16) {
-        write_field_header(out, if value { 1 } else { 2 }, id, last);
-    }
-
-    pub fn write_field_header(out: &mut Vec<u8>, type_id: u8, id: i16, last: &mut i16) {
-        let delta = id - *last;
-        if (1..=15).contains(&delta) {
-            out.push((u8::try_from(delta).unwrap() << 4) | type_id);
-        } else {
-            out.push(type_id);
-            write_varint(out, zigzag_i32(i32::from(id)));
-        }
-        *last = id;
-    }
-
-    fn write_list_header(out: &mut Vec<u8>, element_type: u8, size: usize) {
-        if size < 15 {
-            out.push((u8::try_from(size).unwrap() << 4) | element_type);
-        } else {
-            out.push(0xF0 | element_type);
-            write_varint(out, u64::try_from(size).unwrap());
-        }
-    }
-
-    fn write_varint(out: &mut Vec<u8>, mut value: u64) {
-        while value >= 0x80 {
-            out.push(u8::try_from(value & 0x7f).unwrap() | 0x80);
-            value >>= 7;
-        }
-        out.push(u8::try_from(value).unwrap());
-    }
-
-    fn zigzag_i32(value: i32) -> u64 {
-        u64::from(((value << 1) ^ (value >> 31)).cast_unsigned())
-    }
-
-    fn zigzag_i64(value: i64) -> u64 {
-        ((value << 1) ^ (value >> 63)).cast_unsigned()
     }
 }
 
@@ -351,8 +286,6 @@ mod tests {
     /// another so a variant reading a neighbouring field is visible.
     #[test]
     fn a_jaeger_tag_takes_the_variant_its_wire_type_names() {
-        use super::test_support::{write_field_header, write_i64_field, write_string_field};
-
         // Key in field 1, then one value field, then the stop byte.
         let string_tag = {
             let mut out = Vec::new();
@@ -562,11 +495,15 @@ mod tests {
     }
     use assert2::check;
 
-    use super::*;
-    use crate::{
-        ids::{TraceIdHigh, TraceIdLow},
-        span::{AttrValue, EventRecord, SpanKind, StatusCode},
+    use super::{
+        test_support::{encode_sample_batch, write_process, write_span_list},
+        thrift_fixture::{
+            encode_binary_sample_batch, write_field_header, write_i64_field, write_string_field,
+            write_varint, zigzag_i32,
+        },
+        *,
     };
+    use crate::span::{AttrValue, EventRecord, SpanKind, StatusCode};
 
     /// Jaeger carries the span kind as a `span.kind` tag rather than a field.
     /// Every name maps to its own kind, an unknown or absent one falls back
@@ -621,6 +558,34 @@ mod tests {
         );
     }
 
+    fn str_attr(key: &str, value: &str) -> KeyValue {
+        KeyValue {
+            key: key.into(),
+            value: AttrValue::Str(value.into()),
+        }
+    }
+
+    // The process tags both sample batches carry, with the service name the
+    // decoder appends.
+    fn sample_resource_attrs() -> Vec<KeyValue> {
+        vec![
+            str_attr("process.tag", "present"),
+            str_attr("service.name", "checkout"),
+        ]
+    }
+
+    // The span tags both sample batches carry.
+    fn sample_span_attrs() -> Vec<KeyValue> {
+        vec![
+            str_attr("span.kind", "server"),
+            str_attr("http.method", "GET"),
+            KeyValue {
+                key: "error".into(),
+                value: AttrValue::Bool(true),
+            },
+        ]
+    }
+
     #[test]
     fn decodes_jaeger_thrift_batch() {
         let spans = decode_jaeger_thrift(&encode_sample_batch()).unwrap();
@@ -637,30 +602,8 @@ mod tests {
                     duration_ns: 25_000,
                     status: StatusCode::Error,
                     status_message: String::new(),
-                    resource_attrs: vec![
-                        KeyValue {
-                            key: "process.tag".into(),
-                            value: AttrValue::Str("present".into()),
-                        },
-                        KeyValue {
-                            key: "service.name".into(),
-                            value: AttrValue::Str("checkout".into()),
-                        },
-                    ],
-                    span_attrs: vec![
-                        KeyValue {
-                            key: "span.kind".into(),
-                            value: AttrValue::Str("server".into()),
-                        },
-                        KeyValue {
-                            key: "http.method".into(),
-                            value: AttrValue::Str("GET".into()),
-                        },
-                        KeyValue {
-                            key: "error".into(),
-                            value: AttrValue::Bool(true),
-                        },
-                    ],
+                    resource_attrs: sample_resource_attrs(),
+                    span_attrs: sample_span_attrs(),
                     events: vec![EventRecord {
                         time_unix_nano: 1_005_000,
                         name: "cache.miss".into(),
@@ -705,30 +648,8 @@ mod tests {
                     duration_ns: 25_000,
                     status: StatusCode::Error,
                     status_message: String::new(),
-                    resource_attrs: vec![
-                        KeyValue {
-                            key: "process.tag".into(),
-                            value: AttrValue::Str("present".into()),
-                        },
-                        KeyValue {
-                            key: "service.name".into(),
-                            value: AttrValue::Str("checkout".into()),
-                        },
-                    ],
-                    span_attrs: vec![
-                        KeyValue {
-                            key: "span.kind".into(),
-                            value: AttrValue::Str("server".into()),
-                        },
-                        KeyValue {
-                            key: "http.method".into(),
-                            value: AttrValue::Str("GET".into()),
-                        },
-                        KeyValue {
-                            key: "error".into(),
-                            value: AttrValue::Bool(true),
-                        },
-                    ],
+                    resource_attrs: sample_resource_attrs(),
+                    span_attrs: sample_span_attrs(),
                     events: Vec::new(),
                     links: Vec::new(),
                     instrumentation_scope: String::new(),
@@ -919,82 +840,6 @@ mod tests {
         );
     }
 
-    fn encode_binary_sample_batch() -> Vec<u8> {
-        const T_STOP: u8 = 0;
-        const T_BOOL: u8 = 2;
-        const T_I32: u8 = 8;
-        const T_I64: u8 = 10;
-        const T_BINARY: u8 = 11;
-        const T_STRUCT: u8 = 12;
-        const T_LIST: u8 = 15;
-
-        fn field(out: &mut Vec<u8>, type_: u8, id: i16) {
-            out.push(type_);
-            out.extend_from_slice(&id.to_be_bytes());
-        }
-        fn string(out: &mut Vec<u8>, value: &str) {
-            out.extend_from_slice(&i32::try_from(value.len()).unwrap().to_be_bytes());
-            out.extend_from_slice(value.as_bytes());
-        }
-        fn string_field(out: &mut Vec<u8>, id: i16, value: &str) {
-            field(out, T_BINARY, id);
-            string(out, value);
-        }
-        fn i32_field(out: &mut Vec<u8>, id: i16, value: i32) {
-            field(out, T_I32, id);
-            out.extend_from_slice(&value.to_be_bytes());
-        }
-        fn i64_field(out: &mut Vec<u8>, id: i16, value: i64) {
-            field(out, T_I64, id);
-            out.extend_from_slice(&value.to_be_bytes());
-        }
-        fn bool_field(out: &mut Vec<u8>, id: i16, value: bool) {
-            field(out, T_BOOL, id);
-            out.push(u8::from(value));
-        }
-        fn key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 0);
-            string_field(out, 3, value);
-            out.push(T_STOP);
-        }
-        fn key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 3);
-            bool_field(out, 5, value);
-            out.push(T_STOP);
-        }
-
-        let mut out = Vec::new();
-        field(&mut out, T_STRUCT, 1);
-        string_field(&mut out, 1, "checkout");
-        field(&mut out, T_LIST, 2);
-        out.push(T_STRUCT);
-        out.extend_from_slice(&1_i32.to_be_bytes());
-        key_value_string(&mut out, "process.tag", "present");
-        out.push(T_STOP);
-
-        field(&mut out, T_LIST, 2);
-        out.push(T_STRUCT);
-        out.extend_from_slice(&1_i32.to_be_bytes());
-        i64_field(&mut out, 1, 2);
-        i64_field(&mut out, 2, 1);
-        i64_field(&mut out, 3, 3);
-        i64_field(&mut out, 4, 0);
-        string_field(&mut out, 5, "GET /binary");
-        i64_field(&mut out, 8, 1_000);
-        i64_field(&mut out, 9, 25);
-        field(&mut out, T_LIST, 10);
-        out.push(T_STRUCT);
-        out.extend_from_slice(&3_i32.to_be_bytes());
-        key_value_string(&mut out, "span.kind", "server");
-        key_value_string(&mut out, "http.method", "GET");
-        key_value_bool(&mut out, "error", true);
-        out.push(T_STOP);
-        out.push(T_STOP);
-        out
-    }
-
     fn encode_binary_sample_batch_with_unknown_map() -> Vec<u8> {
         const T_MAP: u8 = 13;
         const T_BINARY: u8 = 11;
@@ -1014,14 +859,6 @@ mod tests {
         out
     }
 
-    fn encode_sample_batch() -> Vec<u8> {
-        let mut out = Vec::new();
-        write_process(&mut out, 1, "checkout");
-        write_span_list(&mut out, 2);
-        out.push(0);
-        out
-    }
-
     fn encode_sample_batch_with_unknown_map() -> Vec<u8> {
         let mut out = Vec::new();
         write_process(&mut out, 1, "checkout");
@@ -1036,124 +873,6 @@ mod tests {
         out
     }
 
-    fn write_process(out: &mut Vec<u8>, field_id: i16, service: &str) {
-        write_field_header(out, 12, field_id, &mut 0);
-        let mut last = 0;
-        write_string_field(out, 1, service, &mut last);
-        write_field_header(out, 9, 2, &mut last);
-        write_list_header(out, 12, 1);
-        write_key_value_string(out, "process.tag", "present");
-        out.push(0);
-    }
-
-    fn write_span_list(out: &mut Vec<u8>, field_id: i16) {
-        write_field_header(out, 9, field_id, &mut 1);
-        write_list_header(out, 12, 1);
-        let mut last = 0;
-        write_i64_field(out, 1, 2, &mut last);
-        write_i64_field(out, 2, 1, &mut last);
-        write_i64_field(out, 3, 3, &mut last);
-        write_i64_field(out, 4, 0, &mut last);
-        write_string_field(out, 5, "GET /", &mut last);
-        write_field_header(out, 9, 6, &mut last);
-        write_list_header(out, 12, 2);
-        write_span_ref(out, 0, TraceIdLow(2), TraceIdHigh(1), 4);
-        write_span_ref(out, 1, TraceIdLow(5), TraceIdHigh(6), 7);
-        write_i32_field(out, 7, 0, &mut last);
-        write_i64_field(out, 8, 1_000, &mut last);
-        write_i64_field(out, 9, 25, &mut last);
-        write_field_header(out, 9, 10, &mut last);
-        write_list_header(out, 12, 3);
-        write_key_value_string(out, "span.kind", "server");
-        write_key_value_string(out, "http.method", "GET");
-        write_key_value_bool(out, "error", true);
-        write_field_header(out, 9, 11, &mut last);
-        write_list_header(out, 12, 1);
-        write_log(out);
-        out.push(0);
-    }
-
-    fn write_span_ref(
-        out: &mut Vec<u8>,
-        ref_type: i32,
-        low: TraceIdLow,
-        high: TraceIdHigh,
-        span_id: i64,
-    ) {
-        let mut last = 0;
-        write_i32_field(out, 1, ref_type, &mut last);
-        write_i64_field(out, 2, low.0, &mut last);
-        write_i64_field(out, 3, high.0, &mut last);
-        write_i64_field(out, 4, span_id, &mut last);
-        out.push(0);
-    }
-
-    fn write_log(out: &mut Vec<u8>) {
-        let mut last = 0;
-        write_i64_field(out, 1, 1_005, &mut last);
-        write_field_header(out, 9, 2, &mut last);
-        write_list_header(out, 12, 2);
-        write_key_value_string(out, "event", "cache.miss");
-        write_key_value_string(out, "cache.key", "users");
-        out.push(0);
-    }
-
-    fn write_key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-        let mut last = 0;
-        write_string_field(out, 1, key, &mut last);
-        write_i32_field(out, 2, 0, &mut last);
-        write_string_field(out, 3, value, &mut last);
-        out.push(0);
-    }
-
-    fn write_key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
-        let mut last = 0;
-        write_string_field(out, 1, key, &mut last);
-        write_i32_field(out, 2, 3, &mut last);
-        write_bool_field(out, 5, value, &mut last);
-        out.push(0);
-    }
-
-    fn write_i32_field(out: &mut Vec<u8>, id: i16, value: i32, last: &mut i16) {
-        write_field_header(out, 5, id, last);
-        write_varint(out, zigzag_i32(value));
-    }
-
-    fn write_i64_field(out: &mut Vec<u8>, id: i16, value: i64, last: &mut i16) {
-        write_field_header(out, 6, id, last);
-        write_varint(out, zigzag_i64(value));
-    }
-
-    fn write_string_field(out: &mut Vec<u8>, id: i16, value: &str, last: &mut i16) {
-        write_field_header(out, 8, id, last);
-        write_varint(out, u64::try_from(value.len()).unwrap());
-        out.extend_from_slice(value.as_bytes());
-    }
-
-    fn write_bool_field(out: &mut Vec<u8>, id: i16, value: bool, last: &mut i16) {
-        write_field_header(out, if value { 1 } else { 2 }, id, last);
-    }
-
-    fn write_field_header(out: &mut Vec<u8>, type_id: u8, id: i16, last: &mut i16) {
-        let delta = id - *last;
-        if (1..=15).contains(&delta) {
-            out.push((u8::try_from(delta).unwrap() << 4) | type_id);
-        } else {
-            out.push(type_id);
-            write_varint(out, zigzag_i32(i32::from(id)));
-        }
-        *last = id;
-    }
-
-    fn write_list_header(out: &mut Vec<u8>, element_type: u8, size: usize) {
-        if size < 15 {
-            out.push((u8::try_from(size).unwrap() << 4) | element_type);
-        } else {
-            out.push(0xF0 | element_type);
-            write_varint(out, u64::try_from(size).unwrap());
-        }
-    }
-
     fn write_map_header(out: &mut Vec<u8>, key_type: u8, value_type: u8, size: usize) {
         if size == 0 {
             out.push(0);
@@ -1161,22 +880,6 @@ mod tests {
             write_varint(out, u64::try_from(size).unwrap());
             out.push((key_type << 4) | value_type);
         }
-    }
-
-    fn write_varint(out: &mut Vec<u8>, mut value: u64) {
-        while value >= 0x80 {
-            out.push(u8::try_from(value & 0x7f).unwrap() | 0x80);
-            value >>= 7;
-        }
-        out.push(u8::try_from(value).unwrap());
-    }
-
-    fn zigzag_i32(value: i32) -> u64 {
-        u64::from(((value << 1) ^ (value >> 31)).cast_unsigned())
-    }
-
-    fn zigzag_i64(value: i64) -> u64 {
-        ((value << 1) ^ (value >> 63)).cast_unsigned()
     }
 }
 
@@ -1193,6 +896,7 @@ mod bt_map;
 mod bt_set;
 mod bt_stop;
 mod bt_struct;
+mod check_collection_header;
 mod compact_input;
 mod decode_jaeger_binary_thrift;
 mod decode_jaeger_thrift;
@@ -1233,7 +937,9 @@ mod t_map;
 mod t_set;
 mod t_stop;
 mod t_struct;
+mod take_bytes;
 mod trace_id;
+mod utf8_string;
 
 use binary_input::BinaryInput;
 use bt_binary::BT_BINARY;
@@ -1248,6 +954,7 @@ use bt_map::BT_MAP;
 use bt_set::BT_SET;
 use bt_stop::BT_STOP;
 use bt_struct::BT_STRUCT;
+use check_collection_header::check_collection_header;
 use compact_input::CompactInput;
 pub use decode_jaeger_binary_thrift::decode_jaeger_binary_thrift;
 pub use decode_jaeger_thrift::decode_jaeger_thrift;
@@ -1288,4 +995,6 @@ use t_map::T_MAP;
 use t_set::T_SET;
 use t_stop::T_STOP;
 use t_struct::T_STRUCT;
+use take_bytes::take_bytes;
 use trace_id::trace_id;
+use utf8_string::utf8_string;

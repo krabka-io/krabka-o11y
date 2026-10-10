@@ -6,9 +6,9 @@ use tokio::sync::mpsc;
 use super::{
     Arc, AssignedJob, BackendError, BlockCatalog, FrontendConfig, JobShard, Membership,
     MembershipView, Metrics, MetricsJobRequest, MetricsResponseJson, QuerierBackend,
-    SearchJobRequest, SearchPartial, SearchResponseJson, TagNamesJobRequest, TagNamesPartial,
-    TagValuesJobRequest, TagValuesPartial, TenantId, TraceByIdJobRequest, TraceByIdResponseJson,
-    TraceStatus, assign_jobs, catalog_error, job, merge, metrics_merge, pick_querier, queue,
+    SearchJobRequest, SearchPartial, SearchResponseJson, TagNamesJobRequest, TagValuesJobRequest,
+    TenantId, TraceByIdJobRequest, TraceByIdResponseJson, TraceStatus, assign_jobs, catalog_error,
+    job, merge, metrics_merge, pick_querier, queue,
 };
 
 /// The query-frontend pipeline.
@@ -160,6 +160,38 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
     }
 
     /// Plan the shards for a window, and place each on a ready querier.
+    /// Plan `tenant`'s shards over the window, run `run_job` on each under the
+    /// tenant's admission, and return the partials with the job and block
+    /// counts and the pool's warnings.
+    async fn run_shard_jobs<P, F, Fut>(
+        &self,
+        tenant: &TenantId,
+        start_ns: i64,
+        end_ns: i64,
+        run_job: F,
+    ) -> Result<(Vec<P>, u64, u64, Vec<String>), BackendError>
+    where
+        F: Fn(Arc<B>, AssignedJob) -> Fut,
+        Fut: Future<Output = Result<P, BackendError>>,
+    {
+        let snapshot = self.ready_pool()?;
+        let (assigned, total_blocks, planned_live) = self
+            .plan_and_assign(tenant, start_ns, end_ns, &snapshot)
+            .await?;
+        let total_jobs = assigned.len() as u64;
+        let _permit = self.admit(tenant, assigned.len()).await?;
+
+        let backend = Arc::clone(&self.backend);
+        let results = queue::run_jobs(assigned, self.cfg.max_concurrency, |job| {
+            run_job(Arc::clone(&backend), job)
+        })
+        .await;
+        let partials = results.into_iter().collect::<Result<Vec<_>, _>>()?;
+        let mut warnings = Self::exclusion_warnings(&snapshot, planned_live);
+        warnings.extend(self.generation_warning(&snapshot, planned_live));
+        Ok((partials, total_jobs, total_blocks, warnings))
+    }
+
     async fn plan_and_assign(
         &self,
         tenant: &TenantId,
@@ -414,35 +446,23 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         start_ns: i64,
         end_ns: i64,
     ) -> Result<(Vec<krabka_traceql::ScopedTag>, Metrics, Vec<String>), BackendError> {
-        let snapshot = self.ready_pool()?;
-        let (assigned, total_blocks, planned_live) = self
-            .plan_and_assign(tenant, start_ns, end_ns, &snapshot)
+        let tenant_id = tenant.clone();
+        let (partials, total_jobs, total_blocks, warnings) = self
+            .run_shard_jobs(tenant, start_ns, end_ns, move |backend, job| {
+                let req = TagNamesJobRequest {
+                    tenant: tenant_id.clone(),
+                    scope,
+                    start_ns,
+                    end_ns,
+                    shard: job.shard,
+                    querier: job.querier,
+                };
+                async move { backend.tag_names_job(&req).await }
+            })
             .await?;
-        let total_jobs = assigned.len() as u64;
-        let _permit = self.admit(tenant, assigned.len()).await?;
-
-        let backend = Arc::clone(&self.backend);
-        let tenant = tenant.clone();
-        let results = queue::run_jobs(assigned, self.cfg.max_concurrency, move |job| {
-            let backend = Arc::clone(&backend);
-            let req = TagNamesJobRequest {
-                tenant: tenant.clone(),
-                scope,
-                start_ns,
-                end_ns,
-                shard: job.shard,
-                querier: job.querier,
-            };
-            async move { backend.tag_names_job(&req).await }
-        })
-        .await;
-        let partials: Vec<TagNamesPartial> = results.into_iter().collect::<Result<_, _>>()?;
-
         let (tags, mut metrics) = merge::merge_tag_names(partials);
         metrics.total_jobs = total_jobs;
         metrics.total_blocks = total_blocks;
-        let mut warnings = Self::exclusion_warnings(&snapshot, planned_live);
-        warnings.extend(self.generation_warning(&snapshot, planned_live));
         Ok((tags, metrics, warnings))
     }
 
@@ -458,36 +478,24 @@ impl<B: QuerierBackend + 'static, C: BlockCatalog + 'static> QueryFrontend<B, C>
         start_ns: i64,
         end_ns: i64,
     ) -> Result<(Vec<krabka_traceql::TypedValue>, Metrics, Vec<String>), BackendError> {
-        let snapshot = self.ready_pool()?;
-        let (assigned, total_blocks, planned_live) = self
-            .plan_and_assign(tenant, start_ns, end_ns, &snapshot)
-            .await?;
-        let total_jobs = assigned.len() as u64;
-        let _permit = self.admit(tenant, assigned.len()).await?;
-
-        let backend = Arc::clone(&self.backend);
-        let tenant = tenant.clone();
+        let tenant_id = tenant.clone();
         let tag_s = tag.to_string();
-        let results = queue::run_jobs(assigned, self.cfg.max_concurrency, move |job| {
-            let backend = Arc::clone(&backend);
-            let req = TagValuesJobRequest {
-                tenant: tenant.clone(),
-                tag: tag_s.clone(),
-                start_ns,
-                end_ns,
-                shard: job.shard,
-                querier: job.querier,
-            };
-            async move { backend.tag_values_job(&req).await }
-        })
-        .await;
-        let partials: Vec<TagValuesPartial> = results.into_iter().collect::<Result<_, _>>()?;
-
+        let (partials, total_jobs, total_blocks, warnings) = self
+            .run_shard_jobs(tenant, start_ns, end_ns, move |backend, job| {
+                let req = TagValuesJobRequest {
+                    tenant: tenant_id.clone(),
+                    tag: tag_s.clone(),
+                    start_ns,
+                    end_ns,
+                    shard: job.shard,
+                    querier: job.querier,
+                };
+                async move { backend.tag_values_job(&req).await }
+            })
+            .await?;
         let (values, mut metrics) = merge::merge_tag_values(partials);
         metrics.total_jobs = total_jobs;
         metrics.total_blocks = total_blocks;
-        let mut warnings = Self::exclusion_warnings(&snapshot, planned_live);
-        warnings.extend(self.generation_warning(&snapshot, planned_live));
         Ok((values, metrics, warnings))
     }
 

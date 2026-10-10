@@ -51,7 +51,6 @@
 //! `tempo_differential.rs` LEG 5.
 
 use std::{
-    collections::BTreeMap,
     sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -63,23 +62,16 @@ use axum::{
 };
 use base64::Engine as _;
 use http_body_util::BodyExt as _;
-use krabka_traceql::{
-    AttrValue as TraceqlAttrValue, EngineOpts, InMemorySpanStore, InputSpan, TraceqlEngine,
-};
+use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
-    AttrValue, Span, SpanRecord, TracesError,
+    SpanRecord, TracesError,
     distributor::{self, DistributorState, JaegerGrpcService, OtlpGrpcService, WalSink},
     metricsgen::{
         MetricsGenConfig, MetricsGenService, MockSpanSource, PrometheusRemoteWriteSink,
-        SpanKind as MetricsSpanKind, SpanRecord as MetricsSpanRecord,
-        StatusCode as MetricsStatusCode, SystemClock,
+        SpanKind as MetricsSpanKind, StatusCode as MetricsStatusCode, SystemClock,
     },
     querier::http::{HttpConfig, router_with_config},
     wire::jaeger_grpc::api_v2::collector_service_server::CollectorService,
-};
-use krabka_units::{
-    ByteSize, Time,
-    convert::{ByteSizeExt as _, TimeExt as _},
 };
 use opentelemetry_proto::tonic::{
     collector::trace::v1::{ExportTraceServiceRequest, trace_service_server::TraceService},
@@ -98,6 +90,20 @@ use testcontainers::{
 };
 use tonic::Request as GrpcRequest;
 use tower::ServiceExt as _;
+
+mod metrics_span;
+mod span_store;
+#[path = "../src/wire/jaeger/thrift_fixture.rs"]
+mod thrift_fixture;
+
+use self::{
+    metrics_span::metrics_span,
+    span_store::{resource_attr, span_store_from_records},
+    thrift_fixture::{
+        encode_binary_sample_batch, write_field_header, write_i64_field, write_key_value_bool,
+        write_key_value_string, write_list_header, write_string_field,
+    },
+};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -353,87 +359,6 @@ fn string_kv(key: &str, value: &str) -> OtlpKeyValue {
     }
 }
 
-/// Self-contained Jaeger binary-thrift batch, ported verbatim from
-/// `distributor::tests::jaeger_binary_batch`.
-///
-/// It yields one span named `GET /binary`, with service `checkout` from its
-/// embedded process.
-fn jaeger_binary_batch() -> Vec<u8> {
-    const T_STOP: u8 = 0;
-    const T_BOOL: u8 = 2;
-    const T_I32: u8 = 8;
-    const T_I64: u8 = 10;
-    const T_BINARY: u8 = 11;
-    const T_STRUCT: u8 = 12;
-    const T_LIST: u8 = 15;
-
-    fn field(out: &mut Vec<u8>, type_: u8, id: i16) {
-        out.push(type_);
-        out.extend_from_slice(&id.to_be_bytes());
-    }
-    fn string(out: &mut Vec<u8>, value: &str) {
-        out.extend_from_slice(&i32::try_from(value.len()).unwrap().to_be_bytes());
-        out.extend_from_slice(value.as_bytes());
-    }
-    fn string_field(out: &mut Vec<u8>, id: i16, value: &str) {
-        field(out, T_BINARY, id);
-        string(out, value);
-    }
-    fn i32_field(out: &mut Vec<u8>, id: i16, value: i32) {
-        field(out, T_I32, id);
-        out.extend_from_slice(&value.to_be_bytes());
-    }
-    fn i64_field(out: &mut Vec<u8>, id: i16, value: i64) {
-        field(out, T_I64, id);
-        out.extend_from_slice(&value.to_be_bytes());
-    }
-    fn bool_field(out: &mut Vec<u8>, id: i16, value: bool) {
-        field(out, T_BOOL, id);
-        out.push(u8::from(value));
-    }
-    fn key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-        string_field(out, 1, key);
-        i32_field(out, 2, 0);
-        string_field(out, 3, value);
-        out.push(T_STOP);
-    }
-    fn key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
-        string_field(out, 1, key);
-        i32_field(out, 2, 3);
-        bool_field(out, 5, value);
-        out.push(T_STOP);
-    }
-
-    let mut out = Vec::new();
-    field(&mut out, T_STRUCT, 1);
-    string_field(&mut out, 1, "checkout");
-    field(&mut out, T_LIST, 2);
-    out.push(T_STRUCT);
-    out.extend_from_slice(&1_i32.to_be_bytes());
-    key_value_string(&mut out, "process.tag", "present");
-    out.push(T_STOP);
-
-    field(&mut out, T_LIST, 2);
-    out.push(T_STRUCT);
-    out.extend_from_slice(&1_i32.to_be_bytes());
-    i64_field(&mut out, 1, 2);
-    i64_field(&mut out, 2, 1);
-    i64_field(&mut out, 3, 3);
-    i64_field(&mut out, 4, 0);
-    string_field(&mut out, 5, "GET /binary");
-    i64_field(&mut out, 8, 1_000);
-    i64_field(&mut out, 9, 25);
-    field(&mut out, T_LIST, 10);
-    out.push(T_STRUCT);
-    out.extend_from_slice(&3_i32.to_be_bytes());
-    key_value_string(&mut out, "span.kind", "server");
-    key_value_string(&mut out, "http.method", "GET");
-    key_value_bool(&mut out, "error", true);
-    out.push(T_STOP);
-    out.push(T_STOP);
-    out
-}
-
 /// Self-contained Jaeger **compact**-thrift batch.
 ///
 /// The compact protocol uses field-delta headers and zig-zag varints. This
@@ -445,93 +370,30 @@ fn jaeger_binary_batch() -> Vec<u8> {
 /// It yields one span `compact thrift op`, service `compact-svc`, with the
 /// `error` tag set so the decoded status is ERROR.
 fn jaeger_compact_batch() -> Vec<u8> {
-    fn write_varint(out: &mut Vec<u8>, mut value: u64) {
-        while value >= 0x80 {
-            out.push(u8::try_from(value & 0x7f).unwrap() | 0x80);
-            value >>= 7;
-        }
-        out.push(u8::try_from(value).unwrap());
-    }
-    fn zigzag_i32(value: i32) -> u64 {
-        u64::from(((value << 1) ^ (value >> 31)).cast_unsigned())
-    }
-    fn zigzag_i64(value: i64) -> u64 {
-        ((value << 1) ^ (value >> 63)).cast_unsigned()
-    }
-    fn field_header(out: &mut Vec<u8>, type_id: u8, id: i16, last: &mut i16) {
-        let delta = id - *last;
-        if (1..=15).contains(&delta) {
-            out.push((u8::try_from(delta).unwrap() << 4) | type_id);
-        } else {
-            out.push(type_id);
-            write_varint(out, zigzag_i32(i32::from(id)));
-        }
-        *last = id;
-    }
-    fn list_header(out: &mut Vec<u8>, element_type: u8, size: usize) {
-        if size < 15 {
-            out.push((u8::try_from(size).unwrap() << 4) | element_type);
-        } else {
-            out.push(0xF0 | element_type);
-            write_varint(out, u64::try_from(size).unwrap());
-        }
-    }
-    fn string_field(out: &mut Vec<u8>, id: i16, value: &str, last: &mut i16) {
-        field_header(out, 8, id, last); // compact BINARY/STRING = 8
-        write_varint(out, u64::try_from(value.len()).unwrap());
-        out.extend_from_slice(value.as_bytes());
-    }
-    fn i32_field(out: &mut Vec<u8>, id: i16, value: i32, last: &mut i16) {
-        field_header(out, 5, id, last); // compact I32 = 5
-        write_varint(out, zigzag_i32(value));
-    }
-    fn i64_field(out: &mut Vec<u8>, id: i16, value: i64, last: &mut i16) {
-        field_header(out, 6, id, last); // compact I64 = 6
-        write_varint(out, zigzag_i64(value));
-    }
-    fn bool_field(out: &mut Vec<u8>, id: i16, value: bool, last: &mut i16) {
-        // compact bool is encoded directly in the field header: TRUE=1, FALSE=2.
-        field_header(out, if value { 1 } else { 2 }, id, last);
-    }
-    fn key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-        let mut last = 0;
-        string_field(out, 1, key, &mut last);
-        i32_field(out, 2, 0, &mut last); // value_type = STRING
-        string_field(out, 3, value, &mut last);
-        out.push(0);
-    }
-    fn key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
-        let mut last = 0;
-        string_field(out, 1, key, &mut last);
-        i32_field(out, 2, 3, &mut last); // value_type = BOOL
-        bool_field(out, 5, value, &mut last);
-        out.push(0);
-    }
-
     let mut out = Vec::new();
     // Batch.process (struct, field 1).
-    field_header(&mut out, 12, 1, &mut 0);
+    write_field_header(&mut out, 12, 1, &mut 0);
     {
         let mut last = 0;
-        string_field(&mut out, 1, "compact-svc", &mut last); // Process.service_name
+        write_string_field(&mut out, 1, "compact-svc", &mut last); // Process.service_name
         out.push(0);
     }
     // Batch.spans (list<struct>, field 2).
-    field_header(&mut out, 9, 2, &mut 1);
-    list_header(&mut out, 12, 1);
+    write_field_header(&mut out, 9, 2, &mut 1);
+    write_list_header(&mut out, 12, 1);
     {
         let mut last = 0;
-        i64_field(&mut out, 1, 4, &mut last); // trace_id_low
-        i64_field(&mut out, 2, 3, &mut last); // trace_id_high
-        i64_field(&mut out, 3, 9, &mut last); // span_id
-        i64_field(&mut out, 4, 0, &mut last); // parent_span_id
-        string_field(&mut out, 5, "compact thrift op", &mut last); // operation_name
-        i64_field(&mut out, 8, 1_000, &mut last); // start_time (micros)
-        i64_field(&mut out, 9, 25, &mut last); // duration (micros)
-        field_header(&mut out, 9, 10, &mut last); // tags (list<struct>)
-        list_header(&mut out, 12, 2);
-        key_value_string(&mut out, "span.kind", "server");
-        key_value_bool(&mut out, "error", true);
+        write_i64_field(&mut out, 1, 4, &mut last); // trace_id_low
+        write_i64_field(&mut out, 2, 3, &mut last); // trace_id_high
+        write_i64_field(&mut out, 3, 9, &mut last); // span_id
+        write_i64_field(&mut out, 4, 0, &mut last); // parent_span_id
+        write_string_field(&mut out, 5, "compact thrift op", &mut last); // operation_name
+        write_i64_field(&mut out, 8, 1_000, &mut last); // start_time (micros)
+        write_i64_field(&mut out, 9, 25, &mut last); // duration (micros)
+        write_field_header(&mut out, 9, 10, &mut last); // tags (list<struct>)
+        write_list_header(&mut out, 12, 2);
+        write_key_value_string(&mut out, "span.kind", "server");
+        write_key_value_bool(&mut out, "error", true);
         out.push(0); // end span struct
     }
     out.push(0); // end batch struct
@@ -605,7 +467,7 @@ async fn ingest_all_doors() -> TestResult<Vec<SpanRecord>> {
                 .uri("/api/traces")
                 .header("content-type", "application/vnd.apache.thrift.binary")
                 .header("x-scope-orgid", TENANT)
-                .body(Body::from(jaeger_binary_batch()))?,
+                .body(Body::from(encode_binary_sample_batch()))?,
         )
         .await?;
     assert2::assert!(resp.status() == StatusCode::ACCEPTED);
@@ -769,130 +631,6 @@ fn assert_all_doors_present(records: &[SpanRecord]) {
         if let Some(expected) = error_status {
             assert2::assert!(record.span.status.as_i32() == expected);
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Querier-building helpers (copied + extended from tempo_differential.rs).
-// ---------------------------------------------------------------------------
-
-fn span_store_from_records(records: &[SpanRecord]) -> InMemorySpanStore {
-    let mut grouped: BTreeMap<(String, [u8; 16]), Vec<Span>> = BTreeMap::new();
-    for record in records {
-        grouped
-            .entry((record.tenant.clone(), record.span.trace_id))
-            .or_default()
-            .push(record.span.clone());
-    }
-
-    let mut store = InMemorySpanStore::new();
-    for ((tenant, _), spans) in grouped {
-        let root = spans
-            .iter()
-            .find(|span| span.parent_span_id.is_none())
-            .unwrap_or(&spans[0]);
-        let root_service = resource_attr(root, "service.name")
-            .unwrap_or("unknown")
-            .to_string();
-        let root_name = root.name.clone();
-        store.push_trace(
-            &tenant,
-            &root_service,
-            &root_name,
-            spans.into_iter().map(input_span).collect(),
-        );
-    }
-    store
-}
-
-fn input_span(span: Span) -> InputSpan {
-    let mut attrs = span.resource_attrs;
-    attrs.extend(span.span_attrs);
-    InputSpan {
-        trace_id: span.trace_id,
-        span_id: span.span_id,
-        parent_span_id: span.parent_span_id,
-        name: span.name,
-        kind: span.kind.as_i32(),
-        start_unix_nano: span.start_ns,
-        duration: Time::from_nanos(span.duration_ns),
-        status_code: span.status.as_i32(),
-        status_message: span.status_message,
-        instrumentation_name: span.instrumentation_scope,
-        instrumentation_version: span.instrumentation_version,
-        attrs: attrs
-            .into_iter()
-            .filter_map(|attr| Some((attr.key, traceql_attr(attr.value)?)))
-            .collect(),
-        events: Vec::new(),
-        links: Vec::new(),
-    }
-}
-
-fn traceql_attr(value: AttrValue) -> Option<TraceqlAttrValue> {
-    if let AttrValue::Array(values) = &value
-        && values.iter().any(|element| {
-            matches!(
-                element,
-                AttrValue::Array(_) | AttrValue::Bytes(_) | AttrValue::Unsupported(_)
-            ) || values.first().is_some_and(|first| {
-                std::mem::discriminant(first) != std::mem::discriminant(element)
-            })
-        })
-    {
-        return Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()));
-    }
-    match value {
-        AttrValue::Unsupported(value) => Some(TraceqlAttrValue::Unsupported(value)),
-        AttrValue::Array(values) => Some(TraceqlAttrValue::Array(
-            values
-                .into_iter()
-                .map(traceql_attr)
-                .collect::<Option<Vec<_>>>()?,
-        )),
-        AttrValue::Str(value) => Some(TraceqlAttrValue::Str(value)),
-        AttrValue::Int(value) => Some(TraceqlAttrValue::Int(value)),
-        AttrValue::Double(value) => Some(TraceqlAttrValue::Float(value)),
-        AttrValue::Bool(value) => Some(TraceqlAttrValue::Bool(value)),
-        value @ AttrValue::Bytes(_) => {
-            Some(TraceqlAttrValue::Unsupported(value.otlp_json().to_string()))
-        }
-    }
-}
-
-fn resource_attr<'a>(span: &'a Span, key: &str) -> Option<&'a str> {
-    span.resource_attrs
-        .iter()
-        .find_map(|attr| match &attr.value {
-            AttrValue::Str(value) if attr.key == key => Some(value.as_str()),
-            _ => None,
-        })
-}
-
-/// Metrics-generator span record helper, the service-graph loop input.
-fn metrics_span(
-    service: &str,
-    span_id: [u8; 8],
-    parent: [u8; 8],
-    kind: MetricsSpanKind,
-    status: MetricsStatusCode,
-    duration_ns: i64,
-) -> MetricsSpanRecord {
-    MetricsSpanRecord {
-        tenant: TENANT.into(),
-        trace_id: [0x11; 16],
-        span_id,
-        parent_span_id: parent,
-        name: "op".into(),
-        kind,
-        start_ns: 0,
-        duration_ns,
-        status,
-        status_message: String::new(),
-        service_name: service.into(),
-        attributes: vec![],
-        resource_attributes: vec![],
-        size: ByteSize::from_bytes(0),
     }
 }
 

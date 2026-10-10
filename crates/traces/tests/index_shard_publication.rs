@@ -6,18 +6,18 @@
 //! and names the rest by the keys the previous generation already used. These
 //! tests pin that, and measure it.
 
+mod hooked_store;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
 };
 
 use assert2::check;
-use futures::stream::BoxStream;
 use krabka_blockstore::{BlockLevel, ShardedTraceBloom, TraceBlockStats, TraceIndex};
-use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
-};
+use object_store::{ObjectStore, PutPayload, memory::InMemory, path::Path};
+
+use self::hooked_store::{HookedStore, StoreHooks};
 
 const INDEX_KEY: &str = "index/traces.json";
 const TENANT: &str = "tenant-a";
@@ -35,7 +35,6 @@ const TRACES_PER_BLOCK: usize = 2_000;
 /// Object store that records every put, so a test can say what a flush wrote
 /// rather than what it hoped a flush wrote.
 struct RecordingStore {
-    inner: Arc<InMemory>,
     puts: std::sync::Mutex<Vec<(String, usize)>>,
     /// Distinct objects read since the last reset. Distinct rather than
     /// counted, because one capped read is a head and then a get and the test
@@ -44,12 +43,11 @@ struct RecordingStore {
 }
 
 impl RecordingStore {
-    fn new() -> Self {
-        Self {
-            inner: Arc::new(InMemory::new()),
+    fn new() -> HookedStore<Self> {
+        HookedStore::new(Self {
             puts: std::sync::Mutex::new(Vec::new()),
             reads: std::sync::Mutex::new(BTreeSet::new()),
-        }
+        })
     }
 
     fn reset(&self) {
@@ -74,75 +72,23 @@ impl RecordingStore {
     }
 }
 
-impl std::fmt::Debug for RecordingStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RecordingStore")
-    }
-}
-
-impl std::fmt::Display for RecordingStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RecordingStore")
-    }
-}
-
 #[async_trait::async_trait]
-impl ObjectStore for RecordingStore {
-    async fn put_opts(
-        &self,
-        location: &Path,
-        payload: PutPayload,
-        opts: PutOptions,
-    ) -> object_store::Result<PutResult> {
+impl StoreHooks for RecordingStore {
+    const NAME: &'static str = "RecordingStore";
+
+    async fn before_put(&self, location: &Path, payload: &PutPayload) -> object_store::Result<()> {
         self.puts
             .lock()
             .expect("puts lock")
             .push((location.to_string(), payload.content_length()));
-        self.inner.put_opts(location, payload, opts).await
+        Ok(())
     }
 
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
+    fn before_get(&self, location: &Path) {
         self.reads
             .lock()
             .expect("reads lock")
             .insert(location.to_string());
-        self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 }
 

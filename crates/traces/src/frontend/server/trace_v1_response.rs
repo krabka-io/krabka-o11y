@@ -8,52 +8,28 @@ use prost::Message as _;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::{
-    Arc, BlockCatalog, Extension, HeaderMap, IntoResponse, Json, Path, Principal, QuerierBackend,
-    QueryFrontend, Response, State, StatusCode, Uri, backend_error_response, optional_time_bounds,
-    parse_hex16, request_tenant,
-};
-use crate::querier::http::wants_json;
+use super::{HeaderMap, IntoResponse, Json, Response, StatusCode};
+use crate::{frontend::wire::TraceByIdResponseJson, querier::http::wants_json};
 
-pub(crate) async fn trace_by_id_v1<B, C>(
-    State(qf): State<Arc<QueryFrontend<B, C>>>,
-    Extension(principal): Extension<Principal>,
-    headers: HeaderMap,
-    Path(trace_id): Path<String>,
-    uri: Uri,
-) -> Response
-where
-    B: QuerierBackend + 'static,
-    C: BlockCatalog + 'static,
-{
-    if trace_id.len() != 32 || hex::decode(&trace_id).is_err() {
-        return (StatusCode::BAD_REQUEST, "trace id must be 32 hex chars").into_response();
+/// Tempo's v1 trace-by-id answer, for `/api/traces/{id}`.
+///
+/// Grafana's Tempo *backend* datasource fetches the trace-view there with
+/// `Accept: application/protobuf` and proto-decodes the body as OTLP. The
+/// answer therefore defaults to OTLP `TracesData` protobuf, which is Tempo's
+/// v1 default. It falls back to the wrapped JSON for humans.
+pub(crate) fn trace_v1_response(
+    headers: &HeaderMap,
+    trace: Option<TraceByIdResponseJson>,
+) -> Response {
+    let Some(trace) = trace else {
+        return (StatusCode::NOT_FOUND, "trace not found").into_response();
+    };
+    if wants_json(headers) {
+        return Json(trace.trace).into_response();
     }
-    let tenant = match request_tenant(&headers, &principal, &qf.cfg.tenant_policy) {
-        Ok(tenant) => tenant,
-        Err(rejection) => return *rejection,
-    };
-    let (start_ns, end_ns) = match optional_time_bounds(&uri) {
-        Ok(bounds) => bounds,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    match qf
-        .trace_by_id(&tenant, parse_hex16(&trace_id), start_ns, end_ns)
-        .await
-    {
-        Ok((Some(trace), _, _, _)) => {
-            if wants_json(&headers) {
-                return Json(trace.trace).into_response();
-            }
-            match trace_protobuf(trace.trace) {
-                Ok(bytes) => {
-                    ([(header::CONTENT_TYPE, "application/protobuf")], bytes).into_response()
-                }
-                Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
-            }
-        }
-        Ok((None, _, _, _)) => (StatusCode::NOT_FOUND, "trace not found").into_response(),
-        Err(err) => backend_error_response(&err),
+    match trace_protobuf(trace.trace) {
+        Ok(bytes) => ([(header::CONTENT_TYPE, "application/protobuf")], bytes).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
     }
 }
 

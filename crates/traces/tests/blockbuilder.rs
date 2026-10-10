@@ -1,3 +1,6 @@
+mod hooked_store;
+mod span_fixture;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
@@ -12,7 +15,6 @@ use arrow::{
 };
 use assert2::check;
 use bytes::Bytes;
-use futures::stream::BoxStream;
 use krabka_blockstore::{
     BlockLevel, BlockWriter, ObjectStoreRetryPolicy, PromotedSpanAttr, SCOL_START_NANO,
     SCOL_TRACE_ID, ShardedTraceBloom, TraceBlockStats, TraceIndex, read_block,
@@ -20,7 +22,7 @@ use krabka_blockstore::{
 };
 use krabka_client_consumer::ConsumerRecord;
 use krabka_traces::{
-    AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode, TracesError,
+    SpanRecord, TracesError,
     blockbuilder::{
         BlockBuilderConfig, WalConsumerCommit, WalConsumerPoll, build_blocks,
         build_blocks_with_prefix, build_blocks_with_promoted_attrs, decode_consumer_records,
@@ -30,39 +32,14 @@ use krabka_traces::{
     metrics::ServiceMetrics,
 };
 use krabka_units::{hours, millis, minutes};
-use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory,
-    path::Path,
-};
+use object_store::{ObjectStore, ObjectStoreExt, PutPayload, memory::InMemory, path::Path};
 use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 
-fn span(trace_id: [u8; 16], span_id: u8, parent: Option<u8>, start_ns: i64) -> Span {
-    Span {
-        trace_id,
-        span_id: [span_id; 8],
-        parent_span_id: parent.map(|id| [id; 8]),
-        name: format!("span-{span_id}"),
-        kind: SpanKind::Server,
-        start_ns,
-        duration_ns: 5,
-        status: StatusCode::Ok,
-        status_message: String::new(),
-        resource_attrs: vec![KeyValue {
-            key: "service.name".into(),
-            value: AttrValue::Str("api".into()),
-        }],
-        span_attrs: vec![KeyValue {
-            key: "http.method".into(),
-            value: AttrValue::Str("GET".into()),
-        }],
-        events: Vec::new(),
-        links: Vec::new(),
-        instrumentation_scope: "test".into(),
-        instrumentation_version: String::new(),
-    }
-}
+use self::{
+    hooked_store::{HookedStore, StoreHooks},
+    span_fixture::span,
+};
 
 fn rec(
     tenant: &str,
@@ -399,14 +376,8 @@ async fn multiple_polls_below_threshold_flush_one_block_per_partition() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let config = BlockBuilderConfig {
-        object_key_prefix: String::new(),
-        index_key: "index/traces.json".into(),
-        window: millis(1),
-        empty_poll_backoff: millis(1),
-        promoted_attrs: Vec::new(),
-        flush_max_records: 50_000,
         flush_max_age: minutes(1),
-        index_snapshot_retain: krabka_blockstore::IndexSnapshotRetain::default(),
+        ..block_builder_config()
     };
 
     // Three polls, each well under the flush threshold, all for the same trace
@@ -472,14 +443,9 @@ async fn accumulator_flushes_on_record_count_threshold() {
     use tokio::time::Instant;
 
     let config = BlockBuilderConfig {
-        object_key_prefix: String::new(),
-        index_key: "index/traces.json".into(),
-        window: millis(1),
-        empty_poll_backoff: millis(1),
-        promoted_attrs: Vec::new(),
         flush_max_records: 2,
         flush_max_age: minutes(1),
-        index_snapshot_retain: krabka_blockstore::IndexSnapshotRetain::default(),
+        ..block_builder_config()
     };
 
     let mut accumulator = FlushAccumulator::new();
@@ -504,14 +470,8 @@ async fn accumulator_flushes_on_age_for_low_traffic_stream() {
     use tokio::time::Instant;
 
     let config = BlockBuilderConfig {
-        object_key_prefix: String::new(),
-        index_key: "index/traces.json".into(),
-        window: millis(1),
-        empty_poll_backoff: millis(1),
-        promoted_attrs: Vec::new(),
-        flush_max_records: 50_000,
         flush_max_age: minutes(1),
-        index_snapshot_retain: krabka_blockstore::IndexSnapshotRetain::default(),
+        ..block_builder_config()
     };
 
     let mut accumulator = FlushAccumulator::new();
@@ -538,14 +498,8 @@ async fn shutdown_drain_flushes_remaining_buffer_without_losing_spans() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let config = BlockBuilderConfig {
-        object_key_prefix: String::new(),
-        index_key: "index/traces.json".into(),
-        window: millis(1),
-        empty_poll_backoff: millis(1),
-        promoted_attrs: Vec::new(),
-        flush_max_records: 50_000,
         flush_max_age: minutes(1),
-        index_snapshot_retain: krabka_blockstore::IndexSnapshotRetain::default(),
+        ..block_builder_config()
     };
 
     // Two polls buffered, never reaching the flush threshold (mirrors a pending
@@ -754,7 +708,6 @@ type EventLog = Arc<StdMutex<Vec<String>>>;
 /// `error`, and it counts every attempt so a test can tell a retry from a
 /// single try. Everything else delegates to an inner [`InMemory`] store.
 struct RecordingObjectStore {
-    inner: Arc<InMemory>,
     events: EventLog,
     remaining_failures: AtomicUsize,
     put_attempts: AtomicUsize,
@@ -779,22 +732,25 @@ fn permanent_failure() -> object_store::Error {
 }
 
 impl RecordingObjectStore {
-    fn recording(events: EventLog) -> Self {
+    fn recording(events: EventLog) -> HookedStore<Self> {
         Self::flaky(events, 0, transient_failure)
     }
 
-    fn failing(events: EventLog) -> Self {
+    fn failing(events: EventLog) -> HookedStore<Self> {
         Self::flaky(events, usize::MAX, permanent_failure)
     }
 
-    fn flaky(events: EventLog, failures: usize, error: fn() -> object_store::Error) -> Self {
-        Self {
-            inner: Arc::new(InMemory::new()),
+    fn flaky(
+        events: EventLog,
+        failures: usize,
+        error: fn() -> object_store::Error,
+    ) -> HookedStore<Self> {
+        HookedStore::new(Self {
             events,
             remaining_failures: AtomicUsize::new(failures),
             put_attempts: AtomicUsize::new(0),
             error,
-        }
+        })
     }
 
     fn put_attempts(&self) -> usize {
@@ -802,26 +758,11 @@ impl RecordingObjectStore {
     }
 }
 
-impl std::fmt::Debug for RecordingObjectStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RecordingObjectStore")
-    }
-}
-
-impl std::fmt::Display for RecordingObjectStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("RecordingObjectStore")
-    }
-}
-
 #[async_trait::async_trait]
-impl ObjectStore for RecordingObjectStore {
-    async fn put_opts(
-        &self,
-        location: &Path,
-        payload: PutPayload,
-        opts: PutOptions,
-    ) -> object_store::Result<PutResult> {
+impl StoreHooks for RecordingObjectStore {
+    const NAME: &'static str = "RecordingObjectStore";
+
+    async fn before_put(&self, location: &Path, _payload: &PutPayload) -> object_store::Result<()> {
         self.put_attempts.fetch_add(1, Ordering::SeqCst);
         if self
             .remaining_failures
@@ -836,47 +777,7 @@ impl ObjectStore for RecordingObjectStore {
             .lock()
             .expect("events lock")
             .push(format!("put:{location}"));
-        self.inner.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
+        Ok(())
     }
 }
 
@@ -953,18 +854,24 @@ fn block_builder_config() -> BlockBuilderConfig {
     }
 }
 
-#[tokio::test]
-async fn run_commits_offsets_only_after_a_durable_block_write() {
+// An event log, and a store that records each put into it.
+fn recording_store() -> (EventLog, Arc<dyn ObjectStore>) {
     let events: EventLog = Arc::new(StdMutex::new(Vec::new()));
     let store = Arc::new(RecordingObjectStore::recording(Arc::clone(&events)));
-    let object_store: Arc<dyn ObjectStore> = store.clone();
-    let writer = BlockWriter::new(object_store.clone());
-    let index = Arc::new(Mutex::new(TraceIndex::new()));
+    (events, store)
+}
+
+// Run the block builder over one poll of two `tenant-a` spans of one trace,
+// below the flush threshold, so the only flush is the shutdown drain. Returns
+// the run's result and the count of its offset commits.
+async fn run_two_span_poll(
+    writer: BlockWriter,
+    index: Arc<Mutex<TraceIndex>>,
+    object_store: Arc<dyn ObjectStore>,
+    events: &EventLog,
+) -> (Result<(), TracesError>, Arc<AtomicUsize>) {
     let shutdown = CancellationToken::new();
     let commit_calls = Arc::new(AtomicUsize::new(0));
-
-    // One poll of two spans for the same trace, well below the flush threshold,
-    // so the only flush+commit happens on the shutdown drain.
     let batch = vec![
         consumer_record(3, 10, &rec("tenant-a", [1; 16], 1, None, 100)),
         consumer_record(3, 11, &rec("tenant-a", [1; 16], 2, Some(1), 200)),
@@ -973,20 +880,32 @@ async fn run_commits_offsets_only_after_a_durable_block_write() {
         vec![batch],
         shutdown.clone(),
         Arc::clone(&commit_calls),
-        Arc::clone(&events),
+        Arc::clone(events),
     );
-
-    run(
+    let result = run(
         consumer,
         writer,
-        Arc::clone(&index),
-        object_store.clone(),
+        index,
+        object_store,
         block_builder_config(),
         ServiceMetrics::new(),
         shutdown,
     )
-    .await
-    .unwrap();
+    .await;
+    (result, commit_calls)
+}
+
+#[tokio::test]
+async fn run_commits_offsets_only_after_a_durable_block_write() {
+    let (events, object_store) = recording_store();
+    let writer = BlockWriter::new(object_store.clone());
+    let index = Arc::new(Mutex::new(TraceIndex::new()));
+
+    // One poll of two spans for the same trace, well below the flush threshold,
+    // so the only flush+commit happens on the shutdown drain.
+    let (result, commit_calls) =
+        run_two_span_poll(writer, Arc::clone(&index), object_store.clone(), &events).await;
+    result.unwrap();
 
     // Commit happened exactly once.
     assert2::assert!(commit_calls.load(Ordering::SeqCst) == 1);
@@ -1094,31 +1013,10 @@ async fn run_commits_exactly_once_after_the_object_store_recovers() {
     let writer =
         BlockWriter::with_retry_policy(object_store.clone(), ObjectStoreRetryPolicy::immediate(4));
     let index = Arc::new(Mutex::new(TraceIndex::new()));
-    let shutdown = CancellationToken::new();
-    let commit_calls = Arc::new(AtomicUsize::new(0));
 
-    let batch = vec![
-        consumer_record(3, 10, &rec("tenant-a", [1; 16], 1, None, 100)),
-        consumer_record(3, 11, &rec("tenant-a", [1; 16], 2, Some(1), 200)),
-    ];
-    let consumer = ScriptedConsumer::new(
-        vec![batch],
-        shutdown.clone(),
-        Arc::clone(&commit_calls),
-        Arc::clone(&events),
-    );
-
-    run(
-        consumer,
-        writer,
-        Arc::clone(&index),
-        object_store.clone(),
-        block_builder_config(),
-        ServiceMetrics::new(),
-        shutdown,
-    )
-    .await
-    .expect("the flush rides out the transient failures");
+    let (result, commit_calls) =
+        run_two_span_poll(writer, Arc::clone(&index), object_store.clone(), &events).await;
+    result.expect("the flush rides out the transient failures");
 
     // The write really was attempted more than once ...
     check!(store.put_attempts() > 2);
@@ -1198,9 +1096,7 @@ async fn run_reports_a_permanent_object_store_failure_without_spending_the_budge
 
 #[tokio::test]
 async fn run_drains_remaining_buffer_exactly_once_on_shutdown() {
-    let events: EventLog = Arc::new(StdMutex::new(Vec::new()));
-    let store = Arc::new(RecordingObjectStore::recording(Arc::clone(&events)));
-    let object_store: Arc<dyn ObjectStore> = store.clone();
+    let (events, object_store) = recording_store();
     let writer = BlockWriter::new(object_store.clone());
     let index = Arc::new(Mutex::new(TraceIndex::new()));
     let shutdown = CancellationToken::new();
@@ -1282,7 +1178,6 @@ async fn run_drains_remaining_buffer_exactly_once_on_shutdown() {
 /// payloads would release the writers before either had reached the write that
 /// contends.
 struct IndexSnapshotBarrierStore {
-    inner: Arc<InMemory>,
     snapshot_prefix: String,
     gate: Arc<tokio::sync::Barrier>,
     gated_puts: usize,
@@ -1290,14 +1185,17 @@ struct IndexSnapshotBarrierStore {
 }
 
 impl IndexSnapshotBarrierStore {
-    fn new(snapshot_prefix: &str, gate: Arc<tokio::sync::Barrier>, gated_puts: usize) -> Self {
-        Self {
-            inner: Arc::new(InMemory::new()),
+    fn new(
+        snapshot_prefix: &str,
+        gate: Arc<tokio::sync::Barrier>,
+        gated_puts: usize,
+    ) -> HookedStore<Self> {
+        HookedStore::new(Self {
             snapshot_prefix: snapshot_prefix.to_string(),
             gate,
             gated_puts,
             snapshot_puts: AtomicUsize::new(0),
-        }
+        })
     }
 
     /// Snapshot writes attempted, retries included.
@@ -1310,72 +1208,17 @@ impl IndexSnapshotBarrierStore {
     }
 }
 
-impl std::fmt::Debug for IndexSnapshotBarrierStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("IndexSnapshotBarrierStore")
-    }
-}
-
-impl std::fmt::Display for IndexSnapshotBarrierStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("IndexSnapshotBarrierStore")
-    }
-}
-
 #[async_trait::async_trait]
-impl ObjectStore for IndexSnapshotBarrierStore {
-    async fn put_opts(
-        &self,
-        location: &Path,
-        payload: PutPayload,
-        opts: PutOptions,
-    ) -> object_store::Result<PutResult> {
+impl StoreHooks for IndexSnapshotBarrierStore {
+    const NAME: &'static str = "IndexSnapshotBarrierStore";
+
+    async fn before_put(&self, location: &Path, _payload: &PutPayload) -> object_store::Result<()> {
         if location.as_ref().starts_with(&self.snapshot_prefix)
             && self.snapshot_puts.fetch_add(1, Ordering::SeqCst) < self.gated_puts
         {
             self.gate.wait().await;
         }
-        self.inner.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
+        Ok(())
     }
 }
 
@@ -1685,7 +1528,6 @@ async fn retention_still_prunes_when_four_builders_write_at_once() {
 /// one back, so that interleaving is a fact of the test rather than a hope
 /// about the scheduler, and no sleep is involved.
 struct SnapshotHandoffStore {
-    inner: Arc<InMemory>,
     snapshot_prefix: String,
     held: StdMutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
     snapshot_puts: AtomicUsize,
@@ -1700,13 +1542,12 @@ struct SnapshotHandoff {
 }
 
 impl SnapshotHandoffStore {
-    fn new(snapshot_prefix: &str) -> Self {
-        Self {
-            inner: Arc::new(InMemory::new()),
+    fn new(snapshot_prefix: &str) -> HookedStore<Self> {
+        HookedStore::new(Self {
             snapshot_prefix: snapshot_prefix.to_string(),
             held: StdMutex::new(None),
             snapshot_puts: AtomicUsize::new(0),
-        }
+        })
     }
 
     /// Arms the store to hold the next snapshot write.
@@ -1727,26 +1568,11 @@ impl SnapshotHandoffStore {
     }
 }
 
-impl std::fmt::Debug for SnapshotHandoffStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("SnapshotHandoffStore")
-    }
-}
-
-impl std::fmt::Display for SnapshotHandoffStore {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("SnapshotHandoffStore")
-    }
-}
-
 #[async_trait::async_trait]
-impl ObjectStore for SnapshotHandoffStore {
-    async fn put_opts(
-        &self,
-        location: &Path,
-        payload: PutPayload,
-        opts: PutOptions,
-    ) -> object_store::Result<PutResult> {
+impl StoreHooks for SnapshotHandoffStore {
+    const NAME: &'static str = "SnapshotHandoffStore";
+
+    async fn before_put(&self, location: &Path, _payload: &PutPayload) -> object_store::Result<()> {
         if location.as_ref().starts_with(&self.snapshot_prefix) {
             self.snapshot_puts.fetch_add(1, Ordering::SeqCst);
             // Taken, not held: the lock must not span the wait, or the writer
@@ -1757,47 +1583,7 @@ impl ObjectStore for SnapshotHandoffStore {
                 let _ = release.await;
             }
         }
-        self.inner.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
+        Ok(())
     }
 }
 

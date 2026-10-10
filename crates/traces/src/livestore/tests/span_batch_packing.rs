@@ -112,34 +112,19 @@ async fn borrowed_window_keeps_complete_rows_order_and_owned_output() {
         child.name = format!("child-{id}");
         child.start_ns = 2_000;
         child.span_attrs.extend([
-            KeyValue {
-                key: "http.method".into(),
-                value: AttrValue::Str("POST".into()),
-            },
-            KeyValue {
-                key: "__resource.service.name".into(),
-                value: AttrValue::Str("spoof".into()),
-            },
-            KeyValue {
-                key: "bytes".into(),
-                value: AttrValue::Bytes(vec![0, 255]),
-            },
-            KeyValue {
-                key: "empty".into(),
-                value: AttrValue::Array(Vec::new()),
-            },
-            KeyValue {
-                key: "one".into(),
-                value: AttrValue::Array(vec![AttrValue::Int(7)]),
-            },
-            KeyValue {
-                key: "many".into(),
-                value: AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
-            },
-            KeyValue {
-                key: "mixed".into(),
-                value: AttrValue::Array(vec![AttrValue::Int(7), AttrValue::Str("seven".into())]),
-            },
+            KeyValue::new("http.method", AttrValue::Str("POST".into())),
+            KeyValue::new("__resource.service.name", AttrValue::Str("spoof".into())),
+            KeyValue::new("bytes", AttrValue::Bytes(vec![0, 255])),
+            KeyValue::new("empty", AttrValue::Array(Vec::new())),
+            KeyValue::new("one", AttrValue::Array(vec![AttrValue::Int(7)])),
+            KeyValue::new(
+                "many",
+                AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
+            ),
+            KeyValue::new(
+                "mixed",
+                AttrValue::Array(vec![AttrValue::Int(7), AttrValue::Str("seven".into())]),
+            ),
         ]);
         store.ingest(SpanRecord {
             tenant: "t".into(),

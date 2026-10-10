@@ -1,16 +1,19 @@
 use super::{
-    AppState, HeaderMap, IntoResponse, Json, Principal, Response, SpanStore, StatusCode, Uri,
-    exact_tag_value_filter, filter_tag_values, is_match_all_query, matching_traces,
-    optional_time_bounds, q_filter_limit, query_param, request_tenant, scan_options_param,
-    search_tag_values_json, tag_values_from_traces, tempo_tag_alias, traceql_query_error_response,
+    AppState, HeaderMap, IntoResponse, Json, Principal, Response, SpanStore, StatusCode,
+    TypedValue, Uri, Value, exact_tag_value_filter, filter_tag_values, is_match_all_query,
+    optional_time_bounds, query_param, request_tenant, tag_values_from_traces, tempo_tag_alias,
+    traceql_query_error_response, traces_matching_filter,
 };
 
+/// Answer a tag-values request, rendering the values with `render`, which is
+/// where the v1 and v2 endpoints differ.
 pub(crate) async fn search_tag_values_inner<S>(
     state: &AppState<S>,
     principal: &Principal,
     headers: HeaderMap,
     tag: String,
     uri: Uri,
+    render: fn(&[TypedValue]) -> Value,
 ) -> Response
 where
     S: SpanStore + 'static,
@@ -24,73 +27,41 @@ where
         Ok(bounds) => bounds,
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    if let Some(query) = query_param(&uri, "q") {
-        if is_match_all_query(&query) {
-            return match state
-                .engine
-                .tag_values(tenant.as_str(), tag, start_ns, end_ns)
-                .await
-            {
-                Ok(values) => Json(search_tag_values_json(&values)).into_response(),
-                Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-            };
-        }
+    let mut expected = None;
+    if let Some(query) = query_param(&uri, "q")
+        && !is_match_all_query(&query)
+    {
         match exact_tag_value_filter(&query, tag) {
-            Ok(Some(expected)) => {
-                return match state
-                    .engine
-                    .tag_values(tenant.as_str(), tag, start_ns, end_ns)
-                    .await
+            Ok(Some(value)) => expected = Some(value),
+            Ok(None) => {
+                return match traces_matching_filter(
+                    state,
+                    tenant.as_str(),
+                    &query,
+                    &uri,
+                    start_ns,
+                    end_ns,
+                )
+                .await
                 {
-                    Ok(values) => Json(search_tag_values_json(&filter_tag_values(
-                        values, &expected,
-                    )))
-                    .into_response(),
-                    Err(err) => {
-                        (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
+                    Ok(traces) => {
+                        Json(render(&tag_values_from_traces(&traces, tag))).into_response()
                     }
+                    Err(rejection) => *rejection,
                 };
             }
-            Ok(None) => {}
             Err(err) => return traceql_query_error_response(&err),
         }
-        let scan_options = match scan_options_param(&uri) {
-            Ok(value) => value,
-            Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-        };
-        let limit = match q_filter_limit(
-            &uri,
-            state.engine.max_traces(),
-            state.cfg.tag_query_filter_autocomplete_limit,
-        ) {
-            Ok(value) => value,
-            Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-        };
-        match matching_traces(
-            state.engine.as_ref(),
-            tenant.as_str(),
-            &query,
-            start_ns,
-            end_ns,
-            scan_options,
-            limit,
-        )
+    }
+    match state
+        .engine
+        .tag_values(tenant.as_str(), tag, start_ns, end_ns)
         .await
-        {
-            Ok(traces) => Json(search_tag_values_json(&tag_values_from_traces(
-                &traces, tag,
-            )))
-            .into_response(),
-            Err(err) => traceql_query_error_response(&err),
-        }
-    } else {
-        match state
-            .engine
-            .tag_values(tenant.as_str(), tag, start_ns, end_ns)
-            .await
-        {
-            Ok(values) => Json(search_tag_values_json(&values)).into_response(),
-            Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-        }
+    {
+        Ok(values) => match expected {
+            Some(expected) => Json(render(&filter_tag_values(values, &expected))).into_response(),
+            None => Json(render(&values)).into_response(),
+        },
+        Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
     }
 }

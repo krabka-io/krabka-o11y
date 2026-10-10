@@ -1,7 +1,7 @@
 use super::{
     AppState, HeaderMap, IntoResponse, Json, Principal, QueryEnforcer, Response, SearchOptions,
     SpanStore, StatusCode, Uri, duration_param, filter_search_duration, limit_error_response,
-    optional_usize_param, request_tenant, required_seconds_param, scan_options_param, search_json,
+    optional_usize_param, request_tenant, required_time_range, scan_options_param, search_json,
     search_query,
 };
 
@@ -25,17 +25,10 @@ where
         }
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
     };
-    let start_ns = match required_seconds_param(&uri, "start") {
-        Ok(value) => value,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
+    let (start_ns, end_ns) = match required_time_range(&uri) {
+        Ok(range) => range,
+        Err(rejection) => return *rejection,
     };
-    let end_ns = match required_seconds_param(&uri, "end") {
-        Ok(value) => value,
-        Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),
-    };
-    if end_ns < start_ns {
-        return (StatusCode::BAD_REQUEST, "end must be >= start").into_response();
-    }
     let limit = match optional_usize_param(&uri, "limit") {
         Ok(value) => value.unwrap_or(0),
         Err(err) => return (StatusCode::BAD_REQUEST, err).into_response(),

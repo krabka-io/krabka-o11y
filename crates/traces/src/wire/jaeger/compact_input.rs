@@ -1,6 +1,6 @@
 use super::{
     T_BINARY, T_BOOL_FALSE, T_BOOL_TRUE, T_BYTE, T_DOUBLE, T_I16, T_I32, T_I64, T_LIST, T_MAP,
-    T_SET, T_STOP, T_STRUCT, WireError,
+    T_SET, T_STOP, T_STRUCT, WireError, check_collection_header, take_bytes, utf8_string,
 };
 
 pub(crate) struct CompactInput<'a> {
@@ -76,21 +76,7 @@ impl<'a> CompactInput<'a> {
     /// not a value type at all -- it terminates a struct -- and is the one
     /// element type whose skip would consume nothing.
     fn check_collection_header(&self, element_type: u8, len: usize) -> Result<(), WireError> {
-        if len == 0 {
-            return Ok(());
-        }
-        if element_type == T_STOP {
-            return Err(WireError::Decode(
-                "stop is not a collection element type".into(),
-            ));
-        }
-        let remaining = self.bytes.len().saturating_sub(self.pos);
-        if len > remaining {
-            return Err(WireError::Decode(format!(
-                "collection of {len} elements exceeds the {remaining} bytes left"
-            )));
-        }
-        Ok(())
+        check_collection_header(self.bytes, self.pos, T_STOP, element_type, len)
     }
 
     pub(crate) fn read_map_header(&mut self) -> Result<(u8, u8, usize), WireError> {
@@ -107,22 +93,13 @@ impl<'a> CompactInput<'a> {
     }
 
     pub(crate) fn read_string(&mut self) -> Result<String, WireError> {
-        String::from_utf8(self.read_binary()?).map_err(|err| WireError::Decode(err.to_string()))
+        utf8_string(self.read_binary()?)
     }
 
     pub(crate) fn read_binary(&mut self) -> Result<Vec<u8>, WireError> {
         let len = usize::try_from(self.read_varint()?)
             .map_err(|_| WireError::Decode("binary too large".into()))?;
-        let end = self
-            .pos
-            .checked_add(len)
-            .ok_or_else(|| WireError::Decode("binary length overflow".into()))?;
-        if end > self.bytes.len() {
-            return Err(WireError::Decode("truncated binary".into()));
-        }
-        let out = self.bytes[self.pos..end].to_vec();
-        self.pos = end;
-        Ok(out)
+        take_bytes(self.bytes, &mut self.pos, len)
     }
 
     pub(crate) fn read_i32(&mut self) -> Result<i32, WireError> {

@@ -1,17 +1,15 @@
 use super::AttrValue;
+use crate::span::typed_value_parts::{TypedPart, TypedValue};
 
-pub(crate) fn typed_value_parts(value: &AttrValue) -> Vec<(String, String)> {
-    if let AttrValue::Array(values) = value {
-        return values.iter().flat_map(typed_value_parts).collect();
+impl TypedValue for AttrValue {
+    fn typed_part(&self) -> TypedPart<'_, Self> {
+        match self {
+            AttrValue::Array(values) => TypedPart::Array(values),
+            AttrValue::Str(value) => TypedPart::Scalar("string", value.clone()),
+            AttrValue::Int(value) => TypedPart::Scalar("int", value.to_string()),
+            AttrValue::Float(value) => TypedPart::Scalar("float", value.to_string()),
+            AttrValue::Bool(value) => TypedPart::Scalar("bool", value.to_string()),
+            AttrValue::Unsupported(_) => TypedPart::Unlisted,
+        }
     }
-    if matches!(value, AttrValue::Unsupported(_)) {
-        return Vec::new();
-    }
-    vec![match value {
-        AttrValue::Str(value) => ("string".into(), value.clone()),
-        AttrValue::Int(value) => ("int".into(), value.to_string()),
-        AttrValue::Float(value) => ("float".into(), value.to_string()),
-        AttrValue::Bool(value) => ("bool".into(), value.to_string()),
-        AttrValue::Unsupported(_) | AttrValue::Array(_) => unreachable!("arrays handled above"),
-    }]
 }

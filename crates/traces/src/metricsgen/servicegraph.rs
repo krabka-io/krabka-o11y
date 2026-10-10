@@ -451,8 +451,9 @@ mod tests {
         assert2::check!(store.record_span(&server, 2) == RecordOutcome::Completed);
     }
 
-    #[test]
-    fn pairs_client_then_server_into_one_request() {
+    // Pair one 10ms `frontend` client span with its 8ms `backend` server
+    // span under the default config, and drain the edge.
+    fn drain_frontend_to_backend_request() -> Vec<Series> {
         let mut store = EdgeStore::new(&MetricsGenConfig::default());
         let client = span(
             "frontend",
@@ -474,7 +475,12 @@ mod tests {
         assert2::assert!(store.record_span(&client, 0) == RecordOutcome::Recorded);
         assert2::assert!(store.record_span(&server, 1) == RecordOutcome::Completed);
 
-        let out = store.drain(1_000);
+        store.drain(1_000)
+    }
+
+    #[test]
+    fn pairs_client_then_server_into_one_request() {
+        let out = drain_frontend_to_backend_request();
         assert2::assert!((counter(&out, "traces_service_graph_request_total") - 1.0).abs() < 1e-9);
         assert2::assert!(counter(&out, "traces_service_graph_request_failed_total").abs() < 1e-9);
 
@@ -546,28 +552,7 @@ mod tests {
 
     #[test]
     fn request_latency_histograms_include_configured_buckets() {
-        let mut store = EdgeStore::new(&MetricsGenConfig::default());
-        let client = span(
-            "frontend",
-            [0xA; 8],
-            [0; 8],
-            SpanKind::Client,
-            StatusCode::Ok,
-            10_000_000,
-        );
-        let server = span(
-            "backend",
-            [0xB; 8],
-            [0xA; 8],
-            SpanKind::Server,
-            StatusCode::Ok,
-            8_000_000,
-        );
-
-        assert2::assert!(store.record_span(&client, 0) == RecordOutcome::Recorded);
-        assert2::assert!(store.record_span(&server, 1) == RecordOutcome::Completed);
-
-        let out = store.drain(1_000);
+        let out = drain_frontend_to_backend_request();
         for (name, le, want) in [
             ("traces_service_graph_request_client_seconds", 0.008, 0.0),
             ("traces_service_graph_request_client_seconds", 0.016, 1.0),

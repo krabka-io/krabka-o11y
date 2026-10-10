@@ -72,6 +72,7 @@ mod link_record;
 mod span_kind;
 mod span_type;
 mod status_code;
+pub(crate) mod typed_value_parts;
 
 pub use attr_value::AttrValue;
 pub use event_record::EventRecord;

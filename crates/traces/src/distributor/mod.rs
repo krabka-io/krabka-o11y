@@ -78,6 +78,7 @@ mod tests {
     use tower::ServiceExt as _;
 
     use super::*;
+    use crate::wire::jaeger::thrift_fixture::encode_binary_sample_batch;
 
     // The push doors read their principal from the request extensions, where
     // the authentication layer puts it. The tests drive the router behind the
@@ -495,7 +496,7 @@ mod tests {
                     .uri("/api/traces")
                     .header("content-type", "application/vnd.apache.thrift.binary")
                     .header(TENANT_HEADER, "t")
-                    .body(Body::from(jaeger_binary_batch()))
+                    .body(Body::from(encode_binary_sample_batch()))
                     .unwrap(),
             )
             .await
@@ -568,7 +569,11 @@ mod tests {
                 request = request.header(TENANT_HEADER, HeaderValue::from_bytes(value).unwrap());
             }
             let resp = router(state)
-                .oneshot(request.body(Body::from(jaeger_binary_batch())).unwrap())
+                .oneshot(
+                    request
+                        .body(Body::from(encode_binary_sample_batch()))
+                        .unwrap(),
+                )
                 .await
                 .unwrap();
 
@@ -588,6 +593,16 @@ mod tests {
         }
     }
 
+    async fn post_otlp(app: Router, tenant: Option<&str>, body: Vec<u8>) -> Response {
+        let mut request = Request::builder().method("POST").uri("/v1/traces");
+        if let Some(tenant) = tenant {
+            request = request.header(TENANT_HEADER, tenant);
+        }
+        app.oneshot(request.body(Body::from(body)).unwrap())
+            .await
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn over_span_limit_is_400() {
         let limits = crate::limits::Limits {
@@ -595,16 +610,7 @@ mod tests {
             ..crate::limits::Limits::default()
         };
         let (state, sink) = test_state_with_limits(limits);
-        let resp = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .body(Body::from(otlp_body_with_spans(2)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let resp = post_otlp(router(state), None, otlp_body_with_spans(2)).await;
         assert2::assert!(resp.status() == StatusCode::BAD_REQUEST);
         assert2::assert!(sink.count() == 0);
     }
@@ -619,16 +625,7 @@ mod tests {
             ..crate::limits::Limits::default()
         };
         let (state, sink) = test_state_with_limits(limits);
-        let resp = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .body(Body::from(otlp_body_with_spans(2)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let resp = post_otlp(router(state), None, otlp_body_with_spans(2)).await;
 
         check!(resp.status() == StatusCode::OK);
         check!(sink.count() == 2);
@@ -642,16 +639,7 @@ mod tests {
         };
         let (state, sink) = test_state_with_limits(limits);
 
-        let resp = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .body(Body::from(otlp_body_with_spans(2)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let resp = post_otlp(router(state), None, otlp_body_with_spans(2)).await;
 
         assert2::assert!(resp.status() == StatusCode::BAD_REQUEST);
         let body = resp.into_body().collect().await.unwrap().to_bytes();
@@ -678,29 +666,8 @@ overrides:
         let (state, sink) = test_state_with_overrides(overrides);
         let app = router(state);
 
-        let tight = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-tight")
-                    .body(Body::from(otlp_body_with_spans(2)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let loose = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-loose")
-                    .body(Body::from(otlp_body_with_spans(2)))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let tight = post_otlp(app.clone(), Some("tenant-tight"), otlp_body_with_spans(2)).await;
+        let loose = post_otlp(app, Some("tenant-loose"), otlp_body_with_spans(2)).await;
 
         check!(tight.status() == StatusCode::BAD_REQUEST);
         check!(loose.status() == StatusCode::OK);
@@ -709,8 +676,9 @@ overrides:
         assert2::assert!(sink.tenant(1) == "tenant-loose".to_string());
     }
 
-    #[tokio::test]
-    async fn shared_ingest_rate_limit_is_per_tenant() {
+    // Push one span for `tenant-a` twice and then once for `tenant-b`, under a
+    // one-span-per-second rate limit.
+    async fn push_twice_then_other_tenant() -> ([Response; 3], Arc<RecordingSink>) {
         let limits = crate::limits::Limits {
             ingestion_rate: per_sec(1),
             ingestion_burst_spans: 1,
@@ -719,41 +687,15 @@ overrides:
         let (state, sink) = test_state_with_limits(limits);
         let app = router(state);
 
-        let first = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::from(otlp_body()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let second = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::from(otlp_body()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let other_tenant = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-b")
-                    .body(Body::from(otlp_body()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let first = post_otlp(app.clone(), Some("tenant-a"), otlp_body()).await;
+        let second = post_otlp(app.clone(), Some("tenant-a"), otlp_body()).await;
+        let other_tenant = post_otlp(app, Some("tenant-b"), otlp_body()).await;
+        ([first, second, other_tenant], sink)
+    }
+
+    #[tokio::test]
+    async fn shared_ingest_rate_limit_is_per_tenant() {
+        let ([first, second, other_tenant], sink) = push_twice_then_other_tenant().await;
 
         assert2::assert!(first.status() == StatusCode::OK);
         assert2::assert!(second.status() == StatusCode::TOO_MANY_REQUESTS);
@@ -773,49 +715,7 @@ overrides:
 
     #[tokio::test]
     async fn ingest_rate_limit_is_per_tenant() {
-        let limits = crate::limits::Limits {
-            ingestion_rate: per_sec(1),
-            ingestion_burst_spans: 1,
-            ..crate::limits::Limits::default()
-        };
-        let (state, sink) = test_state_with_limits(limits);
-        let app = router(state);
-
-        let first = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::from(otlp_body()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let second = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-a")
-                    .body(Body::from(otlp_body()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let other_tenant = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/v1/traces")
-                    .header(TENANT_HEADER, "tenant-b")
-                    .body(Body::from(otlp_body()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let ([first, second, other_tenant], sink) = push_twice_then_other_tenant().await;
 
         check!(first.status() == StatusCode::OK);
         check!(second.status() == StatusCode::TOO_MANY_REQUESTS);
@@ -941,82 +841,6 @@ overrides:
         assert2::assert!(validate_shared(&[first, second], &limits).is_err());
     }
 
-    fn jaeger_binary_batch() -> Vec<u8> {
-        const T_STOP: u8 = 0;
-        const T_BOOL: u8 = 2;
-        const T_I32: u8 = 8;
-        const T_I64: u8 = 10;
-        const T_BINARY: u8 = 11;
-        const T_STRUCT: u8 = 12;
-        const T_LIST: u8 = 15;
-
-        fn field(out: &mut Vec<u8>, type_: u8, id: i16) {
-            out.push(type_);
-            out.extend_from_slice(&id.to_be_bytes());
-        }
-        fn string(out: &mut Vec<u8>, value: &str) {
-            out.extend_from_slice(&i32::try_from(value.len()).unwrap().to_be_bytes());
-            out.extend_from_slice(value.as_bytes());
-        }
-        fn string_field(out: &mut Vec<u8>, id: i16, value: &str) {
-            field(out, T_BINARY, id);
-            string(out, value);
-        }
-        fn i32_field(out: &mut Vec<u8>, id: i16, value: i32) {
-            field(out, T_I32, id);
-            out.extend_from_slice(&value.to_be_bytes());
-        }
-        fn i64_field(out: &mut Vec<u8>, id: i16, value: i64) {
-            field(out, T_I64, id);
-            out.extend_from_slice(&value.to_be_bytes());
-        }
-        fn bool_field(out: &mut Vec<u8>, id: i16, value: bool) {
-            field(out, T_BOOL, id);
-            out.push(u8::from(value));
-        }
-        fn key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 0);
-            string_field(out, 3, value);
-            out.push(T_STOP);
-        }
-        fn key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 3);
-            bool_field(out, 5, value);
-            out.push(T_STOP);
-        }
-
-        let mut out = Vec::new();
-        field(&mut out, T_STRUCT, 1);
-        string_field(&mut out, 1, "checkout");
-        field(&mut out, T_LIST, 2);
-        out.push(T_STRUCT);
-        out.extend_from_slice(&1_i32.to_be_bytes());
-        key_value_string(&mut out, "process.tag", "present");
-        out.push(T_STOP);
-
-        field(&mut out, T_LIST, 2);
-        out.push(T_STRUCT);
-        out.extend_from_slice(&1_i32.to_be_bytes());
-        i64_field(&mut out, 1, 2);
-        i64_field(&mut out, 2, 1);
-        i64_field(&mut out, 3, 3);
-        i64_field(&mut out, 4, 0);
-        string_field(&mut out, 5, "GET /binary");
-        i64_field(&mut out, 8, 1_000);
-        i64_field(&mut out, 9, 25);
-        field(&mut out, T_LIST, 10);
-        out.push(T_STRUCT);
-        out.extend_from_slice(&3_i32.to_be_bytes());
-        key_value_string(&mut out, "span.kind", "server");
-        key_value_string(&mut out, "http.method", "GET");
-        key_value_bool(&mut out, "error", true);
-        out.push(T_STOP);
-        out.push(T_STOP);
-        out
-    }
-
     #[test]
     fn oversized_bytes_attr_is_rejected_by_attribute_size_cap() {
         let limits = crate::limits::Limits {
@@ -1060,6 +884,7 @@ mod otlp_grpc_service;
 mod otlp_push;
 mod otlp_success_response;
 mod produce_spans;
+mod push_spans;
 mod record_ingest_response;
 mod request_principal;
 mod require_content_type;
@@ -1069,6 +894,7 @@ mod serve_jaeger_compact_udp;
 mod serve_jaeger_grpc;
 mod serve_otlp_grpc;
 mod shared_attr_measured;
+mod spawn_server;
 mod validate_shared;
 mod wal_sink;
 mod zipkin_push;
@@ -1091,6 +917,7 @@ pub use otlp_grpc_service::OtlpGrpcService;
 use otlp_push::otlp_push;
 use otlp_success_response::otlp_success_response;
 pub use produce_spans::produce_spans;
+use push_spans::push_spans;
 use record_ingest_response::record_ingest_response;
 use request_principal::request_principal;
 use require_content_type::require_content_type;
@@ -1100,6 +927,7 @@ pub use serve_jaeger_compact_udp::serve_jaeger_compact_udp;
 pub use serve_jaeger_grpc::serve_jaeger_grpc;
 pub use serve_otlp_grpc::serve_otlp_grpc;
 use shared_attr_measured::shared_attr_measured;
+use spawn_server::{bind_listener, spawn_server};
 use validate_shared::validate_shared;
 pub use wal_sink::WalSink;
 use zipkin_push::zipkin_push;

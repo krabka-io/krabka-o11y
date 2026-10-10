@@ -258,26 +258,17 @@ mod tests {
     fn explicit_arrays_keep_empty_and_singleton_identity_in_blocks() {
         let mut value = span(1, None, "api");
         value.span_attrs = vec![
-            KeyValue {
-                key: "empty".into(),
-                value: AttrValue::Array(Vec::new()),
-            },
-            KeyValue {
-                key: "one".into(),
-                value: AttrValue::Array(vec![AttrValue::Int(7)]),
-            },
-            KeyValue {
-                key: "many".into(),
-                value: AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
-            },
-            KeyValue {
-                key: "scalar".into(),
-                value: AttrValue::Int(7),
-            },
-            KeyValue {
-                key: "mixed".into(),
-                value: AttrValue::Array(vec![AttrValue::Int(7), AttrValue::Str("seven".into())]),
-            },
+            KeyValue::new("empty", AttrValue::Array(Vec::new())),
+            KeyValue::new("one", AttrValue::Array(vec![AttrValue::Int(7)])),
+            KeyValue::new(
+                "many",
+                AttrValue::Array(vec![AttrValue::Bool(true), AttrValue::Bool(false)]),
+            ),
+            KeyValue::new("scalar", AttrValue::Int(7)),
+            KeyValue::new(
+                "mixed",
+                AttrValue::Array(vec![AttrValue::Int(7), AttrValue::Str("seven".into())]),
+            ),
         ];
         let attrs = span_attrs(&value);
         check!(

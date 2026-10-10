@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, Bytes, DistributorState, Extension, HeaderMap, Principal, Response, State, decode_zipkin,
+    push_spans,
+};
 
 pub(crate) async fn zipkin_push(
     State(state): State<Arc<DistributorState>>,
@@ -6,27 +9,13 @@ pub(crate) async fn zipkin_push(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let start = std::time::Instant::now();
-    let body_size = ByteSize::from_bytes(body.len() as u64);
-    let tenant = match state.resolve_tenant(
+    push_spans(
+        &state,
         &principal,
-        headers.get(TENANT_HEADER).map(HeaderValue::as_bytes),
-    ) {
-        Ok(tenant) => tenant,
-        Err(err) => {
-            return record_ingest_response(&state, error_response(&err), body_size, 0, start);
-        }
-    };
-    if let Err(err) = require_content_type(&headers, &["application/json"]) {
-        return record_ingest_response(&state, error_response(&err), body_size, 0, start);
-    }
-    match decode_body(&headers, &body, state.max_decompressed).and_then(|body| decode_zipkin(&body))
-    {
-        Ok(spans) => {
-            let items = spans.len() as u64;
-            let resp = append_decoded(&state, &tenant, spans, StatusCode::ACCEPTED).await;
-            record_ingest_response(&state, resp, body_size, items, start)
-        }
-        Err(err) => record_ingest_response(&state, error_response(&err), body_size, 0, start),
-    }
+        &headers,
+        &body,
+        &["application/json"],
+        decode_zipkin,
+    )
+    .await
 }

@@ -40,13 +40,11 @@ mod tests {
         Span {
             trace_id: [1; 16],
             span_id: [2; 8],
-            parent_span_id: None,
             name: "GET /users".into(),
             kind: SpanKind::Server,
             start_ns: 1_000,
             duration_ns: 500,
             status: StatusCode::Ok,
-            status_message: String::new(),
             resource_attrs: vec![KeyValue {
                 key: "service.name".into(),
                 value: AttrValue::Str("api".into()),
@@ -73,6 +71,7 @@ mod tests {
             }],
             instrumentation_scope: "otel-rust".into(),
             instrumentation_version: "1.2.3".into(),
+            ..Span::default()
         }
     }
 
@@ -278,7 +277,6 @@ mod tests {
 }
 
 mod attr_string;
-mod bytes_to_hex;
 mod collect_event_values;
 mod collect_link_values;
 mod collect_span_intrinsic_value;
@@ -299,10 +297,8 @@ mod scoped_attribute_tag;
 mod span_ref;
 mod trace_spans;
 mod traceql_attr;
-mod typed_value_parts;
 
 use attr_string::attr_string;
-use bytes_to_hex::bytes_to_hex;
 use collect_event_values::collect_event_values;
 use collect_link_values::collect_link_values;
 use collect_span_intrinsic_value::collect_span_intrinsic_value;
@@ -323,4 +319,5 @@ use scoped_attribute_tag::scoped_attribute_tag;
 use span_ref::span_ref;
 use trace_spans::trace_spans;
 use traceql_attr::traceql_attr;
-use typed_value_parts::typed_value_parts;
+
+use crate::{querier::store::bytes_to_hex, span::typed_value_parts::typed_value_parts};
