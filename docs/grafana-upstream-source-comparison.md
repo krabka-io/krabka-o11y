@@ -281,11 +281,23 @@ iterator work: `ScalarValue::eq` consumes 80.65% of sampled self CPU, and
 `532cd0376448c94b6a87d03fe2072d5094764704`, `restricted_column` deduplicates
 literal `IN` values with `Vec::contains`, before checking whether the column
 holds each value once. That performs quadratic comparisons for a large list,
-even when the uniqueness condition cannot hold. Krabka's log scan emits every
-selected fingerprint as one `IN` list; the metric scan already bounds large
-lists. Bounding the log scan predicate and retaining the existing exact Rust
-membership check is a follow-up candidate. The current PR does not change
-that scan contract or DataFusion dependency.
+even when the uniqueness condition cannot hold. Krabka now keeps log fingerprint
+lists exact through 4,096 values, then uses their first/last range and retains
+the exact Rust membership check. It rejects unrelated fingerprint runs before
+allocating structured metadata. The metric scan already bounds large lists.
+The million-row log fixture includes broad, quarter-selected and roughly
+one-sixty-fourth-selected queries. The initially tried 1,024 cutoff regressed
+the last case by decoding more Parquet rows; the larger cutoff keeps that
+1,563-value selection exact. The DataFusion dependency and SQL `LIMIT` contract
+remain unchanged.
+
+The earlier local 20,000-stream Loki write failures are explained by its WAL
+disk throttle, rather than a completed performance comparison. The saved log
+reports 90.05% disk usage against the default 90% threshold. Both shutdown and
+that throttle return `ErrReadOnly` with the text "Ingester is shutting down".
+See [the WAL threshold](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/ingester/wal.go#L55)
+and [the push checks](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/ingester/ingester.go#L1002-L1012).
+The repeat reserves disk space before deployment and preserves that default.
 
 ## Tempo
 

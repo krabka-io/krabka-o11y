@@ -1,0 +1,1578 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "date": "2026-10-10",
+  "source_commit": "bd24605123d8f767a890d35a4e33bc7244fc8f1a",
+  "base_commit": "9e630202d4b190e7ae1c50950da8cca789b1fe53",
+  "execution": "current VM; no GCP VM launches",
+  "sources_sha256": {
+    "benches/src/log_queries.rs": "034cb45d65556fc0bca916463b29faa740566aecb9f5561a649848d6174ccee2",
+    "benches/benches/log_stream_query.rs": "e6f8c9d5ed7678dffb4b929d2976b5a407d849b2eae9438860f502043e96d799",
+    "benches/examples/log_stream_query_profile.rs": "1a6d7dd2ec820a8b3a4891620a04cbc3a335edf13e8d106324979bd60a68c34e",
+    "crates/observability/src/querier/scan/stream_scans/stream_plan_scan_sql_for_time_range.rs": "bd6a5ae6e07373a147a0128ef8f4ef87f06165d0eeae4c0020aea05e377ea2ff",
+    "crates/observability/src/querier/scan/metric_scans/append_matching_log_batches.rs": "174c65036923741c619c40d387462c3fb19ee724f7e95f04654c90336f313ef7",
+    "crates/observability/tests/querier.rs": "e228d895d0b517753701de397c235ec10533bedaf64ea256f6e7786f0679b330"
+  },
+  "baseline_sources_sha256": {
+    "crates/observability/src/querier/scan/stream_scans/stream_plan_scan_sql_for_time_range.rs": "f514c4e1455918005c9bf0de81b3849675275fdbc26bf4bed25ee2ccb2b4fe85",
+    "crates/observability/src/querier/scan/metric_scans/append_matching_log_batches.rs": "eaa92bc74737649d9396776381032ff9c8e69b57072cc265daa03314819eb43d"
+  },
+  "binaries": {
+    "baseline-log-stream-query": {
+      "sha256": "f71658375a6ebb5375e1a8a54c4953638bcba4a4b9e3283eb90bdc2e66443256",
+      "bytes": 195010632
+    },
+    "candidate-log-stream-query": {
+      "sha256": "7ac1d57f9ce88bfc8c820e84c60b10113ac1f98b442e7a497fee077e1ffae48e",
+      "bytes": 195015456
+    },
+    "krabka-observability-candidate": {
+      "sha256": "ff95811e3fae7cb3d6e288e60f9b4cd8241b94c625e455b013fd03269b475fc7",
+      "bytes": 238240768
+    },
+    "krabka-observability-matched-baseline": {
+      "sha256": "9fd5b7aa25e93987f392b050c36c3d7b0becd536ee88b5184138c305f416be3a",
+      "bytes": 238256832
+    },
+    "log-stream-query-criterion": {
+      "sha256": "6cedc438859853c58dab8cb7de6a407222aeb19663fb53dbd8ebfbfd24d29116",
+      "bytes": 197404040
+    }
+  },
+  "fixture": {
+    "seed": "0x10C5_B10C",
+    "streams": [
+      1000,
+      5000,
+      20000,
+      100000
+    ],
+    "rows_per_stream": 10,
+    "metadata_bytes": 64,
+    "cases": [
+      "all",
+      "all_exact",
+      "all_line",
+      "sparse",
+      "sparse_window",
+      "rare",
+      "single"
+    ],
+    "rare_fraction": "1/64",
+    "complete_response_check": "independent generated input ledger before every process timing",
+    "store": "InMemory ObjectStore containing real persisted Parquet; CPU benchmark, no network object-store I/O"
+  },
+  "implementation": {
+    "max_fingerprint_in_list": 4096,
+    "large_selection": "coarse fingerprint range, exact Rust membership preserved",
+    "metadata_decode": "reject unrelated fingerprint runs before allocating metadata"
+  },
+  "experiment_rejected": {
+    "binary_sha256": "0d8e2525921c74c6cda0384847efa09ff10265f1b175cad9ccf3a0e4bb3a1acf",
+    "archive": "qualification/evidence/log-scan-predicate-2026-10-10/candidate-1024-rare-control.gz",
+    "cutoff": 1024,
+    "case": "rare",
+    "streams": 100000,
+    "selected": 1563,
+    "baseline_seconds": 0.206129291,
+    "candidate_seconds": 0.383562502,
+    "exploratory": true,
+    "reason": "Increase cutoff to avoid extra decoding for this moderately sized sparse selection."
+  },
+  "evidence_directory": "qualification/evidence/log-scan-predicate-2026-10-10",
+  "measurement_plan": {
+    "affinity": [
+      4
+    ],
+    "repeated_pairs": 3,
+    "verification_queries_per_process": 1,
+    "timed_queries_per_process": 1,
+    "largest_broad_baseline_pairs": 1,
+    "candidate_regex_growth_runs": 1,
+    "other_largest_candidate_growth_runs": 3,
+    "other_largest_paired_controls": [
+      "rare",
+      "single"
+    ],
+    "timing_excludes": "fixture creation, input-ledger creation and verification; includes SQL planning, scan, evaluator, JSON response",
+    "no_compiler_profiler_or_archive_during_timing": true
+  },
+  "loki_pilot_diagnosis": {
+    "previous_run": "qualification/evidence/profile-query-2026-10-09/local-native-logs-pilot-3/1-loki-high_cardinality/containers.log",
+    "wal_warning_line": 24044,
+    "usage_percent": 90.05,
+    "default_threshold_percent": 90.0,
+    "error": "Ingester is shutting down",
+    "cause": "WAL IsDiskThrottled shares ErrReadOnly with shutdown",
+    "pinned_source_commit": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
+    "source_sha256": {
+      "loki-ingester.go": "eda0954d0168cc19f29b7c95455d8dd47e59acad6925a756e5a29c4b809bee7a",
+      "loki-wal.go": "3d3e798881e20b583ff39700f58dc21bedb95b25b9bfef12ed1b07155b59ce70"
+    }
+  },
+  "scope": "Completed optimization round; overall performance parity remains unqualified.",
+  "host": {
+    "hostname": "bce6f61f7cac",
+    "cpu_quota": 4,
+    "affinity_available": "0-4",
+    "model": "AMD EPYC 9V74",
+    "memory_gib": 17,
+    "filesystem_bytes": 33770192896
+  },
+  "timings": {
+    "measurements": 150,
+    "cases": [
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all",
+        "baseline_seconds": 0.641708229,
+        "candidate_seconds": 0.643170726,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.0523614128490941,
+        "paired_ratios": [
+          1.0019380942051157,
+          1.0523614128490941,
+          1.0863756384982464
+        ],
+        "baseline_range": [
+          0.611169051,
+          0.662583652
+        ],
+        "candidate_range": [
+          0.64295192,
+          0.719814738
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all_exact",
+        "baseline_seconds": 0.04592071,
+        "candidate_seconds": 0.052347996,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.0396905535225738,
+        "paired_ratios": [
+          1.0230583325040055,
+          1.1727601412070707,
+          1.0396905535225738
+        ],
+        "baseline_range": [
+          0.044636575,
+          0.056584648
+        ],
+        "candidate_range": [
+          0.046979565,
+          0.058830524
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all_line",
+        "baseline_seconds": 0.346636688,
+        "candidate_seconds": 0.32769114,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9736572200343663,
+        "paired_ratios": [
+          0.9255951113246758,
+          1.0022027482612827,
+          0.9736572200343663
+        ],
+        "baseline_range": [
+          0.319865875,
+          0.35403292
+        ],
+        "candidate_range": [
+          0.320570459,
+          0.337505314
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "rare",
+        "baseline_seconds": 0.002525068,
+        "candidate_seconds": 0.002561172,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.0664027417326027,
+        "paired_ratios": [
+          1.0006823578612536,
+          1.0664027417326027,
+          1.110621529882315
+        ],
+        "baseline_range": [
+          0.002401693,
+          0.002550706
+        ],
+        "candidate_range": [
+          0.002526791,
+          0.002832869
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "single",
+        "baseline_seconds": 0.001555217,
+        "candidate_seconds": 0.001604381,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.015165086286994,
+        "paired_ratios": [
+          0.8748350531428783,
+          1.015165086286994,
+          1.1469186291575904
+        ],
+        "baseline_range": [
+          0.001553935,
+          0.001833924
+        ],
+        "candidate_range": [
+          0.001578802,
+          0.001782237
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "sparse",
+        "baseline_seconds": 0.013063189,
+        "candidate_seconds": 0.011206896,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.8978038211037137,
+        "paired_ratios": [
+          0.8978038211037137,
+          1.031780173819792,
+          0.7651406369751154
+        ],
+        "baseline_range": [
+          0.010861709,
+          0.013932538
+        ],
+        "candidate_range": [
+          0.010660351,
+          0.011728181
+        ]
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "sparse_window",
+        "baseline_seconds": 0.0069774,
+        "candidate_seconds": 0.007717708,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.106100839854387,
+        "paired_ratios": [
+          1.2080117310939347,
+          1.0248233800865283,
+          1.106100839854387
+        ],
+        "baseline_range": [
+          0.006744851,
+          0.007114767
+        ],
+        "candidate_range": [
+          0.006912281,
+          0.008594722
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all",
+        "baseline_seconds": 3.344859957,
+        "candidate_seconds": 3.127709935,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9331114615765778,
+        "paired_ratios": [
+          0.9931069311431863,
+          0.9177939578124495,
+          0.9331114615765778
+        ],
+        "baseline_range": [
+          3.323138003,
+          3.407856315
+        ],
+        "candidate_range": [
+          3.100858159,
+          3.321803607
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all_exact",
+        "baseline_seconds": 0.482418008,
+        "candidate_seconds": 0.322285296,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.64860634260166,
+        "paired_ratios": [
+          0.6030993084321181,
+          0.758711572507954,
+          0.64860634260166
+        ],
+        "baseline_range": [
+          0.463989882,
+          0.496888906
+        ],
+        "candidate_range": [
+          0.290945967,
+          0.352034493
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all_line",
+        "baseline_seconds": 1.8343067579999999,
+        "candidate_seconds": 1.72457189,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9308634830033332,
+        "paired_ratios": [
+          0.9308634830033332,
+          0.9238950036806746,
+          0.9552627396469527
+        ],
+        "baseline_range": [
+          1.799905113,
+          1.852658227
+        ],
+        "candidate_range": [
+          1.662923341,
+          1.752244899
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "rare",
+        "baseline_seconds": 0.006894959,
+        "candidate_seconds": 0.006577662,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9934286773858988,
+        "paired_ratios": [
+          0.9934286773858988,
+          0.8361898402976187,
+          1.0072571260825163
+        ],
+        "baseline_range": [
+          0.006530271,
+          0.007132079
+        ],
+        "candidate_range": [
+          0.005963772,
+          0.00684965
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "single",
+        "baseline_seconds": 0.002257557,
+        "candidate_seconds": 0.002290236,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9743797366089667,
+        "paired_ratios": [
+          0.9743797366089667,
+          1.0144753820169325,
+          0.9516881508833218
+        ],
+        "baseline_range": [
+          0.00217851,
+          0.002623166
+        ],
+        "candidate_range": [
+          0.002122696,
+          0.002496436
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "sparse",
+        "baseline_seconds": 0.074441111,
+        "candidate_seconds": 0.070342082,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9748693970996751,
+        "paired_ratios": [
+          0.9748693970996751,
+          1.0184964891080281,
+          0.9274992500387095
+        ],
+        "baseline_range": [
+          0.068486727,
+          0.075840581
+        ],
+        "candidate_range": [
+          0.069753491,
+          0.072570361
+        ]
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "sparse_window",
+        "baseline_seconds": 0.041987656,
+        "candidate_seconds": 0.04032772,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9738260548085629,
+        "paired_ratios": [
+          0.9599742837081249,
+          0.9738260548085629,
+          1.0375638973511645
+        ],
+        "baseline_range": [
+          0.040954659,
+          0.042009167
+        ],
+        "candidate_range": [
+          0.039882714,
+          0.043564876
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all",
+        "baseline_seconds": 18.06323359,
+        "candidate_seconds": 14.038740188,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.7784625718832882,
+        "paired_ratios": [
+          0.7450746757212674,
+          0.7826286441432019,
+          0.7784625718832882
+        ],
+        "baseline_range": [
+          17.937933007,
+          18.550373555
+        ],
+        "candidate_range": [
+          13.821413561,
+          14.061551277
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all_exact",
+        "baseline_seconds": 5.961883277,
+        "candidate_seconds": 1.545070237,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.2607774908896511,
+        "paired_ratios": [
+          0.2607774908896511,
+          0.2591580823060787,
+          0.2629260802806651
+        ],
+        "baseline_range": [
+          5.847046905,
+          5.984591351
+        ],
+        "candidate_range": [
+          1.524778221,
+          1.573505146
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all_line",
+        "baseline_seconds": 10.926712121,
+        "candidate_seconds": 7.37953655,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.6753666124155776,
+        "paired_ratios": [
+          0.6753666124155776,
+          0.6580811320077078,
+          0.7115405823411235
+        ],
+        "baseline_range": [
+          10.836685506,
+          11.091691313
+        ],
+        "candidate_range": [
+          7.131418265,
+          7.892188496
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "rare",
+        "baseline_seconds": 0.02936835,
+        "candidate_seconds": 0.031390717,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.0778973142052881,
+        "paired_ratios": [
+          1.0688621253832782,
+          1.0907330452039032,
+          1.0778973142052881
+        ],
+        "baseline_range": [
+          0.026662909,
+          0.034697601
+        ],
+        "candidate_range": [
+          0.028739878,
+          0.03784582
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "single",
+        "baseline_seconds": 0.003441611,
+        "candidate_seconds": 0.004006806,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9339623718937426,
+        "paired_ratios": [
+          0.9339623718937426,
+          0.7380405708607002,
+          1.1642239637193164
+        ],
+        "baseline_range": [
+          0.003414841,
+          0.005617973
+        ],
+        "candidate_range": [
+          0.003189333,
+          0.004146292
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "sparse",
+        "baseline_seconds": 0.584468845,
+        "candidate_seconds": 0.377263165,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.633329833636383,
+        "paired_ratios": [
+          0.633329833636383,
+          0.6242797646468222,
+          0.6804662848612943
+        ],
+        "baseline_range": [
+          0.5544186,
+          0.6301498
+        ],
+        "candidate_range": [
+          0.364872073,
+          0.399092668
+        ]
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "sparse_window",
+        "baseline_seconds": 0.320920839,
+        "candidate_seconds": 0.184920755,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.5549439238624001,
+        "paired_ratios": [
+          0.5498188162785823,
+          0.5762192183474878,
+          0.5549439238624001
+        ],
+        "baseline_range": [
+          0.312206952,
+          0.38160989
+        ],
+        "candidate_range": [
+          0.173257351,
+          0.209816298
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all",
+        "baseline_seconds": null,
+        "candidate_seconds": 78.871869936,
+        "baseline_runs": 0,
+        "candidate_runs": 1,
+        "paired_runs": 0,
+        "median_paired_ratio": null,
+        "paired_ratios": [],
+        "baseline_range": null,
+        "candidate_range": [
+          78.871869936,
+          78.871869936
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all_exact",
+        "baseline_seconds": 157.425105242,
+        "candidate_seconds": 9.0900842,
+        "baseline_runs": 1,
+        "candidate_runs": 3,
+        "paired_runs": 1,
+        "median_paired_ratio": 0.057742278056770985,
+        "paired_ratios": [
+          0.057742278056770985
+        ],
+        "baseline_range": [
+          157.425105242,
+          157.425105242
+        ],
+        "candidate_range": [
+          8.928146914,
+          9.609176091
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all_line",
+        "baseline_seconds": null,
+        "candidate_seconds": 40.65148254,
+        "baseline_runs": 0,
+        "candidate_runs": 1,
+        "paired_runs": 0,
+        "median_paired_ratio": null,
+        "paired_ratios": [],
+        "baseline_range": null,
+        "candidate_range": [
+          40.65148254,
+          40.65148254
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "rare",
+        "baseline_seconds": 0.221299857,
+        "candidate_seconds": 0.256869467,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 1.072580995838601,
+        "paired_ratios": [
+          1.072580995838601,
+          1.5423836241005704,
+          0.9754756141793216
+        ],
+        "baseline_range": [
+          0.199986768,
+          0.26332741
+        ],
+        "candidate_range": [
+          0.237362021,
+          0.308456316
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "single",
+        "baseline_seconds": 0.009167866,
+        "candidate_seconds": 0.008818983,
+        "baseline_runs": 3,
+        "candidate_runs": 3,
+        "paired_runs": 3,
+        "median_paired_ratio": 0.9619450153394477,
+        "paired_ratios": [
+          0.9619450153394477,
+          1.3097070154641772,
+          0.8383728739143606
+        ],
+        "baseline_range": [
+          0.007518861,
+          0.009547828
+        ],
+        "candidate_range": [
+          0.00800464,
+          0.009847505
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "sparse",
+        "baseline_seconds": null,
+        "candidate_seconds": 2.688364849,
+        "baseline_runs": 0,
+        "candidate_runs": 3,
+        "paired_runs": 0,
+        "median_paired_ratio": null,
+        "paired_ratios": [],
+        "baseline_range": null,
+        "candidate_range": [
+          2.676307177,
+          2.782085283
+        ]
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "sparse_window",
+        "baseline_seconds": null,
+        "candidate_seconds": 1.38760563,
+        "baseline_runs": 0,
+        "candidate_runs": 3,
+        "paired_runs": 0,
+        "median_paired_ratio": null,
+        "paired_ratios": [],
+        "baseline_range": null,
+        "candidate_range": [
+          1.274072071,
+          1.409649269
+        ]
+      }
+    ],
+    "raw": "pairs.json",
+    "timeout_seconds": 360,
+    "censored_runs": 0,
+    "ratios": "candidate/baseline; median of corresponding pairs, distinct from ratio of independently computed medians",
+    "largest_scope": "all_exact has one baseline pair and three candidate runs; all and all_line have one unpaired candidate run; sparse and sparse_window have three unpaired candidate runs; rare and single have three pairs",
+    "numeric_benchmark_budgets_changed": false,
+    "new_unseeded_benchmarks": 28
+  },
+  "cpu": {
+    "scope": "Whole process: fixture construction, one verification query, three timed queries; 20000 streams, all_exact",
+    "frequency_hz": 199,
+    "event": "cpu-clock:u",
+    "stack_bytes": 8192,
+    "lost_samples": {
+      "baseline": 0,
+      "candidate": 0
+    },
+    "baseline_scalar_value_eq_self_percent": 61.94,
+    "baseline_filter_statistics_helper_self_percent": 2.06,
+    "candidate_scalar_value_eq": "below 0.5% report threshold",
+    "comparability": "Matched counts and compilation flags; percentages include fixture costs and do not quantify query-only CPU speedup",
+    "reports": [
+      "baseline-20000-exact-perf-flat.txt",
+      "candidate-20000-exact-perf-flat.txt"
+    ],
+    "exploratory_capture": "baseline-20000-all.perf.data uses an earlier fixture and cached library; excluded from final matched attribution"
+  },
+  "heap": {
+    "scope": "Whole process: fixture construction, one verification query and one timed sparse query at 20000 streams",
+    "baseline": {
+      "allocation_calls": 6676958,
+      "temporary_allocations": 415880,
+      "peak_heap_mb": 229.98,
+      "peak_rss_including_profiler_mb": 329.54
+    },
+    "candidate": {
+      "allocation_calls": 6339237,
+      "temporary_allocations": 377074,
+      "peak_heap_mb": 229.98,
+      "peak_rss_including_profiler_mb": 386.85
+    },
+    "limitation": "Whole-process allocation counts are not per-query counts; peak heap is unchanged and instrumented RSS increases",
+    "reports": [
+      "baseline-20000-sparse-heap.txt",
+      "candidate-20000-sparse-heap.txt"
+    ]
+  },
+  "native_comparison": {
+    "report": "native-candidate-vs-loki-repeat/comparison-report.json",
+    "repetitions": 1,
+    "requested_cardinalities": [
+      1000,
+      5000,
+      20000,
+      100000
+    ],
+    "completed_cardinalities": [
+      1000,
+      5000,
+      20000
+    ],
+    "unexecuted_cardinalities": [
+      100000
+    ],
+    "stop_reason": "Both backends fail objective at 20000, activating the harness gate",
+    "application_and_broker_cpus": 2.5,
+    "object_store_cpus": 0.5,
+    "host_activity_gate_enabled": true,
+    "telemetry_gate_enabled": true,
+    "disk_preflight": {
+      "total": 33770192896,
+      "free": 4359188480,
+      "used_fraction": 0.8195464564041085,
+      "loki_default_wal_throttle_fraction": 0.9
+    },
+    "mounted_application": {
+      "binary": "/workspace/krabka-o11y/qualification/evidence/log-scan-predicate-2026-10-10/binaries/krabka-observability-candidate",
+      "sha256": "ff95811e3fae7cb3d6e288e60f9b4cd8241b94c625e455b013fd03269b475fc7",
+      "runtime_image_id": "sha256:7b7fdb0d87250efbba1e63d87cf660c426c4b228278066ed378c55bd272c25c8",
+      "base_commit": "4eefcc7adeb1466c74b7243d1e5bea3e99530408",
+      "application_source_sha256": {
+        "crates/observability/src/querier/scan/stream_scans/stream_plan_scan_sql_for_time_range.rs": "bd6a5ae6e07373a147a0128ef8f4ef87f06165d0eeae4c0020aea05e377ea2ff",
+        "crates/observability/src/querier/scan/metric_scans/append_matching_log_batches.rs": "174c65036923741c619c40d387462c3fb19ee724f7e95f04654c90336f313ef7"
+      },
+      "launcher_sha256": "6f3e1171599ece262a1832ffc7ac5d4348d9ce73a81ad98519ae4da9b34311cc",
+      "note": "Matched direct release CLI mounted read-only into local runtime; diagnostic deployment."
+    },
+    "acknowledgements": "API accepted; native durability contracts differ",
+    "scope": "Diagnostic direct release CLI mounted into existing runtime; different durability contracts; no matched native baseline/candidate ratio or release qualification",
+    "initial_failed_attempt": "native-candidate-vs-loki: configuration read PermissionDenied before measurement; repeat fixes read permissions and restores original modes on cleanup",
+    "entries": [
+      {
+        "backend": "krabka",
+        "cardinality": 1000,
+        "duration_seconds": 30.54365385800338,
+        "ingest": {
+          "attempts": 60,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 60000,
+          "accepted_rows_per_sec": 1964.4015178713842,
+          "latency_seconds": {
+            "count": 60,
+            "p50": 0.045208383999124635,
+            "p95": 0.1992264000000432,
+            "p99": 0.23969002300145803
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "204": 60
+          }
+        },
+        "query": {
+          "attempts": 119,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 0,
+          "accepted_rows_per_sec": 0.0,
+          "latency_seconds": {
+            "count": 119,
+            "p50": 0.04473197200422874,
+            "p95": 0.22170909700071206,
+            "p99": 0.24986611100030132
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "200": 119
+          }
+        },
+        "objectives_met": true,
+        "resources": {
+          "cpu_seconds_by_role": {
+            "broker": 0.617422,
+            "logs-all": 9.47718,
+            "minio": 1.292127
+          },
+          "cpu_seconds_total": 10.094602,
+          "accounting_scope": "application_and_broker_excluding_object_store",
+          "load_generator_cpu_seconds": 0.459886262,
+          "throttled_seconds_by_role": {
+            "broker": 0.0,
+            "logs-all": 0.0,
+            "minio": 0.340974
+          },
+          "rss_kib_simultaneous_peak": 204840,
+          "object_store": {
+            "role": "minio",
+            "cpu_seconds": 1.292127,
+            "throttled_seconds": 0.340974,
+            "rss_kib_peak": 248088
+          },
+          "s3_requests": 1369.0,
+          "s3_read_bytes": 8167253.0,
+          "s3_write_bytes": 1684483.0,
+          "external_cpu_cores_mean": 0.056051252427845394,
+          "external_cpu_cores_peak_window": 0.08457953454202055,
+          "host_activity_qualified": true,
+          "sample_count": 30,
+          "sampled_seconds": 30.032954931259155,
+          "coverage_fraction": 0.983279704218806,
+          "cpu_seconds_per_million_accepted_rows": 168.24336666666667
+        },
+        "telemetry": {
+          "wal_lag_records_max": 0.0,
+          "wal_lag_records_last": [
+            0.0
+          ],
+          "rss_kib_peak_by_role": {
+            "minio": 248088,
+            "broker": 23144,
+            "logs-all": 181696
+          },
+          "object_requests": 1702.0,
+          "object_bytes": 15897695.0,
+          "maintenance": {
+            "krabka_logs_compaction_runs_total{status=\"ok\"}": 30.0,
+            "krabka_logs_compaction_blocks_total": 30.0,
+            "krabka_logs_compaction_deletion_sweeps_total": 0.0,
+            "krabka_logs_compaction_deleted_blocks_total": 0.0,
+            "krabka_logs_compaction_deleted_sidecars_total": 0.0,
+            "krabka_logs_compaction_deletion_failures_total": 0.0,
+            "krabka_logs_compaction_orphan_sweeps_total": 0.0,
+            "krabka_logs_compaction_orphans_deleted_total": 0.0,
+            "krabka_logs_compaction_orphan_failures_total": 0.0
+          },
+          "cpu_seconds_by_role": {},
+          "expected_restart_gaps": 0,
+          "scrape_errors": 0
+        }
+      },
+      {
+        "backend": "krabka",
+        "cardinality": 5000,
+        "duration_seconds": 30.544285755997407,
+        "ingest": {
+          "attempts": 60,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 60000,
+          "accepted_rows_per_sec": 1964.3608784736086,
+          "latency_seconds": {
+            "count": 60,
+            "p50": 0.02865716900123516,
+            "p95": 0.04491697499906877,
+            "p99": 0.05502016399987042
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "204": 60
+          }
+        },
+        "query": {
+          "attempts": 120,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 0,
+          "accepted_rows_per_sec": 0.0,
+          "latency_seconds": {
+            "count": 120,
+            "p50": 0.0902113880001707,
+            "p95": 0.1187016699986998,
+            "p99": 0.17698318699694937
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "200": 120
+          }
+        },
+        "objectives_met": true,
+        "resources": {
+          "cpu_seconds_by_role": {
+            "broker": 0.571145,
+            "logs-all": 12.90975,
+            "minio": 0.68514
+          },
+          "cpu_seconds_total": 13.480895,
+          "accounting_scope": "application_and_broker_excluding_object_store",
+          "load_generator_cpu_seconds": 0.44865424899999984,
+          "throttled_seconds_by_role": {
+            "broker": 0.0,
+            "logs-all": 0.0,
+            "minio": 0.138957
+          },
+          "rss_kib_simultaneous_peak": 373828,
+          "object_store": {
+            "role": "minio",
+            "cpu_seconds": 0.68514,
+            "throttled_seconds": 0.138957,
+            "rss_kib_peak": 329328
+          },
+          "s3_requests": 540.0,
+          "s3_read_bytes": 13377147.0,
+          "s3_write_bytes": 1691217.0,
+          "external_cpu_cores_mean": 0.04480130195922136,
+          "external_cpu_cores_peak_window": 0.05126568314420925,
+          "host_activity_qualified": true,
+          "sample_count": 30,
+          "sampled_seconds": 30.028385162353516,
+          "coverage_fraction": 0.9831097509444104,
+          "cpu_seconds_per_million_accepted_rows": 224.68158333333332
+        },
+        "telemetry": {
+          "wal_lag_records_max": 2000.0,
+          "wal_lag_records_last": [
+            2000.0
+          ],
+          "rss_kib_peak_by_role": {
+            "minio": 329328,
+            "broker": 24408,
+            "logs-all": 349448
+          },
+          "object_requests": 510.0,
+          "object_bytes": 15507913.0,
+          "maintenance": {
+            "krabka_logs_compaction_runs_total{status=\"ok\"}": 30.0,
+            "krabka_logs_compaction_blocks_total": 30.0,
+            "krabka_logs_compaction_deletion_sweeps_total": 0.0,
+            "krabka_logs_compaction_deleted_blocks_total": 0.0,
+            "krabka_logs_compaction_deleted_sidecars_total": 0.0,
+            "krabka_logs_compaction_deletion_failures_total": 0.0,
+            "krabka_logs_compaction_orphan_sweeps_total": 0.0,
+            "krabka_logs_compaction_orphans_deleted_total": 0.0,
+            "krabka_logs_compaction_orphan_failures_total": 0.0
+          },
+          "cpu_seconds_by_role": {},
+          "expected_restart_gaps": 0,
+          "scrape_errors": 0
+        }
+      },
+      {
+        "backend": "krabka",
+        "cardinality": 20000,
+        "duration_seconds": 30.911271983000915,
+        "ingest": {
+          "attempts": 22,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 22000,
+          "accepted_rows_per_sec": 711.7144843505145,
+          "latency_seconds": {
+            "count": 22,
+            "p50": 2.561041394001222,
+            "p95": 4.24613205899368,
+            "p99": 5.020232154995028
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "204": 22
+          }
+        },
+        "query": {
+          "attempts": 105,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 0,
+          "accepted_rows_per_sec": 0.0,
+          "latency_seconds": {
+            "count": 105,
+            "p50": 0.27066298400313826,
+            "p95": 0.4659365789993899,
+            "p99": 0.5987198679940775
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "200": 105
+          }
+        },
+        "objectives_met": false,
+        "resources": {
+          "cpu_seconds_by_role": {
+            "broker": 0.380666,
+            "logs-all": 30.227786,
+            "minio": 0.749879
+          },
+          "cpu_seconds_total": 30.608452,
+          "accounting_scope": "application_and_broker_excluding_object_store",
+          "load_generator_cpu_seconds": 0.3491450519999999,
+          "throttled_seconds_by_role": {
+            "broker": 0.0,
+            "logs-all": 0.0,
+            "minio": 0.426106
+          },
+          "rss_kib_simultaneous_peak": 756844,
+          "object_store": {
+            "role": "minio",
+            "cpu_seconds": 0.749879,
+            "throttled_seconds": 0.426106,
+            "rss_kib_peak": 342164
+          },
+          "s3_requests": 809.0,
+          "s3_read_bytes": 27792094.0,
+          "s3_write_bytes": 593471.0,
+          "external_cpu_cores_mean": 0.03658803129618702,
+          "external_cpu_cores_peak_window": 0.04097949780660476,
+          "host_activity_qualified": true,
+          "sample_count": 25,
+          "sampled_seconds": 30.40677261352539,
+          "coverage_fraction": 0.9836791132453894,
+          "cpu_seconds_per_million_accepted_rows": 1391.2932727272728
+        },
+        "telemetry": {
+          "wal_lag_records_max": 5211.0,
+          "wal_lag_records_last": [
+            5211.0
+          ],
+          "rss_kib_peak_by_role": {
+            "minio": 342164,
+            "broker": 25792,
+            "logs-all": 731052
+          },
+          "object_requests": 688.0,
+          "object_bytes": 32587532.0,
+          "maintenance": {
+            "krabka_logs_compaction_runs_total{status=\"ok\"}": 13.0,
+            "krabka_logs_compaction_blocks_total": 13.0,
+            "krabka_logs_compaction_deletion_sweeps_total": 0.0,
+            "krabka_logs_compaction_deleted_blocks_total": 0.0,
+            "krabka_logs_compaction_deleted_sidecars_total": 0.0,
+            "krabka_logs_compaction_deletion_failures_total": 0.0,
+            "krabka_logs_compaction_orphan_sweeps_total": 0.0,
+            "krabka_logs_compaction_orphans_deleted_total": 0.0,
+            "krabka_logs_compaction_orphan_failures_total": 0.0
+          },
+          "cpu_seconds_by_role": {},
+          "expected_restart_gaps": 0,
+          "scrape_errors": 0
+        }
+      },
+      {
+        "backend": "loki",
+        "cardinality": 1000,
+        "duration_seconds": 30.93923026000266,
+        "ingest": {
+          "attempts": 60,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 60000,
+          "accepted_rows_per_sec": 1939.2854798190072,
+          "latency_seconds": {
+            "count": 60,
+            "p50": 0.007835495998733677,
+            "p95": 0.015069471002789214,
+            "p99": 0.018618934002006426
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "204": 60
+          }
+        },
+        "query": {
+          "attempts": 120,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 0,
+          "accepted_rows_per_sec": 0.0,
+          "latency_seconds": {
+            "count": 120,
+            "p50": 0.04819461200531805,
+            "p95": 0.07591359000070952,
+            "p99": 0.08372641899768496
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "200": 120
+          }
+        },
+        "objectives_met": true,
+        "resources": {
+          "cpu_seconds_by_role": {
+            "loki": 9.164047,
+            "minio": 1.903586
+          },
+          "cpu_seconds_total": 9.164047,
+          "accounting_scope": "application_and_broker_excluding_object_store",
+          "load_generator_cpu_seconds": 0.46754222000000034,
+          "throttled_seconds_by_role": {
+            "loki": 0.0,
+            "minio": 0.145822
+          },
+          "rss_kib_simultaneous_peak": 291028,
+          "object_store": {
+            "role": "minio",
+            "cpu_seconds": 1.903586,
+            "throttled_seconds": 0.145822,
+            "rss_kib_peak": 251540
+          },
+          "s3_requests": 0.0,
+          "s3_read_bytes": 0.0,
+          "s3_write_bytes": 0.0,
+          "external_cpu_cores_mean": 0.03500164055281487,
+          "external_cpu_cores_peak_window": 0.05562957440946975,
+          "host_activity_qualified": true,
+          "sample_count": 31,
+          "sampled_seconds": 30.422139167785645,
+          "coverage_fraction": 0.9832868792186632,
+          "cpu_seconds_per_million_accepted_rows": 152.73411666666667
+        },
+        "telemetry": {
+          "wal_lag_records_max": null,
+          "wal_lag_records_last": [],
+          "rss_kib_peak_by_role": {
+            "minio": 251540,
+            "loki": 291028
+          },
+          "object_requests": 0,
+          "object_bytes": 0,
+          "maintenance": {},
+          "cpu_seconds_by_role": {
+            "loki": 9.17
+          },
+          "expected_restart_gaps": 0,
+          "scrape_errors": 0
+        }
+      },
+      {
+        "backend": "loki",
+        "cardinality": 5000,
+        "duration_seconds": 30.552441378000367,
+        "ingest": {
+          "attempts": 60,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 60000,
+          "accepted_rows_per_sec": 1963.8365149831752,
+          "latency_seconds": {
+            "count": 60,
+            "p50": 0.008019910004804842,
+            "p95": 0.012886552001873497,
+            "p99": 0.02222161599638639
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "204": 60
+          }
+        },
+        "query": {
+          "attempts": 97,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 0,
+          "accepted_rows_per_sec": 0.0,
+          "latency_seconds": {
+            "count": 97,
+            "p50": 0.04899145599483745,
+            "p95": 0.5458160220005084,
+            "p99": 1.9039851609995821
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "200": 97
+          }
+        },
+        "objectives_met": true,
+        "resources": {
+          "cpu_seconds_by_role": {
+            "loki": 12.602716,
+            "minio": 7.57281
+          },
+          "cpu_seconds_total": 12.602716,
+          "accounting_scope": "application_and_broker_excluding_object_store",
+          "load_generator_cpu_seconds": 0.44231984199999985,
+          "throttled_seconds_by_role": {
+            "loki": 0.0,
+            "minio": 5.196359
+          },
+          "rss_kib_simultaneous_peak": 445508,
+          "object_store": {
+            "role": "minio",
+            "cpu_seconds": 7.57281,
+            "throttled_seconds": 5.196359,
+            "rss_kib_peak": 322644
+          },
+          "s3_requests": 4176.0,
+          "s3_read_bytes": 0.0,
+          "s3_write_bytes": 1979772.0,
+          "external_cpu_cores_mean": 0.02870120845776254,
+          "external_cpu_cores_peak_window": 0.04040337985893803,
+          "host_activity_qualified": true,
+          "sample_count": 30,
+          "sampled_seconds": 30.038949728012085,
+          "coverage_fraction": 0.9831931057935676,
+          "cpu_seconds_per_million_accepted_rows": 210.04526666666666
+        },
+        "telemetry": {
+          "wal_lag_records_max": null,
+          "wal_lag_records_last": [],
+          "rss_kib_peak_by_role": {
+            "minio": 322644,
+            "loki": 445508
+          },
+          "object_requests": 0,
+          "object_bytes": 0,
+          "maintenance": {},
+          "cpu_seconds_by_role": {
+            "loki": 12.61
+          },
+          "expected_restart_gaps": 0,
+          "scrape_errors": 0
+        }
+      },
+      {
+        "backend": "loki",
+        "cardinality": 20000,
+        "duration_seconds": 30.549599603000388,
+        "ingest": {
+          "attempts": 60,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 60000,
+          "accepted_rows_per_sec": 1964.0191943500033,
+          "latency_seconds": {
+            "count": 60,
+            "p50": 0.009765190996404272,
+            "p95": 0.02669181899545947,
+            "p99": 0.03061211499880301
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "204": 60
+          }
+        },
+        "query": {
+          "attempts": 87,
+          "errors": 0,
+          "error_rate": 0.0,
+          "accepted_rows": 0,
+          "accepted_rows_per_sec": 0.0,
+          "latency_seconds": {
+            "count": 87,
+            "p50": 0.16769640699931188,
+            "p95": 1.3471422990041901,
+            "p99": 2.029711772003793
+          },
+          "empty_queries": 0,
+          "status_counts": {
+            "200": 87
+          }
+        },
+        "objectives_met": false,
+        "resources": {
+          "cpu_seconds_by_role": {
+            "loki": 32.378515,
+            "minio": 13.762499
+          },
+          "cpu_seconds_total": 32.378515,
+          "accounting_scope": "application_and_broker_excluding_object_store",
+          "load_generator_cpu_seconds": 0.41099672899999895,
+          "throttled_seconds_by_role": {
+            "loki": 0.240664,
+            "minio": 40.185041
+          },
+          "rss_kib_simultaneous_peak": 798348,
+          "object_store": {
+            "role": "minio",
+            "cpu_seconds": 13.762499,
+            "throttled_seconds": 40.185041,
+            "rss_kib_peak": 332628
+          },
+          "s3_requests": 15774.0,
+          "s3_read_bytes": 0.0,
+          "s3_write_bytes": 7506222.0,
+          "external_cpu_cores_mean": 0.07117940031810037,
+          "external_cpu_cores_peak_window": 0.09062580422600638,
+          "host_activity_qualified": true,
+          "sample_count": 28,
+          "sampled_seconds": 30.03662943840027,
+          "coverage_fraction": 0.9832086125099414,
+          "cpu_seconds_per_million_accepted_rows": 539.6419166666667
+        },
+        "telemetry": {
+          "wal_lag_records_max": null,
+          "wal_lag_records_last": [],
+          "rss_kib_peak_by_role": {
+            "minio": 332628,
+            "loki": 798348
+          },
+          "object_requests": 0,
+          "object_bytes": 0,
+          "maintenance": {},
+          "cpu_seconds_by_role": {
+            "loki": 32.4
+          },
+          "expected_restart_gaps": 0,
+          "scrape_errors": 0
+        }
+      }
+    ]
+  },
+  "native_cpu": {
+    "report_directory": "native-20000-profile",
+    "frequency_hz": 49,
+    "event": "cpu-clock:u",
+    "stack_bytes": 8192,
+    "duration_seconds": 30,
+    "lost_samples": 0,
+    "instrumented": true,
+    "role": "logs-all only; excludes broker and object-store CPU",
+    "binary_sha256": "ff95811e3fae7cb3d6e288e60f9b4cd8241b94c625e455b013fd03269b475fc7",
+    "ingest": {
+      "attempts": 19,
+      "errors": 0,
+      "error_rate": 0.0,
+      "accepted_rows": 19000,
+      "accepted_rows_per_sec": 610.1933648286794,
+      "latency_seconds": {
+        "count": 19,
+        "p50": 2.6597909280026215,
+        "p95": 5.128102608003246,
+        "p99": 5.128102608003246
+      },
+      "empty_queries": 0,
+      "status_counts": {
+        "204": 19
+      }
+    },
+    "query": {
+      "attempts": 104,
+      "errors": 0,
+      "error_rate": 0.0,
+      "accepted_rows": 0,
+      "accepted_rows_per_sec": 0.0,
+      "latency_seconds": {
+        "count": 104,
+        "p50": 0.26770415200007847,
+        "p95": 0.4993528589984635,
+        "p99": 0.5272645549994195
+      },
+      "empty_queries": 0,
+      "status_counts": {
+        "200": 104
+      }
+    },
+    "telemetry": {
+      "wal_lag_records_max": 2916.0,
+      "wal_lag_records_last": [
+        2916.0
+      ],
+      "rss_kib_peak_by_role": {
+        "minio": 318568,
+        "logs-all": 719792,
+        "broker": 25312
+      },
+      "object_requests": 750.0,
+      "object_bytes": 32741721.0,
+      "maintenance": {
+        "krabka_logs_compaction_runs_total{status=\"ok\"}": 13.0,
+        "krabka_logs_compaction_blocks_total": 13.0,
+        "krabka_logs_compaction_deletion_sweeps_total": 0.0,
+        "krabka_logs_compaction_deleted_blocks_total": 0.0,
+        "krabka_logs_compaction_deleted_sidecars_total": 0.0,
+        "krabka_logs_compaction_deletion_failures_total": 0.0,
+        "krabka_logs_compaction_orphan_sweeps_total": 0.0,
+        "krabka_logs_compaction_orphans_deleted_total": 0.0,
+        "krabka_logs_compaction_orphan_failures_total": 0.0
+      },
+      "cpu_seconds_by_role": {},
+      "expected_restart_gaps": 0,
+      "scrape_errors": 0
+    },
+    "resolved_reports": [
+      "top-resolved.txt",
+      "cum-resolved.txt"
+    ],
+    "initial_unresolved_reports_preserved": true,
+    "findings": "Query-state and label-index cloning plus allocation/freeing dominate resolved CPU costs; CPU samples do not establish the cause of ingest waiting."
+  },
+  "next_investigations": [
+    "Attribute native ingest wall-clock waits at 20000 streams.",
+    "Reduce cloned query state and label indexes after full response verification.",
+    "Reuse compiled regexes in large log queries; candidate broad regex growth remains 78.872 seconds at one million rows."
+  ],
+  "validation": {
+    "querier_tests": {
+      "passed": 70,
+      "log": "querier-tests.log"
+    },
+    "querier_object_store_tests": {
+      "passed": 22,
+      "log": "querier_object_store-tests.log"
+    },
+    "large_selection_regression": "Complete stream and count_over_time responses for 5200 selected fingerprints, unrelated fingerprints inside the range, line/time boundaries and structured metadata.",
+    "clippy": "all,pedantic with -D warnings: production observability library, fixture library, profiling example, Criterion target and changed querier test target",
+    "clippy_logs": [
+      "krabka_observability-candidate-command.json.clippy.log",
+      "krabka_o11y_benches-command.json.clippy.log",
+      "log_stream_query_profile-candidate-command.json.clippy.log",
+      "criterion-clippy.log",
+      "querier-test-clippy.log"
+    ],
+    "criterion_inventory": {
+      "ids": 28,
+      "log": "criterion-inventory.log"
+    },
+    "tool_checks": [
+      "bazel run //tools/format",
+      "git diff --check",
+      "tools/mutants-record.py --check",
+      "tools/bench-ratchet.py --self-test (31 passed)",
+      "tools/check-fuzz-patch.sh (46 pins match)",
+      "cargo metadata --locked for benches"
+    ],
+    "local_build_scope": "Recorded direct rustc/clippy commands reuse the exact cached Cargo dependency graph. They do not replace Cargo and Bazel PR CI."
+  },
+  "build": {
+    "rustc": "1.98.1",
+    "opt_level": 3,
+    "debuginfo": "line-tables-only",
+    "force_frame_pointers": true,
+    "codegen_units": 16,
+    "lto": false,
+    "baseline_production_source": "git archive bd24605123d8f767a890d35a4e33bc7244fc8f1a crates/observability/src; compiled fresh with the same flags as candidate",
+    "dependency_graph": "Cached Cargo krabka-observability-2a7d2a4d36dce738 fingerprint and exact mapped dependencies; dependency JSON and direct compiler command arrays preserved",
+    "elf_link_strip": "Debug sections stripped; function symbols retained",
+    "cache_archival": "Original rlib bytes gzip-archived and SHA-verified before removing unused cache files. Own libraries strip debug and LLVM bitcode only after proving metadata and allocated code/data identity; no LTO is used.",
+    "archive_proofs": [
+      "libkrabka_observability.rlib-archive.json",
+      "libkrabka_observability_baseline.rlib-archive.json",
+      "unused-cache-removal.json"
+    ],
+    "prior_cache_proof": "qualification/evidence/profile-query-2026-10-09/build-cache-archives/archives.json"
+  },
+  "reproduction_scripts_sha256": {
+    "archive-completed-log-scan-cache.py": "da2bc7017e7891738bbbd9067f365bc6ba81fe873e644645f174d6b780dd1c6c",
+    "archive-strip-log-scan-library.py": "cdf0e565f21643d326281dca9c06df9f5597875f897974e1b0e0e9f3a991ea59",
+    "archive-unused-log-scan-cache.py": "cffda26c4a2467eef1014805866d3bb511930f4bf2b073588096964823b229e8",
+    "build-log-scan-candidate.py": "218ac2c4840348a42f349c493780f3dcfb0e1760a160fccfb9eddd8e9369f29d",
+    "build-log-scan-direct.py": "da29ab1a5e4cd2facb3de085e5fff26c57d7a70f746e0e2b6f52e7cff19aed96",
+    "build-log-scan-matched-baseline.py": "99763ab4d533d7489400340505831459ce795fc9037ff77fdc3b5c05e82230c0",
+    "build-log-scan-service.py": "4f921f69fc83871cf3e5532a27544efb992bb1889bc0253aa02aa308bef18d55",
+    "build-log-scan-tests.py": "bba720d6b2acfaeb876095fcd44b74386a3950aae0666b833f3e5d7c986879f3",
+    "clippy-log-scan-direct.py": "d067d376a419ca8167c0ec76fe5d0b185870b4cbf84a66395fc6d6cd147b3814",
+    "compare-grafana.py": "fe2d806d0f1d9218230c7cd44af2ae8bc5718b7303cae0f99804f2d834c7bff7",
+    "compare-log-scan-mounted.py": "6f3e1171599ece262a1832ffc7ac5d4348d9ce73a81ad98519ae4da9b34311cc",
+    "finalize-log-scan-record.py": "9ae487720e097145736c176783f166eb280994ffac2695f3e7f695e8b5acee70",
+    "log-scan-after-pairs.py": "3e052dd9f9681b71fb10c72f0d15836b99cb5c50f0bd771a5fe5368ce7ec8880",
+    "pinned-runtime-layers.json": "b6a016f37ac8bf8fc445e154e1864c8bf9814c11ebd8c9e400a62e64ad8928e7",
+    "plan-log-scan-cache.py": "2bce541cae08af1bca44283ce951a9ff5ee648db615f04ad2ea8e03bb09b4abd",
+    "profile-log-scan-native.py": "62473ced46a71f10604983d60600dd63b9f2316f609916dbbf3ef029d7b42ad3",
+    "relink-log-scan-drivers.py": "d52f3225f028dc5ce9dcddb69e346a51d4a7f74e4bf616fa132404b1323386c0",
+    "restore-log-scan-cache.py": "c2c47ad85839a64f2d81df6036ded10fd314807dca274159279aa64aaa30422a",
+    "run-log-scan-pairs.py": "4e66a4ee64d1ae379ab378ac7a5f913cc1977b1a4ef675adfff4fe5415fa1256",
+    "summarize-log-scan-pairs.py": "b8aa8c4132b183487f41becfb1fc522c314a48215b193e4c9751420da938b8c6"
+  },
+  "raw_manifest": {
+    "path": "qualification/evidence/log-scan-predicate-2026-10-10/raw-manifest.json",
+    "sha256": "99db67818e02d9e335e91a5fca6516628604a64d915545ce4696db698d1b9297",
+    "scope": "All evidence files except raw-manifest.json itself; includes raw timings, ELF and verified cache archives, reports, source snapshots and reproduction scripts",
+    "files": 1361,
+    "bytes": 3601450198
+  }
+}

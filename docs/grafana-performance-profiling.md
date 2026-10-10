@@ -1032,3 +1032,86 @@ from attribution conclusions. Its 49 Hz repeat, with a larger ring buffer and
 head-summary cloning also remain visible. A separate 15-second logs seed
 verification capture includes regex compilation and is not an ingest-only
 profile. All these captures are diagnostic and do not supply performance ratios.
+
+## Bounded log scan predicates
+
+The next round runs entirely on this VM. The `log_stream_query` benchmark
+persists ten rows per stream and grows from 1,000 to 100,000 streams, reaching
+one million rows. Seven query shapes cover broad regex and nonempty-value
+selectors, line filtering, sparse selections, time windows and single streams.
+Every process verifies its complete JSON response against an independent input
+ledger before timing. SQL planning, Parquet scans, pipeline evaluation and JSON
+construction are timed; fixture creation and stream-selection planning are not.
+The in-memory object store contains real Parquet but excludes network I/O.
+
+The scan keeps exact SQL `IN` predicates through 4,096 selected fingerprints.
+Larger selections use their fingerprint range, followed by the existing exact
+row membership check. The stream appender rejects unrelated fingerprint runs
+before decoding structured metadata. A 1,024 cutoff was rejected: a sparse
+1,563-stream selection at the largest size slowed from 0.206 to 0.384 seconds
+when the coarse range decoded extra rows.
+
+The final matrix contains 150 measurements pinned to CPU 4, without concurrent
+compilers or profilers. At 20,000 streams, three alternating pairs give:
+
+| Query | Baseline median | Candidate median | Median paired ratio |
+| --- | ---: | ---: | ---: |
+| All streams, nonempty-value selector | 5.962 s | 1.545 s | 0.2608 |
+| All streams, regex selector | 18.063 s | 14.039 s | 0.7785 |
+| One quarter of streams | 0.584 s | 0.377 s | 0.6333 |
+| Quarter selection, line and time filters | 0.321 s | 0.185 s | 0.5549 |
+
+At 100,000 streams, the single paired nonempty-value query falls from 157.425
+to 9.090 seconds, a 17.3-fold improvement. The candidate has three runs at
+that size; the baseline has one. The other largest broad and quarter-selection
+cases measure candidate growth only. Largest rare and single-stream controls
+retain three pairs. The rare controls are about 7.8% slower at 20,000 streams
+and 7.3% slower at 100,000 by median paired ratio. The 1,000-stream line-and-time
+control is about 10.6% slower. All controls and run ranges remain recorded;
+the 28 new benchmark IDs remain unseeded and existing numeric budgets are unchanged.
+
+Matched CPU captures at 20,000 streams include fixture creation, verification
+and three timed nonempty-value queries, with no lost samples. `ScalarValue::eq`
+accounts for 61.94% of baseline self CPU and falls below the candidate report's
+0.5% threshold. Heap captures of the quarter selection include fixture creation,
+verification and one timed query. Whole-process allocation calls fall from
+6,676,958 to 6,339,237; peak heap remains 229.98 MB. RSS including heaptrack
+overhead rises from 329.54 to 386.85 MB. These figures do not establish reduced
+peak memory or per-query allocation counts.
+
+A fresh native comparison preserves Loki's default 90% WAL disk threshold.
+The earlier `Ingester is shutting down` error came from disk throttling:
+the pinned ingester returns that same error when `wal.IsDiskThrottled()` is true.
+Verified cache archival creates sufficient free space for the repeat. Its
+initial configuration-permission failure remains recorded alongside the
+successful repeat, which has zero API errors on both backends at all three
+completed cardinalities.
+
+| Streams | Krabka query p99 | Loki query p99 | Krabka ingest p99 | Loki ingest p99 |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 | 0.250 s | 0.084 s | 0.240 s | 0.019 s |
+| 5,000 | 0.177 s | 1.904 s | 0.055 s | 0.022 s |
+| 20,000 | 0.599 s | 2.030 s | 5.020 s | 0.031 s |
+
+These are single-run API observations under the same local CPU and memory
+budgets, with host-activity and telemetry gates enabled. Both backends fail
+the harness objective at 20,000 and stop before the requested 100,000 stage.
+They are diagnostic deployments with different durability contracts, and
+do not establish parity or a matched native before/after improvement.
+
+A separate 49 Hz service capture during concurrent writes and reads loses no
+samples. The resolved report shows query-state cloning and label-index work;
+it does not establish the cause of the ingest wait. Its ingest p99 is 5.128
+seconds. Broad regex queries also remain expensive in the engine fixture:
+the largest candidate query takes 78.872 seconds, with regex construction
+visible in the exploratory capture. Query-state sharing, regex reuse and
+ingest wait attribution are the next investigations.
+
+The [qualification record](../qualification/log-scan-predicate-2026-10-10.json)
+preserves source and ELF hashes, all timings, build commands, CPU and heap
+scope, native reports, failures and the raw evidence manifest. Validation
+passes 70 querier and 22 object-store tests, including full stream and numeric
+responses with unrelated fingerprints inside the coarse range, plus scoped
+Clippy checks with `-D warnings`. Cached Cargo dependencies are reused through
+recorded direct compiler commands with matched production compilation flags;
+these local builds are separate from the PR's Cargo and Bazel CI gates.

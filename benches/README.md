@@ -6,7 +6,7 @@ Part of [krabka-o11y](https://github.com/krabka-io/krabka-o11y), the Krabka obse
 
 ## Overview
 
-This directory measures five operations: block write, block read, index pruning, PromQL range evaluation, TraceQL span filtering, and pprof tree merge. Each one is a path that every query or every ingest goes through, so a change in its cost is a change in the cost of the whole system.
+This directory measures block write, block read, index pruning, PromQL range evaluation, TraceQL span filtering, pprof tree merge and complete profile and log queries. Each one is a path that every query or every ingest goes through, so a change in its cost is a change in the cost of the whole system.
 
 The benchmarks exist because nothing else here measures speed. The differential suites and the golden corpora check that an answer is correct. They say nothing about what the answer costs, and they run at a volume too small to show any cost that matters: a few hundred series and a few thousand samples. Krabka is a columnar block store over object storage. That design gives its benefit at high cardinality and high volume, and its failure modes — an index that stops pruning, a compaction that reads more than it writes, a query that holds a whole result in memory — do not appear below that scale.
 
@@ -69,6 +69,27 @@ The driver checks the full result once, then consumes each timed result.
 Whole-process captures also include fixture creation and the verification
 query; attribution to symbol resolution and query tree insertion separates
 those costs from fixture generation.
+
+`tools/bench.sh --quick log_stream_query` measures complete Parquet-backed log
+responses at 1,000, 5,000, 20,000 and 100,000 streams, with ten rows per stream.
+Each stream carries a deterministic 64-byte structured metadata value. Cases
+select all streams with a regex or a nonempty-value matcher, all streams with
+a line filter, one quarter of streams, that quarter with line and time
+filters, roughly one sixty-fourth of streams, or one stream. Every complete
+JSON response is checked against an
+independent input ledger before measurement. Fixture creation and planning
+the stream selection remain outside timing; Parquet SQL planning, scanning,
+pipeline evaluation and response construction are timed.
+
+For CPU or allocation captures:
+
+```bash
+cargo build --manifest-path benches/Cargo.toml --release --example log_stream_query_profile
+benches/target/release/examples/log_stream_query_profile 20000 1 all_exact
+```
+
+This driver verifies one complete response before its timed queries. Whole
+process captures include fixture creation and that verification query.
 
 ## Where they run
 

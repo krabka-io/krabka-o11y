@@ -212,3 +212,33 @@ profile_query/trace_callsite/1000 unseeded
 profile_query/trace_callsite/10000 unseeded
 profile_query/trace_callsite/100000 unseeded
 profile_query/trace_callsite/1000000 unseeded
+
+# Complete log stream queries; seed on the recorded stable runner.
+log_stream_query/all/1000 unseeded
+log_stream_query/all/5000 unseeded
+log_stream_query/all/20000 unseeded
+log_stream_query/all/100000 unseeded
+log_stream_query/all_exact/1000 unseeded
+log_stream_query/all_exact/5000 unseeded
+log_stream_query/all_exact/20000 unseeded
+log_stream_query/all_exact/100000 unseeded
+log_stream_query/all_line/1000 unseeded
+log_stream_query/all_line/5000 unseeded
+log_stream_query/all_line/20000 unseeded
+log_stream_query/all_line/100000 unseeded
+log_stream_query/sparse/1000 unseeded
+log_stream_query/sparse/5000 unseeded
+log_stream_query/sparse/20000 unseeded
+log_stream_query/sparse/100000 unseeded
+log_stream_query/sparse_window/1000 unseeded
+log_stream_query/sparse_window/5000 unseeded
+log_stream_query/sparse_window/20000 unseeded
+log_stream_query/sparse_window/100000 unseeded
+log_stream_query/single/1000 unseeded
+log_stream_query/single/5000 unseeded
+log_stream_query/single/20000 unseeded
+log_stream_query/single/100000 unseeded
+log_stream_query/rare/1000 unseeded
+log_stream_query/rare/5000 unseeded
+log_stream_query/rare/20000 unseeded
+log_stream_query/rare/100000 unseeded

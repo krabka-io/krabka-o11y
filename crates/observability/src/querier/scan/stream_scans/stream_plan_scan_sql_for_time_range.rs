@@ -1,5 +1,12 @@
 use super::{StreamPlan, TimeRange, line_filter_sql_predicates};
 
+// DataFusion deduplicates literal IN values with quadratic comparisons. Keep
+// moderately sparse selections exact: coarse ranges decode extra Parquet rows.
+// The large-query benchmark measures that tradeoff through one million rows.
+// The appender checks exact membership after a range, so its extra rows cannot
+// admit an unrelated stream into the result.
+const MAX_FINGERPRINT_IN_LIST: usize = 4_096;
+
 /// The SQL one planned block scan runs.
 ///
 /// # Why there is no `LIMIT`
@@ -40,14 +47,18 @@ pub(crate) fn stream_plan_scan_sql_for_time_range(
         "timestamp_ns >= {} and timestamp_ns <= {}",
         time_range.start_ns, time_range.end_ns
     )];
-    if !plan.fingerprints.is_empty() {
-        let fingerprints = plan
-            .fingerprints
-            .iter()
-            .map(u64::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        predicates.push(format!("series_fingerprint in ({fingerprints})"));
+    if let (Some(first), Some(last)) = (plan.fingerprints.first(), plan.fingerprints.last()) {
+        if plan.fingerprints.len() > MAX_FINGERPRINT_IN_LIST {
+            predicates.push(format!("series_fingerprint between {first} and {last}"));
+        } else {
+            let fingerprints = plan
+                .fingerprints
+                .iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            predicates.push(format!("series_fingerprint in ({fingerprints})"));
+        }
     }
     predicates.extend(line_filter_sql_predicates(&plan.query.pipeline));
     format!(

@@ -67,11 +67,14 @@ krabka-blockstore = { path = "../crates/blockstore" }
 # `WalRecord` is `krabka-metrics`' type, not one //crates/promql re-exports,
 # and the WAL-head benchmark applies records rather than pushing samples.
 krabka-metrics = { path = "../crates/metrics" }
+krabka-logql = { path = "../crates/logql" }
+krabka-observability = { path = "../crates/observability" }
 krabka-pprof = { path = "../crates/pprof" }
 krabka-promql = { path = "../crates/promql" }
 krabka-traceql = { path = "../crates/traceql" }
 krabka-units = { version = "0.6.0" }
 object_store = { version = "0.14", features = ["aws", "azure", "gcp"] }
+serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
@@ -136,6 +139,10 @@ harness = false
 
 [[bench]]
 name = "profile_query"
+harness = false
+
+[[bench]]
+name = "log_stream_query"
 harness = false
 
 [patch.crates-io]
