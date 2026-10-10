@@ -477,3 +477,15 @@ object-store heap capture. The
 preserves the raw profile hashes. MinIO is outside the application budget.
 These profiles neither establish
 application RSS savings nor qualify an application performance advantage.
+
+## Single tenant-shard request preparation
+
+At the pinned Loki source commit
+`7a40404f32b3e6464c9cfc6cc7dd75a40f3931da`,
+[`IndexSlice.For`](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/storage/stores/shipper/indexshipper/tsdb/multi_file_index.go#L39)
+directly invokes the callback when there is one index. `MultiIndex` visits
+overlapping index readers and accumulates query results, rather than
+constructing a complete label/postings index on each request. Krabka's
+new single-shard path reuses the already tenant-filtered immutable snapshot;
+its multiple-shard path still materializes merged indexes. The source file
+and its hash are retained with the local experiment evidence.

@@ -1,0 +1,701 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "date": "2026-10-10",
+  "source_commit": "2d3e2910cb88f23c84bca686da03dd45c52c21a3",
+  "execution": "Current VM only; no GCP VM launches",
+  "scope": "Single-shard request-index reuse; overall upstream performance parity remains unqualified",
+  "implementation": "Return the immutable Arc label/block snapshots when exactly one tenant-filtered shard overlaps a request. Multiple shards retain existing materialized merge and descriptor deduplication. Cache TTLs, frontier generations and tenant filtering are unchanged.",
+  "evidence_directory": "qualification/evidence/single-shard-index-reuse-2026-10-10",
+  "hypothesis_source": "qualification/ingest-wait-2026-10-10.json: fresh native CPU profile attributes 37.14% cumulative samples to tenant-shard merging",
+  "fixture": {
+    "streams": [
+      1000,
+      5000,
+      20000,
+      100000
+    ],
+    "rows_per_stream": 10,
+    "seed": "0x10C5_B10C",
+    "metadata_bytes": 64,
+    "storage": "Private local filesystem with real Parquet, one tenant shard and catalog",
+    "shard_cache_ttl_seconds": 3600,
+    "request_index_cache_ttl_seconds": 0,
+    "result_cache_ttl_seconds": 0,
+    "query_range_ns": [
+      0,
+      10
+    ],
+    "persisted_shard_range_ns": [
+      0,
+      9
+    ],
+    "cases": [
+      "all",
+      "rare",
+      "single",
+      "none"
+    ],
+    "controls": "Existing tenant-manifest fixture, one-hour request-index TTL and disabled result cache, at 1000 and 100000 streams for all and none",
+    "verification": "Independent complete API envelope, canonical labels and every row; variable execution statistics omitted; one verification query before timing every process",
+    "timing_scope": "In-process production HTTP preparation, planning, warmed filesystem Parquet reads, result serialization and complete body consumption; excludes construction and verification"
+  },
+  "measurement_plan": {
+    "paired_runs": 3,
+    "alternating_order": true,
+    "affinity": [
+      4
+    ],
+    "primary_measurements": 96,
+    "control_measurements": 24,
+    "timeout_seconds": 360
+  },
+  "host": {
+    "hostname": "bce6f61f7cac",
+    "cpu_quota": 4,
+    "affinity_available": "0-4",
+    "model": "AMD EPYC 9V74",
+    "memory_gib": 17,
+    "filesystem_bytes": 33770192896
+  },
+  "build": {
+    "rustc": "1.98.1",
+    "opt_level": 3,
+    "debuginfo": "line-tables-only",
+    "force_frame_pointers": true,
+    "codegen_units": 16,
+    "lto": false,
+    "production_and_fixture_metadata_tags": "query_state_candidate for both variants",
+    "baseline": "Unmodified production library from preceding bounded-label candidate; freshly compiled identical expanded fixture and profiling driver",
+    "candidate": "Fresh production library plus identical expanded fixture and profiling driver",
+    "commands": "Exact direct compiler, Clippy and test commands retained",
+    "normal_ci": "Separate Cargo/Bazel CI remains additional validation",
+    "recovery": "104 verified cache dependencies restored then removed; original archives retained. Fresh default formatter cache was removed after a failed disk-full run; formatter succeeded with managed Bazel cache. Baseline driver initially lacked its production dependency search directory; corrected command and failed logs retained."
+  },
+  "timings": {
+    "measurements": 96,
+    "verified": 96,
+    "censored": 0,
+    "cases": [
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.057457509,
+          "min": 0.05603290833333333,
+          "max": 0.05827440933333333
+        },
+        "candidate_seconds": {
+          "median": 0.059439144,
+          "min": 0.054856238,
+          "max": 0.06642705166666667
+        },
+        "paired_candidate_baseline_ratios": [
+          0.9547270488179361,
+          1.0607899137842955,
+          1.1399009003540421
+        ],
+        "median_paired_ratio": 1.0607899137842955
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "rare",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.0047981774999999996,
+          "min": 0.00417050235,
+          "max": 0.0050783944
+        },
+        "candidate_seconds": {
+          "median": 0.00320736205,
+          "min": 0.0030045821,
+          "max": 0.0035840782
+        },
+        "paired_candidate_baseline_ratios": [
+          0.7204364960974066,
+          0.6315700982184448,
+          0.746966572203717
+        ],
+        "median_paired_ratio": 0.7204364960974066
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "single",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.00353593775,
+          "min": 0.00325377705,
+          "max": 0.00405542685
+        },
+        "candidate_seconds": {
+          "median": 0.0021597799500000002,
+          "min": 0.0020584267999999998,
+          "max": 0.0024827927499999998
+        },
+        "paired_candidate_baseline_ratios": [
+          0.6326268728215413,
+          0.610808250230084,
+          0.6122149016200353
+        ],
+        "median_paired_ratio": 0.6122149016200353
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "none",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.00131266255,
+          "min": 0.0012598502500000002,
+          "max": 0.0013621308
+        },
+        "candidate_seconds": {
+          "median": 0.0001271243,
+          "min": 9.1548e-05,
+          "max": 0.0001314577
+        },
+        "paired_candidate_baseline_ratios": [
+          0.10434390912729508,
+          0.06720940455938593,
+          0.09684461554875622
+        ],
+        "median_paired_ratio": 0.09684461554875622
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.4129578333333333,
+          "min": 0.411982244,
+          "max": 0.433519238
+        },
+        "candidate_seconds": {
+          "median": 0.41609669600000004,
+          "min": 0.39349252233333337,
+          "max": 0.459901259
+        },
+        "paired_candidate_baseline_ratios": [
+          1.0608554792671048,
+          0.9551201005966979,
+          1.0076009277783406
+        ],
+        "median_paired_ratio": 1.0076009277783406
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "rare",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.02046654875,
+          "min": 0.01969810725,
+          "max": 0.021161801350000002
+        },
+        "candidate_seconds": {
+          "median": 0.0090866492,
+          "min": 0.0076087689,
+          "max": 0.009604874650000001
+        },
+        "paired_candidate_baseline_ratios": [
+          0.44397564586945804,
+          0.3595520425769425,
+          0.487603937175233
+        ],
+        "median_paired_ratio": 0.44397564586945804
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "single",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.015130520650000001,
+          "min": 0.0135203529,
+          "max": 0.017524534
+        },
+        "candidate_seconds": {
+          "median": 0.003568528,
+          "min": 0.00305165555,
+          "max": 0.0039060033
+        },
+        "paired_candidate_baseline_ratios": [
+          0.2036304075189674,
+          0.22570827644594987,
+          0.2581539254566233
+        ],
+        "median_paired_ratio": 0.22570827644594987
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "none",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.009397143,
+          "min": 0.00897626995,
+          "max": 0.00953424495
+        },
+        "candidate_seconds": {
+          "median": 0.00011642969999999999,
+          "min": 0.00011123845000000001,
+          "max": 0.0001258038
+        },
+        "paired_candidate_baseline_ratios": [
+          0.011837475496541875,
+          0.012211737857647552,
+          0.014015153365569178
+        ],
+        "median_paired_ratio": 0.012211737857647552
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 2.2548797130000002,
+          "min": 2.226496517,
+          "max": 2.299612055
+        },
+        "candidate_seconds": {
+          "median": 2.198537158,
+          "min": 2.186568532,
+          "max": 2.31187837
+        },
+        "paired_candidate_baseline_ratios": [
+          0.9820668998603242,
+          0.9560469789761996,
+          1.025277914680498
+        ],
+        "median_paired_ratio": 0.9820668998603242
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "rare",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.097125787,
+          "min": 0.089831072,
+          "max": 0.098076392
+        },
+        "candidate_seconds": {
+          "median": 0.031457525,
+          "min": 0.031348193,
+          "max": 0.037881066
+        },
+        "paired_candidate_baseline_ratios": [
+          0.3238843768648176,
+          0.3862404114539613,
+          0.3489682612270285
+        ],
+        "median_paired_ratio": 0.3489682612270285
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "single",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.064861681,
+          "min": 0.062215986,
+          "max": 0.068719846
+        },
+        "candidate_seconds": {
+          "median": 0.007669036,
+          "min": 0.006878705,
+          "max": 0.00820705
+        },
+        "paired_candidate_baseline_ratios": [
+          0.11942765413065681,
+          0.11823677526951544,
+          0.11056169711752217
+        ],
+        "median_paired_ratio": 0.11823677526951544
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "none",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.057272667,
+          "min": 0.053801009,
+          "max": 0.063259073
+        },
+        "candidate_seconds": {
+          "median": 0.000388131,
+          "min": 0.000262763,
+          "max": 0.000460869
+        },
+        "paired_candidate_baseline_ratios": [
+          0.00804692751605229,
+          0.006135578369920154,
+          0.004883979034668291
+        ],
+        "median_paired_ratio": 0.006135578369920154
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 14.370354129,
+          "min": 13.920707582,
+          "max": 14.458603073
+        },
+        "candidate_seconds": {
+          "median": 13.878211346,
+          "min": 13.755669976,
+          "max": 14.047125264
+        },
+        "paired_candidate_baseline_ratios": [
+          0.9715409706648359,
+          0.9969472646595243,
+          0.9572255389476073
+        ],
+        "median_paired_ratio": 0.9715409706648359
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "rare",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.699078483,
+          "min": 0.687277212,
+          "max": 0.838426132
+        },
+        "candidate_seconds": {
+          "median": 0.272617705,
+          "min": 0.263029398,
+          "max": 0.290378107
+        },
+        "paired_candidate_baseline_ratios": [
+          0.422505070632256,
+          0.3137180342561174,
+          0.3899672377700688
+        ],
+        "median_paired_ratio": 0.3899672377700688
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "single",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.462479644,
+          "min": 0.435801143,
+          "max": 0.488830112
+        },
+        "candidate_seconds": {
+          "median": 0.017993299,
+          "min": 0.016957636,
+          "max": 0.018593
+        },
+        "paired_candidate_baseline_ratios": [
+          0.03891140781152105,
+          0.03803570922406679,
+          0.038906142645275
+        ],
+        "median_paired_ratio": 0.038906142645275
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "none",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.4369829,
+          "min": 0.429145075,
+          "max": 0.450974259
+        },
+        "candidate_seconds": {
+          "median": 0.000371146,
+          "min": 0.000343204,
+          "max": 0.000546438
+        },
+        "paired_candidate_baseline_ratios": [
+          0.0007997388761830717,
+          0.001211683347984613,
+          0.0008493375827749782
+        ],
+        "median_paired_ratio": 0.0008493375827749782
+      }
+    ]
+  },
+  "controls": {
+    "measurements": 24,
+    "verified": 24,
+    "censored": 0,
+    "cases": [
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.059153535666666666,
+          "min": 0.058736197999999996,
+          "max": 0.05918919266666667
+        },
+        "candidate_seconds": {
+          "median": 0.05856154633333333,
+          "min": 0.05569849366666666,
+          "max": 0.06373873033333334
+        },
+        "paired_candidate_baseline_ratios": [
+          1.0851694951949962,
+          0.9893959301511676,
+          0.9415919613077847
+        ],
+        "median_paired_ratio": 0.9893959301511676
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "none",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 4.28857e-05,
+          "min": 3.99838e-05,
+          "max": 4.492675e-05
+        },
+        "candidate_seconds": {
+          "median": 4.65772e-05,
+          "min": 4.44045e-05,
+          "max": 0.0001505518
+        },
+        "paired_candidate_baseline_ratios": [
+          0.9883755223780931,
+          1.0860776435968165,
+          3.765319954581605
+        ],
+        "median_paired_ratio": 1.0860776435968165
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 13.287917635,
+          "min": 13.232443934,
+          "max": 14.026273414
+        },
+        "candidate_seconds": {
+          "median": 13.939178590000001,
+          "min": 13.749332948,
+          "max": 14.457891195
+        },
+        "paired_candidate_baseline_ratios": [
+          1.0490115135335125,
+          1.0390622485595333,
+          1.0307720923626935
+        ],
+        "median_paired_ratio": 1.0390622485595333
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "none",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.000150245,
+          "min": 0.000146779,
+          "max": 0.000156965
+        },
+        "candidate_seconds": {
+          "median": 0.000176695,
+          "min": 0.000176124,
+          "max": 0.000183274
+        },
+        "paired_candidate_baseline_ratios": [
+          1.1999264199919606,
+          1.1676106138311089,
+          1.1760457918732736
+        ],
+        "median_paired_ratio": 1.1760457918732736
+      }
+    ]
+  },
+  "sources_sha256": {
+    "crates/observability/src/querier/state/request_state/querier_state.rs": "e3213d114f56ab70c25676e164d994c1535bffa0b7d27d7fa2627c46c4915f2e",
+    "crates/observability/src/tests/shard_index_cache/querier_state_with_request_tenant_index_caches_shard_indexes_for_repeated_range.rs": "c324113acc3270f89e8899cbe3512c6d86e47061c821c0ab05dacbc0132727f8",
+    "benches/src/log_frontend.rs": "4690cf3b2df05fdade02246e221768ef78235b6ef1339df8fa4d8211e711ef7a",
+    "benches/src/log_queries.rs": "4d1fdca41cb461f699798b2431574920db91e59a31855efdcca12c5e8dfa64ce",
+    "benches/benches/log_query_frontend.rs": "af9127dbcc78c96ee07aca92f71e69609d8d67eb3e03f9b7f147fda0f927393f",
+    "benches/examples/log_query_frontend_profile.rs": "2dcaa60466c1c39889aad93c43407114bcd2eb8c6483a7bd6a428293f41bd449"
+  },
+  "baseline_source_sha256": "dc7c9ac171c920883fb94069207863a113b32201349d4bb7f722f6242c91a39d",
+  "binaries": {
+    "baseline": {
+      "path": "qualification/evidence/single-shard-index-reuse-2026-10-10/binaries/baseline/log-query-frontend",
+      "sha256": "71838f284ee951797ee84a7dba9f1594f454fa3f778f21ce4b4c1cdc96b2c9e9",
+      "bytes": 226753520
+    },
+    "candidate": {
+      "path": "qualification/evidence/single-shard-index-reuse-2026-10-10/binaries/candidate/log-query-frontend",
+      "sha256": "7c4d73fdee08583a0c3d64bd946a6a2005647dbb7725ce7b50439fab4c5e6e31",
+      "bytes": 226848560
+    }
+  },
+  "baseline_production_library": {
+    "path": "qualification/evidence/shard-label-selection-matched-2026-10-10/binaries/candidate/libkrabka_observability.rlib",
+    "sha256": "bb492bcf598feab7149fcf2f06d6c95c9c6612bd81ab527d06b38b29cb3bc3d2",
+    "provenance": "qualification/shard-label-selection-matched-2026-10-10.json"
+  },
+  "upstream": {
+    "system": "Loki",
+    "source_commit": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
+    "url": "https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/storage/stores/shipper/indexshipper/tsdb/multi_file_index.go",
+    "source_sha256": "a8999cc32ecd524f7c6090263becbdb8cbdeaac8277e39736fbb740d1065e3ec",
+    "finding": "IndexSlice.For directly visits one index; MultiIndex visits overlapping existing readers and accumulates query results without materializing a full label/postings index per request. Krabka still materializes its multiple-shard merge."
+  },
+  "cpu": {
+    "scope": "Whole process: fixture creation, one verification request and 50 timed empty-result shard requests at 20000 streams",
+    "event": "cpu-clock:u",
+    "frequency_hz": 199,
+    "stack_bytes": 8192,
+    "mmap_pages": 512,
+    "threshold_percent": 0.5,
+    "captures": {
+      "baseline": {
+        "samples": 720,
+        "lost_samples": 0,
+        "approximate_event_nanoseconds": 3618090000
+      },
+      "candidate": {
+        "samples": 100,
+        "lost_samples": 0,
+        "approximate_event_nanoseconds": 502512500
+      }
+    },
+    "limitation": "Cumulative callers overlap; candidate capture is dominated by fixture construction and is not a query-only CPU ratio",
+    "baseline_merge_cumulative_percent": 41.67,
+    "candidate_merge_entry": "Absent at 0.5% reporting threshold"
+  },
+  "heap": {
+    "scope": "Whole process: fixture construction, one verification and 20 timed empty-result shard requests at 5000 streams",
+    "captures": [
+      {
+        "variant": "baseline",
+        "allocation_calls": 3566134,
+        "temporary_allocations": 1332037,
+        "peak_heap": "57.18M",
+        "peak_rss_including_profiler": "102.58M"
+      },
+      {
+        "variant": "candidate",
+        "allocation_calls": 751799,
+        "temporary_allocations": 177212,
+        "peak_heap": "57.18M",
+        "peak_rss_including_profiler": "100.73M"
+      }
+    ],
+    "limitation": "Counts include construction and verification; RSS includes profiler overhead; peak heap is unchanged"
+  },
+  "validation": {
+    "passed_tests": 585,
+    "suites": {
+      "observability_unit": 427,
+      "querier": 70,
+      "querier_object_store": 22,
+      "query_range": 56,
+      "per_tenant_limits": 10
+    },
+    "clippy": "all,pedantic -D warnings: production, full unit source, fixture library, profiling driver, Criterion source",
+    "format": "bazel --output_user_root=/workspace/.cloud-setup/bazel run --repository_cache=/workspace/.cloud-setup/bazel/cache/repos --remote_executor= --spawn_strategy=local //tools/format",
+    "criterion_inventory": {
+      "ids": 44,
+      "new_unseeded_ids": 16,
+      "total_unseeded_ids": 172,
+      "historical_numeric_budgets": 85,
+      "historical_numeric_budgets_changed": false
+    },
+    "tool_checks": [
+      "git diff --check",
+      "tools/mutants-record.py --check"
+    ]
+  },
+  "limitations": [
+    "Synthetic warmed local-filesystem timings with three pairs; no new native candidate/upstream comparison",
+    "Broad primary requests at 1000 streams retain a 6.1% median paired regression with overlapping ranges; all observations retained",
+    "Broad response costs remain dominant at large sizes; no general throughput or memory advantage claim",
+    "The fresh preceding native ingest diagnosis did not reproduce its earlier five-second tail latency; cause remains unresolved",
+    "Manifest-cached broad control at 100000 streams regresses by median paired ratio 1.0391, with overlapping ranges and all three candidate pairs slower",
+    "Manifest-cached empty-result control at 100000 streams regresses by ratio 1.1760 (medians 150/177 microseconds) with disjoint ranges; absolute impact is about 26 microseconds",
+    "A separate three-pair repeat confirms slower largest manifest controls; all repeated observations are retained"
+  ],
+  "reproduction_scripts_sha256": {
+    "archive-single-shard-artifact.py": "cc35c83704dace6ee4947809e04b9a9e3ecebe47f55596f2d9aafcd974decfb7",
+    "build-single-shard.py": "fc22f2dc90de195bd9f96d7f1085d8907fd31dc36f8d729b5fc29bd66032ef94",
+    "clippy-single-shard-fixture.py": "a7f36572dffab42135ec8e44b9e66147f7e8fc852dc60383f4ecb6a95cd99fd0",
+    "clippy-single-shard.py": "6c106e5e775199f051e1c7ea5e313732c95d3cc6941b9622691d40a0b69b97fe",
+    "compact-own-cargo-debug-cache-round2.py": "0e1c38e658fe450c72ce206287984e7a5027942627ade1ad1dc208cb2d897fdf",
+    "finalize-single-shard-record.py": "44fa268f28ededa86381e6c1291323fffa06d5daceac9d1e499ae364eade965c",
+    "profile-single-shard.py": "028e61c5b541f7d1ce758bd33ef8c4e987573d0073d8c1c07dc54422bbbf89ea",
+    "restore-single-shard-cache.py": "4c67ae880186d1ad1999dd4676baf15a9140e647c292b5b36271e0ad1afeab41",
+    "run-single-shard-control-round.py": "762bedcffe3b2373fde7158102598eebc33516d19a48b4241e0ec7d8aef7e2cb",
+    "run-single-shard-controls.py": "a281cfcf3ab985378517716b4dd4ff2fb3aa413b5e7e81bb6138772d39e7fcaf",
+    "run-single-shard-pairs.py": "438f882dd9c45d91fb019db86bb4fb473fefd3905cf17415525e7cee3c55fe17",
+    "run-single-shard-round.py": "3348fe8ac77d4da895b25f3ffa2226f8dc5846de4d1922040656b1f484680ec3",
+    "test-single-shard.py": "21d8536ce70f2d628530b9dd39ba26b16298b3ef511060d6ae7493ee7bfa5202"
+  },
+  "raw_manifest": {
+    "path": "qualification/evidence/single-shard-index-reuse-2026-10-10/raw-manifest.json",
+    "sha256": "07e7f5decc7c3dd47676b7cc8a3639143457d5a7f273168e19d77bf00a48281f",
+    "files": 118,
+    "bytes": 1102223688,
+    "scope": "Every file in this evidence directory except manifest; preceding baseline production library and its build proof remain in separately frozen bounded-label evidence"
+  },
+  "control_confirmation": "qualification/single-shard-index-control-repeat-2026-10-10.json",
+  "control_confirmation_summary": [
+    {
+      "case": "all",
+      "baseline_seconds": {
+        "median": 13.5706789,
+        "min": 13.457859764,
+        "max": 13.957609933
+      },
+      "candidate_seconds": {
+        "median": 14.692773911,
+        "min": 13.633221401,
+        "max": 16.170238236
+      },
+      "paired_candidate_baseline_ratios": [
+        1.1585248702049395,
+        1.0826852524673618,
+        1.0130304253481
+      ],
+      "median_paired_ratio": 1.0826852524673618
+    },
+    {
+      "case": "none",
+      "baseline_seconds": {
+        "median": 0.000180971,
+        "min": 0.000151166,
+        "max": 0.000209994
+      },
+      "candidate_seconds": {
+        "median": 0.000198988,
+        "min": 0.000181281,
+        "max": 0.000426228
+      },
+      "paired_candidate_baseline_ratios": [
+        2.3552281857314155,
+        1.199218078139264,
+        0.9475889787327257
+      ],
+      "median_paired_ratio": 1.199218078139264
+    }
+  ],
+  "retention_decision": "Repeat confirms slower manifest controls. Retain the single-shard optimization for its much larger selective/empty request gains while reporting this tradeoff. Broad-response performance needs further profiling; no universal performance advantage is claimed."
+}

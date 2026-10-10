@@ -1339,3 +1339,100 @@ This round adds no native deployment comparison or overall upstream parity
 claim. Borrowed fingerprint-range traversal, avoiding repeated bounded-index
 rebuilds, native ingest wait attribution and larger native comparisons remain
 unfinished.
+
+## Native ingest diagnosis on the current VM
+
+The [fresh native diagnostic](../qualification/ingest-wait-2026-10-10.json)
+uses the retained bounded-label candidate, 20,000 streams and 200,000 seed
+rows. Independent readback verifies every seeded label and row. Each
+measured write contains 1,000 entries at every cardinality; cardinality does
+not multiply the measured request size. Two writers submit once per second
+while cold-window queries run at a 250 ms interval. The application and
+broker share a 2.5 CPU budget, with a separate 0.5 CPU MinIO budget.
+
+The 30-second instrumented run accepts 60 writes and completes 113 queries
+with zero errors or empty query results. Ingest p99 is 0.376 s and query p99
+is 0.574 s. The earlier 5.020 s ingest p99 does not recur, and its cause
+remains unresolved. This is one fresh Krabka diagnostic, without a fresh
+Loki deployment or a causal before/after latency claim. Kafka `Acks::All`
+and API acknowledgement semantics remain in force. Loki's default WAL disk
+guard was not changed.
+
+The CPU capture samples application and broker userspace at 49 Hz, losing
+no samples. Exact mounted-binary symbol resolution attributes 37.14% of
+cumulative samples to `merge_tenant_shard_indexes`, 8.01% of self samples to
+label-index insertion, 4.77% to `malloc`, and 6.47% to `cfree`. Cumulative
+callers overlap; these percentages do not measure request wait time. They
+identify repeated tenant-index materialization as the next optimization
+target. The seed ledger is updated while readback proceeds, so an
+intermediate `verified: false` means the check is incomplete; its final
+value verifies all 200,000 rows.
+
+## Reusing one cached tenant shard
+
+A request that overlaps exactly one persisted tenant shard now retains its
+immutable label and block indexes. The shard reader already filters both
+indexes to the requested tenant. Multiple shards still use the existing
+merge, including first-descriptor deduplication. TTLs, frontier generations
+and old-request snapshot lifetimes retain their existing rules. The
+moving-window cache test checks shared identity and complete contents after
+cache clearing.
+
+The added `log_query_frontend/shards_*` fixtures use real local Parquet and
+an immutable shard snapshot. The shard cache lasts one hour, while the
+request-index and result caches expire immediately. This exposes the
+preparation cost of windows that do not reuse the merged request cache.
+The same four stream counts reach one million rows; every timed process
+first verifies its complete API envelope, labels and rows against the input
+ledger. Fixture creation and verification are excluded from timings.
+
+The [paired experiment](../qualification/single-shard-index-reuse-2026-10-10.json)
+passes all 96 primary payload checks, with three alternating pairs at each
+size. At 100,000 streams:
+
+| Request over cached shard | Baseline median | Candidate median | Median paired ratio |
+| --- | --- | --- | --- |
+| All streams | 14.370 s | 13.878 s | 0.9715 |
+| Roughly one sixty-fourth | 0.699 s | 0.273 s | 0.3900 |
+| One stream | 0.462 s | 0.0180 s | 0.0389 |
+| Empty result | 0.437 s | 0.000371 s | 0.000849 |
+
+Selective and empty-result ranges are disjoint at this size. Broad ranges
+overlap, and the smallest broad case retains a 6.1% median paired regression
+with overlapping ranges. The 5,000-stream broad paired ratio is 1.0076. All
+measurements and ranges remain in the record; broad response construction
+continues to dominate large requests.
+
+CPU captures include fixture creation, one verification request and 50 timed
+empty-result requests at 20,000 streams. They lose no samples. Baseline
+merging accounts for 41.67% of cumulative samples; the candidate has no
+merge entry at the 0.5% threshold. Its 100 samples are dominated by fixture
+construction, so these captures do not establish a query-only CPU ratio.
+Whole-process heap captures include construction, one verification and 20
+timed empty-result requests at 5,000 streams. Allocation calls fall from
+3,566,134 to 751,799, while peak heap remains 57.18 MB. Instrumented RSS is
+102.58/100.73 MB; no general memory advantage is inferred.
+
+All 585 unit and scoped integration tests pass, as do strict production,
+unit-source, fixture, profiling-driver and Criterion lint checks. The 44
+Criterion IDs include 16 new unseeded shard cases; all 85 historical numeric
+budgets remain unchanged. Native profiling supplied the hypothesis, while
+this experiment measures local synthetic frontend requests. A fresh native
+candidate/upstream comparison remains unfinished.
+
+The 24 manifest-cache control measurements also verify complete payloads.
+Their largest broad case retains a 3.9% median paired regression, with
+overlapping ranges and all three candidate pairs slower. The largest empty
+control rises from 150 to 177 microseconds (paired ratio 1.1760), with
+disjoint ranges. These control costs are retained alongside the selective
+shard gains and require a separate repeat before a broader performance claim.
+
+The [separate control repeat](../qualification/single-shard-index-control-repeat-2026-10-10.json)
+verifies all 12 observations using the identical retained executables and
+three alternating pairs. Broad medians are 13.571/14.693 s
+with median paired ratio 1.0827; empty medians are
+181.0/199.0 microseconds with paired ratio
+1.1992. The slower controls recur. The single-shard
+change is retained for its much larger selective and empty-request gains,
+with this tradeoff explicit. Broad-response profiling and a fresh native
+candidate/upstream comparison remain outstanding.

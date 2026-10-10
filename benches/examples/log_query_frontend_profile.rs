@@ -10,7 +10,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let iterations = args.next().expect("iteration count").parse::<usize>()?;
     let name = args.next().expect("request case");
     let runtime = tokio::runtime::Runtime::new()?;
-    let fixture = runtime.block_on(LogFrontendFixture::new(streams));
+    let shards = args.next().is_some_and(|source| source == "shards");
+    let fixture = runtime.block_on(async {
+        if shards {
+            LogFrontendFixture::new_shards(streams).await
+        } else {
+            LogFrontendFixture::new(streams).await
+        }
+    });
     runtime.block_on(fixture.verify(&name))?;
     let started = Instant::now();
     for _ in 0..iterations {

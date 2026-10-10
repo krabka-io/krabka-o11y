@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use krabka_blockstore::{
     BlockKey, LabelIndex, LogBlockIndex, LogRow, TimeRange, labels,
     write_log_block_to_object_store, write_tenant_log_index_manifest_to_object_store,
+    write_tenant_log_index_shards_to_object_store,
 };
 use krabka_logql::{StreamPlan, parse_query, plan_stream_query};
 use object_store::{ObjectStore, memory::InMemory, path::Path as ObjectPath};
@@ -135,6 +136,23 @@ impl LogQueryFixture {
         )
         .await
         .expect("the fixture indexes write");
+    }
+
+    /// Persist one tenant shard containing all fixture rows.
+    ///
+    /// # Panics
+    /// Panics if writing the deterministic fixture shard fails.
+    pub async fn persist_shard(&self) {
+        write_tenant_log_index_shards_to_object_store(
+            self.store.as_ref(),
+            &self.prefix,
+            TENANT,
+            &[TimeRange::new(0, 9).expect("the fixture range is valid")],
+            &self.label_index,
+            &self.block_index,
+        )
+        .await
+        .expect("the fixture shard writes");
     }
 
     /// Physical block size for configuring a fixed number of frontend shards.

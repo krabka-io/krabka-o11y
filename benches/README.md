@@ -99,6 +99,13 @@ cache. Cases cover all streams, all streams with a small shard-byte budget,
 one quarter of streams, roughly one sixty-fourth, one stream, an empty result,
 and label values. Fixture limits allow the complete broad response.
 
+The `shards_all`, `shards_rare`, `shards_single`, and `shards_none` cases
+retain one persisted tenant shard for an hour, with request-index and result
+caches disabled. They expose index preparation for moving query windows
+without including shard download in the timer. The profiling example accepts
+a final `shards` argument to select this fixture. These 16 new IDs remain
+`unseeded`; the historical numeric budgets are unchanged.
+
 Each case checks the API envelope and every label and row against the input
 ledger before timing. Execution statistics are excluded from equality because
 request timings and cache counters vary. Handler preparation, selection,

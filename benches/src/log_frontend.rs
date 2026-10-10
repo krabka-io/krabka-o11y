@@ -58,6 +58,18 @@ impl LogFrontendFixture {
     /// # Panics
     /// Panics if fixture persistence or service construction fails.
     pub async fn new(streams: usize) -> Self {
+        Self::with_index_source(streams, QuerierIndexSource::TenantObjectStoreManifest).await
+    }
+
+    /// Cache the persisted shard but prepare a fresh merged index per request.
+    ///
+    /// # Panics
+    /// Panics if fixture persistence or service construction fails.
+    pub async fn new_shards(streams: usize) -> Self {
+        Self::with_index_source(streams, QuerierIndexSource::TenantObjectStoreShards).await
+    }
+
+    async fn with_index_source(streams: usize, source: QuerierIndexSource) -> Self {
         let root = FixtureRoot(std::env::temp_dir().join(format!(
             "krabka-log-frontend-{}-{}",
             std::process::id(),
@@ -67,7 +79,11 @@ impl LogFrontendFixture {
         let store =
             Arc::new(LocalFileSystem::new_with_prefix(&root.0).expect("the fixture store opens"));
         let queries = LogQueryFixture::new_in_store(streams, store).await;
-        queries.persist_indexes().await;
+        if source == QuerierIndexSource::TenantObjectStoreShards {
+            queries.persist_shard().await;
+        } else {
+            queries.persist_indexes().await;
+        }
         let limits = root.0.join("limits.yaml");
         std::fs::write(
             &limits,
@@ -79,9 +95,16 @@ impl LogFrontendFixture {
             data_root: root.0.join("cache"),
             object_store_url: Some(format!("file://{}", root.0.display())),
             index_prefix: Some(queries.prefix.to_string()),
-            querier_index_source: QuerierIndexSource::TenantObjectStoreManifest,
+            querier_index_source: source,
             logs_limits_overrides_config: Some(limits),
-            querier_dynamic_index_cache_ttl: hours(1),
+            querier_dynamic_index_cache_ttl: if source
+                == QuerierIndexSource::TenantObjectStoreShards
+            {
+                secs(0)
+            } else {
+                hours(1)
+            },
+            querier_shard_index_cache_ttl: hours(1),
             querier_query_frontend_cache_ttl: secs(0),
             ..ServiceConfig::default()
         };

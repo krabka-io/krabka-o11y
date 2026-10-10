@@ -24,6 +24,25 @@ fn log_query_frontend(criterion: &mut Criterion) {
         }
     }
     group.finish();
+    let mut group = criterion.benchmark_group("log_query_frontend");
+    group.sample_size(10);
+    for streams in [1_000, 5_000, 20_000, 100_000] {
+        let fixture = runtime.block_on(LogFrontendFixture::new_shards(streams));
+        for name in ["all", "rare", "single", "none"] {
+            group.bench_function(
+                BenchmarkId::new(format!("shards_{name}"), streams),
+                |bencher| {
+                    runtime
+                        .block_on(fixture.verify(name))
+                        .expect("the complete payload matches");
+                    bencher.to_async(&runtime).iter(|| async {
+                        black_box(fixture.execute(name).await.expect("the request succeeds"))
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
 }
 
 criterion_group!(benches, log_query_frontend);

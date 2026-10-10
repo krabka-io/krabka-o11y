@@ -1,0 +1,199 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "date": "2026-10-10",
+  "execution": "Current VM only; no GCP VM launches",
+  "source_commit": "2d3e2910cb88f23c84bca686da03dd45c52c21a3",
+  "evidence_directory": "qualification/evidence/ingest-wait-2026-10-10",
+  "scope": "Instrumented native Krabka logs diagnosis; fresh upstream comparison and overall parity are unqualified",
+  "binary": {
+    "path": "/workspace/krabka-o11y/qualification/evidence/ingest-wait-2026-10-10/binaries/krabka-observability",
+    "bytes": 237938328,
+    "sha256": "056dacac8cd01f296da211ee86a6ad66c4327ef832b393c968a9f71d829b6b8b"
+  },
+  "baseline_production_library": "qualification/evidence/shard-label-selection-matched-2026-10-10/binaries/candidate/libkrabka_observability.rlib",
+  "workload": {
+    "streams": 20000,
+    "seed_rows": 200000,
+    "rows_per_write": 1000,
+    "writers": 2,
+    "write_interval_seconds": 1,
+    "query_interval_seconds": 0.25,
+    "query_window_seconds": 1800,
+    "seconds": 30,
+    "warmup_seconds": 7.5,
+    "application_and_broker_cpu_budget": 2.5,
+    "minio_cpu_budget": 0.5,
+    "target": "all",
+    "acknowledgements": "Kafka producer Acks::All; API acknowledgement, no post-request catch-up wait"
+  },
+  "seed_verification": {
+    "seed_unique_rows": 200000,
+    "query_limit": 1000,
+    "expected_query_rows": 200000,
+    "observed_query_rows": 200000,
+    "query_count": 200,
+    "expected_query_count": 200,
+    "complete_seed": true,
+    "verified": true
+  },
+  "results": {
+    "signal": "logs",
+    "writers": 2,
+    "cardinality": 20000,
+    "warmup_seconds": 7.5,
+    "duration_seconds": 30.715938631001336,
+    "write_interval_seconds": 1,
+    "ingest": {
+      "attempts": 60,
+      "errors": 0,
+      "error_rate": 0.0,
+      "accepted_rows": 60000,
+      "accepted_rows_per_sec": 1953.3832490289751,
+      "latency_seconds": {
+        "count": 60,
+        "p50": 0.030143082003633026,
+        "p95": 0.30832246399950236,
+        "p99": 0.37644366799941054
+      },
+      "empty_queries": 0,
+      "status_counts": {
+        "204": 60
+      }
+    },
+    "query": {
+      "attempts": 113,
+      "errors": 0,
+      "error_rate": 0.0,
+      "accepted_rows": 0,
+      "accepted_rows_per_sec": 0.0,
+      "latency_seconds": {
+        "count": 113,
+        "p50": 0.07134370199491968,
+        "p95": 0.4420208509982331,
+        "p99": 0.5741166469961172
+      },
+      "empty_queries": 0,
+      "status_counts": {
+        "200": 113
+      }
+    },
+    "telemetry": {
+      "wal_lag_records_max": 0.0,
+      "wal_lag_records_last": [
+        0.0
+      ],
+      "rss_kib_peak_by_role": {
+        "broker": 25396,
+        "minio": 311556,
+        "logs-all": 1198984
+      },
+      "object_requests": 1166.0,
+      "object_bytes": 33801203.0,
+      "maintenance": {
+        "krabka_logs_compaction_runs_total{status=\"ok\"}": 30.0,
+        "krabka_logs_compaction_blocks_total": 30.0,
+        "krabka_logs_compaction_deletion_sweeps_total": 0.0,
+        "krabka_logs_compaction_deleted_blocks_total": 0.0,
+        "krabka_logs_compaction_deleted_sidecars_total": 0.0,
+        "krabka_logs_compaction_deletion_failures_total": 0.0,
+        "krabka_logs_compaction_orphan_sweeps_total": 0.0,
+        "krabka_logs_compaction_orphans_deleted_total": 0.0,
+        "krabka_logs_compaction_orphan_failures_total": 0.0
+      },
+      "cpu_seconds_by_role": {},
+      "expected_restart_gaps": 0,
+      "scrape_errors": 0
+    },
+    "tenant": "cardinality-20000",
+    "tenants": {
+      "cardinality-20000": {
+        "attempts": 60,
+        "errors": 0,
+        "error_rate": 0.0,
+        "accepted_rows": 60000,
+        "accepted_rows_per_sec": 1953.3832490289751,
+        "latency_seconds": {
+          "count": 60,
+          "p50": 0.030143082003633026,
+          "p95": 0.30832246399950236,
+          "p99": 0.37644366799941054
+        },
+        "empty_queries": 0,
+        "status_counts": {
+          "204": 60
+        }
+      }
+    },
+    "objectives_met": true,
+    "diagnostic_instrumented": true,
+    "profiler_scope": "30 seconds of logs-all and broker CPU with concurrent writes and cold-window reads",
+    "binary_sha256": "056dacac8cd01f296da211ee86a6ad66c4327ef832b393c968a9f71d829b6b8b",
+    "harness_sha256": "fe2d806d0f1d9218230c7cd44af2ae8bc5718b7303cae0f99804f2d834c7bff7"
+  },
+  "broker_produce": {
+    "count_delta": 1442.0,
+    "duration_sum_seconds_delta": 0.2021523940000013,
+    "mean_seconds": 0.00014018890013869716
+  },
+  "profile": {
+    "scope": "30 seconds of app and broker userspace CPU during concurrent writes and cold-window queries",
+    "sample_frequency_hz": 49,
+    "samples": 587,
+    "lost_samples": 0,
+    "symbol_resolution": "Initial raw reports contain unresolved addresses; final reports map the exact mounted application ELF into a separate symfs",
+    "merge_tenant_shard_indexes_cumulative_percent": 37.14,
+    "insert_series_self_percent": 8.01,
+    "malloc_self_percent": 4.77,
+    "free_self_percent": 6.47,
+    "interpretation": "Index preparation and allocation costs guide the next single-shard reuse experiment; cumulative percentages overlap and do not attribute request wait time"
+  },
+  "limitations": [
+    "One instrumented diagnostic run; no causal before/after latency claim",
+    "Earlier five-second ingest p99 did not recur; its cause remains unresolved",
+    "Seed verification ledger is written incrementally; intermediate verified=false meant verification was incomplete, final ledger verifies all rows",
+    "Loki was not launched in this diagnostic and its default WAL disk guard was not changed"
+  ],
+  "source_sha256": {
+    "crates/observability/src/querier/state/request_state/querier_state.rs": "dc7c9ac171c920883fb94069207863a113b32201349d4bb7f722f6242c91a39d",
+    "crates/observability/src/wal/hot_tail/kafka_log_wal_sink.rs": "521bd99b468bdce952ac4786eb40dd195d9f473a7fe30c33e927b742cff33c5d",
+    "crates/observability/src/wal_produce/write_batch_pipelined.rs": "54fe5b7e9e1d624d3c957868158292fc9dccb92eb9122477a46f74efa5181d90",
+    "tools/compare-grafana.py": "fe2d806d0f1d9218230c7cd44af2ae8bc5718b7303cae0f99804f2d834c7bff7",
+    "tools/deployment-envelope.py": "2038dcff6219429e61a4923d2f6408a83bd96faecb4ab5125f07faa89d29206d"
+  },
+  "raw_manifest": {
+    "path": "qualification/evidence/ingest-wait-2026-10-10/raw-manifest.json",
+    "sha256": "e4e67bb711d9e225f80581f671655b69902ac845ce2e8d264033c518d5694548",
+    "files": 282,
+    "bytes": 669343185
+  },
+  "resource_cost": {
+    "cpu_seconds_by_role": {
+      "broker": 0.62268,
+      "logs-all": 12.459046,
+      "minio": 1.050743
+    },
+    "cpu_seconds_total": 13.081726,
+    "accounting_scope": "application_and_broker_excluding_object_store",
+    "load_generator_cpu_seconds": 0.4555458379999999,
+    "throttled_seconds_by_role": {
+      "broker": 0.0,
+      "logs-all": 0.0,
+      "minio": 0.325811
+    },
+    "rss_kib_simultaneous_peak": 1223528,
+    "object_store": {
+      "role": "minio",
+      "cpu_seconds": 1.050743,
+      "throttled_seconds": 0.325811,
+      "rss_kib_peak": 311556
+    },
+    "s3_requests": 1368.0,
+    "s3_read_bytes": 36221039.0,
+    "s3_write_bytes": 1699747.0,
+    "external_cpu_cores_mean": 1.710698560823822,
+    "external_cpu_cores_peak_window": 2.0437673747715572,
+    "host_activity_qualified": true
+  },
+  "resource_cost_derivation": "tools/compare-grafana.py cost(raw native-logs/telemetry.jsonl); all raw telemetry remains covered by the frozen manifest"
+}

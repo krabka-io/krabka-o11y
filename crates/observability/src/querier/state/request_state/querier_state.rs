@@ -402,8 +402,6 @@ impl QuerierState {
                 let (label_index, block_index) = self
                     .cached_tenant_shard_indexes(store.as_ref(), prefix, tenant, query_range)
                     .await?;
-                let label_index = Arc::new(label_index);
-                let block_index = Arc::new(block_index);
                 self.dynamic_index_cache.insert(
                     cache_key,
                     Arc::clone(&label_index),
@@ -463,7 +461,7 @@ impl QuerierState {
         prefix: &ObjectPath,
         tenant: &str,
         query_range: TimeRange,
-    ) -> Result<(LabelIndex, BlockIndex), BlockStoreError> {
+    ) -> Result<(Arc<LabelIndex>, Arc<BlockIndex>), BlockStoreError> {
         let shard_ranges = self
             .cached_tenant_shard_ranges(store, prefix, tenant)
             .await?;
@@ -517,7 +515,13 @@ impl QuerierState {
             indexes.push((label_index, block_index));
         }
 
-        Ok(merge_tenant_shard_indexes(tenant, indexes))
+        // Shard reads filter both indexes to this tenant before caching them.
+        // One immutable shard already is the complete requested index.
+        if indexes.len() == 1 {
+            return Ok(indexes.pop().expect("one tenant shard exists"));
+        }
+        let (labels, blocks) = merge_tenant_shard_indexes(tenant, indexes);
+        Ok((Arc::new(labels), Arc::new(blocks)))
     }
 
     /// # Errors
