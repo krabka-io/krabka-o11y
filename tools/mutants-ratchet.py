@@ -66,11 +66,12 @@ The shard logs are synthetic, and the block says so.
 
 import argparse
 import json
-import os
 import pathlib
 import re
 import sys
 import tempfile
+
+from ratchet_annotations import annotate, keep_stdout_for_json
 
 # The line //mutants/private/cargo_mutants_runner.rs prints per shard.
 # Leading whitespace is tolerated so the same parser reads a console
@@ -118,24 +119,6 @@ class UsageError(Exception):
 
 class ProofFailed(Exception):
     """`--prove-gate` saw the gate pass a sweep it has to reject."""
-
-
-def annotate(level, message):
-    """Prints a message, as a GitHub annotation when the run is on Actions."""
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        print(f"::{level}::{message}", flush=True)
-    else:
-        print(f"{level}: {message}", flush=True)
-
-
-def keep_stdout_for_json(destination):
-    """Sends every other line to standard error when the JSON goes to stdout.
-
-    `--json -` is for a pipe into another tool, and the annotations would
-    break that JSON.
-    """
-    if destination == "-":
-        sys.stdout = sys.stderr
 
 
 def shard_logs(logs_root, crate):

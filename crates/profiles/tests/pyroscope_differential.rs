@@ -161,18 +161,7 @@ async fn real_pyroscope_render_matches_krabka_after_identical_ingest() -> TestRe
         fixture_nanos,
     )?;
 
-    let sink = CapturingSink::default();
-    let store = WalTailProfileStore::new();
-    let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
-
-    post_push_profile(&client, PushTarget::oracle(&pyroscope_base), &gzipped_pprof).await?;
-    post_push_profile(
-        &client,
-        PushTarget::krabka(&krabka.distributor_base),
-        &gzipped_pprof,
-    )
-    .await?;
-    drain_sink_into_cold_store(&sink)?;
+    let krabka = ingest_into_both(&client, &pyroscope_base, &gzipped_pprof).await?;
 
     let pyroscope_render = render_until_non_empty(
         &client,
@@ -295,18 +284,7 @@ async fn real_pyroscope_series_and_stats_match_krabka_after_identical_ingest() -
     wait_for_http_ok(&client, &pyroscope_base, &["/ready"]).await?;
     let gzipped_pprof = fetch_goroutine_pprof(&client, &pyroscope_base).await?;
 
-    let sink = CapturingSink::default();
-    let store = WalTailProfileStore::new();
-    let krabka = start_krabka_pair(sink.clone(), store.clone()).await?;
-
-    post_push_profile(&client, PushTarget::oracle(&pyroscope_base), &gzipped_pprof).await?;
-    post_push_profile(
-        &client,
-        PushTarget::krabka(&krabka.distributor_base),
-        &gzipped_pprof,
-    )
-    .await?;
-    drain_sink_into_cold_store(&sink)?;
+    let krabka = ingest_into_both(&client, &pyroscope_base, &gzipped_pprof).await?;
 
     // (a) GetProfileStats — empty (all-default) request body. Pyroscope ingests
     // asynchronously, so poll until it reports data, then compare.
@@ -942,6 +920,27 @@ impl KrabkaPair {
             let _ = tx.send(());
         }
     }
+}
+
+/// Starts a krabka pair, pushes `gzipped_pprof` to both it and the Pyroscope
+/// at `pyroscope_base`, and drains krabka's WAL into its cold store.
+async fn ingest_into_both(
+    client: &reqwest::Client,
+    pyroscope_base: &str,
+    gzipped_pprof: &[u8],
+) -> TestResult<KrabkaPair> {
+    let sink = CapturingSink::default();
+    let krabka = start_krabka_pair(sink.clone(), WalTailProfileStore::new()).await?;
+
+    post_push_profile(client, PushTarget::oracle(pyroscope_base), gzipped_pprof).await?;
+    post_push_profile(
+        client,
+        PushTarget::krabka(&krabka.distributor_base),
+        gzipped_pprof,
+    )
+    .await?;
+    drain_sink_into_cold_store(&sink)?;
+    Ok(krabka)
 }
 
 async fn start_krabka_pair(

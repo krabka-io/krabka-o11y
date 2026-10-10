@@ -1,7 +1,8 @@
 use super::{
-    DistributorState, HeaderMap, PushError, PushSuccess, TenantId, TranslationStrategy,
-    append_decoded_series, decode_otlp_http_body, decode_otlp_stateful_bytes_partial,
-    otlp_translation_strategy, require_otlp_protobuf_content_type,
+    DistributorState, HeaderMap, OtlpDecodeOptions, PushError, PushSuccess, TenantId,
+    TranslationStrategy, append_decoded_series, decode_otlp_http_body,
+    decode_otlp_stateful_bytes_partial, otlp_translation_strategy,
+    require_otlp_protobuf_content_type,
 };
 
 pub(crate) struct OtlpPartialSuccess {
@@ -57,9 +58,11 @@ fn decode_tenant_otlp(
     guard.seen_at(now);
     let decoded = decode_otlp_stateful_bytes_partial(
         body,
-        strategy,
-        &mut guard,
-        &state.otlp_promote_resource_attributes,
+        OtlpDecodeOptions {
+            strategy,
+            accumulator: Some(&mut guard),
+            additional_resource_attributes: &state.otlp_promote_resource_attributes,
+        },
     );
     // Bound before the error is propagated, so a rejected body cannot leave the
     // streams it created behind.

@@ -778,17 +778,17 @@ mod tests {
         let second = Arc::new(QuerierState::empty().with_admin_store(store.clone()));
         let tenant: TenantId = "tenant-a".parse().unwrap();
         let id = "88888888-8888-4888-8888-888888888888";
-        publish_pending(&first, &tenant, id, 1, 0).await;
-        let (mut initial, version) = record::load(&first, &tenant, id).await.unwrap();
-        initial.owner.clone_from(&first.async_runtime.owner);
-        check!(
-            record::write(&first, &initial, PutMode::Update(version))
-                .await
-                .unwrap()
-        );
         // Force the TOCTOU interleaving: A reads, B takes ownership, then A
         // stages its answer and tries to publish the old metadata generation.
-        let (observed_by_first, first_version) = record::load(&first, &tenant, id).await.unwrap();
+        let (observed_by_first, first_version) = claimed_pending(
+            &first,
+            &tenant,
+            StalePending {
+                id,
+                heartbeat_ms: 1,
+            },
+        )
+        .await;
         let (mut adopted, second_version) = record::load(&second, &tenant, id).await.unwrap();
         adopted.owner.clone_from(&second.async_runtime.owner);
         adopted.adoptions += 1;
@@ -1149,8 +1149,21 @@ mod tests {
         check!(record::load(&state, &tenant, id).await.unwrap_err().code() == Code::NotFound);
     }
 
-    async fn owned_pending(state: &QuerierState, tenant: &TenantId, id: &str) -> record::Record {
-        publish_pending(state, tenant, id, record::now_ms(), 0).await;
+    /// A pending query to publish, and the heartbeat its lost owner last wrote.
+    struct StalePending<'a> {
+        id: &'a str,
+        heartbeat_ms: i64,
+    }
+
+    /// Publishes `pending` under a lost owner, has `state` claim it, and
+    /// loads the claimed record with its version.
+    async fn claimed_pending(
+        state: &QuerierState,
+        tenant: &TenantId,
+        pending: StalePending<'_>,
+    ) -> (record::Record, object_store::UpdateVersion) {
+        let StalePending { id, heartbeat_ms } = pending;
+        publish_pending(state, tenant, id, heartbeat_ms, 0).await;
         let (mut metadata, version) = record::load(state, tenant, id).await.unwrap();
         metadata.owner.clone_from(&state.async_runtime.owner);
         check!(
@@ -1158,7 +1171,15 @@ mod tests {
                 .await
                 .unwrap()
         );
-        record::load(state, tenant, id).await.unwrap().0
+        record::load(state, tenant, id).await.unwrap()
+    }
+
+    async fn owned_pending(state: &QuerierState, tenant: &TenantId, id: &str) -> record::Record {
+        let pending = StalePending {
+            id,
+            heartbeat_ms: record::now_ms(),
+        };
+        claimed_pending(state, tenant, pending).await.0
     }
 
     fn prepared_success(id: &str) -> SelectMergeStacktracesResponse {

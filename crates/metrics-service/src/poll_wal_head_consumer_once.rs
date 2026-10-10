@@ -1,10 +1,8 @@
-use krabka_observability::{
-    persisted_format::validate_persisted_format, wal_consumer_metrics::WalConsumerMetrics,
-};
+use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
 
 use super::{
     Time, WalHead, WalHeadConsumerCommit, WalHeadConsumerError, WalHeadConsumerPoll,
-    WalHeadConsumerRecord, WalHeadReplayResult, replay_wal_head_records,
+    WalHeadReplayResult, checked_replay_records, replay_wal_head_records,
 };
 
 #[tracing::instrument(
@@ -31,24 +29,8 @@ where
     if let Some(metrics) = metrics {
         metrics.record_poll(&records);
     }
-    for record in records.iter().filter(|record| record.topic == wal_topic) {
-        validate_persisted_format(
-            record
-                .headers
-                .iter()
-                .map(|header| (header.key.as_str(), header.value.as_deref())),
-        )
+    let replay_records = checked_replay_records(records, wal_topic)
         .map_err(|error| WalHeadConsumerError::UnsupportedFormat(error.to_string()))?;
-    }
-    let replay_records = records
-        .into_iter()
-        .map(|record| WalHeadConsumerRecord {
-            topic: record.topic,
-            partition: record.partition.into(),
-            offset: record.offset.into(),
-            value: record.value.map(|value| value.to_vec()),
-        })
-        .collect::<Vec<_>>();
     let result = replay_wal_head_records(head, wal_topic, &replay_records)?;
     let span = tracing::Span::current();
     span.record("polled", result.polled_records);

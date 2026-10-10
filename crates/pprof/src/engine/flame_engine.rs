@@ -32,6 +32,13 @@ struct MillisRange {
     end_ms: i64,
 }
 
+/// One `group_by` group of a query: its label values, and the matchers that
+/// select only its profiles.
+struct GroupSelection {
+    labels: Vec<(String, String)>,
+    matchers: Vec<LabelMatcher>,
+}
+
 /// A span-profile merge over several time-range shards.
 #[derive(Clone, Copy, Debug)]
 pub struct SpanProfileShards<'q> {
@@ -472,14 +479,16 @@ impl<S: ProfileStore> FlameEngine<S> {
         sample_selector: SampleSelector<'_>,
         call_sites: &[String],
     ) -> Result<Tree, ProfileError> {
-        let adapter = TreeShardAdapter {
-            engine: self,
-            tenant,
-            profile_type,
-            label_selector,
+        let adapter = ShardAdapter {
+            query: TreeShards {
+                engine: self,
+                tenant,
+                profile_type,
+                label_selector,
+                sample_selector,
+                call_sites,
+            },
             ranges,
-            sample_selector,
-            call_sites,
             admission_limits: (self.admission_limits)(tenant),
         };
         self.tree_frontend
@@ -619,6 +628,41 @@ impl<S: ProfileStore> FlameEngine<S> {
             .await
     }
 
+    /// The `group_by` groups that `selection` matches over `range`, each with
+    /// the matchers that select only its profiles. With no `group_by` this is
+    /// one ungrouped selection.
+    async fn group_selections(
+        &self,
+        selection: ProfileSelection<'_>,
+        group_by: &[String],
+        range: MillisRange,
+    ) -> Result<Vec<GroupSelection>, ProfileError> {
+        let base_matchers = crate::matcher::parse_label_selector(selection.label_selector)?;
+        let groups = if group_by.is_empty() {
+            vec![Vec::new()]
+        } else {
+            self.store
+                .series(
+                    selection.tenant,
+                    &base_matchers,
+                    group_by,
+                    range.start_ms,
+                    range.end_ms,
+                )
+                .await?
+        };
+        Ok(groups
+            .into_iter()
+            .map(|labels| {
+                let mut matchers = base_matchers.clone();
+                matchers.extend(labels.iter().map(|(name, value)| {
+                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
+                }));
+                GroupSelection { labels, matchers }
+            })
+            .collect())
+    }
+
     async fn select_series_with_anchor(
         &self,
         query: (&str, &str, &str),
@@ -641,23 +685,23 @@ impl<S: ProfileStore> FlameEngine<S> {
         } else {
             start_ms
         };
-        let base_matchers = crate::matcher::parse_label_selector(label_selector)?;
-        let groups = if group_by.is_empty() {
-            vec![Vec::new()]
-        } else {
-            self.store
-                .series(tenant, &base_matchers, group_by, scan_start, end_ms)
-                .await?
-        };
+        let groups = self
+            .group_selections(
+                ProfileSelection {
+                    tenant,
+                    profile_type,
+                    label_selector,
+                },
+                group_by,
+                MillisRange {
+                    start_ms: scan_start,
+                    end_ms,
+                },
+            )
+            .await?;
 
         let mut out = Vec::new();
-        for labels in groups {
-            let mut matchers = base_matchers.clone();
-            matchers.extend(
-                labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
-                }),
-            );
+        for GroupSelection { labels, matchers } in groups {
             let scan = self
                 .store
                 .select(tenant, profile_type, &matchers, scan_start, end_ms)
@@ -741,15 +785,17 @@ impl<S: ProfileStore> FlameEngine<S> {
                 .await;
         }
 
-        let adapter = SeriesShardAdapter {
-            engine: self,
-            query,
-            group_by,
-            step,
-            agg,
+        let adapter = ShardAdapter {
+            query: SeriesShards {
+                engine: self,
+                query,
+                group_by,
+                step,
+                agg,
+                anchor: (start_ms, end_ms),
+                call_sites,
+            },
             ranges,
-            anchor: (start_ms, end_ms),
-            call_sites,
             admission_limits: (self.admission_limits)(query.0),
         };
         self.series_frontend
@@ -1120,23 +1166,20 @@ impl<S: ProfileStore> FlameEngine<S> {
     ) -> Result<Vec<crate::LabeledHeatmapPoints>, ProfileError> {
         let (tenant, profile_type, label_selector) = query;
         let (start_ms, end_ms) = range;
-        let base_matchers = crate::matcher::parse_label_selector(label_selector)?;
-        let groups = if group_by.is_empty() {
-            vec![Vec::new()]
-        } else {
-            self.store
-                .series(tenant, &base_matchers, group_by, start_ms, end_ms)
-                .await?
-        };
+        let groups = self
+            .group_selections(
+                ProfileSelection {
+                    tenant,
+                    profile_type,
+                    label_selector,
+                },
+                group_by,
+                MillisRange { start_ms, end_ms },
+            )
+            .await?;
 
         let mut out = Vec::new();
-        for labels in groups {
-            let mut matchers = base_matchers.clone();
-            matchers.extend(
-                labels.iter().map(|(name, value)| {
-                    LabelMatcher::new(name.clone(), MatchOp::Eq, value.clone())
-                }),
-            );
+        for GroupSelection { labels, matchers } in groups {
             let scan = self
                 .store
                 .select(tenant, profile_type, &matchers, start_ms, end_ms)
@@ -1168,46 +1211,54 @@ fn series_bytes(series: &Vec<Series>) -> usize {
             .sum::<usize>()
 }
 
-struct TreeShardAdapter<'a, S: ProfileStore> {
-    engine: &'a FlameEngine<S>,
-    tenant: &'a str,
-    profile_type: &'a str,
-    label_selector: &'a str,
+/// One kind of sharded engine query: how a shard is keyed in the result
+/// cache, run, and folded into the response.
+#[async_trait]
+trait ShardedQuery: Sync {
+    type Output: Clone + Send + Sync;
+
+    /// The tenant whose cache namespace the shards are keyed under.
+    fn tenant(&self) -> &str;
+
+    /// The cache key text of the shard over `range`, which has to name every
+    /// input the shard's result depends on.
+    fn shard_cache_key(&self, range: MillisRange) -> String;
+
+    async fn execute_shard(&self, range: MillisRange) -> Result<Self::Output, ProfileError>;
+
+    fn merge_shards(&self, results: Vec<Self::Output>) -> Self::Output;
+}
+
+/// Runs a [`ShardedQuery`] through the query frontend, one planned query per
+/// inclusive `(start_ms, end_ms)` shard.
+struct ShardAdapter<'a, Q> {
+    query: Q,
     ranges: &'a [(i64, i64)],
-    sample_selector: SampleSelector<'a>,
-    call_sites: &'a [String],
     admission_limits: AdmissionLimits,
 }
 
 #[async_trait]
-impl<S: ProfileStore> QueryFrontendAdapter for TreeShardAdapter<'_, S> {
+impl<Q: ShardedQuery> QueryFrontendAdapter for ShardAdapter<'_, Q> {
     type Request = ();
-    type Query = (i64, i64);
-    type Output = Tree;
-    type Response = Tree;
+    type Query = MillisRange;
+    type Output = Q::Output;
+    type Response = Q::Output;
     type Error = ProfileError;
 
     fn plan(&self, (): &()) -> Result<Vec<PlannedQuery<Self::Query>>, Self::Error> {
         self.ranges
             .iter()
             .copied()
-            .map(|range| {
-                validate_range(range.0, range.1)?;
+            .map(|(start_ms, end_ms)| {
+                validate_range(start_ms, end_ms)?;
+                let range = MillisRange { start_ms, end_ms };
                 Ok(PlannedQuery {
                     query: range,
                     cache_key: CacheKey::new(
-                        self.tenant,
-                        format!(
-                            "profiles-tree\0{}\0{}\0{}\0{}\0{:?}\0{:?}",
-                            self.profile_type,
-                            self.label_selector,
-                            range.0,
-                            range.1,
-                            self.sample_selector,
-                            self.call_sites,
-                        ),
+                        self.query.tenant(),
+                        self.query.shard_cache_key(range),
                     ),
-                    end_epoch_millis: range.1,
+                    end_epoch_millis: end_ms,
                     estimated_bytes: 0,
                 })
             })
@@ -1215,6 +1266,52 @@ impl<S: ProfileStore> QueryFrontendAdapter for TreeShardAdapter<'_, S> {
     }
 
     async fn execute(&self, range: &Self::Query) -> Result<Self::Output, Self::Error> {
+        self.query.execute_shard(*range).await
+    }
+
+    fn is_retryable(&self, _error: &Self::Error) -> bool {
+        false
+    }
+
+    fn admission_limits(&self, (): &()) -> Option<AdmissionLimits> {
+        Some(self.admission_limits)
+    }
+
+    fn merge(&self, (): &(), results: Vec<Self::Output>) -> Result<Self::Response, Self::Error> {
+        Ok(self.query.merge_shards(results))
+    }
+}
+
+struct TreeShards<'a, S: ProfileStore> {
+    engine: &'a FlameEngine<S>,
+    tenant: &'a str,
+    profile_type: &'a str,
+    label_selector: &'a str,
+    sample_selector: SampleSelector<'a>,
+    call_sites: &'a [String],
+}
+
+#[async_trait]
+impl<S: ProfileStore> ShardedQuery for TreeShards<'_, S> {
+    type Output = Tree;
+
+    fn tenant(&self) -> &str {
+        self.tenant
+    }
+
+    fn shard_cache_key(&self, range: MillisRange) -> String {
+        format!(
+            "profiles-tree\0{}\0{}\0{}\0{}\0{:?}\0{:?}",
+            self.profile_type,
+            self.label_selector,
+            range.start_ms,
+            range.end_ms,
+            self.sample_selector,
+            self.call_sites,
+        )
+    }
+
+    async fn execute_shard(&self, range: MillisRange) -> Result<Tree, ProfileError> {
         self.engine
             .merge_to_tree_with_sample_selector(ProfileMerge {
                 selection: ProfileSelection {
@@ -1222,105 +1319,69 @@ impl<S: ProfileStore> QueryFrontendAdapter for TreeShardAdapter<'_, S> {
                     profile_type: self.profile_type,
                     label_selector: self.label_selector,
                 },
-                range: MillisRange {
-                    start_ms: range.0,
-                    end_ms: range.1,
-                },
+                range,
                 sample_selector: self.sample_selector,
                 call_sites: self.call_sites,
             })
             .await
     }
 
-    fn is_retryable(&self, _error: &Self::Error) -> bool {
-        false
-    }
-
-    fn admission_limits(&self, (): &()) -> Option<AdmissionLimits> {
-        Some(self.admission_limits)
-    }
-
-    fn merge(&self, (): &(), results: Vec<Self::Output>) -> Result<Self::Response, Self::Error> {
+    fn merge_shards(&self, results: Vec<Tree>) -> Tree {
         let mut merged = Tree::new();
         for tree in results {
             merged.merge(&tree);
         }
-        Ok(merged)
+        merged
     }
 }
 
-struct SeriesShardAdapter<'a, S: ProfileStore> {
+struct SeriesShards<'a, S: ProfileStore> {
     engine: &'a FlameEngine<S>,
     query: (&'a str, &'a str, &'a str),
     group_by: &'a [String],
     step: Time,
     agg: SeriesAgg,
-    ranges: &'a [(i64, i64)],
     anchor: (i64, i64),
     call_sites: &'a [String],
-    admission_limits: AdmissionLimits,
 }
 
 #[async_trait]
-impl<S: ProfileStore> QueryFrontendAdapter for SeriesShardAdapter<'_, S> {
-    type Request = ();
-    type Query = (i64, i64);
+impl<S: ProfileStore> ShardedQuery for SeriesShards<'_, S> {
     type Output = Vec<Series>;
-    type Response = Vec<Series>;
-    type Error = ProfileError;
 
-    fn plan(&self, (): &()) -> Result<Vec<PlannedQuery<Self::Query>>, Self::Error> {
-        self.ranges
-            .iter()
-            .copied()
-            .map(|range| {
-                validate_range(range.0, range.1)?;
-                Ok(PlannedQuery {
-                    query: range,
-                    cache_key: CacheKey::new(
-                        self.query.0,
-                        format!(
-                            "profiles-series\0{}\0{}\0{:?}\0{:?}\0{:?}\0{}\0{}\0{:?}\0{:?}",
-                            self.query.1,
-                            self.query.2,
-                            self.group_by,
-                            self.step,
-                            self.agg,
-                            range.0,
-                            range.1,
-                            self.call_sites,
-                            self.anchor,
-                        ),
-                    ),
-                    end_epoch_millis: range.1,
-                    estimated_bytes: 0,
-                })
-            })
-            .collect()
+    fn tenant(&self) -> &str {
+        self.query.0
     }
 
-    async fn execute(&self, range: &Self::Query) -> Result<Self::Output, Self::Error> {
+    fn shard_cache_key(&self, range: MillisRange) -> String {
+        format!(
+            "profiles-series\0{}\0{}\0{:?}\0{:?}\0{:?}\0{}\0{}\0{:?}\0{:?}",
+            self.query.1,
+            self.query.2,
+            self.group_by,
+            self.step,
+            self.agg,
+            range.start_ms,
+            range.end_ms,
+            self.call_sites,
+            self.anchor,
+        )
+    }
+
+    async fn execute_shard(&self, range: MillisRange) -> Result<Vec<Series>, ProfileError> {
         self.engine
             .select_series_with_anchor(
                 self.query,
                 self.group_by,
                 (self.step, self.agg),
-                *range,
+                (range.start_ms, range.end_ms),
                 self.call_sites,
                 self.anchor,
             )
             .await
     }
 
-    fn is_retryable(&self, _error: &Self::Error) -> bool {
-        false
-    }
-
-    fn admission_limits(&self, (): &()) -> Option<AdmissionLimits> {
-        Some(self.admission_limits)
-    }
-
-    fn merge(&self, (): &(), results: Vec<Self::Output>) -> Result<Self::Response, Self::Error> {
+    fn merge_shards(&self, results: Vec<Vec<Series>>) -> Vec<Series> {
         let mut merged: BTreeMap<Vec<(String, String)>, BTreeMap<i64, f64>> = BTreeMap::new();
         for series in results {
             for item in series {
@@ -1330,13 +1391,13 @@ impl<S: ProfileStore> QueryFrontendAdapter for SeriesShardAdapter<'_, S> {
                 }
             }
         }
-        Ok(merged
+        merged
             .into_iter()
             .map(|(labels, points)| Series {
                 labels,
                 points: points.into_iter().collect(),
             })
-            .collect())
+            .collect()
     }
 }
 

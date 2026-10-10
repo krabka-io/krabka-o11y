@@ -963,6 +963,7 @@ mod shutdown;
 mod spawn_role_wal_head_consumer;
 mod spawn_shutdown_signal_listener;
 mod spawn_wal_head_consumer_task;
+mod start_role_audit;
 mod target;
 
 // `alloc` deliberately has no `use` line. `#[global_allocator]` registers
@@ -987,6 +988,7 @@ use shutdown::Shutdown;
 use spawn_role_wal_head_consumer::{WalHeadFeed, spawn_role_wal_head_consumer};
 use spawn_shutdown_signal_listener::spawn_shutdown_signal_listener;
 use spawn_wal_head_consumer_task::{WalHeadConsumerRecovery, spawn_wal_head_consumer_task};
+use start_role_audit::{RoleAudit, start_role_audit};
 use target::Target;
 
 #[tokio::main]
@@ -1045,20 +1047,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!(role = %cli.target.kind(), "krabka-metrics-service starting");
             // With no `--audit-topic` this spawns nothing and reaches no
             // broker.
-            let audit_stop = CancellationToken::new();
-            let (audit, audit_writer) = AuditService::start(
-                &cli.audit,
-                krabka_product("krabka-metrics-service", env!("CARGO_PKG_VERSION")),
-                cli.wal_bootstrap.as_deref(),
-                wal_security.as_ref(),
-                audit_stop.clone(),
-            )
-            .await?
-            .into_parts();
-            let mut audit_tasks = SupervisedTasks::new(audit_stop);
-            if let Some(writer) = audit_writer {
-                audit_tasks.adopt("audit writer", writer);
-            }
+            let RoleAudit {
+                handle: audit,
+                tasks: mut audit_tasks,
+            } = start_role_audit(&cli, wal_security.as_ref()).await?;
             let server_security = server_security.with_security_events(Arc::new(audit.clone()));
             // Boxed, so the start-up future stays small: the role's own future
             // holds its whole serving state.

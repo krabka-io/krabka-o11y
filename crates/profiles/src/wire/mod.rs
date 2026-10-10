@@ -170,6 +170,21 @@ pub(crate) mod test_fixtures {
         }
     }
 
+    /// A profile of one `samples` sample type holding one sample of value 5
+    /// at `location_id`. Callers fill in its locations, functions, strings
+    /// and period.
+    pub(crate) fn one_sample_profile(location_id: u64) -> krabka_pprof::proto::Profile {
+        krabka_pprof::proto::Profile {
+            sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
+            sample: vec![krabka_pprof::proto::Sample {
+                location_id: vec![location_id],
+                value: vec![5],
+                label: Vec::new(),
+            }],
+            ..Default::default()
+        }
+    }
+
     pub(crate) fn raw_profile_cpu() -> crate::ingest::RawProfile {
         api_raw_profile("process_cpu", cpu_profile())
     }
@@ -196,26 +211,34 @@ pub(crate) mod test_fixtures {
                     "space".to_string(),
                     "main".to_string(),
                 ],
-                location: vec![krabka_pprof::proto::Location {
-                    id: 1,
-                    address: 0x40,
-                    line: vec![krabka_pprof::proto::Line {
-                        function_id: 1,
-                        line: 10,
-                        column: 0,
-                    }],
-                    ..Default::default()
-                }],
-                function: vec![krabka_pprof::proto::Function {
-                    id: 1,
-                    name: 6,
-                    system_name: 6,
-                    ..Default::default()
-                }],
                 period_type: Some(krabka_pprof::proto::ValueType { r#type: 5, unit: 4 }),
-                ..Default::default()
+                ..main_frame_profile(6)
             }),
         )
+    }
+
+    /// A profile whose one location, at address `0x40`, is line 10 of its
+    /// one function, named by string-table entry `name_ref`.
+    fn main_frame_profile(name_ref: i64) -> krabka_pprof::proto::Profile {
+        krabka_pprof::proto::Profile {
+            location: vec![krabka_pprof::proto::Location {
+                id: 1,
+                address: 0x40,
+                line: vec![krabka_pprof::proto::Line {
+                    function_id: 1,
+                    line: 10,
+                    column: 0,
+                }],
+                ..Default::default()
+            }],
+            function: vec![krabka_pprof::proto::Function {
+                id: 1,
+                name: name_ref,
+                system_name: name_ref,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
     }
 
     fn cpu_profile() -> PprofProfile {
@@ -232,24 +255,8 @@ pub(crate) mod test_fixtures {
                 "nanoseconds".to_string(),
                 "main".to_string(),
             ],
-            location: vec![krabka_pprof::proto::Location {
-                id: 1,
-                address: 0x40,
-                line: vec![krabka_pprof::proto::Line {
-                    function_id: 1,
-                    line: 10,
-                    column: 0,
-                }],
-                ..Default::default()
-            }],
-            function: vec![krabka_pprof::proto::Function {
-                id: 1,
-                name: 3,
-                system_name: 3,
-                ..Default::default()
-            }],
             period_type: Some(krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }),
-            ..Default::default()
+            ..main_frame_profile(3)
         })
     }
 }

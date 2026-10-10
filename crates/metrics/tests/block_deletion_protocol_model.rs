@@ -4,9 +4,12 @@
 //! every sidecar is absent before its block is deleted. Failures and crashes
 //! preserve completed deletes, and a later sweep safely replays the sequence.
 
-use std::time::Duration;
+use stateright::{Model, Property};
 
-use stateright::{Checker, Model, Property};
+#[path = "support/bounded_model.rs"]
+mod bounded_model;
+
+use bounded_model::{ModelBounds, check_bounded_model};
 
 const MAX_DEPTH: usize = 24;
 const MAX_STATES: usize = 10_000;
@@ -148,17 +151,14 @@ impl Model for DeletionModel {
 }
 
 fn check(sidecars: usize, expected_states: usize) {
-    let checker = DeletionModel { sidecars }
-        .checker()
-        .target_max_depth(MAX_DEPTH)
-        .target_state_count(MAX_STATES)
-        .timeout(Duration::from_secs(30))
-        .spawn_bfs()
-        .join();
-    assert2::check!(checker.max_depth() < MAX_DEPTH);
-    assert2::check!(checker.state_count() < MAX_STATES);
-    assert2::check!(checker.unique_state_count() == expected_states);
-    checker.assert_properties();
+    check_bounded_model(
+        DeletionModel { sidecars },
+        &ModelBounds {
+            max_depth: MAX_DEPTH,
+            max_states: MAX_STATES,
+            expected_states,
+        },
+    );
 }
 
 #[test]

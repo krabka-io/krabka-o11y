@@ -218,6 +218,18 @@ impl Deployment {
         .await
     }
 
+    /// Pushes `TENANT`'s `checkout` profile with values 100 and 40, waits for
+    /// the hot querier to answer it, and returns a cold querier that answers
+    /// it from storage.
+    async fn checkout_stored(&self) -> TestResult<ContainerAsync<GenericImage>> {
+        self.push(TENANT, START, "checkout", &[100, 40], false)
+            .await?;
+        let rows = expected(&[100, 40]);
+        self.stacks(&self.hot, TENANT, PROFILE_TYPE, SELECTOR, &rows)
+            .await?;
+        self.stored(TENANT, PROFILE_TYPE, SELECTOR, &rows).await
+    }
+
     async fn stored(
         &self,
         tenant: &str,
@@ -638,16 +650,8 @@ fn otlp_request() -> pb::otlp_profiles::ExportProfilesServiceRequest {
 #[ignore = "requires Docker and Bazel-loaded images"]
 async fn profile_metadata_and_selectors_survive_storage_and_restart() -> TestResult {
     let deployment = Deployment::start().await?;
-    deployment
-        .push(TENANT, START, "checkout", &[100, 40], false)
-        .await?;
+    let cold = deployment.checkout_stored().await?;
     let rows = expected(&[100, 40]);
-    deployment
-        .stacks(&deployment.hot, TENANT, PROFILE_TYPE, SELECTOR, &rows)
-        .await?;
-    let cold = deployment
-        .stored(TENANT, PROFILE_TYPE, SELECTOR, &rows)
-        .await?;
     for container in [&deployment.hot, &cold] {
         for range in [json!({}), json!({"start":START-1000,"end":START+1000})] {
             let result = deployment
@@ -840,16 +844,7 @@ async fn malformed_pprof_is_rejected_without_wal_data() -> TestResult {
         );
         assert!(error["code"] == "invalid_argument");
     }
-    deployment
-        .push(TENANT, START, "checkout", &[100, 40], false)
-        .await?;
-    let rows = expected(&[100, 40]);
-    deployment
-        .stacks(&deployment.hot, TENANT, PROFILE_TYPE, SELECTOR, &rows)
-        .await?;
-    let cold = deployment
-        .stored(TENANT, PROFILE_TYPE, SELECTOR, &rows)
-        .await?;
+    let cold = deployment.checkout_stored().await?;
     for container in [&deployment.hot, &cold] {
         deployment
             .stacks(

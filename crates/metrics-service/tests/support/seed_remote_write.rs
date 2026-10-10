@@ -10,7 +10,13 @@ pub fn remote_write_body() -> Vec<u8> {
         timeseries: seed_dataset()
             .into_iter()
             .map(|point| pb::v1::TimeSeries {
-                labels: remote_write_labels(point.metric, point.labels),
+                labels: remote_write_labels(
+                    point.metric,
+                    point
+                        .labels
+                        .iter()
+                        .map(|&(name, value)| FixtureLabel { name, value }),
+                ),
                 samples: point
                     .samples
                     .iter()
@@ -29,14 +35,25 @@ pub fn remote_write_body() -> Vec<u8> {
         .expect("snappy remote_write")
 }
 
-pub fn remote_write_labels(metric: &str, labels: &[(&str, &str)]) -> Vec<pb::v1::Label> {
+/// One label of a fixture series, other than its metric name.
+#[derive(Clone, Copy)]
+pub struct FixtureLabel<'a> {
+    pub name: &'a str,
+    pub value: &'a str,
+}
+
+/// The `remote_write` labels of the series `metric{labels}`, name first.
+pub fn remote_write_labels<'a>(
+    metric: &str,
+    labels: impl IntoIterator<Item = FixtureLabel<'a>>,
+) -> Vec<pb::v1::Label> {
     std::iter::once(pb::v1::Label {
         name: "__name__".to_string(),
         value: metric.to_string(),
     })
-    .chain(labels.iter().map(|(name, value)| pb::v1::Label {
-        name: (*name).to_string(),
-        value: (*value).to_string(),
+    .chain(labels.into_iter().map(|label| pb::v1::Label {
+        name: label.name.to_string(),
+        value: label.value.to_string(),
     }))
     .collect()
 }

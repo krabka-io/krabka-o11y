@@ -2,13 +2,13 @@ use std::{error::Error, panic::AssertUnwindSafe, sync::Arc};
 
 use futures::{FutureExt as _, future::FusedFuture as _};
 use krabka_metrics::runtime::{WriterConfig, WriterTarget, serve_writer};
-use krabka_observability::{CancellationToken, RoleKind, StagedDrain, SupervisedTasks};
+use krabka_observability::{CancellationToken, RoleKind, StagedDrain};
 use prometheus_client::registry::Registry;
 use tokio::sync::{Mutex, mpsc};
 
 use super::{
-    AuditService, Cli, ClientSecurity, RoleLaunch, RoleReadiness, ServerSecurity, Shutdown,
-    WAL_TOPIC, krabka_product, readiness_router, run_querier,
+    Cli, ClientSecurity, RoleAudit, RoleLaunch, RoleReadiness, ServerSecurity, Shutdown, WAL_TOPIC,
+    readiness_router, run_querier, start_role_audit,
 };
 
 type RoleError = Box<dyn Error + Send + Sync>;
@@ -129,20 +129,10 @@ pub async fn serve_all(
     let query_metrics =
         krabka_promql::metrics::ServiceMetrics::for_role(Arc::clone(&registry), RoleKind::Querier)
             .await;
-    let audit_stop = CancellationToken::new();
-    let (audit, audit_writer) = AuditService::start(
-        &cli.audit,
-        krabka_product("krabka-metrics-service", env!("CARGO_PKG_VERSION")),
-        cli.wal_bootstrap.as_deref(),
-        wal_security.as_ref(),
-        audit_stop.clone(),
-    )
-    .await?
-    .into_parts();
-    let mut audit_tasks = SupervisedTasks::new(audit_stop);
-    if let Some(writer) = audit_writer {
-        audit_tasks.adopt("audit writer", writer);
-    }
+    let RoleAudit {
+        handle: audit,
+        tasks: mut audit_tasks,
+    } = start_role_audit(&cli, wal_security.as_ref()).await?;
     let security = security.with_security_events(Arc::new(audit.clone()));
     let admin_address = cli.admin_listen_addr;
     let profiling = cli.profiling.clone();

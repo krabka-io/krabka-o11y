@@ -90,6 +90,8 @@ import sys
 import tempfile
 import time
 
+from ratchet_annotations import annotate, keep_stdout_for_json
+
 UNSEEDED = "unseeded"
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -145,24 +147,6 @@ DEFAULT_TOLERANCE = 1.5
 # How wide Criterion's 95% confidence interval may be, as a fraction of the
 # mean, before the measurement is treated as too noisy to gate on.
 DEFAULT_NOISE_CEILING = 0.25
-
-
-def annotate(level, message):
-    """Prints a message, as a GitHub annotation when the run is on Actions."""
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        print(f"::{level}::{message}", flush=True)
-    else:
-        print(f"{level}: {message}", flush=True)
-
-
-def keep_stdout_for_json(destination):
-    """Sends every other line to standard error when the JSON goes to stdout.
-
-    `--json -` is for a pipe into another tool, and the annotations would
-    break that JSON.
-    """
-    if destination == "-":
-        sys.stdout = sys.stderr
 
 
 def estimate_files(criterion_root):

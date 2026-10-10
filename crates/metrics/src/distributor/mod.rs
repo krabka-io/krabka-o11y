@@ -48,8 +48,8 @@ use crate::{
     IngestEnforcer, LimitError, Limits, OverridesProvider,
     metrics::ServiceMetrics,
     otlp::{
-        OtlpError, PartialOtlpDecode, TenantDeltaAccumulators, TranslationStrategy,
-        decode_otlp_stateful_bytes_partial, decode_otlp_stateful_with_promoted_resource_attributes,
+        OtlpDecodeOptions, OtlpError, PartialOtlpDecode, TenantDeltaAccumulators,
+        TranslationStrategy, decode_otlp_inner, decode_otlp_stateful_bytes_partial,
     },
     request_tenant::{
         RequestTenantError, TenantAccessError, authorized_tenant_from_headers, tenant_from_metadata,
@@ -1572,6 +1572,15 @@ overrides:
         (Arc::new(DistributorState::new(sink.clone())), sink)
     }
 
+    /// A distributor over a recording sink that enforces `limits`.
+    fn limited_state(limits: Limits) -> (Arc<DistributorState>, Arc<RecordingSink>) {
+        let sink = Arc::new(RecordingSink::default());
+        (
+            Arc::new(DistributorState::new(sink.clone()).with_limits(limits)),
+            sink,
+        )
+    }
+
     #[test]
     fn distributor_state_stores_configured_runtime_policy() {
         let sink = Arc::new(RecordingSink::default());
@@ -1959,25 +1968,36 @@ overrides:
         assert!(sink.records().len() == 1);
     }
 
+    /// The Prometheus receiver path, and a legacy content type on the push
+    /// path, are both accepted as `remote_write` v1.
     #[tokio::test]
-    async fn push_v1_accepts_prometheus_remote_write_receiver_path() {
-        let (state, sink) = test_state();
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/write")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", "up")])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+    async fn push_v1_accepts_the_receiver_path_and_a_legacy_content_type() {
+        for (name, uri, content_type) in [
+            (
+                "prometheus remote write receiver path",
+                "/api/v1/write",
+                "application/x-protobuf",
+            ),
+            ("legacy content type", "/api/v1/push", "text/plain"),
+        ] {
+            let (state, sink) = test_state();
+            let response = router(state)
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(uri)
+                        .header("Content-Type", content_type)
+                        .header("Content-Encoding", "snappy")
+                        .header("X-Scope-OrgID", "tenant-a")
+                        .body(Body::from(v1_body(vec![label("__name__", "up")])))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
 
-        assert!(response.status() == StatusCode::OK);
-        assert!(sink.records().len() == 1);
+            check!(response.status() == StatusCode::OK, "{name}");
+            check!(sink.records().len() == 1, "{name}");
+        }
     }
 
     #[tokio::test]
@@ -2217,11 +2237,10 @@ overrides:
 
     #[tokio::test]
     async fn oversized_label_names_are_rejected() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+        let (state, sink) = limited_state(Limits {
             max_label_name_length: bytes(7),
             ..Limits::default()
-        }));
+        });
         let response = push_v1(
             &router(state),
             "tenant-a",
@@ -2291,11 +2310,10 @@ overrides:
 
     #[tokio::test]
     async fn oversized_sample_sets_are_rejected() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+        let (state, sink) = limited_state(Limits {
             max_samples_per_series: 1,
             ..Limits::default()
-        }));
+        });
         let response = push_v1(&router(state), "tenant-a", v1_body_with_samples(2)).await;
 
         assert!(response == StatusCode::BAD_REQUEST);
@@ -2410,12 +2428,11 @@ overrides:
 
     #[tokio::test]
     async fn ingestion_rate_limit_returns_429_without_append() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+        let (state, sink) = limited_state(Limits {
             ingestion_rate: per_sec(1),
             ingestion_burst_size: 1,
             ..Limits::default()
-        }));
+        });
         let app = router(state);
 
         let first_response =
@@ -2477,12 +2494,11 @@ defaults:
 
     #[tokio::test]
     async fn ingestion_rate_limit_counts_exemplar_only_writes() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+        let (state, sink) = limited_state(Limits {
             ingestion_rate: per_sec(1),
             ingestion_burst_size: 1,
             ..Limits::default()
-        }));
+        });
         let app = router(state);
 
         let exemplar_response =
@@ -2496,11 +2512,10 @@ defaults:
 
     #[tokio::test]
     async fn too_old_samples_beyond_out_of_order_window_are_rejected() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+        let (state, sink) = limited_state(Limits {
             out_of_order_time_window: millis(100),
             ..Limits::default()
-        }));
+        });
         let app = router(state);
 
         let newest_response = push_v1(&app, "tenant-a", v1_body_with_sample_timestamp(1_000)).await;
@@ -2545,11 +2560,10 @@ overrides:
 
     #[tokio::test]
     async fn too_old_exemplar_only_series_beyond_out_of_order_window_are_rejected() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = Arc::new(DistributorState::new(sink.clone()).with_limits(Limits {
+        let (state, sink) = limited_state(Limits {
             out_of_order_time_window: millis(100),
             ..Limits::default()
-        }));
+        });
         let app = router(state);
 
         let newest_response = push_v1(&app, "tenant-a", v1_body_with_sample_timestamp(1_000)).await;
@@ -2814,27 +2828,6 @@ overrides:
 
         assert!(response.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE);
         assert!(sink.records().is_empty());
-    }
-
-    #[tokio::test]
-    async fn push_treats_a_legacy_content_type_as_v1() {
-        let (state, sink) = test_state();
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "text/plain")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", "up")])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::OK);
-        assert!(sink.records().len() == 1);
     }
 
     #[tokio::test]

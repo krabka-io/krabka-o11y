@@ -33,6 +33,13 @@ pub struct QuerierState<S: ProfileStore = DefaultStore> {
     pub(crate) heatmap_time_buckets_max: usize,
 }
 
+/// A validated series exemplar query: its parsed selector, and where its
+/// scan starts once the one-step lookback before the range is included.
+struct SeriesExemplarScan {
+    base_matchers: Vec<LabelMatcher>,
+    scan_start: i64,
+}
+
 impl QuerierState<DefaultStore> {
     #[must_use]
     pub fn empty() -> Self {
@@ -413,21 +420,37 @@ impl<S: ProfileStore> QuerierState<S> {
         }
     }
 
+    /// Validates a series exemplar query and parses its selector.
+    fn series_exemplar_scan(
+        &self,
+        query: SeriesExemplarQuery<'_>,
+    ) -> Result<SeriesExemplarScan, ProfileError> {
+        let (tenant, _, label_selector) = query.target;
+        let (start_ms, end_ms) = query.range;
+        self.validate_query_range(tenant, start_ms, end_ms)?;
+        Ok(SeriesExemplarScan {
+            base_matchers: parse_label_selector(label_selector)?,
+            // The first point covers the one-step lookback before `start_ms`.
+            scan_start: start_ms.saturating_sub(query.step.millis_i64()),
+        })
+    }
+
     pub(crate) async fn select_series_span_exemplars(
         &self,
         query: SeriesExemplarQuery<'_>,
     ) -> Result<SpanExemplarsBySeries, ProfileError> {
+        let SeriesExemplarScan {
+            base_matchers,
+            scan_start,
+        } = self.series_exemplar_scan(query)?;
         let SeriesExemplarQuery {
-            target: (tenant, profile_type, label_selector),
+            target: (tenant, profile_type, _),
             group_by,
             step,
             range,
             call_sites,
         } = query;
-        let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let scan_start = start_ms.saturating_sub(step.millis_i64());
-        let base_matchers = parse_label_selector(label_selector)?;
+        let end_ms = range.1;
         let groups = if group_by.is_empty() {
             vec![Vec::new()]
         } else {
@@ -468,17 +491,18 @@ impl<S: ProfileStore> QuerierState<S> {
         &self,
         query: SeriesExemplarQuery<'_>,
     ) -> Result<SpanExemplarsBySeries, ProfileError> {
+        let SeriesExemplarScan {
+            base_matchers,
+            scan_start,
+        } = self.series_exemplar_scan(query)?;
         let SeriesExemplarQuery {
-            target: (tenant, profile_type, label_selector),
+            target: (tenant, profile_type, _),
             group_by,
             step,
             range,
             call_sites,
         } = query;
-        let (start_ms, end_ms) = range;
-        self.validate_query_range(tenant, start_ms, end_ms)?;
-        let scan_start = start_ms.saturating_sub(step.millis_i64());
-        let base_matchers = parse_label_selector(label_selector)?;
+        let end_ms = range.1;
         let groups = self
             .store
             .series(tenant.as_str(), &base_matchers, &[], scan_start, end_ms)

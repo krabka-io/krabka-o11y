@@ -1838,14 +1838,9 @@ fn offset_range_in(
 }
 
 async fn list_paths(store: &Arc<dyn ObjectStore>) -> Vec<String> {
-    let mut paths = futures::TryStreamExt::try_collect::<Vec<_>>(store.list(None))
+    krabka_blockstore::sorted_object_paths(store.as_ref())
         .await
         .expect("list")
-        .into_iter()
-        .map(|meta| meta.location.to_string())
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths
 }
 
 // ---------------------------------------------------------------------------

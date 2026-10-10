@@ -67,10 +67,10 @@ pub(crate) async fn run_query_frontend(
                     group_id,
                     head: head.clone(),
                     gate: wal_head_gate,
-                    recovery: WalHeadConsumerRecovery {
-                        metrics: Some(recovery_metrics),
-                        catch_up_gate: Some(readiness.gate("wal-catch-up")),
-                    },
+                    recovery: WalHeadConsumerRecovery::for_serving_role(
+                        recovery_metrics,
+                        &readiness,
+                    ),
                 },
                 shutdown.clone(),
             ),

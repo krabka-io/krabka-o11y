@@ -509,6 +509,24 @@ mod tests {
         Arc::new(test_state(sink, OverridesProvider::new(Limits::default())))
     }
 
+    /// Pushes `profile` as tenant `tenant-a`'s `samples` profile of service
+    /// `api`, and returns the sink that recorded what the push wrote.
+    async fn push_recorded(profile: krabka_pprof::proto::Profile) -> Arc<RecordingSink> {
+        let sink = Arc::new(RecordingSink::default());
+        let state = state_with(sink.clone());
+        process_raw(
+            &state,
+            &tenant("tenant-a"),
+            vec![crate::wire::test_fixtures::api_raw_profile(
+                "samples",
+                PprofProfile::from(profile),
+            )],
+        )
+        .await
+        .unwrap();
+        sink
+    }
+
     fn otlp_export_request() -> pb::otlp_profiles::ExportProfilesServiceRequest {
         use pb::{
             opentelemetry::proto::{
@@ -648,15 +666,7 @@ mod tests {
 
     #[tokio::test]
     async fn push_normalizes_pprof_symbol_ids_to_wal_indices() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = state_with(sink.clone());
-        let profile = PprofProfile::from(krabka_pprof::proto::Profile {
-            sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
-            sample: vec![krabka_pprof::proto::Sample {
-                location_id: vec![2],
-                value: vec![5],
-                label: Vec::new(),
-            }],
+        let profile = krabka_pprof::proto::Profile {
             location: vec![
                 krabka_pprof::proto::Location {
                     id: 1,
@@ -702,19 +712,10 @@ mod tests {
                 "main.go".to_string(),
             ],
             period_type: Some(krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }),
-            ..Default::default()
-        });
+            ..crate::wire::test_fixtures::one_sample_profile(2)
+        };
 
-        process_raw(
-            &state,
-            &tenant("tenant-a"),
-            vec![crate::wire::test_fixtures::api_raw_profile(
-                "samples", profile,
-            )],
-        )
-        .await
-        .unwrap();
-
+        let sink = push_recorded(profile).await;
         let recs = sink.0.lock().unwrap();
         assert!(recs[0].samples[0].stacktrace_location_refs == vec![1]);
         assert!(recs[0].symbols.locations[1].lines[0].0 == 1);
@@ -1527,15 +1528,7 @@ overrides:
     // #11: mapping symbolization flags flow through independently.
     #[tokio::test]
     async fn mapping_symbolization_flags_are_populated_independently() {
-        let sink = Arc::new(RecordingSink::default());
-        let state = state_with(sink.clone());
-        let profile = PprofProfile::from(krabka_pprof::proto::Profile {
-            sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
-            sample: vec![krabka_pprof::proto::Sample {
-                location_id: vec![1],
-                value: vec![5],
-                label: Vec::new(),
-            }],
+        let profile = krabka_pprof::proto::Profile {
             location: vec![krabka_pprof::proto::Location {
                 id: 1,
                 mapping_id: 1,
@@ -1576,19 +1569,10 @@ overrides:
                 "bin".to_string(),
             ],
             period_type: Some(krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }),
-            ..Default::default()
-        });
+            ..crate::wire::test_fixtures::one_sample_profile(1)
+        };
 
-        process_raw(
-            &state,
-            &tenant("tenant-a"),
-            vec![crate::wire::test_fixtures::api_raw_profile(
-                "samples", profile,
-            )],
-        )
-        .await
-        .unwrap();
-
+        let sink = push_recorded(profile).await;
         let recs = sink.0.lock().unwrap();
         let mapping = &recs[0].symbols.mappings[0];
         check!(mapping.has_functions.get());

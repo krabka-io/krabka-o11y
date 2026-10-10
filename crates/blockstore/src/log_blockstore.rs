@@ -70,6 +70,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::awkward_tenants::AWKWARD_TENANTS;
 
     #[test]
     fn labels_and_fingerprints_are_canonicalized_with_length_prefixes() {
@@ -1185,22 +1186,6 @@ mod tests {
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect()
     }
-
-    const AWKWARD_TENANTS: [(&str, &str); 13] = [
-        ("plain", "tenant-a"),
-        ("separator", "a/b"),
-        ("relative", ".."),
-        ("current", "."),
-        ("traversal", "../../etc"),
-        ("absolute", "/etc/passwd"),
-        ("space", "a b"),
-        ("star", "a*b"),
-        ("marker", "a!b"),
-        ("quote", "a'b"),
-        ("brackets", "(a)"),
-        ("backslash", "a\\b"),
-        ("non ASCII", "\u{e9}"),
-    ];
 
     /// A tenant reaches these keys from an untrusted header, and the keys are
     /// what separates one tenant's blocks and index shards from another's.

@@ -21,6 +21,16 @@ pub(crate) struct ManifestRead<'a> {
     pub(crate) max_bytes: ByteSize,
 }
 
+/// A load of the latest published generation, which reads as an empty index
+/// when nothing has been published yet.
+pub(crate) struct LatestSnapshotRead<'a> {
+    pub(crate) store: &'a Arc<dyn ObjectStore>,
+    pub(crate) key: &'a str,
+    /// When given, only this tenant's shards that meet the span are read.
+    pub(crate) window: Option<ShardWindow<'a>>,
+    pub(crate) max_bytes: ByteSize,
+}
+
 /// How many shards a load listed and how many it read.
 pub(crate) struct WindowShardReads {
     pub(crate) listed: usize,

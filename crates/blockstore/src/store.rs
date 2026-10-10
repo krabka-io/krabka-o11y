@@ -397,9 +397,7 @@ mod tests {
             .unwrap();
         // Table name is the fixed logical name, not a stub string.
         assert2::assert!(table == "logs");
-        let df = ctx.sql(&format!("SELECT line FROM {table}")).await.unwrap();
-        let batches = df.collect().await.unwrap();
-        let total: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        let total = table_line_count(&ctx, &table).await;
         assert2::assert!(total == 2);
     }
 
@@ -435,9 +433,7 @@ mod tests {
             .await
             .unwrap();
         assert2::assert!(table == "logs");
-        let df = ctx.sql(&format!("SELECT line FROM {table}")).await.unwrap();
-        let batches = df.collect().await.unwrap();
-        let total: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        let total = table_line_count(&ctx, &table).await;
         assert2::assert!(total == 2);
     }
 
@@ -619,6 +615,13 @@ mod tests {
                 "blocks/b2.parquet".to_string(),
             ],
         )
+    }
+
+    /// Counts the rows a `SELECT line` over `table` returns.
+    async fn table_line_count(ctx: &SessionContext, table: &str) -> usize {
+        let df = ctx.sql(&format!("SELECT line FROM {table}")).await.unwrap();
+        let batches = df.collect().await.unwrap();
+        batches.iter().map(RecordBatch::num_rows).sum()
     }
 
     async fn table_lines(ctx: &SessionContext, table: &str) -> Vec<String> {
@@ -915,9 +918,7 @@ mod tests {
             .scan_context("t", &matchers, 0, 1_000, schema)
             .await
             .unwrap();
-        let df = ctx.sql(&format!("SELECT line FROM {table}")).await.unwrap();
-        let batches = df.collect().await.unwrap();
-        let total: usize = batches.iter().map(RecordBatch::num_rows).sum();
+        let total = table_line_count(&ctx, &table).await;
         assert2::assert!(total == 0);
     }
 }

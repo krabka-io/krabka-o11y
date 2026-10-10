@@ -8,6 +8,8 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+mod awkward_tenants;
 mod block;
 mod block_index;
 mod bloom;
@@ -139,7 +141,7 @@ pub use recovery::{
     DeploymentBackupPlan, DeploymentBackupReport, DeploymentCut, DeploymentPart,
     DeploymentRestoreReport, DrainedGroup, GroupOffset, RecoveryError, RestoreReport, WalOffset,
     audit_backup, audit_deployment_backup, audit_recovery_target, backup_deployment, create_backup,
-    load_backup_manifest, restore_backup, restore_deployment_backup,
+    load_backup_manifest, restore_backup, restore_deployment_backup, sorted_object_paths,
 };
 pub use retry::{
     ObjectStoreRetryPolicy, RetryingObjectStore, is_transient_object_store_error,

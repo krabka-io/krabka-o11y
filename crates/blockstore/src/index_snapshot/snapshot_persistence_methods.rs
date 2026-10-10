@@ -141,17 +141,9 @@ macro_rules! snapshot_persistence_methods {
             max_ts: i64,
             max_bytes: ::krabka_units::ByteSize,
         ) -> $crate::error::Result<Self> {
-            let Some(manifest) = $crate::index_snapshot::read_latest_snapshot_manifest(
-                store, key, max_bytes, $label,
-            )
-            .await?
-            else {
-                return Ok(Self::new());
-            };
-            Self::from_manifest($crate::index_snapshot::ManifestRead {
+            Self::load_latest_snapshot_read($crate::index_snapshot::LatestSnapshotRead {
                 store,
                 key,
-                manifest: &manifest,
                 window: Some($crate::index_snapshot::ShardWindow {
                     tenant,
                     span: $crate::IndexShardRange::new(min_ts, max_ts),
@@ -172,19 +164,36 @@ macro_rules! snapshot_persistence_methods {
             key: &str,
             max_bytes: ::krabka_units::ByteSize,
         ) -> $crate::error::Result<Self> {
+            Self::load_latest_snapshot_read($crate::index_snapshot::LatestSnapshotRead {
+                store,
+                key,
+                window: None,
+                max_bytes,
+            })
+            .await
+        }
+
+        /// Loads the latest generation that `read` names, or an empty index
+        /// when nothing is published yet.
+        async fn load_latest_snapshot_read(
+            read: $crate::index_snapshot::LatestSnapshotRead<'_>,
+        ) -> $crate::error::Result<Self> {
             let Some(manifest) = $crate::index_snapshot::read_latest_snapshot_manifest(
-                store, key, max_bytes, $label,
+                read.store,
+                read.key,
+                read.max_bytes,
+                $label,
             )
             .await?
             else {
                 return Ok(Self::new());
             };
             Self::from_manifest($crate::index_snapshot::ManifestRead {
-                store,
-                key,
+                store: read.store,
+                key: read.key,
                 manifest: &manifest,
-                window: None,
-                max_bytes,
+                window: read.window,
+                max_bytes: read.max_bytes,
             })
             .await
         }

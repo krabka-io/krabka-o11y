@@ -420,7 +420,7 @@ pub(crate) use read_index_snapshot_bytes::{IndexSnapshotBytes, read_index_snapsh
 pub(crate) use read_latest_snapshot_manifest::read_latest_snapshot_manifest;
 pub(crate) use read_manifest_snapshot_base::read_manifest_snapshot_base;
 pub(crate) use read_shard_payload::read_shard_payload;
-pub(crate) use read_window_shards::{ManifestRead, ShardWindow};
+pub(crate) use read_window_shards::{LatestSnapshotRead, ManifestRead, ShardWindow};
 pub(crate) use shard_payload_content_hash::shard_payload_content_hash;
 pub(crate) use shard_payload_object_key::shard_payload_object_key;
 pub(crate) use shard_payload_prefix_for_key::shard_payload_prefix_for_key;
@@ -428,6 +428,22 @@ pub(crate) use shard_payload_sweep_grace::{
     SHARD_PAYLOAD_PUBLISH_TIMEOUT, SHARD_PAYLOAD_SWEEP_GRACE,
 };
 pub(crate) use shard_range_of_slot::shard_range_of_slot;
+
+/// Counts every object under the snapshot prefix of `key`, whatever its kind.
+#[cfg(test)]
+pub(crate) async fn count_snapshot_prefix_objects(
+    store: &Arc<dyn ObjectStore>,
+    key: &str,
+) -> usize {
+    let prefix = Path::from(index_snapshot_prefix_for_key(key));
+    let mut stream = store.list(Some(&prefix));
+    let mut count = 0;
+    while let Some(meta) = stream.next().await {
+        meta.unwrap();
+        count += 1;
+    }
+    count
+}
 pub(crate) use shard_ranges_for_span::shard_ranges_for_span;
 pub(crate) use snapshot_contribution::SnapshotContribution;
 pub(crate) use snapshot_generation_from_path::snapshot_generation_from_path;

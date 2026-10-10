@@ -16,7 +16,7 @@ mod tests {
     use krabka_pprof::PprofProfile;
 
     use super::*;
-    use crate::wire::test_fixtures::api_raw_profile;
+    use crate::wire::test_fixtures::{api_raw_profile, one_sample_profile};
 
     fn two_type_profile() -> PprofProfile {
         let profile = krabka_pprof::proto::Profile {
@@ -100,12 +100,6 @@ mod tests {
     #[test]
     fn split_normalizes_pprof_location_ids_to_symbol_indices() {
         let profile = krabka_pprof::proto::Profile {
-            sample_type: vec![krabka_pprof::proto::ValueType { r#type: 1, unit: 2 }],
-            sample: vec![krabka_pprof::proto::Sample {
-                location_id: vec![2],
-                value: vec![5],
-                label: Vec::new(),
-            }],
             location: vec![
                 krabka_pprof::proto::Location {
                     id: 1,
@@ -123,7 +117,7 @@ mod tests {
                 "sample".to_string(),
             ],
             period_type: Some(krabka_pprof::proto::ValueType { r#type: 3, unit: 2 }),
-            ..Default::default()
+            ..one_sample_profile(2)
         };
 
         let out =

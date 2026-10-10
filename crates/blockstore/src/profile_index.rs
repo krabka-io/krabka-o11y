@@ -581,7 +581,6 @@ mod tests {
 
     #[tokio::test]
     async fn latest_snapshot_retains_bounded_snapshot_set() {
-        use futures::StreamExt as _;
         use object_store::memory::InMemory;
 
         let index = seed();
@@ -594,20 +593,15 @@ mod tests {
                 .unwrap();
         }
 
-        let prefix = Path::from(crate::index_snapshot_prefix_for_key("index/profiles.json"));
-        let mut stream = store.list(Some(&prefix));
-        let mut count = 0;
-        while let Some(meta) = stream.next().await {
-            meta.unwrap();
-            count += 1;
-        }
+        let count =
+            crate::index_snapshot::count_snapshot_prefix_objects(&store, "index/profiles.json")
+                .await;
 
         assert2::assert!(count == crate::index_snapshot::DEFAULT_INDEX_SNAPSHOT_RETAIN);
     }
 
     #[tokio::test]
     async fn configurable_snapshot_policy_caps_loads_and_retention() {
-        use futures::StreamExt as _;
         use object_store::memory::InMemory;
 
         let index = seed();
@@ -621,14 +615,10 @@ mod tests {
                 .unwrap();
         }
 
-        let prefix = Path::from(crate::index_snapshot_prefix_for_key("index/profiles.json"));
-        let mut stream = store.list(Some(&prefix));
-        let mut count = 0;
-        while let Some(meta) = stream.next().await {
-            meta.unwrap();
-            count += 1;
-        }
-        assert_eq!(count, 2);
+        let count =
+            crate::index_snapshot::count_snapshot_prefix_objects(&store, "index/profiles.json")
+                .await;
+        assert2::assert!(count == 2);
 
         let cap = krabka_units::bytes(1);
         let got =
@@ -735,20 +725,13 @@ mod tests {
     /// it would be read twice until the writer restarted. Only blocks
     /// registered since the writer's last successful write are contributed, so
     /// the swap survives.
-    #[tokio::test]
-    async fn a_stale_writer_does_not_resurrect_the_block_a_compactor_replaced() {
-        use object_store::memory::InMemory;
-
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let (mut writer, cpu_checkout_fp, ..) = seed_with_blocks();
-        writer.add_profile_block("t", "cpu-checkout.parquet", vec![1]);
-        writer
-            .save_latest_snapshot(&store, "index/profiles.json")
-            .await
-            .unwrap();
-
-        // Another process loads that snapshot and swaps the block out.
-        let mut compactor = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
+    /// Loads the published index the way a compactor does and replaces
+    /// `cpu-checkout.parquet` with `compacted.parquet`, without publishing.
+    async fn load_and_compact_cpu_checkout(
+        store: &Arc<dyn ObjectStore>,
+        cpu_checkout_fp: SeriesFingerprint,
+    ) -> ProfileIndex {
+        let mut compactor = ProfileIndex::load_latest_snapshot(store, "index/profiles.json")
             .await
             .unwrap();
         compactor.replace_profile_blocks(
@@ -767,6 +750,23 @@ mod tests {
                 vec![9],
             )],
         );
+        compactor
+    }
+
+    #[tokio::test]
+    async fn a_stale_writer_does_not_resurrect_the_block_a_compactor_replaced() {
+        use object_store::memory::InMemory;
+
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let (mut writer, cpu_checkout_fp, ..) = seed_with_blocks();
+        writer.add_profile_block("t", "cpu-checkout.parquet", vec![1]);
+        writer
+            .save_latest_snapshot(&store, "index/profiles.json")
+            .await
+            .unwrap();
+
+        // Another process loads that snapshot and swaps the block out.
+        let compactor = load_and_compact_cpu_checkout(&store, cpu_checkout_fp).await;
         compactor
             .save_latest_snapshot(&store, "index/profiles.json")
             .await
@@ -837,25 +837,7 @@ mod tests {
             .unwrap();
 
         // The compactor retires the block, but has not published yet.
-        let mut compactor = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
-            .await
-            .unwrap();
-        compactor.replace_profile_blocks(
-            "t",
-            &strings(&["cpu-checkout.parquet"]),
-            &[(
-                BlockMeta {
-                    tenant: "t".to_string(),
-                    object_key: "compacted.parquet".to_string(),
-                    min_ts: 100,
-                    max_ts: 199,
-                    row_count: 10,
-                    fingerprints: vec![cpu_checkout_fp],
-                    level: BlockLevel::INGESTED,
-                },
-                vec![9],
-            )],
-        );
+        let compactor = load_and_compact_cpu_checkout(&store, cpu_checkout_fp).await;
 
         // A third writer mints the same key for a different block and gets
         // there first.

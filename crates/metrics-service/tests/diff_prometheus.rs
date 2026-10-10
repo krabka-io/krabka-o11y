@@ -39,7 +39,7 @@ mod upstream_http;
 
 use self::{
     corpus_differential::{CorpusDiff, PromApi, SAMPLES_PER_BATCH},
-    seed_remote_write::{remote_write_body, remote_write_labels},
+    seed_remote_write::{FixtureLabel, remote_write_body, remote_write_labels},
     upstream_http::{
         KrabkaServer, RemoteWrite, TestResult, mapped_base_url, post_remote_write, wait_for_http_ok,
     },

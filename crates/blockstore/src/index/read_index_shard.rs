@@ -22,29 +22,45 @@ pub(crate) async fn read_index_shard(
             } => BlockStoreError::InvalidBlock(format!(
                 "index shard `{path}` is {size} bytes, exceeds cap of {max_bytes} bytes"
             )),
-            krabka_object_store::v013::ObjectStoreError::Backend(message)
-            | krabka_object_store::v013::ObjectStoreError::InvalidConfig(message) => {
-                BlockStoreError::ObjectStore(message)
-            }
-            krabka_object_store::v013::ObjectStoreError::Io(error) => {
-                BlockStoreError::ObjectStore(error.to_string())
-            }
-            not_found @ krabka_object_store::v013::ObjectStoreError::NotFound(_) => {
-                // A shard the listing named and the read could not find was
-                // deleted between the two, which a concurrent save does. Report
-                // it rather than answering from a partial index.
-                match store.head(path).await {
-                    Ok(_) => BlockStoreError::ObjectStore(not_found.to_string()),
-                    Err(missing) => BlockStoreError::ObjectStore(missing.to_string()),
-                }
-            }
-            // Write-side variants: `read_capped` cannot raise them, but they
-            // are part of the enum, so surface them like any other backend
-            // failure rather than widening the read path.
-            conflict @ (krabka_object_store::v013::ObjectStoreError::AlreadyExists(_)
-            | krabka_object_store::v013::ObjectStoreError::Precondition { .. }) => {
-                BlockStoreError::ObjectStore(conflict.to_string())
-            }
+            other => capped_read_error(store, path, other).await,
         }),
+    }
+}
+
+/// Maps a `read_capped` failure other than `TooLarge` onto the blockstore
+/// error the index readers report.
+///
+/// A missing object is re-checked with a `head`: an index object that a
+/// listing or a live manifest names is not allowed to vanish, whether a
+/// concurrent save deleted it or a torn write or outside deletion did, and
+/// answering from a partial index would hide that.
+pub(crate) async fn capped_read_error(
+    store: &Arc<dyn ObjectStore>,
+    path: &Path,
+    error: krabka_object_store::v013::ObjectStoreError,
+) -> BlockStoreError {
+    match error {
+        krabka_object_store::v013::ObjectStoreError::Backend(message)
+        | krabka_object_store::v013::ObjectStoreError::InvalidConfig(message) => {
+            BlockStoreError::ObjectStore(message)
+        }
+        krabka_object_store::v013::ObjectStoreError::Io(error) => {
+            BlockStoreError::ObjectStore(error.to_string())
+        }
+        not_found @ krabka_object_store::v013::ObjectStoreError::NotFound(_) => {
+            match store.head(path).await {
+                Ok(_) => BlockStoreError::ObjectStore(not_found.to_string()),
+                Err(missing) => BlockStoreError::ObjectStore(missing.to_string()),
+            }
+        }
+        // Write-side variants: `read_capped` cannot raise them, but they are
+        // part of the enum, so surface them like any other backend failure
+        // rather than widening the read path. `TooLarge` reaches here only if
+        // a caller forwards it, and is a backend failure like the rest.
+        other @ (krabka_object_store::v013::ObjectStoreError::AlreadyExists(_)
+        | krabka_object_store::v013::ObjectStoreError::Precondition { .. }
+        | krabka_object_store::v013::ObjectStoreError::TooLarge { .. }) => {
+            BlockStoreError::ObjectStore(other.to_string())
+        }
     }
 }

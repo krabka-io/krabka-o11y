@@ -2142,12 +2142,38 @@ rules:
         assert2::assert!(list_calls.load(Ordering::SeqCst) == 1);
     }
 
+    /// A block writer rooted at `memory:///`, and the compaction-index sink
+    /// that publishes beside it, both over one object store.
+    struct BlockWriterFixture {
+        object_store: std::sync::Arc<dyn ObjectStore>,
+        base: url::Url,
+        writer_store: krabka_blockstore::BlockStore,
+        sink: krabka_metrics::ObjectStoreCompactionIndexSink,
+    }
+
+    impl BlockWriterFixture {
+        fn over(object_store: std::sync::Arc<dyn ObjectStore>) -> Self {
+            let base = url::Url::parse("memory:///").unwrap();
+            Self {
+                writer_store: krabka_blockstore::BlockStore::new(
+                    object_store.clone(),
+                    base.clone(),
+                ),
+                sink: krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone()),
+                object_store,
+                base,
+            }
+        }
+    }
+
     #[tokio::test]
     async fn refreshing_blockstore_bounds_cold_manifests_to_query_time() {
-        let object_store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
-        let base = url::Url::parse("memory:///").unwrap();
-        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
-        let sink = krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone());
+        let BlockWriterFixture {
+            object_store,
+            base,
+            writer_store,
+            sink,
+        } = BlockWriterFixture::over(std::sync::Arc::new(InMemory::new()));
 
         let mut old_labels = krabka_blockstore::Labels::new();
         old_labels.insert("__name__", "up");
@@ -2256,10 +2282,12 @@ rules:
             Time::ZERO,
         ));
         let get_calls = Arc::clone(&object_store.get_calls);
-        let object_store: std::sync::Arc<dyn ObjectStore> = object_store;
-        let base = url::Url::parse("memory:///").unwrap();
-        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
-        let sink = krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone());
+        let BlockWriterFixture {
+            object_store,
+            base,
+            writer_store,
+            sink,
+        } = BlockWriterFixture::over(object_store);
 
         write_float_manifest(
             &writer_store,
@@ -2377,10 +2405,12 @@ rules:
 
     #[tokio::test]
     async fn refreshing_blockstore_tsdb_stats_ignores_stale_compacted_blocks() {
-        let object_store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
-        let base = url::Url::parse("memory:///").unwrap();
-        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
-        let sink = krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone());
+        let BlockWriterFixture {
+            object_store,
+            base,
+            writer_store,
+            sink,
+        } = BlockWriterFixture::over(std::sync::Arc::new(InMemory::new()));
         let now_ms = super::duration_ms(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -2951,6 +2981,7 @@ pub use wal_head_consumer_error::WalHeadConsumerError;
 pub use wal_head_consumer_loop_summary::WalHeadConsumerLoopSummary;
 pub use wal_head_consumer_poll::WalHeadConsumerPoll;
 pub use wal_head_consumer_record::WalHeadConsumerRecord;
+use wal_head_consumer_record::checked_replay_records;
 pub use wal_head_partition_offset::WalHeadPartitionOffset;
 pub use wal_head_replay_error::WalHeadReplayError;
 pub use wal_head_replay_result::WalHeadReplayResult;
