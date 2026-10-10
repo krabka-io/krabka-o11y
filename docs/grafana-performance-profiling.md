@@ -1566,3 +1566,55 @@ versions. This supports the retained optimizations on explicitly selected,
 warmed workspace storage. Three observations per version do not qualify
 cold storage, network I/O, concurrent ingest, sharded requests, or native
 upstream parity. No new CPU or allocation captures are taken in this repeat.
+
+
+## Rejected borrowed metric-label conversion
+
+The native metrics profile identifies intermediate tree cloning in cold
+label resolution. The [borrowed-label experiment](../qualification/borrowed-metric-labels-2026-10-10.json)
+tries converting borrowed index labels directly into final `MetricLabels`,
+while retaining canonical hashing and stored-ID order. One executable contains
+both paths, using an aliased blockstore crate and the unchanged cached metrics
+library. It mirrors the two conversion implementations; it does not execute
+the production PromQL caller or query engine.
+
+All 72 observations verify the complete canonical-keyed label map before
+timing. Three alternating pairs cover broad, selective and empty selectors
+at four sizes, with eight labels per series. Stored row IDs deliberately
+differ from canonical fingerprints; values include Unicode, NUL and long
+strings. Setup and verification are excluded from timing. The fixture is
+an in-memory index, so these are not storage or HTTP measurements.
+
+| Broad selector | Owned median | Borrowed median | Median paired ratio |
+| --- | --- | --- | --- |
+| 1,000 series | 1.690 ms | 1.379 ms | 0.8071 |
+| 20,000 series | 84.779 ms | 79.011 ms | 0.9320 |
+| 100,000 series | 534.435 ms | 565.829 ms | 1.0454 |
+| 1,000,000 series | 6.261 s | 4.442 s | 0.7046 |
+
+The million-series case improves in every pair with disjoint ranges. The
+100,000-series case slows in every pair, with narrowly overlapping ranges.
+One selective million-series pair also slows by 23.6%. Empty cases take tens
+to hundreds of nanoseconds, making their small ratios difficult to attribute.
+Every observation remains recorded; the prototype is rejected and all three
+production and test files are restored byte for byte.
+
+CPU captures include construction, independent expected labels, one verification
+and 50 timed broad resolutions at 20,000 series. Both lose zero samples.
+Intermediate tree cloning disappears above the 0.5% reporting threshold,
+while canonical hashing remains about 24% self. Label conversion and result
+tree construction receive more relative attribution. These overlapping,
+whole-process samples do not isolate the 100,000-series slowdown. Heap captures
+at 5,000 series include setup, verification and 20 timed resolutions:
+allocation calls fall from 2,476,820 to 2,371,568, peak heap from 16.41 to
+16.22 MB, and instrumented RSS from 30.86 to 28.27 MB. Lower allocation
+traffic does not qualify a reliable latency advantage.
+
+The prototype passes 339 blockstore tests, strict production and full unit-source
+lint, and managed formatting. The actual PromQL caller is not compiled or
+qualified because rejection occurs at the isolated resolver stage. Verified
+RAM build dependencies are removed before timing; the demo is restored healthy.
+The pinned [Mimir packed-label approach](grafana-upstream-source-comparison.md#packed-labels-and-compressed-head-samples)
+returns slices from a packed string. This experiment still clones strings
+into a tree and does not implement that representation or qualify upstream
+parity. Canonical hash, wire format and retained benchmark budgets stay intact.
