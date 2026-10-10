@@ -1,15 +1,15 @@
 use crate::{
     ActiveLogDeleteFilter, Arc, BTreeMap, BlockDescriptor, ColdBlockScan, CompactionFrontier,
-    FsPath, Int64Array, LabelIndex, Labels, LokiStreamEncoding, LokiStreamEntry, MapArray,
-    MetricQuery, MetricWindow, ObjectPath, ObjectStore, QueryError, QueryHotTail, QueryRow,
-    RecordBatch, SessionContext, StreamPlan, StringArray, TimeRange, UInt64Array, Value,
-    WalLogRecord, append_matching_hot_log_record, append_matching_hot_metric_record,
-    append_matching_log_row, apply_absent_over_time, default_block_fetch_concurrency, eval_times,
+    FsPath, LabelIndex, Labels, LokiStreamEncoding, LokiStreamEntry, MetricQuery, MetricWindow,
+    ObjectPath, ObjectStore, QueryError, QueryHotTail, RecordBatch, SessionContext, StreamPlan,
+    TimeRange, Value, WalLogRecord, append_matching_hot_log_record,
+    append_matching_hot_metric_record, append_matching_log_row, apply_absent_over_time,
+    default_block_fetch_concurrency, eval_times,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
-    format_metric_samples, json, loki_matrix_response, loki_stream_results, metric_plan_scan_sql,
-    metric_samples_from_batches, register_log_blocks, register_log_blocks_from_object_store,
-    sort_loki_stream_values, structured_metadata_value,
+    for_each_query_row, format_metric_samples, json, loki_matrix_response, loki_stream_results,
+    metric_plan_scan_sql, metric_samples_from_batches, register_log_blocks,
+    register_log_blocks_from_object_store, sort_loki_stream_values,
 };
 
 mod append_matching_log_batches;

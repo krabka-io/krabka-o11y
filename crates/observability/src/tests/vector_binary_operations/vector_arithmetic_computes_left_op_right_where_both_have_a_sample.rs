@@ -12,32 +12,22 @@ use super::*;
 pub(crate) fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample() {
     use krabka_logql::MetricScalarArithmeticOp;
 
-    let series = |samples: &[(i64, &str)]| {
-        serde_json::json!({
-            "metric": {"app": "api"},
-            "values": samples
-                .iter()
-                .map(|(ts, value)| serde_json::json!([ts, value]))
-                .collect::<Vec<_>>(),
-        })
-    };
-    let pairs = |value: &serde_json::Value| {
-        value
-            .get("values")
-            .and_then(serde_json::Value::as_array)
-            .expect("the series has values")
-            .iter()
-            .map(|sample| {
-                (
-                    sample[0].as_i64().expect("a timestamp"),
-                    sample[1].as_str().expect("a value").to_string(),
-                )
-            })
-            .collect::<Vec<_>>()
-    };
-    let left = series(&[(1, "10"), (4, "20"), (5, "20")]);
+    let left = range_series(&[
+        timed_sample(1, "10"),
+        timed_sample(4, "20"),
+        timed_sample(5, "20"),
+    ]);
     // 2, 3 and 6 have no left sample; 2 and 3 are adjacent.
-    let right = || series(&[(1, "2"), (2, "1"), (3, "1"), (4, "5"), (5, "5"), (6, "1")]);
+    let right = || {
+        range_series(&[
+            timed_sample(1, "2"),
+            timed_sample(2, "1"),
+            timed_sample(3, "1"),
+            timed_sample(4, "5"),
+            timed_sample(5, "5"),
+            timed_sample(6, "1"),
+        ])
+    };
     let apply = |op| {
         let mut output = right();
         let kept =
@@ -46,7 +36,7 @@ pub(crate) fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample(
                 &left,
                 op,
             );
-        (kept, pairs(&output))
+        (kept, range_pairs(&output))
     };
 
     // 10-2, 20-5, 20-5 -- not 2-10, which is what a swap would give.
@@ -85,7 +75,7 @@ pub(crate) fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample(
     );
 
     // A division with no answer drops its sample rather than emitting one.
-    let mut output = series(&[(1, "0")]);
+    let mut output = range_series(&[timed_sample(1, "0")]);
     check!(
         !super::super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
             &mut output,
@@ -95,22 +85,21 @@ pub(crate) fn vector_arithmetic_computes_left_op_right_where_both_have_a_sample(
     );
 
     // The instant shape again, where nothing pre-matches the timestamps.
-    let instant = |ts: i64, value: &str| serde_json::json!({"metric": {}, "value": [ts, value]});
-    let mut output = instant(1, "2");
+    let mut output = instant_series(timed_sample(1, "2"));
     check!(
         super::super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
             &mut output,
-            &instant(1, "10"),
+            &instant_series(timed_sample(1, "10")),
             MetricScalarArithmeticOp::Subtract,
         )
     );
     check!(output["value"][1] == "8");
 
-    let mut output = instant(1, "2");
+    let mut output = instant_series(timed_sample(1, "2"));
     check!(
         !super::super::prelude::apply_metric_binary_arithmetic_to_series_with_left_operand(
             &mut output,
-            &instant(2, "10"),
+            &instant_series(timed_sample(2, "10")),
             MetricScalarArithmeticOp::Subtract,
         ),
         "two different instants have no arithmetic between them"

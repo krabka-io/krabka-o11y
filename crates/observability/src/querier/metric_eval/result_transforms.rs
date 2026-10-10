@@ -7,15 +7,12 @@ use crate::{
     scalar_vector_expression_result,
 };
 use crate::{
-    MetricQuery, MetricScalarArithmeticOp, MetricValue, MetricVectorGroupModifier,
-    MetricVectorMatching, Ordering, Value, VectorAggregationOp,
-    apply_metric_binary_arithmetic_to_sample,
-    apply_metric_binary_arithmetic_to_series_with_left_operand, include_metric_group_labels,
-    matching_metric_binary_sample, metric_series_labels, metric_vector_group_modifier,
-    metric_vector_matching_key, parse_metric_sample_value,
+    MetricBinaryOperator, MetricQuery, MetricScalarArithmeticOp, MetricValue, MetricVectorMatching,
+    Ordering, Value, VectorAggregationOp, apply_metric_binary_arithmetic_to_sample,
+    apply_metric_binary_arithmetic_to_series_with_left_operand, apply_metric_binary_to_series,
+    parse_metric_sample_value,
 };
 
-mod apply_metric_binary_arithmetic_group_right_to_results;
 mod apply_metric_binary_arithmetic_to_loki_result;
 mod apply_metric_binary_arithmetic_to_series;
 #[cfg(test)]
@@ -26,7 +23,6 @@ mod metric_query_uses_count_values;
 mod retain_metric_binary_on_labels;
 mod sort_loki_vector_result;
 
-pub(crate) use apply_metric_binary_arithmetic_group_right_to_results::apply_metric_binary_arithmetic_group_right_to_results;
 pub(crate) use apply_metric_binary_arithmetic_to_loki_result::apply_metric_binary_arithmetic_to_loki_result;
 pub(crate) use apply_metric_binary_arithmetic_to_series::apply_metric_binary_arithmetic_to_series;
 #[cfg(test)]

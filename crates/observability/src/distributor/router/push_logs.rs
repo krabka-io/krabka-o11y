@@ -1,9 +1,8 @@
 use super::{
     ByteSizeExt, Bytes, DistributorState, HeaderMap, Instant, Instrument, IntoResponse,
-    RequestSecurity, Response, State, StatusCode, TenantErrorSurface,
-    append_distributor_wal_records, measured_size, normalize_loki_http_push,
-    record_ingest_response, resolve_single_tenant, tenant_error_response, tenant_header_value,
-    validate_ingest_body_limit,
+    NormalizedPush, RequestSecurity, Response, State, TenantErrorSurface, append_and_record_push,
+    measured_size, normalize_loki_http_push, record_ingest_response, resolve_single_tenant,
+    tenant_error_response, tenant_header_value, validate_ingest_body_limit,
 };
 
 pub(crate) async fn push_logs(
@@ -48,16 +47,18 @@ pub(crate) async fn push_logs(
         }
         let resp = match normalize_loki_http_push(&tenant, &headers, &body, &limits) {
             Ok(records) => {
-                let items = records.len() as u64;
-                tracing::Span::current().record("krabka.ingest.lines", items);
-                state.metrics.record_ingest_lines(tenant.as_str(), items);
-                let resp = match append_distributor_wal_records(&state, &security, &tenant, records)
-                    .await
-                {
-                    Ok(()) => StatusCode::NO_CONTENT.into_response(),
-                    Err(error) => error.into_response(),
-                };
-                return record_ingest_response(&state, resp, body_size, items, start);
+                return append_and_record_push(
+                    NormalizedPush {
+                        state: &state,
+                        security: &security,
+                        tenant: &tenant,
+                        body_size,
+                        start,
+                    },
+                    records,
+                    |_| {},
+                )
+                .await;
             }
             Err(error) => error.into_response(),
         };

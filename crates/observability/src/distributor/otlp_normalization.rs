@@ -23,6 +23,7 @@ mod normalize_otlp_proto_logs;
 mod normalize_otlp_proto_logs_for_tenant;
 mod otlp_attributes_to_labels;
 mod otlp_log_record_structured_metadata;
+mod otlp_log_steps;
 mod otlp_severity_number_to_string;
 mod otlp_timestamp_ns;
 mod otlp_value_to_string;
@@ -49,6 +50,9 @@ pub(crate) use normalize_otlp_proto_logs::normalize_otlp_proto_logs;
 pub(crate) use normalize_otlp_proto_logs_for_tenant::normalize_otlp_proto_logs_for_tenant;
 pub(crate) use otlp_attributes_to_labels::otlp_attributes_to_labels;
 pub(crate) use otlp_log_record_structured_metadata::otlp_log_record_structured_metadata;
+pub(crate) use otlp_log_steps::{
+    OtlpLine, OtlpScope, otlp_resource_labels, otlp_scope_metadata, otlp_stream_labels,
+};
 pub(crate) use otlp_severity_number_to_string::otlp_severity_number_to_string;
 pub(crate) use otlp_timestamp_ns::otlp_timestamp_ns;
 pub(crate) use otlp_value_to_string::otlp_value_to_string;

@@ -1,5 +1,4 @@
 use krabka_units::convert::TimeExt;
-use num_traits::{FromPrimitive as _, ToPrimitive};
 
 use crate::{
     ByteSize, ByteSizeExt, HttpQueryError, LOKI_MAX_QUERY_RANGE_RESOLUTION_POINTS,
@@ -17,6 +16,7 @@ mod format_loki_model_duration;
 mod format_loki_query_length;
 mod gcd_signed;
 mod parse_scalar_sample;
+mod rational_arithmetic;
 mod resolved_range_step;
 mod scalar_sample;
 mod validate_loki_query_range_resolution;
@@ -33,6 +33,9 @@ pub(crate) use format_loki_model_duration::format_loki_model_duration;
 pub(crate) use format_loki_query_length::format_loki_query_length;
 pub(crate) use gcd_signed::gcd_signed;
 pub(crate) use parse_scalar_sample::parse_scalar_sample;
+pub(crate) use rational_arithmetic::{
+    Rational, decimal_scaled_numerator, impl_rational_division_ops, rational_to_f64,
+};
 pub(crate) use resolved_range_step::resolved_range_step;
 pub(crate) use scalar_sample::ScalarSample;
 pub(crate) use validate_loki_query_range_resolution::validate_loki_query_range_resolution;

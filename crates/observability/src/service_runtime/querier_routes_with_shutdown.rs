@@ -9,7 +9,7 @@ use super::{
     spawn_compaction_frontier_refresher, spawn_log_hot_tail_poller,
     spawn_wal_hot_tail_connect_and_poll,
 };
-use crate::{RoleReadiness, spawn_logs_ruler};
+use crate::{ConfiguredObjectStore, RoleReadiness, SharedCompactionFrontier, spawn_logs_ruler};
 
 /// The querier's read routes, and the tasks that keep them able to answer.
 ///
@@ -72,28 +72,21 @@ pub(crate) async fn querier_routes_with_shutdown(
     } else if let Some(wal_consumer) = dependencies.wal_consumer {
         // Pre-connected consumer supplied directly (e.g. by tests).
         let hot_tail = BufferedLogHotTail::with_bucket_width(config.querier_hot_tail_bucket_width);
-        let (frontier, refresh_source) = load_querier_shared_compaction_frontier(
+        let LoadedFrontier {
+            frontier,
+            refresher,
+        } = FrontierRefresh {
             config,
-            configured_store.as_ref(),
+            configured_store: configured_store.as_ref(),
             object_store,
-        )
-        .await?;
-        if let (Some(frontier), Some((store, prefix))) = (frontier.clone(), refresh_source) {
-            // Named and kept, not dropped: this task is the only thing
-            // that moves the querier's frontier forward, and a querier
-            // answering from a frozen frontier says nothing about it.
-            background_tasks.push((
-                "querier compaction frontier",
-                spawn_compaction_frontier_refresher(
-                    store,
-                    prefix,
-                    frontier,
-                    hot_tail.clone(),
-                    token.clone(),
-                    config.querier_frontier_refresh_interval,
-                ),
-            ));
+            token: &token,
         }
+        .load(&hot_tail)
+        .await?;
+        // Named and kept, not dropped: the refresher is the only thing that
+        // moves the querier's frontier forward, and a querier answering from
+        // a frozen frontier says nothing about it.
+        background_tasks.extend(refresher.map(|task| (FRONTIER_REFRESHER, task)));
         background_tasks.push((
             "querier WAL hot-tail",
             spawn_log_hot_tail_poller(
@@ -118,28 +111,21 @@ pub(crate) async fn querier_routes_with_shutdown(
         // Deferred connect: the consumer connects asynchronously so the
         // querier's HTTP port binds without waiting for the broker to be ready (FIX B2).
         let hot_tail = BufferedLogHotTail::with_bucket_width(config.querier_hot_tail_bucket_width);
-        let (frontier, refresh_source) = load_querier_shared_compaction_frontier(
+        let LoadedFrontier {
+            frontier,
+            refresher,
+        } = FrontierRefresh {
             config,
-            configured_store.as_ref(),
+            configured_store: configured_store.as_ref(),
             object_store,
-        )
-        .await?;
-        if let (Some(frontier), Some((store, prefix))) = (frontier.clone(), refresh_source) {
-            // Named and kept, not dropped: this task is the only thing
-            // that moves the querier's frontier forward, and a querier
-            // answering from a frozen frontier says nothing about it.
-            background_tasks.push((
-                "querier compaction frontier",
-                spawn_compaction_frontier_refresher(
-                    store,
-                    prefix,
-                    frontier,
-                    hot_tail.clone(),
-                    token.clone(),
-                    config.querier_frontier_refresh_interval,
-                ),
-            ));
+            token: &token,
         }
+        .load(&hot_tail)
+        .await?;
+        // Named and kept, not dropped: the refresher is the only thing that
+        // moves the querier's frontier forward, and a querier answering from
+        // a frozen frontier says nothing about it.
+        background_tasks.extend(refresher.map(|task| (FRONTIER_REFRESHER, task)));
 
         // Spawn the consumer connect + poll loop in a background task.
         background_tasks.push((
@@ -164,4 +150,54 @@ pub(crate) async fn querier_routes_with_shutdown(
     state = state.with_metrics(metrics);
     background_tasks.push(("logs ruler", spawn_logs_ruler(state.clone(), token)));
     Ok((loki_query_routes(state), background_tasks))
+}
+
+/// What a querier needs to load the shared compaction frontier its hot tail
+/// filters by, and to keep that frontier moving.
+struct FrontierRefresh<'a> {
+    config: &'a ServiceConfig,
+    configured_store: Option<&'a ConfiguredObjectStore>,
+    object_store: Option<&'a dyn ObjectStore>,
+    token: &'a CancellationToken,
+}
+
+/// The frontier a querier loaded, and the task that keeps it moving when the
+/// store can refresh it.
+struct LoadedFrontier {
+    frontier: Option<SharedCompactionFrontier>,
+    refresher: Option<JoinHandle<()>>,
+}
+
+/// The name a querier's frontier refresher runs under.
+const FRONTIER_REFRESHER: &str = "querier compaction frontier";
+
+impl FrontierRefresh<'_> {
+    /// Loads the frontier and, when the store can refresh it, spawns the task
+    /// that does.
+    async fn load(
+        self,
+        hot_tail: &BufferedLogHotTail,
+    ) -> Result<LoadedFrontier, ServiceConfigError> {
+        let (frontier, refresh_source) = load_querier_shared_compaction_frontier(
+            self.config,
+            self.configured_store,
+            self.object_store,
+        )
+        .await?;
+        let refresher = match (frontier.clone(), refresh_source) {
+            (Some(frontier), Some((store, prefix))) => Some(spawn_compaction_frontier_refresher(
+                store,
+                prefix,
+                frontier,
+                hot_tail.clone(),
+                self.token.clone(),
+                self.config.querier_frontier_refresh_interval,
+            )),
+            _ => None,
+        };
+        Ok(LoadedFrontier {
+            frontier,
+            refresher,
+        })
+    }
 }

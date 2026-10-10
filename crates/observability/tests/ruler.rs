@@ -16,6 +16,59 @@ use support::{
 };
 use tower::ServiceExt as _;
 
+/// The templated lines of an `ApiErrors` alert rule, as YAML.
+struct AlertTemplates<'a> {
+    /// The `route` label line.
+    route_label: &'a str,
+    /// The `summary` annotation line.
+    summary_annotation: &'a str,
+}
+
+/// Posts an `ApiErrors` alert rule with `templates`, and checks that the
+/// firing alert expands both.
+async fn assert_templated_alert(templates: AlertTemplates<'_>) {
+    let AlertTemplates {
+        route_label,
+        summary_annotation,
+    } = templates;
+    let app = loki_router(fixture());
+    post_loki_rule_group_for_test(
+        &app,
+        "default",
+        &format!(
+            "\
+name: api-errors
+rules:
+  - alert: ApiErrors
+    expr: count_over_time({{app=\"api\"}} |= \"error\" [30ns]) > 0
+    labels:
+      {route_label}
+    annotations:
+      {summary_annotation}
+"
+        ),
+    )
+    .await;
+
+    let alerts_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/prometheus/api/v1/alerts?time=0.000000019")
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert!(alerts_response.status() == StatusCode::OK);
+    let body = json_body(alerts_response).await;
+    check!(body["data"]["alerts"].as_array().unwrap().len() == 1);
+    check!(body["data"]["alerts"][0]["labels"]["route"] == "api-prod");
+    check!(body["data"]["alerts"][0]["annotations"]["summary"] == "service=api value=1");
+}
+
 #[tokio::test]
 async fn ruler_endpoints_match_empty_rule_and_alert_lists() {
     let state = fixture();
@@ -791,80 +844,20 @@ rules:
 
 #[tokio::test]
 async fn prometheus_alerts_endpoint_expands_loki_rule_label_and_annotation_templates() {
-    let state = fixture();
-    let app = loki_router(state);
-    post_loki_rule_group_for_test(
-        &app,
-        "default",
-        "\
-name: api-errors
-rules:
-  - alert: ApiErrors
-    expr: count_over_time({app=\"api\"} |= \"error\" [30ns]) > 0
-    labels:
-      route: '{{ $labels.app }}-{{ $labels.env }}'
-    annotations:
-      summary: 'service={{ $labels.app }} value={{ $value }}'
-",
-    )
+    assert_templated_alert(AlertTemplates {
+        route_label: "route: '{{ $labels.app }}-{{ $labels.env }}'",
+        summary_annotation: "summary: 'service={{ $labels.app }} value={{ $value }}'",
+    })
     .await;
-
-    let alerts_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(alerts_response.status() == StatusCode::OK);
-    let body = json_body(alerts_response).await;
-    check!(body["data"]["alerts"].as_array().unwrap().len() == 1);
-    check!(body["data"]["alerts"][0]["labels"]["route"] == "api-prod");
-    check!(body["data"]["alerts"][0]["annotations"]["summary"] == "service=api value=1");
 }
 
 #[tokio::test]
 async fn prometheus_alerts_endpoint_expands_compact_loki_rule_templates() {
-    let state = fixture();
-    let app = loki_router(state);
-    post_loki_rule_group_for_test(
-        &app,
-        "default",
-        "\
-name: api-errors
-rules:
-  - alert: ApiErrors
-    expr: count_over_time({app=\"api\"} |= \"error\" [30ns]) > 0
-    labels:
-      route: '{{$labels.app}}-{{$labels.env}}'
-    annotations:
-      summary: 'service={{$labels.app}} value={{$value}}'
-",
-    )
+    assert_templated_alert(AlertTemplates {
+        route_label: "route: '{{$labels.app}}-{{$labels.env}}'",
+        summary_annotation: "summary: 'service={{$labels.app}} value={{$value}}'",
+    })
     .await;
-
-    let alerts_response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts?time=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(alerts_response.status() == StatusCode::OK);
-    let body = json_body(alerts_response).await;
-    check!(body["data"]["alerts"].as_array().unwrap().len() == 1);
-    check!(body["data"]["alerts"][0]["labels"]["route"] == "api-prod");
-    check!(body["data"]["alerts"][0]["annotations"]["summary"] == "service=api value=1");
 }
 
 #[tokio::test]

@@ -17,6 +17,7 @@ mod parse_prometheus_duration;
 mod parse_query_params;
 mod parse_volume_params;
 mod prometheus_duration_unit;
+mod set_first_query_param;
 mod split_query_param_pairs;
 mod validate_loki_tail_delay_for;
 
@@ -30,5 +31,6 @@ pub(crate) use parse_prometheus_duration::parse_prometheus_duration;
 pub(crate) use parse_query_params::parse_query_params;
 pub(crate) use parse_volume_params::parse_volume_params;
 pub(crate) use prometheus_duration_unit::prometheus_duration_unit;
+pub(crate) use set_first_query_param::set_first_query_param;
 pub(crate) use split_query_param_pairs::split_query_param_pairs;
 pub(crate) use validate_loki_tail_delay_for::validate_loki_tail_delay_for;

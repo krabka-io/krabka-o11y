@@ -5,11 +5,8 @@ mod support;
 use std::collections::BTreeMap;
 
 use assert2::{assert, check};
-use axum::{
-    body::Body,
-    http::{Request, StatusCode},
-};
-use krabka_blockstore::labels;
+use axum::{body::Body, http::StatusCode};
+use krabka_blockstore::{LogLabels, labels};
 use krabka_observability::{
     InMemoryWalSink, WalLogRecord, distributor_router, otlp_grpc_logs_service,
     otlp_grpc_logs_service_with_limiter,
@@ -22,24 +19,51 @@ use prost::Message as _;
 use serde_json::json;
 use support::{
     FailingWalSink, RejectingIngestLimiter, assert_loki_error, json_body, proto_key_value,
-    proto_logs_request,
+    proto_logs_request, send, tenant_a_post,
 };
-use tower::ServiceExt as _;
+
+/// The record the `checkout` export writes: its resource labels, the line at
+/// 19 ns, and the detected level and instrumentation scope ahead of `metadata`.
+fn checkout_record(metadata: LogLabels) -> WalLogRecord {
+    let mut structured_metadata = BTreeMap::from([
+        ("detected_level".to_string(), "error".to_string()),
+        ("instrumentation_scope".to_string(), "api".to_string()),
+    ]);
+    structured_metadata.extend(metadata);
+    WalLogRecord {
+        tenant: "tenant-a".to_string(),
+        labels: labels([
+            ("deployment_environment", "prod"),
+            ("service_name", "checkout"),
+        ]),
+        timestamp_ns: 19,
+        line: "api error".to_string(),
+        structured_metadata,
+        position: None,
+    }
+}
+
+async fn post_protobuf(
+    app: &axum::Router,
+    uri: &str,
+    payload: Vec<u8>,
+) -> axum::response::Response {
+    send(
+        app,
+        tenant_a_post(uri)
+            .header("content-type", "application/x-protobuf")
+            .body(Body::from(payload))
+            .unwrap(),
+    )
+    .await
+}
 
 #[tokio::test]
 async fn otlp_logs_endpoint_writes_tenant_scoped_wal_records() {
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
+    let response = send(&app, tenant_a_post("/v1/logs").header("content-type", "application/json").body(Body::from(json!({
                         "resourceLogs": [
                             {
                                 "resource": {
@@ -70,33 +94,16 @@ async fn otlp_logs_endpoint_writes_tenant_scoped_wal_records() {
                             }
                         ]
                     })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+                    .to_string())).unwrap()).await;
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
     assert!(
         records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("deployment_environment", "prod"),
-                    ("service_name", "checkout"),
-                ]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([
-                    ("detected_level".to_string(), "error".to_string()),
-                    ("instrumentation_scope".to_string(), "api".to_string()),
-                    ("status".to_string(), "500".to_string()),
-                    ("trace_id".to_string(), "abc".to_string()),
-                ]),
-                position: None,
-            }]
+            == vec![checkout_record(labels([
+                ("status", "500"),
+                ("trace_id", "abc")
+            ]))]
     );
 }
 
@@ -105,46 +112,42 @@ async fn otlp_logs_endpoint_preserves_severity_fields_as_structured_metadata() {
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "resourceLogs": [
-                            {
-                                "resource": {
-                                    "attributes": [
-                                        {"key": "service.name", "value": {"stringValue": "checkout"}}
-                                    ]
-                                },
-                                "scopeLogs": [
-                                    {
-                                        "logRecords": [
-                                            {
-                                                "timeUnixNano": "19",
-                                                "severityText": "ERROR",
-                                                "severityNumber": 17,
-                                                "traceId": "0102030405060708090a0b0c0d0e0f10",
-                                                "spanId": "1112131415161718",
-                                                "body": {"stringValue": "api error"},
-                                                "attributes": []
-                                            }
-                                        ]
-                                    }
+    let response = send(
+        &app,
+        tenant_a_post("/v1/logs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "resourceLogs": [
+                        {
+                            "resource": {
+                                "attributes": [
+                                    {"key": "service.name", "value": {"stringValue": "checkout"}}
                                 ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+                            },
+                            "scopeLogs": [
+                                {
+                                    "logRecords": [
+                                        {
+                                            "timeUnixNano": "19",
+                                            "severityText": "ERROR",
+                                            "severityNumber": 17,
+                                            "traceId": "0102030405060708090a0b0c0d0e0f10",
+                                            "spanId": "1112131415161718",
+                                            "body": {"stringValue": "api error"},
+                                            "attributes": []
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
@@ -168,41 +171,37 @@ async fn otlp_logs_endpoint_preserves_severity_fields_as_structured_metadata() {
 async fn otlp_logs_endpoint_returns_server_error_when_wal_append_fails() {
     let app = distributor_router(FailingWalSink);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "resourceLogs": [
-                            {
-                                "resource": {
-                                    "attributes": [
-                                        {"key": "service.name", "value": {"stringValue": "checkout"}}
-                                    ]
-                                },
-                                "scopeLogs": [
-                                    {
-                                        "logRecords": [
-                                            {
-                                                "timeUnixNano": "19",
-                                                "body": {"stringValue": "api error"}
-                                            }
-                                        ]
-                                    }
+    let response = send(
+        &app,
+        tenant_a_post("/v1/logs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "resourceLogs": [
+                        {
+                            "resource": {
+                                "attributes": [
+                                    {"key": "service.name", "value": {"stringValue": "checkout"}}
                                 ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+                            },
+                            "scopeLogs": [
+                                {
+                                    "logRecords": [
+                                        {
+                                            "timeUnixNano": "19",
+                                            "body": {"stringValue": "api error"}
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
 
     assert!(response.status() == StatusCode::SERVICE_UNAVAILABLE);
     assert_loki_error(&json_body(response).await, "server_error", "wal sink");
@@ -213,15 +212,7 @@ async fn otlp_logs_endpoint_normalizes_attribute_names_for_loki_labels_and_metad
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
+    let response = send(&app, tenant_a_post("/v1/logs").header("content-type", "application/json").body(Body::from(json!({
                         "resourceLogs": [
                             {
                                 "resource": {
@@ -252,12 +243,7 @@ async fn otlp_logs_endpoint_normalizes_attribute_names_for_loki_labels_and_metad
                             }
                         ]
                     })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+                    .to_string())).unwrap()).await;
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
@@ -285,42 +271,38 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_resource_attributes_wit
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "resourceLogs": [
-                            {
-                                "resource": {
-                                    "attributes": [
-                                        {"key": "service.name", "value": {"stringValue": "checkout"}},
-                                        {"key": "service_name", "value": {"stringValue": "billing"}}
-                                    ]
-                                },
-                                "scopeLogs": [
-                                    {
-                                        "logRecords": [
-                                            {
-                                                "timeUnixNano": "19",
-                                                "body": {"stringValue": "api error"}
-                                            }
-                                        ]
-                                    }
+    let response = send(
+        &app,
+        tenant_a_post("/v1/logs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "resourceLogs": [
+                        {
+                            "resource": {
+                                "attributes": [
+                                    {"key": "service.name", "value": {"stringValue": "checkout"}},
+                                    {"key": "service_name", "value": {"stringValue": "billing"}}
                                 ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+                            },
+                            "scopeLogs": [
+                                {
+                                    "logRecords": [
+                                        {
+                                            "timeUnixNano": "19",
+                                            "body": {"stringValue": "api error"}
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(response).await, "bad_data", "OTLP attribute");
@@ -332,15 +314,7 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_log_attributes_without_
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
+    let response = send(&app, tenant_a_post("/v1/logs").header("content-type", "application/json").body(Body::from(json!({
                         "resourceLogs": [
                             {
                                 "resource": {
@@ -365,12 +339,7 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_log_attributes_without_
                             }
                         ]
                     })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+                    .to_string())).unwrap()).await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(response).await, "bad_data", "OTLP attribute");
@@ -382,15 +351,7 @@ async fn otlp_logs_endpoint_discovers_service_name_label_from_resource_attribute
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
+    let response = send(&app, tenant_a_post("/v1/logs").header("content-type", "application/json").body(Body::from(json!({
                         "resourceLogs": [
                             {
                                 "resource": {
@@ -412,12 +373,7 @@ async fn otlp_logs_endpoint_discovers_service_name_label_from_resource_attribute
                             }
                         ]
                     })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+                    .to_string())).unwrap()).await;
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
@@ -437,36 +393,32 @@ async fn otlp_logs_endpoint_uses_unknown_service_when_no_service_name_candidate_
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "resourceLogs": [
-                            {
-                                "scopeLogs": [
-                                    {
-                                        "logRecords": [
-                                            {
-                                                "timeUnixNano": "19",
-                                                "body": {"stringValue": "api error"}
-                                            }
-                                        ]
-                                    }
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        tenant_a_post("/v1/logs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "resourceLogs": [
+                        {
+                            "scopeLogs": [
+                                {
+                                    "logRecords": [
+                                        {
+                                            "timeUnixNano": "19",
+                                            "body": {"stringValue": "api error"}
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
@@ -479,41 +431,37 @@ async fn otlp_logs_endpoint_rejects_invalid_timestamp_without_wal_append() {
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "resourceLogs": [
-                            {
-                                "resource": {
-                                    "attributes": [
-                                        {"key": "service.name", "value": {"stringValue": "checkout"}}
-                                    ]
-                                },
-                                "scopeLogs": [
-                                    {
-                                        "logRecords": [
-                                            {
-                                                "timeUnixNano": "not-a-timestamp",
-                                                "body": {"stringValue": "api error"}
-                                            }
-                                        ]
-                                    }
+    let response = send(
+        &app,
+        tenant_a_post("/v1/logs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "resourceLogs": [
+                        {
+                            "resource": {
+                                "attributes": [
+                                    {"key": "service.name", "value": {"stringValue": "checkout"}}
                                 ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+                            },
+                            "scopeLogs": [
+                                {
+                                    "logRecords": [
+                                        {
+                                            "timeUnixNano": "not-a-timestamp",
+                                            "body": {"stringValue": "api error"}
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(sink.records().is_empty());
@@ -524,41 +472,37 @@ async fn otlp_logs_endpoint_rejects_negative_timestamp_without_wal_append() {
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "resourceLogs": [
-                            {
-                                "resource": {
-                                    "attributes": [
-                                        {"key": "service.name", "value": {"stringValue": "checkout"}}
-                                    ]
-                                },
-                                "scopeLogs": [
-                                    {
-                                        "logRecords": [
-                                            {
-                                                "timeUnixNano": "-1",
-                                                "body": {"stringValue": "api error"}
-                                            }
-                                        ]
-                                    }
+    let response = send(
+        &app,
+        tenant_a_post("/v1/logs")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({
+                    "resourceLogs": [
+                        {
+                            "resource": {
+                                "attributes": [
+                                    {"key": "service.name", "value": {"stringValue": "checkout"}}
                                 ]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+                            },
+                            "scopeLogs": [
+                                {
+                                    "logRecords": [
+                                        {
+                                            "timeUnixNano": "-1",
+                                            "body": {"stringValue": "api error"}
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(response).await, "bad_data", "timestamp");
@@ -571,41 +515,18 @@ async fn otlp_logs_endpoint_accepts_protobuf_payloads() {
     let app = distributor_router(sink.clone());
     let payload = proto_logs_request().encode_to_vec();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_protobuf(&app, "/v1/logs", payload).await;
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
     assert!(
         records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("deployment_environment", "prod"),
-                    ("service_name", "checkout"),
-                ]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([
-                    ("detected_level".to_string(), "error".to_string()),
-                    ("instrumentation_scope".to_string(), "api".to_string()),
-                    ("scope_name".to_string(), "api".to_string()),
-                    ("scope_version".to_string(), "1.2.3".to_string()),
-                    ("status".to_string(), "500".to_string()),
-                    ("trace_id".to_string(), "abc".to_string()),
-                ]),
-                position: None,
-            }]
+            == vec![checkout_record(labels([
+                ("scope_name", "api"),
+                ("scope_version", "1.2.3"),
+                ("status", "500"),
+                ("trace_id", "abc"),
+            ]))]
     );
 }
 
@@ -622,36 +543,21 @@ async fn otlp_logs_endpoint_maps_proto_trace_and_span_ids_to_structured_metadata
     ];
     log.span_id = vec![0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18];
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(request.encode_to_vec()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_protobuf(&app, "/v1/logs", request.encode_to_vec()).await;
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
     assert!(records.len() == 1);
     assert!(
         records[0].structured_metadata
-            == BTreeMap::from([
-                ("detected_level".to_string(), "error".to_string()),
-                ("instrumentation_scope".to_string(), "api".to_string()),
-                ("scope_name".to_string(), "api".to_string()),
-                ("scope_version".to_string(), "1.2.3".to_string()),
-                ("status".to_string(), "500".to_string()),
-                (
-                    "trace_id".to_string(),
-                    "0102030405060708090a0b0c0d0e0f10".to_string(),
-                ),
-                ("span_id".to_string(), "1112131415161718".to_string()),
-            ])
+            == checkout_record(labels([
+                ("scope_name", "api"),
+                ("scope_version", "1.2.3"),
+                ("status", "500"),
+                ("trace_id", "0102030405060708090a0b0c0d0e0f10"),
+                ("span_id", "1112131415161718"),
+            ]))
+            .structured_metadata
     );
 }
 
@@ -668,33 +574,21 @@ async fn otlp_logs_endpoint_maps_proto_severity_fields_to_structured_metadata() 
         any_value::Value::StringValue("abc".into()),
     )];
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(request.encode_to_vec()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_protobuf(&app, "/v1/logs", request.encode_to_vec()).await;
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
     assert!(records.len() == 1);
     assert!(
         records[0].structured_metadata
-            == BTreeMap::from([
-                ("detected_level".to_string(), "error".to_string()),
-                ("instrumentation_scope".to_string(), "api".to_string()),
-                ("scope_name".to_string(), "api".to_string()),
-                ("scope_version".to_string(), "1.2.3".to_string()),
-                ("severity_number".to_string(), "17".to_string()),
-                ("severity_text".to_string(), "ERROR".to_string()),
-                ("trace_id".to_string(), "abc".to_string()),
-            ])
+            == checkout_record(labels([
+                ("scope_name", "api"),
+                ("scope_version", "1.2.3"),
+                ("severity_number", "17"),
+                ("severity_text", "ERROR"),
+                ("trace_id", "abc"),
+            ]))
+            .structured_metadata
     );
 }
 
@@ -718,18 +612,7 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_protobuf_attributes_wit
         entity_refs: vec![],
     });
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(request.encode_to_vec()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_protobuf(&app, "/v1/logs", request.encode_to_vec()).await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(response).await, "bad_data", "OTLP attribute");
@@ -742,18 +625,7 @@ async fn otlp_logs_endpoint_accepts_loki_otlp_path() {
     let app = distributor_router(sink.clone());
     let payload = proto_logs_request().encode_to_vec();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/otlp/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_protobuf(&app, "/otlp/v1/logs", payload).await;
 
     assert!(response.status() == StatusCode::NO_CONTENT);
     let records = sink.records();
@@ -777,24 +649,12 @@ async fn otlp_grpc_logs_service_writes_tenant_scoped_wal_records() {
     let records = sink.records();
     assert!(
         records
-            == vec![WalLogRecord {
-                tenant: "tenant-a".to_string(),
-                labels: labels([
-                    ("deployment_environment", "prod"),
-                    ("service_name", "checkout"),
-                ]),
-                timestamp_ns: 19,
-                line: "api error".to_string(),
-                structured_metadata: BTreeMap::from([
-                    ("detected_level".to_string(), "error".to_string()),
-                    ("instrumentation_scope".to_string(), "api".to_string()),
-                    ("scope_name".to_string(), "api".to_string()),
-                    ("scope_version".to_string(), "1.2.3".to_string()),
-                    ("status".to_string(), "500".to_string()),
-                    ("trace_id".to_string(), "abc".to_string()),
-                ]),
-                position: None,
-            }]
+            == vec![checkout_record(labels([
+                ("scope_name", "api"),
+                ("scope_version", "1.2.3"),
+                ("status", "500"),
+                ("trace_id", "abc"),
+            ]))]
     );
 }
 
@@ -849,18 +709,7 @@ async fn otlp_logs_endpoint_rejects_invalid_protobuf_without_wal_append() {
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(vec![0xff, 0xff, 0xff]))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_protobuf(&app, "/v1/logs", vec![0xff, 0xff, 0xff]).await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(sink.records().is_empty());

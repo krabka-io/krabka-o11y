@@ -10,7 +10,6 @@ use crate::{
 mod apply_metric_binary_arithmetic_to_sample;
 mod apply_metric_binary_arithmetic_to_sample_operands;
 mod apply_metric_binary_arithmetic_to_series_with_left_operand;
-mod apply_metric_binary_comparison_group_right_to_results;
 mod apply_metric_binary_comparison_to_loki_result;
 mod apply_metric_binary_comparison_to_sample;
 mod apply_metric_binary_comparison_to_sample_operands;
@@ -18,13 +17,13 @@ mod apply_metric_binary_comparison_to_series;
 mod apply_metric_binary_comparison_to_series_with_left_operand;
 mod matching_metric_binary_sample;
 mod metric_binary_integer_timestamp_ns_candidates;
+mod metric_binary_operations;
 mod metric_binary_sample_timestamp_ns_candidates;
 mod metric_binary_sample_timestamps_match;
 
 pub(crate) use apply_metric_binary_arithmetic_to_sample::apply_metric_binary_arithmetic_to_sample;
 pub(crate) use apply_metric_binary_arithmetic_to_sample_operands::apply_metric_binary_arithmetic_to_sample_operands;
 pub(crate) use apply_metric_binary_arithmetic_to_series_with_left_operand::apply_metric_binary_arithmetic_to_series_with_left_operand;
-pub(crate) use apply_metric_binary_comparison_group_right_to_results::apply_metric_binary_comparison_group_right_to_results;
 pub(crate) use apply_metric_binary_comparison_to_loki_result::apply_metric_binary_comparison_to_loki_result;
 pub(crate) use apply_metric_binary_comparison_to_sample::apply_metric_binary_comparison_to_sample;
 pub(crate) use apply_metric_binary_comparison_to_sample_operands::apply_metric_binary_comparison_to_sample_operands;
@@ -32,5 +31,9 @@ pub(crate) use apply_metric_binary_comparison_to_series::apply_metric_binary_com
 pub(crate) use apply_metric_binary_comparison_to_series_with_left_operand::apply_metric_binary_comparison_to_series_with_left_operand;
 pub(crate) use matching_metric_binary_sample::matching_metric_binary_sample;
 pub(crate) use metric_binary_integer_timestamp_ns_candidates::metric_binary_integer_timestamp_ns_candidates;
+pub(crate) use metric_binary_operations::{
+    MetricBinaryOperator, SampleOperands, apply_metric_binary_to_series,
+    apply_metric_binary_to_series_with_left_operand, metric_binary_operand_values,
+};
 pub(crate) use metric_binary_sample_timestamp_ns_candidates::metric_binary_sample_timestamp_ns_candidates;
 pub(crate) use metric_binary_sample_timestamps_match::metric_binary_sample_timestamps_match;

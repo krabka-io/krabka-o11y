@@ -13,6 +13,7 @@ mod format_label_replace_metric_scalar_expression;
 mod format_label_replace_metric_vector_expression;
 mod format_logql_quoted_string;
 mod format_loki_vector_expression;
+mod format_metric_and_vector_operands;
 mod format_metric_label_replace_query;
 mod format_metric_query;
 mod format_metric_range_aggregation_query;
@@ -32,12 +33,16 @@ mod has_word_boundary;
 mod indent_logql_lines;
 mod split_top_level_arithmetic_query;
 mod split_top_level_comparison_query;
+mod split_top_level_query;
 mod split_top_level_set_query;
 
 pub(crate) use format_label_replace_metric_scalar_expression::format_label_replace_metric_scalar_expression;
 pub(crate) use format_label_replace_metric_vector_expression::format_label_replace_metric_vector_expression;
 pub(crate) use format_logql_quoted_string::format_logql_quoted_string;
 pub(crate) use format_loki_vector_expression::format_loki_vector_expression;
+pub(crate) use format_metric_and_vector_operands::{
+    OperandTexts, format_metric_and_vector_operands,
+};
 pub(crate) use format_metric_label_replace_query::format_metric_label_replace_query;
 pub(crate) use format_metric_query::format_metric_query;
 pub(crate) use format_metric_range_aggregation_query::format_metric_range_aggregation_query;
@@ -57,4 +62,5 @@ pub(crate) use has_word_boundary::has_word_boundary;
 pub(crate) use indent_logql_lines::indent_logql_lines;
 pub(crate) use split_top_level_arithmetic_query::split_top_level_arithmetic_query;
 pub(crate) use split_top_level_comparison_query::split_top_level_comparison_query;
+pub(crate) use split_top_level_query::split_top_level_query;
 pub(crate) use split_top_level_set_query::split_top_level_set_query;

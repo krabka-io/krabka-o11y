@@ -15,33 +15,23 @@ use super::*;
 pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     use krabka_logql::ComparisonOp;
 
-    let series = |samples: &[(i64, &str)]| {
-        serde_json::json!({
-            "metric": {"app": "api"},
-            "values": samples
-                .iter()
-                .map(|(ts, value)| serde_json::json!([ts, value]))
-                .collect::<Vec<_>>(),
-        })
-    };
-    let pairs = |value: &serde_json::Value| {
-        value
-            .get("values")
-            .and_then(serde_json::Value::as_array)
-            .expect("the series has values")
-            .iter()
-            .map(|sample| {
-                (
-                    sample[0].as_i64().expect("a timestamp"),
-                    sample[1].as_str().expect("a value").to_string(),
-                )
-            })
-            .collect::<Vec<_>>()
-    };
-    let left = series(&[(1, "10"), (4, "20"), (5, "20")]);
+    let left = range_series(&[
+        timed_sample(1, "10"),
+        timed_sample(4, "20"),
+        timed_sample(5, "20"),
+    ]);
     // 2 and 3 have no left sample; 4 and 5 fail the comparison. Each pair
     // is adjacent, so an index that advanced on removal would keep one.
-    let right = || series(&[(1, "1"), (2, "1"), (3, "1"), (4, "30"), (5, "30"), (6, "1")]);
+    let right = || {
+        range_series(&[
+            timed_sample(1, "1"),
+            timed_sample(2, "1"),
+            timed_sample(3, "1"),
+            timed_sample(4, "30"),
+            timed_sample(5, "30"),
+            timed_sample(6, "1"),
+        ])
+    };
 
     let mut output = right();
     check!(
@@ -53,7 +43,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
         )
     );
     check!(
-        pairs(&output) == vec![(1, "10".to_string())],
+        range_pairs(&output) == vec![(1, "10".to_string())],
         "only 10 > 1 survives, carrying the LEFT value"
     );
 
@@ -69,7 +59,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
         )
     );
     check!(
-        pairs(&output)
+        range_pairs(&output)
             == vec![
                 (1, "1".to_string()),
                 (4, "0".to_string()),
@@ -88,10 +78,10 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
             false,
         )
     );
-    check!(pairs(&output) == vec![(4, "20".to_string()), (5, "20".to_string())]);
+    check!(range_pairs(&output) == vec![(4, "20".to_string()), (5, "20".to_string())]);
 
     // Everything filtered out reports false so the caller drops the series.
-    let mut output = series(&[(1, "99")]);
+    let mut output = range_series(&[timed_sample(1, "99")]);
     check!(
         !super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
@@ -106,7 +96,7 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     check!(
         !super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
-            &serde_json::json!({"metric": {}}),
+            &json!({"metric": {}}),
             ComparisonOp::Greater,
             false,
         )
@@ -116,12 +106,11 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     // its timestamp the way the range path does -- so the comparison itself
     // has to refuse two samples from different instants. Comparing them
     // would report a result for a moment neither side observed.
-    let instant = |ts: i64, value: &str| serde_json::json!({"metric": {}, "value": [ts, value]});
-    let mut output = instant(1, "1");
+    let mut output = instant_series(timed_sample(1, "1"));
     check!(
         super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
-            &instant(1, "10"),
+            &instant_series(timed_sample(1, "10")),
             ComparisonOp::Greater,
             false,
         ),
@@ -129,11 +118,11 @@ pub(crate) fn a_vector_comparison_filters_and_takes_the_left_operand() {
     );
     check!(output["value"][1] == "10", "and it takes the left value");
 
-    let mut output = instant(1, "1");
+    let mut output = instant_series(timed_sample(1, "1"));
     check!(
         !super::super::prelude::apply_metric_binary_comparison_to_series_with_left_operand(
             &mut output,
-            &instant(2, "10"),
+            &instant_series(timed_sample(2, "10")),
             ComparisonOp::Greater,
             false,
         ),

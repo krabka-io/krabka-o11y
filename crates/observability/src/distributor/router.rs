@@ -18,6 +18,7 @@ use crate::{
 };
 
 mod all_ops;
+mod append_and_record_push;
 mod block_builder_ops;
 mod distributor_ops;
 mod distributor_push_routes;
@@ -51,6 +52,7 @@ mod role_ops;
 mod with_role_ops_routes;
 
 pub(crate) use all_ops::ALL_OPS;
+pub(crate) use append_and_record_push::{NormalizedPush, append_and_record_push};
 pub(crate) use block_builder_ops::BLOCK_BUILDER_OPS;
 pub(crate) use distributor_ops::DISTRIBUTOR_OPS;
 pub(crate) use distributor_push_routes::distributor_push_routes;

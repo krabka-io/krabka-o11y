@@ -2,9 +2,9 @@ use krabka_logql::{LogqlExpr, parse_logql_expr};
 
 use crate::{
     Bytes, FormattedVectorBinaryModifiers, HttpQueryError, MetricBinarySetOp,
-    MetricVectorGroupModifier, MetricVectorMatching, decode_form_component,
+    MetricVectorGroupModifier, MetricVectorMatching, OperandTexts, decode_form_component,
     format_label_replace_metric_scalar_expression, format_label_replace_metric_vector_expression,
-    format_metric_label_replace_query, format_metric_query,
+    format_metric_and_vector_operands, format_metric_label_replace_query, format_metric_query,
     format_metric_scalar_arithmetic_expression, format_metric_scalar_arithmetic_operator,
     format_metric_scalar_comparison_expression, format_metric_scalar_comparison_operator,
     format_metric_vector_comparison_expression, format_metric_vector_set_expression,
@@ -73,7 +73,9 @@ pub(crate) use label_join_format_query_error::label_join_format_query_error;
 use logql_expression_contains_label_join::logql_expression_contains_label_join;
 pub(crate) use parse_format_query_param::parse_format_query_param;
 pub(crate) use post_query_params::post_query_params;
-pub(crate) use post_query_params_body_first::post_query_params_body_first;
+pub(crate) use post_query_params_body_first::{
+    parse_posted_series_params, post_query_params_body_first,
+};
 pub(crate) use split_leading_vector_binary_modifiers::split_leading_vector_binary_modifiers;
 pub(crate) use split_leading_vector_group_modifier::split_leading_vector_group_modifier;
 pub(crate) use split_leading_vector_matching_modifier::split_leading_vector_matching_modifier;

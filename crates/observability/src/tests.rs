@@ -133,8 +133,8 @@ pub(crate) mod prelude {
         hot_tail_frontier::*, ingest_and_operations::*, operators_and_alerts::*,
         patterns_and_prometheus_rules::*, per_tenant_limits::*, query_limits_and_timestamps::*,
         rules_and_expressions::*, runtime_policies::*, scalar_rules_and_scans::*,
-        scan_stats_and_samples::*, service_and_authorization::*, shard_index_cache::*,
-        tenant_resolution::*, vector_binary_operations::*, *,
+        scan_stats_and_samples::*, series_samples::*, service_and_authorization::*,
+        shard_index_cache::*, tenant_resolution::*, vector_binary_operations::*, *,
     };
     pub use crate::ids::{Offset, PartitionIndex};
     pub(crate) use crate::{
@@ -208,6 +208,7 @@ mod rules_and_expressions;
 mod runtime_policies;
 mod scalar_rules_and_scans;
 mod scan_stats_and_samples;
+mod series_samples;
 mod service_and_authorization;
 mod shard_index_cache;
 mod tenant_resolution;

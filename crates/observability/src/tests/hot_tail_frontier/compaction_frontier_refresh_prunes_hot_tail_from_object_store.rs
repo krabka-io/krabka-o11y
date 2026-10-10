@@ -390,30 +390,63 @@ fn shard_indexes(app: &str, offset: i64) -> (LabelIndex, BlockIndex) {
     (labels, blocks)
 }
 
-#[tokio::test]
-async fn shard_deltas_retry_conflicts_and_preserve_concurrent_append_labels() {
-    for change in ["append", "remove", "replace"] {
+/// A tenant shard store whose first read of generation 0 parks until
+/// `release` gets a permit, after signalling `entered`.
+struct BarrieredShard {
+    prefix: ObjectPath,
+    range: TimeRange,
+    entered: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Semaphore>,
+    store: Arc<RecordingObjectStore>,
+}
+
+impl Default for BarrieredShard {
+    fn default() -> Self {
         let prefix = ObjectPath::from("logs");
         let range = TimeRange::new(19, 20).unwrap();
-        let path = shard_snapshot_path(&prefix, range, 0);
         let entered = Arc::new(tokio::sync::Notify::new());
         let release = Arc::new(tokio::sync::Semaphore::new(0));
         let store = Arc::new(RecordingObjectStore::new().with_get_barrier(
-            path.to_string(),
+            shard_snapshot_path(&prefix, range, 0).to_string(),
             entered.clone(),
             release.clone(),
         ));
-        let (original_labels, original_blocks) = shard_indexes("original", 1);
-        write_tenant_log_index_shard_to_object_store(
-            store.as_ref(),
-            &prefix,
-            "tenant-a",
+        Self {
+            prefix,
             range,
-            &original_labels,
-            &original_blocks,
-        )
-        .await
-        .unwrap();
+            entered,
+            release,
+            store,
+        }
+    }
+}
+
+/// Writes the first generation of the [`BarrieredShard`] tenant shard.
+async fn seed_shard(store: &RecordingObjectStore, labels: &LabelIndex, blocks: &BlockIndex) {
+    write_tenant_log_index_shard_to_object_store(
+        store,
+        &ObjectPath::from("logs"),
+        "tenant-a",
+        TimeRange::new(19, 20).unwrap(),
+        labels,
+        blocks,
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn shard_deltas_retry_conflicts_and_preserve_concurrent_append_labels() {
+    for change in ["append", "remove", "replace"] {
+        let BarrieredShard {
+            prefix,
+            range,
+            entered,
+            release,
+            store,
+        } = BarrieredShard::default();
+        let (original_labels, original_blocks) = shard_indexes("original", 1);
+        seed_shard(store.as_ref(), &original_labels, &original_blocks).await;
         store.clear_put_paths();
         let previous = if change == "append" {
             BlockIndex::default()
@@ -489,26 +522,15 @@ async fn shard_deltas_retry_conflicts_and_preserve_concurrent_append_labels() {
 
 #[tokio::test]
 async fn stale_retention_keeps_an_append_to_an_otherwise_empty_shard() {
-    let prefix = ObjectPath::from("logs");
-    let range = TimeRange::new(19, 20).unwrap();
-    let entered = Arc::new(tokio::sync::Notify::new());
-    let release = Arc::new(tokio::sync::Semaphore::new(0));
-    let store = Arc::new(RecordingObjectStore::new().with_get_barrier(
-        shard_snapshot_path(&prefix, range, 0).to_string(),
-        entered.clone(),
-        release.clone(),
-    ));
-    let (old_labels, old_blocks) = shard_indexes("expired", 1);
-    write_tenant_log_index_shard_to_object_store(
-        store.as_ref(),
-        &prefix,
-        "tenant-a",
+    let BarrieredShard {
+        prefix,
         range,
-        &old_labels,
-        &old_blocks,
-    )
-    .await
-    .unwrap();
+        entered,
+        release,
+        store,
+    } = BarrieredShard::default();
+    let (old_labels, old_blocks) = shard_indexes("expired", 1);
+    seed_shard(store.as_ref(), &old_labels, &old_blocks).await;
     let pending = {
         let store = store.clone();
         let prefix = prefix.clone();
@@ -562,26 +584,15 @@ async fn stale_retention_keeps_an_append_to_an_otherwise_empty_shard() {
 
 #[tokio::test]
 async fn a_blocked_replay_append_does_not_resurrect_a_removed_descriptor() {
-    let prefix = ObjectPath::from("logs");
-    let range = TimeRange::new(19, 20).unwrap();
-    let entered = Arc::new(tokio::sync::Notify::new());
-    let release = Arc::new(tokio::sync::Semaphore::new(0));
-    let store = Arc::new(RecordingObjectStore::new().with_get_barrier(
-        shard_snapshot_path(&prefix, range, 0).to_string(),
-        entered.clone(),
-        release.clone(),
-    ));
-    let (labels, blocks) = shard_indexes("original", 1);
-    write_tenant_log_index_shard_to_object_store(
-        store.as_ref(),
-        &prefix,
-        "tenant-a",
+    let BarrieredShard {
+        prefix,
         range,
-        &labels,
-        &blocks,
-    )
-    .await
-    .unwrap();
+        entered,
+        release,
+        store,
+    } = BarrieredShard::default();
+    let (labels, blocks) = shard_indexes("original", 1);
+    seed_shard(store.as_ref(), &labels, &blocks).await;
     store.clear_put_paths();
     let replay = {
         let store = store.clone();
@@ -766,26 +777,15 @@ async fn invalid_shard_manifests_fail_before_conditional_publication() {
 
 #[tokio::test]
 async fn a_paused_shard_writer_retries_a_reclaimed_generation_instead_of_losing_its_append() {
-    let prefix = ObjectPath::from("logs");
-    let range = TimeRange::new(19, 20).unwrap();
-    let entered = Arc::new(tokio::sync::Notify::new());
-    let release = Arc::new(tokio::sync::Semaphore::new(0));
-    let store = Arc::new(RecordingObjectStore::new().with_get_barrier(
-        shard_snapshot_path(&prefix, range, 0).to_string(),
-        entered.clone(),
-        release.clone(),
-    ));
-    let (mut expected_labels, mut expected_blocks) = shard_indexes("initial", 0);
-    write_tenant_log_index_shard_to_object_store(
-        store.as_ref(),
-        &prefix,
-        "tenant-a",
+    let BarrieredShard {
+        prefix,
         range,
-        &expected_labels,
-        &expected_blocks,
-    )
-    .await
-    .unwrap();
+        entered,
+        release,
+        store,
+    } = BarrieredShard::default();
+    let (mut expected_labels, mut expected_blocks) = shard_indexes("initial", 0);
+    seed_shard(store.as_ref(), &expected_labels, &expected_blocks).await;
     let pending = {
         let store = store.clone();
         let prefix = prefix.clone();

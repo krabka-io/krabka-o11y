@@ -39,13 +39,15 @@ use opentelemetry_proto::tonic::collector::logs::v1::{
     logs_service_client::LogsServiceClient,
     logs_service_server::{LogsService, LogsServiceServer},
 };
-use rcgen::{
-    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose,
-};
+use rcgen::{CertifiedIssuer, ExtendedKeyUsagePurpose, KeyPair};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use tokio::{io::AsyncReadExt as _, net::TcpListener};
+
+#[path = "support/server_security_pki.rs"]
+mod server_security_pki;
+
+use server_security_pki::{Leaf, Pem, RecordedEvents, authority};
 
 const GRAFANA_TOKEN: &str = "grafana-7c1f0e9a4b2d8e6f3a5c7b9d1e0f2a4c";
 const OPS_TOKEN: &str = "ops-2b4d6f8a0c1e3a5b7c9d0e2f4a6b8c0d";
@@ -84,11 +86,6 @@ struct Pki {
     authority: CertifiedIssuer<'static, KeyPair>,
 }
 
-struct Pem {
-    certificate: String,
-    key: String,
-}
-
 impl Pki {
     fn new() -> Self {
         Self {
@@ -104,24 +101,19 @@ impl Pki {
     }
 
     fn client(&self, common_name: &str, names: &[&str]) -> Pem {
-        leaf(
-            &self.authority,
+        Leaf {
             common_name,
             names,
-            ExtendedKeyUsagePurpose::ClientAuth,
-        )
+            usage: ExtendedKeyUsagePurpose::ClientAuth,
+        }
+        .signed_by(&self.authority)
     }
 
     /// The TLS flags for a server certificate signed by this CA, which also
     /// trusts this CA for client certificates unless `client_auth` is
     /// `NoClientCert`.
     fn server_flags(&self, client_auth: &str, handshake_timeout: &str) -> Vec<String> {
-        let server = leaf(
-            &self.authority,
-            "server",
-            &["localhost", "127.0.0.1"],
-            ExtendedKeyUsagePurpose::ServerAuth,
-        );
+        let server = Leaf::LOCAL_SERVER.signed_by(&self.authority);
         let mut flags = vec![
             "--server-tls-cert-path".to_owned(),
             self.write("server.pem", server.certificate),
@@ -152,41 +144,6 @@ impl Pki {
             builder = builder.identity(identity);
         }
         builder.build().expect("the client builds")
-    }
-}
-
-fn authority(common_name: &str) -> CertifiedIssuer<'static, KeyPair> {
-    let mut params = CertificateParams::new(Vec::<String>::new()).expect("valid parameters");
-    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-    params
-        .distinguished_name
-        .push(DnType::CommonName, common_name);
-    CertifiedIssuer::self_signed(params, KeyPair::generate().expect("a key")).expect("a CA")
-}
-
-fn leaf(
-    authority: &CertifiedIssuer<'static, KeyPair>,
-    common_name: &str,
-    names: &[&str],
-    usage: ExtendedKeyUsagePurpose,
-) -> Pem {
-    let mut params = CertificateParams::new(
-        names
-            .iter()
-            .map(|name| (*name).to_owned())
-            .collect::<Vec<_>>(),
-    )
-    .expect("valid parameters");
-    params
-        .distinguished_name
-        .push(DnType::CommonName, common_name);
-    params.extended_key_usages = vec![usage];
-    let key = KeyPair::generate().expect("a key");
-    let certificate = params.signed_by(&key, authority).expect("a signed leaf");
-    Pem {
-        certificate: certificate.pem(),
-        key: key.serialize_pem(),
     }
 }
 
@@ -243,29 +200,6 @@ async fn serve(security: &ServerSecurity) -> Server {
             .into_future(),
     );
     Server { addr, seen, stop }
-}
-
-/// Every event, as text, so a test can compare whole sequences and search
-/// them for credential bytes.
-#[derive(Default)]
-struct RecordedEvents(Mutex<Vec<String>>);
-
-impl RecordedEvents {
-    fn take(&self) -> Vec<String> {
-        std::mem::take(
-            &mut *self
-                .0
-                .lock()
-                .expect("no test panics while holding the lock"),
-        )
-    }
-
-    fn push(&self, event: String) {
-        self.0
-            .lock()
-            .expect("no test panics while holding the lock")
-            .push(event);
-    }
 }
 
 impl SecurityEvents for RecordedEvents {
@@ -411,12 +345,12 @@ async fn require_and_verify_client_cert_serves_only_a_certificate_from_the_clien
     ))
     .await;
     let trusted = pki.client("grafana", &["grafana.internal"]);
-    let foreign = leaf(
-        &authority("another ca"),
-        "grafana",
-        &["grafana.internal"],
-        ExtendedKeyUsagePurpose::ClientAuth,
-    );
+    let foreign = Leaf {
+        common_name: "grafana",
+        names: &["grafana.internal"],
+        usage: ExtendedKeyUsagePurpose::ClientAuth,
+    }
+    .signed_by(&authority("another ca"));
     let url = format!("https://{}/whoami", server.addr);
 
     let without_certificate = pki.https_client(None).get(&url).send().await;

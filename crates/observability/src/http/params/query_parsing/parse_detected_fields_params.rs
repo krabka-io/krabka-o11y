@@ -1,7 +1,7 @@
 use super::{
     DetectedFieldsParams, HttpQueryError, LOKI_DEFAULT_QUERY_RANGE, TimeExt, current_unix_time_ns,
     decode_form_component, parse_loki_duration_query_param, parse_loki_timestamp_query_param,
-    parse_usize_query_param, split_query_param_pairs, start_or_since,
+    parse_usize_query_param, set_first_query_param, split_query_param_pairs, start_or_since,
 };
 
 pub(crate) fn parse_detected_fields_params(
@@ -36,26 +36,30 @@ pub(crate) fn parse_detected_fields_params(
         let value = decode_form_component(value)?;
 
         match key.as_str() {
-            "query" if query.is_none() => query = Some(value),
-            "start" if start.is_none() => {
-                start = Some(parse_loki_timestamp_query_param("start", &value)?);
+            "query" => set_first_query_param(&mut query, || Ok(value))?,
+            "start" => set_first_query_param(&mut start, || {
+                parse_loki_timestamp_query_param("start", &value)
+            })?,
+            "end" => {
+                set_first_query_param(&mut end, || {
+                    parse_loki_timestamp_query_param("end", &value)
+                })?;
             }
-            "end" if end.is_none() => {
-                end = Some(parse_loki_timestamp_query_param("end", &value)?);
+            "since" => set_first_query_param(&mut since, || {
+                parse_loki_duration_query_param("since", &value)
+            })?,
+            "step" => set_first_query_param(&mut step, || {
+                parse_loki_duration_query_param("step", &value)
+            })?,
+            "limit" => {
+                set_first_query_param(&mut limit, || parse_usize_query_param("limit", &value))?;
             }
-            "since" if since.is_none() => {
-                since = Some(parse_loki_duration_query_param("since", &value)?);
-            }
-            "step" if step.is_none() => {
-                step = Some(parse_loki_duration_query_param("step", &value)?);
-            }
-            "limit" if limit.is_none() => limit = Some(parse_usize_query_param("limit", &value)?),
-            "field_limit" if limit.is_none() => {
-                limit = Some(parse_usize_query_param("field_limit", &value)?);
-            }
-            "line_limit" if line_limit.is_none() => {
-                line_limit = Some(parse_usize_query_param("line_limit", &value)?);
-            }
+            "field_limit" => set_first_query_param(&mut limit, || {
+                parse_usize_query_param("field_limit", &value)
+            })?,
+            "line_limit" => set_first_query_param(&mut line_limit, || {
+                parse_usize_query_param("line_limit", &value)
+            })?,
             _ => {}
         }
     }

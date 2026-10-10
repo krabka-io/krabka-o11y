@@ -32,6 +32,7 @@ mod missing_loki_rule_directory_response;
 mod missing_loki_rule_namespace_response;
 mod parse_loki_rule_group;
 mod prometheus_alerts;
+mod prometheus_ruler_request;
 mod prometheus_rules;
 mod prometheus_rules_filters;
 mod ring_status_page;
@@ -54,6 +55,7 @@ pub(crate) use missing_loki_rule_directory_response::missing_loki_rule_directory
 pub(crate) use missing_loki_rule_namespace_response::missing_loki_rule_namespace_response;
 pub(crate) use parse_loki_rule_group::parse_loki_rule_group;
 pub(crate) use prometheus_alerts::prometheus_alerts;
+pub(crate) use prometheus_ruler_request::{PrometheusRulerInputs, PrometheusRulerRequest};
 pub(crate) use prometheus_rules::prometheus_rules;
 pub(crate) use prometheus_rules_filters::PrometheusRulesFilters;
 pub(crate) use ring_status_page::ring_status_page;

@@ -3,7 +3,7 @@ use std::{
     fmt::Write as _,
     net::SocketAddr,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use assert2::assert;
@@ -14,12 +14,14 @@ use axum::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use clap::Parser;
 use krabka_blockstore::TenantId;
-use rcgen::{
-    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
-    KeyPair, KeyUsagePurpose,
-};
+use rcgen::{CertificateParams, DnType, KeyPair};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+
+#[path = "../../tests/support/server_security_pki.rs"]
+mod server_security_pki;
+
+use server_security_pki::{Leaf, Pem, RecordedEvents, authority};
 
 use super::{
     AdminDenied, AuthFailureReason, AuthMethod, ClientIdentity, PeerAddr, Principal,
@@ -37,29 +39,6 @@ struct Cli {
 fn args(flags: &[&str]) -> ServerSecurityArgs {
     let argv = std::iter::once("test").chain(flags.iter().copied());
     Cli::try_parse_from(argv).expect("the flags parse").security
-}
-
-/// Every event, as text, so a test can compare whole sequences and search
-/// them for credential bytes.
-#[derive(Default)]
-struct RecordedEvents(Mutex<Vec<String>>);
-
-impl RecordedEvents {
-    fn take(&self) -> Vec<String> {
-        std::mem::take(
-            &mut *self
-                .0
-                .lock()
-                .expect("no test panics while holding the lock"),
-        )
-    }
-
-    fn push(&self, event: String) {
-        self.0
-            .lock()
-            .expect("no test panics while holding the lock")
-            .push(event);
-    }
 }
 
 impl SecurityEvents for RecordedEvents {
@@ -120,49 +99,10 @@ impl Pki {
         path
     }
 
-    fn authority(common_name: &str) -> CertifiedIssuer<'static, KeyPair> {
-        let mut params = CertificateParams::new(Vec::<String>::new()).expect("valid parameters");
-        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-        params
-            .distinguished_name
-            .push(DnType::CommonName, common_name);
-        CertifiedIssuer::self_signed(params, KeyPair::generate().expect("a key"))
-            .expect("a self-signed CA")
-    }
-
-    /// A leaf certificate and key signed by `authority`, as PEM.
-    fn leaf(
-        authority: &CertifiedIssuer<'static, KeyPair>,
-        common_name: &str,
-        names: &[&str],
-        usage: ExtendedKeyUsagePurpose,
-    ) -> (String, String) {
-        let mut params = CertificateParams::new(
-            names
-                .iter()
-                .map(|name| (*name).to_owned())
-                .collect::<Vec<_>>(),
-        )
-        .expect("valid parameters");
-        params
-            .distinguished_name
-            .push(DnType::CommonName, common_name);
-        params.extended_key_usages = vec![usage];
-        let key = KeyPair::generate().expect("a key");
-        let certificate = params.signed_by(&key, authority).expect("a signed leaf");
-        (certificate.pem(), key.serialize_pem())
-    }
-
     /// Writes a CA and a server certificate and key, and returns their paths.
     fn server_files(&self) -> (PathBuf, PathBuf, PathBuf) {
-        let authority = Self::authority("krabka test ca");
-        let (certificate, key) = Self::leaf(
-            &authority,
-            "server",
-            &["localhost", "127.0.0.1"],
-            ExtendedKeyUsagePurpose::ServerAuth,
-        );
+        let authority = authority("krabka test ca");
+        let Pem { certificate, key } = Leaf::LOCAL_SERVER.signed_by(&authority);
         (
             self.write("ca.pem", authority.pem()),
             self.write("server.pem", certificate),
@@ -629,7 +569,7 @@ fn token_digests_parse_only_as_64_lowercase_hex_characters() {
 
 #[test]
 fn a_client_identity_holds_the_common_name_and_the_names_of_the_certificate() {
-    let authority = Pki::authority("krabka test ca");
+    let authority = authority("krabka test ca");
     let mut params =
         CertificateParams::new(vec!["grafana.internal".to_owned(), "10.0.0.1".to_owned()])
             .expect("valid parameters");

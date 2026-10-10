@@ -7,12 +7,14 @@ exports_files(["Cargo.toml"])
 
 crate_library(
     name = "observability",
-    # Shared by the public HTTP unit suite and the native Loki differential.
+    # Each one is shared by a unit suite and an integration suite, which both
+    # reach it with `#[path]`.
     srcs = glob(
         ["src/**/*.rs"],
         exclude = ["src/bin/**"],
     ) + [
         "tests/support/experimental_queries.rs",
+        "tests/support/server_security_pki.rs",
     ],
 )
 

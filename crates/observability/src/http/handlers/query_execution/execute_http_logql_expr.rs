@@ -25,6 +25,16 @@ pub(crate) async fn execute_http_logql_expr(
     encoding: LokiStreamEncoding,
     full_query: &str,
 ) -> Result<Value, HttpQueryError> {
+    let scope = ExprScope {
+        state,
+        tenant,
+        time_range,
+        step,
+        kind,
+        stream_options,
+        encoding,
+        full_query,
+    };
     match expression {
         LogqlExpr::Stream { source, .. } => {
             if matches!(kind, QueryKind::Instant) {
@@ -97,36 +107,14 @@ pub(crate) async fn execute_http_logql_expr(
             }))
         }
         LogqlExpr::Sort { expr, descending } => {
-            let mut value = Box::pin(execute_http_logql_expr(
-                state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                expr,
-                stream_options,
-                encoding,
-                full_query,
-            ))
-            .await?;
+            let mut value = scope.execute(expr).await?;
             sort_loki_vector_result(&mut value, *descending);
             Ok(value)
         }
         LogqlExpr::Aggregation {
             expr, aggregation, ..
         } => {
-            let mut value = Box::pin(execute_http_logql_expr(
-                state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                expr,
-                stream_options,
-                encoding,
-                full_query,
-            ))
-            .await?;
+            let mut value = scope.execute(expr).await?;
             apply_nested_vector_aggregation(&mut value, aggregation)?;
             Ok(value)
         }
@@ -191,18 +179,7 @@ pub(crate) async fn execute_http_logql_expr(
             source_label,
             pattern,
         } => {
-            let mut value = Box::pin(execute_http_logql_expr(
-                state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                expr,
-                stream_options,
-                encoding,
-                full_query,
-            ))
-            .await?;
+            let mut value = scope.execute(expr).await?;
             apply_label_replace_to_loki_result(
                 &mut value,
                 destination_label,
@@ -219,18 +196,7 @@ pub(crate) async fn execute_http_logql_expr(
             separator,
             source_labels,
         } => {
-            let mut value = Box::pin(execute_http_logql_expr(
-                state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                expr,
-                stream_options,
-                encoding,
-                full_query,
-            ))
-            .await?;
+            let mut value = scope.execute(expr).await?;
             apply_label_join_fields(&mut value, destination_label, separator, source_labels);
             Ok(value)
         }
@@ -244,18 +210,7 @@ pub(crate) async fn execute_http_logql_expr(
                 return Ok(value);
             }
             if let Some((scalar, scalar_on_left, vector)) = scalar_operand(left, right) {
-                let mut value = Box::pin(execute_http_logql_expr(
-                    state,
-                    tenant,
-                    time_range,
-                    step,
-                    kind,
-                    vector,
-                    stream_options,
-                    encoding,
-                    full_query,
-                ))
-                .await?;
+                let mut value = scope.execute(vector).await?;
                 apply_scalar_arithmetic_to_loki_result(
                     &mut value,
                     *op,
@@ -267,30 +222,8 @@ pub(crate) async fn execute_http_logql_expr(
             }
             let left_is_vector = is_scalar_vector_only(left);
             let right_is_vector = is_scalar_vector_only(right);
-            let mut left = Box::pin(execute_http_logql_expr(
-                state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                left,
-                stream_options,
-                encoding,
-                full_query,
-            ))
-            .await?;
-            let right = Box::pin(execute_http_logql_expr(
-                state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                right,
-                stream_options,
-                encoding,
-                full_query,
-            ))
-            .await?;
+            let mut left = scope.execute(left).await?;
+            let right = scope.execute(right).await?;
             apply_metric_binary_arithmetic_to_loki_result(
                 &mut left,
                 &right,
@@ -316,18 +249,7 @@ pub(crate) async fn execute_http_logql_expr(
                 return Ok(value);
             }
             if let Some((scalar, scalar_on_left, vector)) = scalar_operand(left, right) {
-                let mut value = Box::pin(execute_http_logql_expr(
-                    state,
-                    tenant,
-                    time_range,
-                    step,
-                    kind,
-                    vector,
-                    stream_options,
-                    encoding,
-                    full_query,
-                ))
-                .await?;
+                let mut value = scope.execute(vector).await?;
                 apply_scalar_comparison_to_loki_result(
                     &mut value,
                     *op,
@@ -340,30 +262,8 @@ pub(crate) async fn execute_http_logql_expr(
             }
             let left_is_vector = is_scalar_vector_only(left);
             let right_is_vector = is_scalar_vector_only(right);
-            let mut left = Box::pin(execute_http_logql_expr(
-                state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                left,
-                stream_options,
-                encoding,
-                full_query,
-            ))
-            .await?;
-            let right = Box::pin(execute_http_logql_expr(
-                state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                right,
-                stream_options,
-                encoding,
-                full_query,
-            ))
-            .await?;
+            let mut left = scope.execute(left).await?;
+            let right = scope.execute(right).await?;
             apply_metric_binary_comparison_to_loki_result(
                 &mut left,
                 &right,
@@ -387,30 +287,8 @@ pub(crate) async fn execute_http_logql_expr(
         } => {
             let left_is_vector = is_scalar_vector_only(left);
             let right_is_vector = is_scalar_vector_only(right);
-            let mut left = Box::pin(execute_http_logql_expr(
-                state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                left,
-                stream_options,
-                encoding,
-                full_query,
-            ))
-            .await?;
-            let right = Box::pin(execute_http_logql_expr(
-                state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                right,
-                stream_options,
-                encoding,
-                full_query,
-            ))
-            .await?;
+            let mut left = scope.execute(left).await?;
+            let right = scope.execute(right).await?;
             apply_metric_binary_set_to_loki_result(&mut left, &right, *op, matching.as_ref());
             if left_is_vector && !right_is_vector {
                 merge_loki_query_stats(&mut left["data"]["stats"], &right["data"]["stats"]);
@@ -472,4 +350,35 @@ fn scalar_expression_response(
             loki_range_vector_response(time_range, resolved_range_step(step, time_range)?, result)
         }
     })))
+}
+
+/// Everything a nested expression of one query is evaluated with, other than
+/// the expression itself.
+#[derive(Clone, Copy)]
+struct ExprScope<'a> {
+    state: &'a QuerierState,
+    tenant: &'a str,
+    time_range: TimeRange,
+    step: Option<i64>,
+    kind: QueryKind,
+    stream_options: (LokiDirection, Option<usize>, Option<i64>),
+    encoding: LokiStreamEncoding,
+    full_query: &'a str,
+}
+
+impl ExprScope<'_> {
+    async fn execute(self, expression: &LogqlExpr) -> Result<Value, HttpQueryError> {
+        Box::pin(execute_http_logql_expr(
+            self.state,
+            self.tenant,
+            self.time_range,
+            self.step,
+            self.kind,
+            expression,
+            self.stream_options,
+            self.encoding,
+            self.full_query,
+        ))
+        .await
+    }
 }

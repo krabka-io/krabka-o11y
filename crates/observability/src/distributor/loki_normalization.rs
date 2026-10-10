@@ -1,15 +1,14 @@
 use krabka_units::convert::{ByteSizeExt, TimeExt};
 
-use super::otlp_normalization::is_default_otlp_resource_label;
 use crate::{
     ByteSize, CONTENT_TYPE, DistributorError, HeaderMap, Labels, Limits, LokiProtoPushRequest,
-    LokiTypedPushRequest, MatchOp, OtlpAttributeAction, OtlpLogsRequest, TenantId, Time, Value,
-    WalLogRecord, current_unix_time_ns, discover_detected_level_label, discover_service_name_label,
+    LokiTypedPushRequest, MatchOp, OtlpLogsRequest, TenantId, Time, Value, WalLogRecord,
+    current_unix_time_ns, discover_detected_level_label, discover_service_name_label,
     loki_decode_error_context, loki_missing_proto_timestamp_error,
     loki_proto_label_pairs_to_labels, loki_proto_timestamp_ns, loki_stale_sample_label_set,
-    otlp_attributes_to_labels, otlp_log_record_structured_metadata, otlp_timestamp_ns,
-    otlp_value_to_string, parse_query, parse_structured_metadata, quote_logql_string,
-    validate_ingest_timestamp_ns, validate_loki_timestamp_window,
+    otlp_log_record_structured_metadata, otlp_timestamp_ns, otlp_value_to_string, parse_query,
+    parse_structured_metadata, quote_logql_string, validate_ingest_timestamp_ns,
+    validate_loki_timestamp_window,
 };
 
 mod is_loki_json_content_type;

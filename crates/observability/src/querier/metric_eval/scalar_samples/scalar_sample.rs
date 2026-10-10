@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    METRIC_DECIMAL_SCALE, Rational, ScalarComparisonOp, decimal_scaled_numerator, gcd_signed,
+    impl_rational_division_ops, rational_to_f64,
+};
+
+impl_rational_division_ops!(ScalarSample);
 
 #[derive(Clone, Copy)]
 pub(crate) struct ScalarSample {
@@ -51,39 +56,6 @@ impl ScalarSample {
         ))
     }
 
-    pub(crate) fn divide(self, other: Self) -> Option<Self> {
-        if other.numerator == 0 {
-            return None;
-        }
-
-        let mut numerator = self
-            .numerator
-            .checked_mul(i128::try_from(other.denominator).ok()?)?;
-        let mut denominator = i128::try_from(self.denominator)
-            .ok()?
-            .checked_mul(other.numerator)?;
-        // `< 0` against `<= 0` is a permanent survivor: `ScalarSample::new`
-        // normalises a zero denominator to one, and the divisor's numerator was
-        // rejected above, so this product is never zero.
-        if denominator < 0 {
-            numerator = numerator.checked_neg()?;
-            denominator = denominator.checked_neg()?;
-        }
-        Some(Self::new(numerator, u128::try_from(denominator).ok()?))
-    }
-
-    pub(crate) fn modulo(self, other: Self) -> Option<Self> {
-        if other.numerator == 0 {
-            return None;
-        }
-
-        Self::from_f64(self.to_f64()? % other.to_f64()?)
-    }
-
-    pub(crate) fn power(self, other: Self) -> Option<Self> {
-        Self::from_f64(self.to_f64()?.powf(other.to_f64()?))
-    }
-
     pub(crate) fn compare(self, operator: ScalarComparisonOp, other: Self) -> Option<bool> {
         let left = self
             .numerator
@@ -102,17 +74,14 @@ impl ScalarSample {
     }
 
     pub(crate) fn to_f64(self) -> Option<f64> {
-        let value = self.numerator.to_f64()? / self.denominator.to_f64()?;
-        value.is_finite().then_some(value)
+        rational_to_f64(self.numerator, self.denominator)
     }
 
     pub(crate) fn from_f64(value: f64) -> Option<Self> {
-        if !value.is_finite() {
-            return None;
-        }
-
-        let scaled = (value * METRIC_DECIMAL_SCALE.to_f64()?).round();
-        Some(Self::new(i128::from_f64(scaled)?, METRIC_DECIMAL_SCALE))
+        Some(Self::new(
+            decimal_scaled_numerator(value)?,
+            METRIC_DECIMAL_SCALE,
+        ))
     }
 
     pub(crate) fn format(self) -> String {

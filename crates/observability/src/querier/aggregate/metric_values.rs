@@ -2,8 +2,9 @@ use num_traits::{FromPrimitive as _, ToPrimitive};
 
 use crate::{
     ActiveLogDeleteFilter, BTreeMap, LabelIndex, Labels, LokiStreamEntry, METRIC_DECIMAL_SCALE,
-    MetricValue, Ordering, Quantile, QueryError, QueryRow, StreamPlan, TimeRange,
-    VectorAggregationOp, gcd_signed, is_deleted_log_entry, matching_loki_stream_entry,
+    MetricValue, Ordering, Quantile, QueryError, QueryRow, Rational, StreamPlan, TimeRange,
+    VectorAggregationOp, decimal_scaled_numerator, gcd_signed, impl_rational_division_ops,
+    is_deleted_log_entry, matching_loki_stream_entry, rational_to_f64,
 };
 
 mod append_matching_log_row;

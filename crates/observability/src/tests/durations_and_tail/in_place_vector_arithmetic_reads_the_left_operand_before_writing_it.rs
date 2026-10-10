@@ -9,37 +9,19 @@ use super::*;
 pub(crate) fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_it() {
     use krabka_logql::MetricScalarArithmeticOp;
 
-    let series = |samples: &[(i64, &str)]| {
-        serde_json::json!({
-            "metric": {"app": "api"},
-            "values": samples
-                .iter()
-                .map(|(ts, value)| serde_json::json!([ts, value]))
-                .collect::<Vec<_>>(),
-        })
-    };
-    let pairs = |value: &serde_json::Value| {
-        value
-            .get("values")
-            .and_then(serde_json::Value::as_array)
-            .expect("the series has values")
-            .iter()
-            .map(|sample| {
-                (
-                    sample[0].as_i64().expect("a timestamp"),
-                    sample[1].as_str().expect("a value").to_string(),
-                )
-            })
-            .collect::<Vec<_>>()
-    };
     // 2 and 3 have no right sample and are adjacent, so an index that
     // advanced on removal would keep one of them.
-    let right = series(&[(1, "2"), (6, "1")]);
+    let right = range_series(&[timed_sample(1, "2"), timed_sample(6, "1")]);
     let apply = |op| {
-        let mut left = series(&[(1, "10"), (2, "20"), (3, "20"), (6, "7")]);
+        let mut left = range_series(&[
+            timed_sample(1, "10"),
+            timed_sample(2, "20"),
+            timed_sample(3, "20"),
+            timed_sample(6, "7"),
+        ]);
         let kept =
             super::super::prelude::apply_metric_binary_arithmetic_to_series(&mut left, &right, op);
-        (kept, pairs(&left))
+        (kept, range_pairs(&left))
     };
 
     check!(
@@ -54,7 +36,7 @@ pub(crate) fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_i
 
     // Everything dropped reports false so the caller can discard the
     // series rather than emit one with no samples.
-    let mut orphan = series(&[(9, "1")]);
+    let mut orphan = range_series(&[timed_sample(9, "1")]);
     check!(
         !super::super::prelude::apply_metric_binary_arithmetic_to_series(
             &mut orphan,
@@ -64,23 +46,22 @@ pub(crate) fn in_place_vector_arithmetic_reads_the_left_operand_before_writing_i
     );
 
     // A right series with no values matches nothing at all.
-    let mut left = series(&[(1, "10")]);
+    let mut left = range_series(&[timed_sample(1, "10")]);
     check!(
         !super::super::prelude::apply_metric_binary_arithmetic_to_series(
             &mut left,
-            &serde_json::json!({"metric": {}}),
+            &json!({"metric": {}}),
             MetricScalarArithmeticOp::Subtract,
         )
     );
 
     // The instant shape, where the same clone-before-write applies to the
     // single sample.
-    let instant = |ts: i64, value: &str| serde_json::json!({"metric": {}, "value": [ts, value]});
-    let mut left = instant(1, "10");
+    let mut left = instant_series(timed_sample(1, "10"));
     check!(
         super::super::prelude::apply_metric_binary_arithmetic_to_series(
             &mut left,
-            &instant(1, "2"),
+            &instant_series(timed_sample(1, "2")),
             MetricScalarArithmeticOp::Subtract,
         )
     );

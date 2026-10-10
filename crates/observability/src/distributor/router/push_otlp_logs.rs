@@ -1,9 +1,9 @@
 use super::{
     ByteSizeExt, Bytes, CONTENT_ENCODING, CONTENT_TYPE, DistributorState, HeaderMap, Instant,
-    Instrument, IntoResponse, RequestSecurity, Response, State, StatusCode, TenantErrorSurface,
-    append_distributor_wal_records, measured_size, normalize_otlp_http_logs,
-    otlp_http_error_response, record_ingest_response, resolve_single_tenant, tenant_error_response,
-    tenant_header_value, validate_ingest_body_limit,
+    Instrument, IntoResponse, NormalizedPush, RequestSecurity, Response, State, TenantErrorSurface,
+    append_and_record_push, measured_size, normalize_otlp_http_logs, otlp_http_error_response,
+    record_ingest_response, resolve_single_tenant, tenant_error_response, tenant_header_value,
+    validate_ingest_body_limit,
 };
 
 pub(crate) async fn push_otlp_logs(
@@ -45,21 +45,22 @@ pub(crate) async fn push_otlp_logs(
         }
         let resp = match normalize_otlp_http_logs(&tenant, &headers, &body, &limits) {
             Ok(records) => {
-                let items = records.len() as u64;
-                tracing::Span::current().record("krabka.ingest.lines", items);
-                state.metrics.record_ingest_lines(tenant.as_str(), items);
-                let resp = match append_distributor_wal_records(&state, &security, &tenant, records)
-                    .await
-                {
-                    Ok(()) => StatusCode::NO_CONTENT.into_response(),
-                    Err(error) => {
+                return append_and_record_push(
+                    NormalizedPush {
+                        state: &state,
+                        security: &security,
+                        tenant: &tenant,
+                        body_size,
+                        start,
+                    },
+                    records,
+                    |error| {
                         // Surface why an accepted OTLP log batch failed to persist
                         // (WAL append errors are otherwise opaque to the client).
                         tracing::debug!(error = %error, "OTLP logs: WAL append failed");
-                        error.into_response()
-                    }
-                };
-                return record_ingest_response(&state, resp, body_size, items, start);
+                    },
+                )
+                .await;
             }
             Err(error) => {
                 // Surface why an OTLP log push was rejected at decode/normalize

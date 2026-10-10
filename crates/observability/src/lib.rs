@@ -73,8 +73,7 @@ use clap::{
 use datafusion::{
     arrow::{
         array::{
-            ArrayRef, Float64Array, Int64Array, MapArray, StringArray, TimestampNanosecondArray,
-            UInt64Array,
+            ArrayRef, Float64Array, MapArray, StringArray, TimestampNanosecondArray,
             builder::{MapBuilder, StringBuilder},
         },
         datatypes::{DataType, Field, Schema, TimeUnit},
@@ -296,16 +295,15 @@ pub(crate) use self::{
         loki_normalization::{
             is_loki_json_content_type, is_loki_label_name, is_protobuf_content_type,
             loki_json_timestamp_value_parse_error, normalize_loki_proto_push, normalize_loki_push,
-            normalize_otlp_logs, truncate_loki_line, validate_loki_label_limits,
-            validate_loki_line_size,
+            normalize_otlp_logs, validate_loki_label_limits, validate_loki_line_size,
         },
         otlp_normalization::{
             discover_detected_level_label, discover_service_name_label,
             loki_missing_proto_timestamp_error, loki_proto_label_pairs_to_labels,
             loki_proto_timestamp_ns, loki_stale_sample_label_set, normalize_otlp_proto_logs,
-            normalize_otlp_proto_logs_for_tenant, otlp_attributes_to_labels,
-            otlp_log_record_structured_metadata, otlp_timestamp_ns, otlp_value_to_string,
-            rfc3339_seconds, validate_ingest_timestamp_ns, validate_loki_timestamp_window,
+            normalize_otlp_proto_logs_for_tenant, otlp_log_record_structured_metadata,
+            otlp_timestamp_ns, otlp_value_to_string, rfc3339_seconds, validate_ingest_timestamp_ns,
+            validate_loki_timestamp_window,
         },
         router::{
             ALL_OPS, BLOCK_BUILDER_OPS, DISTRIBUTOR_OPS, LokiProtoLabelPair, LokiProtoPushRequest,
@@ -371,10 +369,10 @@ pub(crate) use self::{
                 split_logql_function_arguments,
             },
             metric_formatting::{
-                format_label_replace_metric_scalar_expression,
+                OperandTexts, format_label_replace_metric_scalar_expression,
                 format_label_replace_metric_vector_expression, format_logql_quoted_string,
-                format_metric_label_replace_query, format_metric_query,
-                format_metric_scalar_arithmetic_expression,
+                format_metric_and_vector_operands, format_metric_label_replace_query,
+                format_metric_query, format_metric_scalar_arithmetic_expression,
                 format_metric_scalar_arithmetic_operator,
                 format_metric_scalar_comparison_expression,
                 format_metric_scalar_comparison_operator,
@@ -385,8 +383,9 @@ pub(crate) use self::{
             },
             request_formatting::{
                 execute_format_query, form_body_query, format_metric_vector_arithmetic_expression,
-                format_metric_vector_binary_expression, post_query_params,
-                post_query_params_body_first, split_leading_vector_binary_modifiers,
+                format_metric_vector_binary_expression, parse_posted_series_params,
+                post_query_params, post_query_params_body_first,
+                split_leading_vector_binary_modifiers,
             },
             stream_formatting::{
                 format_stream_query, parse_formatted_vector_function,
@@ -432,9 +431,9 @@ pub(crate) use self::{
             },
             record_matching::{
                 QueryRow, append_matching_hot_log_record, append_matching_hot_metric_record,
-                append_matching_metric_row, apply_distinct_to_streams, is_deleted_log_entry,
-                matching_loki_stream_entry, parse_decimal_sample_literal,
-                parse_metric_sample_value, sort_loki_stream_values, structured_metadata_value,
+                append_matching_metric_row, apply_distinct_to_streams, for_each_query_row,
+                is_deleted_log_entry, matching_loki_stream_entry, parse_decimal_sample_literal,
+                parse_metric_sample_value, sort_loki_stream_values,
             },
             sample_windows::{
                 FormattedMetricSeries, METRIC_DECIMAL_SCALE, MetricSamples, MetricValue,
@@ -444,7 +443,9 @@ pub(crate) use self::{
         },
         analytics::{
             detected_fields::{
-                collect_detected_fields, execute_index_volume_query, sample_time_bucket,
+                AnalyticsQuery, PlannedRead, RangeEnd, VolumeRangeLimit, collect_detected_fields,
+                execute_index_volume_query, plan_analytics_query, reads_planned_row,
+                sample_time_bucket,
             },
             index_patterns::{
                 execute_detected_field_values_query, execute_detected_fields_query,
@@ -459,10 +460,10 @@ pub(crate) use self::{
         },
         metric_eval::{
             binary_arithmetic::{
-                apply_metric_binary_arithmetic_to_sample,
+                MetricBinaryOperator, apply_metric_binary_arithmetic_to_sample,
                 apply_metric_binary_arithmetic_to_series_with_left_operand,
-                apply_metric_binary_comparison_to_loki_result, matching_metric_binary_sample,
-                metric_binary_sample_timestamps_match,
+                apply_metric_binary_comparison_to_loki_result, apply_metric_binary_to_series,
+                matching_metric_binary_sample, metric_binary_sample_timestamps_match,
             },
             binary_sets::{
                 apply_metric_binary_set_to_loki_result, apply_metric_selection,
@@ -488,7 +489,8 @@ pub(crate) use self::{
                 sort_loki_vector_result,
             },
             scalar_samples::{
-                ScalarSample, execute_http_metric_query, gcd_signed, parse_scalar_sample,
+                Rational, ScalarSample, decimal_scaled_numerator, execute_http_metric_query,
+                gcd_signed, impl_rational_division_ops, parse_scalar_sample, rational_to_f64,
                 resolved_range_step, validate_loki_query_range_resolution,
                 validate_loki_range_query_range_limit, validate_loki_volume_query_range_limit,
                 validate_query_entries_limit, validate_query_range_limit,

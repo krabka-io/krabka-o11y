@@ -6,7 +6,8 @@ use crate::{
     execute_detected_fields_query, execute_detected_labels_query, execute_format_query,
     execute_label_names_query, execute_patterns_query, handle_api_prom_query,
     handle_api_prom_query_range, handle_query, json, json_response, loki_success,
-    parse_series_params, post_query_params, post_query_params_body_first,
+    parse_posted_series_params, parse_series_params, post_query_params,
+    post_query_params_body_first,
 };
 
 mod api_prom_query;

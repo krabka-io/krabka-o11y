@@ -13,19 +13,19 @@ use std::{
 use assert2::{assert, check};
 use async_trait::async_trait;
 use axum::{
+    Router,
     body::Body,
     http::{Request, StatusCode},
 };
 use krabka_blockstore::{
-    BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TimeRange, labels, write_log_block,
-    write_log_index_manifest,
+    BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogLabels, LogRow, TimeRange, labels,
+    write_log_block, write_log_index_manifest,
 };
 use krabka_observability::{
-    CompactionFrontier, InMemoryWalSink, KafkaWalHeader, KafkaWalRecord, LogWalConsumer,
-    LogWalSink, Offset, PartitionIndex, QuerierIndexSource, QuerierState, Role, ServiceConfig,
-    ServiceDependencies, WalConsumerError, WalLogRecord, WalPosition, WalSinkError,
-    build_kafka_wal_record, build_service_router, loki_router, serve_service_listener,
-    write_compaction_frontier_to_object_store,
+    CompactionFrontier, InMemoryWalSink, KafkaWalRecord, LogWalConsumer, LogWalSink, Offset,
+    PartitionIndex, QuerierState, Role, ServiceConfig, ServiceDependencies, WalConsumerError,
+    WalLogRecord, WalPosition, WalSinkError, build_service_router, loki_router,
+    serve_service_listener, write_compaction_frontier_to_object_store,
 };
 use krabka_units::{Time, bytes, millis, nanos};
 use object_store::path::Path as ObjectPath;
@@ -34,10 +34,13 @@ use prost::Message as _;
 use serde_json::{Value, json};
 use snap::raw::Encoder as SnappyEncoder;
 use support::{
-    DenyingQueryAuthorizer, LokiProtoEntry, LokiProtoPushRequest, LokiProtoStream,
-    RejectingIngestLimiter, assert_loki_error, current_unix_epoch_nanos, expected_api_error,
-    expected_loki_forwarded_api_error, expected_loki_forwarded_api_error_with_stats, json_body,
-    loki_forwarded_tenant_object_store_shard_catalog_service_fixture, proto_logs_request_at_ns,
+    BodyHeaders, DenyingQueryAuthorizer, ExpectedLokiError, JsonStream, LokiProtoEntry,
+    LokiProtoPushRequest, LokiProtoStream, PushOutcome, RejectingIngestLimiter, Tenant,
+    assert_loki_error, current_unix_epoch_nanos, expected_api_error,
+    expected_loki_forwarded_api_error, expected_loki_forwarded_api_error_with_stats,
+    expected_loki_ingester_stats_with, json_body, kafka_wal_record,
+    loki_forwarded_tenant_object_store_shard_catalog_service_fixture, minimal_service_config,
+    proto_logs_request_at_ns, push_request, send, tenant_a_post,
     tenant_object_store_shard_catalog_service_fixture, text_body,
 };
 use tokio::{
@@ -47,6 +50,8 @@ use tokio::{
 };
 use tower::ServiceExt as _;
 
+const API_PROD: [(&str, &str); 2] = [("app", "api"), ("env", "prod")];
+
 #[derive(Clone)]
 struct PendingWalSink;
 
@@ -54,30 +59,6 @@ struct PendingWalSink;
 impl LogWalSink for PendingWalSink {
     async fn append(&self, _record: WalLogRecord) -> Result<(), WalSinkError> {
         std::future::pending().await
-    }
-}
-
-fn minimal_service_config(target: Role) -> ServiceConfig {
-    ServiceConfig {
-        target,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-block-builder".to_string(),
-        data_root: ".".into(),
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
     }
 }
 
@@ -121,33 +102,39 @@ fn assert_content_type(response: &axum::response::Response, expected: &str, cont
     );
 }
 
-#[tokio::test]
-async fn role_operations_routes_match_existing_behavior() {
-    let distributor = build_service_router(
+async fn router(config: &ServiceConfig, dependencies: ServiceDependencies) -> Router {
+    build_service_router(config, dependencies, None)
+        .await
+        .unwrap()
+}
+
+/// A distributor, a querier and a block builder, each with no state.
+async fn role_routers() -> [(&'static str, Router); 3] {
+    let distributor = router(
         &minimal_service_config(Role::Distributor),
         ServiceDependencies::default().with_wal_sink(InMemoryWalSink::default()),
-        None,
     )
-    .await
-    .unwrap();
+    .await;
     let querier = loki_router(QuerierState::new(
         ".",
         LabelIndex::default(),
         BlockIndex::default(),
     ));
-    let compactor = build_service_router(
+    let compactor = router(
         &minimal_service_config(Role::BlockBuilder),
         ServiceDependencies::default(),
-        None,
     )
-    .await
-    .unwrap();
-
-    for (name, app) in [
+    .await;
+    [
         ("distributor", distributor),
         ("querier", querier),
         ("block-builder", compactor),
-    ] {
+    ]
+}
+
+#[tokio::test]
+async fn role_operations_routes_match_existing_behavior() {
+    for (name, app) in role_routers().await {
         let response = get_response(app.clone(), "/ready").await;
         assert!(response.status() == StatusCode::OK, "{name} /ready status");
         assert_content_type(
@@ -294,25 +281,7 @@ async fn role_operations_routes_match_existing_behavior() {
 
 #[tokio::test]
 async fn role_ring_alias_routes_remain_available() {
-    let distributor = build_service_router(
-        &minimal_service_config(Role::Distributor),
-        ServiceDependencies::default().with_wal_sink(InMemoryWalSink::default()),
-        None,
-    )
-    .await
-    .unwrap();
-    let querier = loki_router(QuerierState::new(
-        ".",
-        LabelIndex::default(),
-        BlockIndex::default(),
-    ));
-    let compactor = build_service_router(
-        &minimal_service_config(Role::BlockBuilder),
-        ServiceDependencies::default(),
-        None,
-    )
-    .await
-    .unwrap();
+    let [(_, distributor), (_, querier), (_, compactor)] = role_routers().await;
 
     for (app, uri, expected) in [
         (distributor.clone(), "/ring", "krabka-distributor"),
@@ -330,167 +299,98 @@ async fn role_ring_alias_routes_remain_available() {
     }
 }
 
-#[tokio::test]
-async fn service_router_builds_distributor_role() {
+/// What one push through a configured distributor did: the response status
+/// and body, and the records its WAL sink holds afterwards.
+async fn push_through(
+    config: &ServiceConfig,
+    dependencies: impl FnOnce(ServiceDependencies) -> ServiceDependencies,
+    request: Request<Body>,
+) -> PushOutcome {
     let sink = InMemoryWalSink::default();
-    let config = ServiceConfig {
-        target: Role::Distributor,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-block-builder".to_string(),
-        data_root: ".".into(),
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(
-        &config,
-        ServiceDependencies::default().with_wal_sink(sink.clone()),
-        None,
+    let app = router(
+        config,
+        dependencies(ServiceDependencies::default().with_wal_sink(sink.clone())),
+    )
+    .await;
+    let response = send(&app, request).await;
+    PushOutcome {
+        status: response.status(),
+        body: text_body(response).await,
+        records: sink.records(),
+    }
+}
+
+async fn push_json_to_distributor(
+    config: &ServiceConfig,
+    dependencies: impl FnOnce(ServiceDependencies) -> ServiceDependencies,
+    payload: &Value,
+) -> PushOutcome {
+    push_through(
+        config,
+        dependencies,
+        push_request(
+            "/loki/api/v1/push",
+            BodyHeaders {
+                content_type: "application/json",
+                content_encoding: None,
+            },
+            payload.to_string(),
+        ),
     )
     .await
-    .unwrap();
-    let timestamp = current_unix_second_ns().to_string();
+}
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api",
-                                    "env": "prod"
-                                },
-                                "values": [[timestamp, "api error"]]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::NO_CONTENT);
-    let records = sink.records();
+fn check_one_tenant_a_api_error(records: &[WalLogRecord]) {
     check!(records.len() == 1);
     check!(records[0].tenant == "tenant-a");
     check!(records[0].line == "api error");
 }
 
+fn now_second() -> String {
+    current_unix_second_ns().to_string()
+}
+
+fn fifteen_minutes_ahead() -> String {
+    (current_unix_second_ns() + 15 * 60 * 1_000_000_000).to_string()
+}
+
+#[tokio::test]
+async fn service_router_builds_distributor_role() {
+    let PushOutcome {
+        status, records, ..
+    } = push_json_to_distributor(
+        &minimal_service_config(Role::Distributor),
+        |dependencies| dependencies,
+        &JsonStream {
+            stream: json!(labels(API_PROD)),
+            values: json!([[&now_second(), "api error"]]),
+        }
+        .payload(),
+    )
+    .await;
+
+    assert!(status == StatusCode::NO_CONTENT);
+    check_one_tenant_a_api_error(&records);
+}
+
 #[tokio::test]
 async fn service_router_rejects_stale_loki_push_timestamp_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let config = ServiceConfig {
-        target: Role::Distributor,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-block-builder".to_string(),
-        data_root: ".".into(),
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(
-        &config,
-        ServiceDependencies::default().with_wal_sink(sink.clone()),
-        None,
+    let outcome = push_json_to_distributor(
+        &minimal_service_config(Role::Distributor),
+        |dependencies| dependencies,
+        &JsonStream {
+            stream: json!(labels([("app", "api")])),
+            values: json!([["1000000000", "stale api error"]]),
+        }
+        .payload(),
     )
-    .await
-    .unwrap();
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [["1000000000", "stale api error"]]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = text_body(response).await;
-    check!(body.contains("timestamp too old"));
-    check!(body.contains(r#"{app="api", service_name="api"}"#));
-    check!(sink.records().is_empty());
+    outcome.rejected_containing(&["timestamp too old", r#"{app="api", service_name="api"}"#]);
 }
 
 #[tokio::test]
 async fn service_router_rejects_missing_protobuf_timestamp_like_loki_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let config = ServiceConfig {
-        target: Role::Distributor,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-block-builder".to_string(),
-        data_root: ".".into(),
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(
-        &config,
-        ServiceDependencies::default().with_wal_sink(sink.clone()),
-        None,
-    )
-    .await
-    .unwrap();
     let payload = LokiProtoPushRequest {
         streams: vec![LokiProtoStream {
             labels: r#"{app="api"}"#.to_string(),
@@ -507,358 +407,155 @@ async fn service_router_rejects_missing_protobuf_timestamp_like_loki_without_wal
         .compress_vec(&payload.encode_to_vec())
         .unwrap();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-protobuf")
-                .body(Body::from(payload))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let outcome = push_through(
+        &minimal_service_config(Role::Distributor),
+        |dependencies| dependencies,
+        push_request(
+            "/loki/api/v1/push",
+            BodyHeaders {
+                content_type: "application/x-protobuf",
+                content_encoding: None,
+            },
+            payload,
+        ),
+    )
+    .await;
 
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = text_body(response).await;
-    check!(body.contains("timestamp too old"));
-    check!(body.contains("0001-01-01T00:00:00Z"));
-    check!(body.contains(r#"{app="api", service_name="api"}"#));
-    check!(sink.records().is_empty());
+    outcome.rejected_containing(&[
+        "timestamp too old",
+        "0001-01-01T00:00:00Z",
+        r#"{app="api", service_name="api"}"#,
+    ]);
 }
 
 #[tokio::test]
 async fn service_router_rejects_future_loki_push_timestamp_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let config = ServiceConfig {
-        target: Role::Distributor,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-block-builder".to_string(),
-        data_root: ".".into(),
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(
-        &config,
-        ServiceDependencies::default().with_wal_sink(sink.clone()),
-        None,
+    let outcome = push_json_to_distributor(
+        &minimal_service_config(Role::Distributor),
+        |dependencies| dependencies,
+        &JsonStream {
+            stream: json!(labels([("app", "api")])),
+            values: json!([[&fifteen_minutes_ahead(), "future api error"]]),
+        }
+        .payload(),
     )
-    .await
-    .unwrap();
-    let timestamp = (current_unix_second_ns() + 15 * 60 * 1_000_000_000).to_string();
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api"
-                                },
-                                "values": [[timestamp, "future api error"]]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = text_body(response).await;
-    check!(body.contains("timestamp too new"));
-    check!(body.contains(r#"{app="api", service_name="api"}"#));
-    check!(sink.records().is_empty());
+    outcome.rejected_containing(&["timestamp too new", r#"{app="api", service_name="api"}"#]);
 }
 
 #[tokio::test]
 async fn service_router_rejects_future_otlp_timestamp_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let config = ServiceConfig {
-        target: Role::Distributor,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-block-builder".to_string(),
-        data_root: ".".into(),
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(
-        &config,
-        ServiceDependencies::default().with_wal_sink(sink.clone()),
-        None,
-    )
-    .await
-    .unwrap();
-    let timestamp = (current_unix_second_ns() + 15 * 60 * 1_000_000_000).to_string();
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/v1/logs")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "resourceLogs": [
+    let outcome = push_through(
+        &minimal_service_config(Role::Distributor),
+        |dependencies| dependencies,
+        push_request(
+            "/v1/logs",
+            BodyHeaders {
+                content_type: "application/json",
+                content_encoding: None,
+            },
+            json!({
+                "resourceLogs": [
+                    {
+                        "resource": {
+                            "attributes": [
+                                {"key": "service.name", "value": {"stringValue": "checkout"}}
+                            ]
+                        },
+                        "scopeLogs": [
                             {
-                                "resource": {
-                                    "attributes": [
-                                        {"key": "service.name", "value": {"stringValue": "checkout"}}
-                                    ]
-                                },
-                                "scopeLogs": [
+                                "logRecords": [
                                     {
-                                        "logRecords": [
-                                            {
-                                                "timeUnixNano": timestamp,
-                                                "body": {"stringValue": "future otlp error"}
-                                            }
-                                        ]
+                                        "timeUnixNano": fifteen_minutes_ahead(),
+                                        "body": {"stringValue": "future otlp error"}
                                     }
                                 ]
                             }
                         ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+                    }
+                ]
+            })
+            .to_string(),
+        ),
+    )
+    .await;
 
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = text_body(response).await;
-    check!(body.contains("timestamp too new"));
-    check!(body.contains(r#"{service_name="checkout"}"#));
-    check!(sink.records().is_empty());
+    outcome.rejected_containing(&["timestamp too new", r#"{service_name="checkout"}"#]);
 }
 
 #[tokio::test]
 async fn service_router_rejects_loki_push_over_configured_ingest_body_limit_without_wal_append() {
-    let sink = InMemoryWalSink::default();
     let config = ServiceConfig {
-        target: Role::Distributor,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-block-builder".to_string(),
-        data_root: ".".into(),
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
         max_ingest_body: Some(bytes(1)),
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
+        ..minimal_service_config(Role::Distributor)
     };
-    let app = build_service_router(
+
+    let outcome = push_json_to_distributor(
         &config,
-        ServiceDependencies::default().with_wal_sink(sink.clone()),
-        None,
+        |dependencies| dependencies,
+        &JsonStream {
+            stream: json!(labels(API_PROD)),
+            values: json!([["19", "api error"]]),
+        }
+        .payload(),
     )
-    .await
-    .unwrap();
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api",
-                                    "env": "prod"
-                                },
-                                "values": [["19", "api error"]]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::TOO_MANY_REQUESTS);
-    assert_loki_error(&json_body(response).await, "rate_limited", "ingest body");
-    assert!(sink.records().is_empty());
+    outcome.rejected_as_loki_error(&ExpectedLokiError {
+        status: StatusCode::TOO_MANY_REQUESTS,
+        error_type: "rate_limited",
+        contains: "ingest body",
+    });
 }
 
 #[tokio::test]
 async fn service_router_rejects_loki_push_over_ingest_quota_without_wal_append() {
-    let sink = InMemoryWalSink::default();
-    let config = ServiceConfig {
-        target: Role::Distributor,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-block-builder".to_string(),
-        data_root: ".".into(),
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(
-        &config,
-        ServiceDependencies::default()
-            .with_wal_sink(sink.clone())
-            .with_ingest_limiter(RejectingIngestLimiter),
-        None,
+    let outcome = push_json_to_distributor(
+        &minimal_service_config(Role::Distributor),
+        |dependencies| dependencies.with_ingest_limiter(RejectingIngestLimiter),
+        &JsonStream {
+            stream: json!(labels(API_PROD)),
+            values: json!([[&now_second(), "api error"]]),
+        }
+        .payload(),
     )
-    .await
-    .unwrap();
-    let timestamp = current_unix_second_ns().to_string();
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api",
-                                    "env": "prod"
-                                },
-                                "values": [[timestamp, "api error"]]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::TOO_MANY_REQUESTS);
-    assert_loki_error(
-        &json_body(response).await,
-        "rate_limited",
-        "tenant write quota exceeded",
-    );
-    assert!(sink.records().is_empty());
+    outcome.rejected_as_loki_error(&ExpectedLokiError {
+        status: StatusCode::TOO_MANY_REQUESTS,
+        error_type: "rate_limited",
+        contains: "tenant write quota exceeded",
+    });
 }
 
 #[tokio::test]
 async fn service_router_times_out_loki_push_when_wal_append_stalls() {
     let config = ServiceConfig {
-        target: Role::Distributor,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-block-builder".to_string(),
-        data_root: ".".into(),
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
         wal_append_timeout: Some(millis(1)),
-        ..ServiceConfig::default()
+        ..minimal_service_config(Role::Distributor)
     };
-    let app = build_service_router(
+    let app = router(
         &config,
         ServiceDependencies::default().with_wal_sink(PendingWalSink),
-        None,
     )
-    .await
-    .unwrap();
-    let timestamp = current_unix_second_ns().to_string();
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({
-                        "streams": [
-                            {
-                                "stream": {
-                                    "app": "api",
-                                    "env": "prod"
-                                },
-                                "values": [[timestamp, "api timeout error"]]
-                            }
-                        ]
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        tenant_a_post("/loki/api/v1/push")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                JsonStream {
+                    stream: json!(labels(API_PROD)),
+                    values: json!([[&now_second(), "api timeout error"]]),
+                }
+                .payload()
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
 
     assert!(response.status() == StatusCode::SERVICE_UNAVAILABLE);
     assert_loki_error(
@@ -868,56 +565,35 @@ async fn service_router_times_out_loki_push_when_wal_append_stalls() {
     );
 }
 
-#[tokio::test]
-async fn service_listener_serves_distributor_role_on_bound_tcp_listener() {
-    let sink = InMemoryWalSink::default();
-    let config = ServiceConfig {
-        target: Role::Distributor,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-block-builder".to_string(),
-        data_root: ".".into(),
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
+/// Serves a distributor that appends to `sink` on a bound loopback listener.
+async fn spawn_distributor_listener(
+    sink: InMemoryWalSink,
+) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let server_sink = sink.clone();
     let server = tokio::spawn(async move {
         serve_service_listener(
             listener,
-            config,
-            ServiceDependencies::default().with_wal_sink(server_sink),
+            minimal_service_config(Role::Distributor),
+            ServiceDependencies::default().with_wal_sink(sink),
             None,
         )
         .await
         .unwrap();
     });
+    (addr, server)
+}
 
-    let timestamp = current_unix_second_ns().to_string();
-    let payload = json!({
-        "streams": [
-            {
-                "stream": {
-                    "app": "api",
-                    "env": "prod"
-                },
-                "values": [[timestamp, "api error"]]
-            }
-        ]
-    })
+#[tokio::test]
+async fn service_listener_serves_distributor_role_on_bound_tcp_listener() {
+    let sink = InMemoryWalSink::default();
+    let (addr, server) = spawn_distributor_listener(sink.clone()).await;
+
+    let payload = JsonStream {
+        stream: json!(labels(API_PROD)),
+        values: json!([[&now_second(), "api error"]]),
+    }
+    .payload()
     .to_string();
     let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
     stream
@@ -936,49 +612,13 @@ async fn service_listener_serves_distributor_role_on_bound_tcp_listener() {
     server.abort();
 
     check!(response.starts_with("HTTP/1.1 204 No Content"));
-    let records = sink.records();
-    check!(records.len() == 1);
-    check!(records[0].tenant == "tenant-a");
-    check!(records[0].line == "api error");
+    check_one_tenant_a_api_error(&sink.records());
 }
 
 #[tokio::test]
 async fn service_listener_serves_otlp_grpc_logs_for_distributor_role() {
     let sink = InMemoryWalSink::default();
-    let config = ServiceConfig {
-        target: Role::Distributor,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-block-builder".to_string(),
-        data_root: ".".into(),
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let server_sink = sink.clone();
-    let server = tokio::spawn(async move {
-        serve_service_listener(
-            listener,
-            config,
-            ServiceDependencies::default().with_wal_sink(server_sink),
-            None,
-        )
-        .await
-        .unwrap();
-    });
+    let (addr, server) = spawn_distributor_listener(sink.clone()).await;
 
     let mut client = LogsServiceClient::connect(format!("http://{addr}"))
         .await
@@ -995,11 +635,10 @@ async fn service_listener_serves_otlp_grpc_logs_for_distributor_role() {
     server.abort();
 
     check!(response.get_ref().partial_success.is_none());
-    let records = sink.records();
-    check!(records.len() == 1);
-    check!(records[0].tenant == "tenant-a");
-    check!(records[0].line == "api error");
+    check_one_tenant_a_api_error(&sink.records());
 }
+
+const ERROR_QUERY_RANGE: &str = "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000";
 
 #[tokio::test]
 async fn service_router_builds_querier_role_from_object_store_shard_catalog_config() {
@@ -1009,293 +648,157 @@ async fn service_router_builds_querier_role_from_object_store_shard_catalog_conf
         .await
         .unwrap();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let (status, body) = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_loki_forwarded_api_error());
+    assert!(status == StatusCode::OK);
+    assert!(body == expected_loki_forwarded_api_error());
+}
+
+/// A kept data root whose local manifest names `series` for tenant-a and no
+/// blocks.
+fn local_manifest_root(series: Vec<LogLabels>) -> std::path::PathBuf {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let mut label_index = LabelIndex::default();
+    for series_labels in series {
+        label_index.insert_series("tenant-a", series_labels);
+    }
+    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
+    dir
+}
+
+fn local_querier_config(data_root: std::path::PathBuf) -> ServiceConfig {
+    ServiceConfig {
+        wal_group_id: "krabka-observability-querier-tail".to_string(),
+        data_root,
+        ..minimal_service_config(Role::Querier)
+    }
+}
+
+async fn assert_query_refused(app: &axum::Router, uri: &str, expected: &ExpectedLokiError<'_>) {
+    let (status, body) = Tenant("tenant-a").get_json(app, uri).await;
+
+    assert!(status == expected.status);
+    assert_loki_error(&body, expected.error_type, expected.contains);
 }
 
 #[tokio::test]
 async fn service_router_applies_query_authorizer_dependency_to_querier_role() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
     let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
         wal_group_id: "krabka-observability-querier".to_string(),
-        data_root: dir,
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
+        ..local_querier_config(local_manifest_root(vec![labels(API_PROD)]))
     };
-    let app = build_service_router(
-        &config,
-        ServiceDependencies::default().with_query_authorizer(DenyingQueryAuthorizer),
-        None,
-    )
-    .await
-    .unwrap();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    assert_query_refused(
+        &router(
+            &config,
+            ServiceDependencies::default().with_query_authorizer(DenyingQueryAuthorizer),
         )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::FORBIDDEN);
-    assert_loki_error(
-        &json_body(response).await,
-        "forbidden",
-        "tenant read ACL denied",
-    );
+        .await,
+        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D",
+        &ExpectedLokiError {
+            status: StatusCode::FORBIDDEN,
+            error_type: "forbidden",
+            contains: "tenant read ACL denied",
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn service_router_builds_querier_role_with_hot_tail_dependency() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
+    let data_root = local_manifest_root(vec![labels(API_PROD)]);
 
     let hot_tail = InMemoryWalSink::default();
     hot_tail
         .append(WalLogRecord {
-            tenant: "tenant-a".to_string(),
-            labels: labels([("app", "api"), ("env", "prod")]),
-            timestamp_ns: 19_000_000_000,
-            line: "api error".to_string(),
-            structured_metadata: BTreeMap::new(),
             position: Some(WalPosition {
                 partition: PartitionIndex(0),
                 offset: Offset(42),
             }),
+            ..api_error_at(19_000_000_000)
         })
         .await
         .unwrap();
 
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root: dir,
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(
-        &config,
+    let app = router(
+        &local_querier_config(data_root),
         ServiceDependencies::default().with_hot_tail_frontier(hot_tail, CompactionFrontier::new(0)),
-        None,
     )
-    .await
-    .unwrap();
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let (status, body) = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
 
-    assert!(response.status() == StatusCode::OK);
+    assert!(status == StatusCode::OK);
     assert!(
-        json_body(response).await
-            == expected_loki_forwarded_api_error_with_stats(&expected_loki_ingester_stats_with(1))
+        body == expected_loki_forwarded_api_error_with_stats(&expected_loki_ingester_stats_with(1))
     );
 }
 
 #[tokio::test]
 async fn service_router_applies_configured_query_range_limit() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
     let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root: dir,
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
         max_query_range: Some(nanos(20)),
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
+        ..local_querier_config(local_manifest_root(vec![labels(API_PROD)]))
     };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(&json_body(response).await, "bad_data", "query range");
+    assert_query_refused(
+        &router(&config, ServiceDependencies::default()).await,
+        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030",
+        &ExpectedLokiError {
+            status: StatusCode::BAD_REQUEST,
+            error_type: "bad_data",
+            contains: "query range",
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn service_router_applies_configured_query_length_limit() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
     let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root: dir,
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
         max_query_string_bytes: Some(bytes(10)),
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
+        ..local_querier_config(local_manifest_root(vec![labels(API_PROD)]))
     };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(&json_body(response).await, "bad_data", "query length");
+    assert_query_refused(
+        &router(&config, ServiceDependencies::default()).await,
+        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D",
+        &ExpectedLokiError {
+            status: StatusCode::BAD_REQUEST,
+            error_type: "bad_data",
+            contains: "query length",
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn service_router_applies_configured_query_series_limit() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
-    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
     let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root: dir,
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
         max_query_series: Some(1),
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
+        ..local_querier_config(local_manifest_root(vec![
+            labels(API_PROD),
+            labels([("app", "worker"), ("env", "prod")]),
+        ]))
     };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Benv%3D%22prod%22%7D&start=0.000000000&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(&json_body(response).await, "bad_data", "series");
+    assert_query_refused(
+        &router(&config, ServiceDependencies::default()).await,
+        "/loki/api/v1/query_range?query=%7Benv%3D%22prod%22%7D&start=0.000000000&end=0.000000030",
+        &ExpectedLokiError {
+            status: StatusCode::BAD_REQUEST,
+            error_type: "bad_data",
+            contains: "series",
+        },
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn service_router_applies_configured_query_bytes_limit() {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let api = label_index.insert_series("tenant-a", labels(API_PROD));
     let mut block_index = BlockIndex::default();
     let api_block = write_log_block(
         &dir,
@@ -1306,112 +809,56 @@ async fn service_router_applies_configured_query_bytes_limit() {
     block_index.insert(api_block);
     write_log_index_manifest(&dir, &label_index, &block_index).unwrap();
     let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root: dir,
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
         max_query_read: Some(bytes(1)),
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
+        ..local_querier_config(dir)
     };
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    assert_query_refused(
+        &router(&config, ServiceDependencies::default()).await,
+        "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=0.000000030",
+        &ExpectedLokiError {
+            status: StatusCode::BAD_REQUEST,
+            error_type: "bad_data",
+            contains: "bytes",
+        },
+    )
+    .await;
+}
 
-    assert!(response.status() == StatusCode::BAD_REQUEST);
-    assert_loki_error(&json_body(response).await, "bad_data", "bytes");
+fn api_error_at(timestamp_ns: i64) -> WalLogRecord {
+    WalLogRecord {
+        tenant: "tenant-a".to_string(),
+        labels: labels(API_PROD),
+        timestamp_ns,
+        line: "api error".to_string(),
+        structured_metadata: BTreeMap::new(),
+        position: None,
+    }
 }
 
 #[tokio::test]
 async fn service_router_builds_querier_role_with_wal_consumer_hot_tail_poller() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
-
-    let record = WalLogRecord {
-        tenant: "tenant-a".to_string(),
-        labels: labels([("app", "api"), ("env", "prod")]),
-        timestamp_ns: 19_000_000_000,
-        line: "api error".to_string(),
-        structured_metadata: BTreeMap::new(),
-        position: None,
-    };
-    let consumer = RecordingWalConsumer::new(vec![vec![kafka_wal_record(&record, 0, 42)]]);
-    let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        object_store_url: None,
-        wal_bootstrap_server: None,
-        wal_topic: "__krabka_observability_logs_wal".to_string(),
-        wal_group_id: "krabka-observability-querier-tail".to_string(),
-        data_root: dir,
-        querier_index_source: QuerierIndexSource::LocalManifest,
-        tenant: None,
-        index_prefix: None,
-        query_start_ns: None,
-        query_end_ns: None,
-        max_query_range: None,
-        max_query_series: None,
-        max_query_read: None,
-        max_query_string_bytes: None,
-        max_ingest_body: None,
-        wal_append_timeout: None,
-        ..ServiceConfig::default()
-    };
-    let app = build_service_router(
-        &config,
+    let data_root = local_manifest_root(vec![labels(API_PROD)]);
+    let consumer = RecordingWalConsumer::new(vec![vec![kafka_wal_record(
+        &api_error_at(19_000_000_000),
+        PartitionIndex(0),
+        Offset(42),
+    )]]);
+    let app = router(
+        &local_querier_config(data_root),
         ServiceDependencies::default().with_wal_consumer(consumer),
-        None,
     )
-    .await
-    .unwrap();
+    .await;
 
     let body = timeout(Duration::from_millis(500), async {
         loop {
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .uri(
-                            "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                        )
-                        .header("X-Scope-OrgID", "tenant-a")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
+            let (status, body) = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
 
-            assert!(response.status() == StatusCode::OK);
-            let body = json_body(response).await;
+            assert!(status == StatusCode::OK);
             if body
-                == expected_loki_forwarded_api_error_with_stats(
-                    &expected_loki_ingester_stats_with(1),
-                )
+                == expected_loki_forwarded_api_error_with_stats(&expected_loki_ingester_stats_with(
+                    1,
+                ))
             {
                 break body;
             }
@@ -1436,17 +883,13 @@ async fn service_router_loads_persisted_frontier_for_configured_querier_hot_tail
     )
     .await
     .unwrap();
-    let record = WalLogRecord {
-        tenant: "tenant-a".to_string(),
-        labels: labels([("app", "api"), ("env", "prod")]),
-        timestamp_ns: 19,
-        line: "api error".to_string(),
-        structured_metadata: BTreeMap::new(),
-        position: None,
-    };
     let poll_count = Arc::new(AtomicUsize::new(0));
-    let consumer = RecordingWalConsumer::new(vec![vec![kafka_wal_record(&record, 0, 43)]])
-        .with_poll_count(poll_count.clone());
+    let consumer = RecordingWalConsumer::new(vec![vec![kafka_wal_record(
+        &api_error_at(19),
+        PartitionIndex(0),
+        Offset(43),
+    )]])
+    .with_poll_count(poll_count.clone());
     let app = build_service_router(
         &config,
         ServiceDependencies::default().with_wal_consumer(consumer),
@@ -1465,21 +908,11 @@ async fn service_router_loads_persisted_frontier_for_configured_querier_hot_tail
     // real-time wait (not a progress poll): bare settle after the WAL consumer's first
     // poll, before issuing the query; no cheap synchronous observable to poll on here.
     tokio::time::sleep(Duration::from_millis(10)).await;
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let (status, body) = Tenant("tenant-a").get_json(&app, "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=0.000000030")
+    .await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_api_error());
+    assert!(status == StatusCode::OK);
+    assert!(body == expected_api_error());
 }
 
 #[tokio::test]
@@ -1487,25 +920,12 @@ async fn service_router_builds_configured_local_object_store_for_querier_role() 
     let (mut config, _store, dir) =
         loki_forwarded_tenant_object_store_shard_catalog_service_fixture().await;
     config.object_store_url = Some(format!("file://{}", dir.display()));
-    let app = build_service_router(&config, ServiceDependencies::default(), None)
-        .await
-        .unwrap();
+    let app = router(&config, ServiceDependencies::default()).await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/loki/api/v1/query_range?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22error%22&start=0.000000000&end=30.000000000",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let (status, body) = Tenant("tenant-a").get_json(&app, ERROR_QUERY_RANGE).await;
 
-    assert!(response.status() == StatusCode::OK);
-    assert!(json_body(response).await == expected_loki_forwarded_api_error());
+    assert!(status == StatusCode::OK);
+    assert!(body == expected_loki_forwarded_api_error());
 }
 
 struct RecordingWalConsumer {
@@ -1545,65 +965,12 @@ impl LogWalConsumer for RecordingWalConsumer {
     }
 }
 
-fn kafka_wal_record(record: &WalLogRecord, partition: i32, offset: i64) -> KafkaWalRecord {
-    let producer_record =
-        build_kafka_wal_record("__krabka_observability_logs_wal", record).expect("producer record");
-    KafkaWalRecord {
-        value: producer_record.value.expect("producer value").to_vec(),
-        partition: PartitionIndex(partition),
-        offset: Offset(offset),
-        timestamp_ms: producer_record.timestamp_ms,
-        headers: producer_record
-            .headers
-            .into_iter()
-            .map(|header| KafkaWalHeader {
-                key: header.key,
-                value: header.value.map(|value| value.to_vec()),
-            })
-            .collect(),
-    }
-}
-
 fn current_unix_second_ns() -> i64 {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock before unix epoch")
         .as_secs();
     i64::try_from(now).expect("unix seconds fit in i64") * 1_000_000_000
-}
-
-fn expected_loki_ingester_stats_with(lines: u64) -> Value {
-    json!({
-        "ingester": {
-            "compressedBytes": 0,
-            "decompressedBytes": 0,
-            "decompressedLines": lines,
-            "headChunkBytes": 0,
-            "headChunkLines": 0,
-            "totalBatches": 0,
-            "totalChunksMatched": 0,
-            "totalDuplicates": 0,
-            "totalLinesSent": lines,
-            "totalReached": 0
-        },
-        "store": {
-            "compressedBytes": 0,
-            "decompressedBytes": 0,
-            "decompressedLines": 0,
-            "chunksDownloadTime": 0.0,
-            "totalChunksRef": 0,
-            "totalChunksDownloaded": 0,
-            "totalDuplicates": 0
-        },
-        "summary": {
-            "bytesProcessedPerSecond": 0,
-            "execTime": 0.0,
-            "linesProcessedPerSecond": 0,
-            "queueTime": 0.0,
-            "totalBytesProcessed": 0,
-            "totalLinesProcessed": lines
-        }
-    })
 }
 
 /// One router, both halves of the surface.
@@ -1631,13 +998,11 @@ async fn the_all_in_one_router_serves_the_write_and_read_surfaces_together() {
     let mut config = minimal_service_config(Role::All);
     config.data_root = data_root.path().to_path_buf();
     config.index_prefix = Some("logs".to_string());
-    let app = build_service_router(
+    let app = router(
         &config,
         ServiceDependencies::default().with_wal_sink(InMemoryWalSink::default()),
-        None,
     )
-    .await
-    .unwrap();
+    .await;
 
     let response = get_response(app.clone(), "/ready").await;
     assert!(response.status() == StatusCode::OK);
@@ -1648,21 +1013,16 @@ async fn the_all_in_one_router_serves_the_write_and_read_surfaces_together() {
     let response = get_response(app.clone(), "/config").await;
     assert!(text_body(response).await.contains("target: all"));
 
-    let pushed = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/push")
-                .header("content-type", "application/json")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::from(
-                    r#"{"streams":[{"stream":{"app":"api"},"values":[["1","hello"]]}]}"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let pushed = send(
+        &app,
+        tenant_a_post("/loki/api/v1/push")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"streams":[{"stream":{"app":"api"},"values":[["1","hello"]]}]}"#,
+            ))
+            .unwrap(),
+    )
+    .await;
     assert!(pushed.status() != StatusCode::NOT_FOUND);
 
     let queried = get_response(

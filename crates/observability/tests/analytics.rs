@@ -5,12 +5,10 @@ mod support;
 use std::collections::BTreeMap;
 
 use assert2::{assert, check};
-use axum::{
-    body::{Body, to_bytes},
-    http::{Request, StatusCode},
-};
+use axum::{Router, body::to_bytes, http::StatusCode};
 use krabka_blockstore::{
-    BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TimeRange, labels, write_log_block,
+    BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogLabels, LogRow, TimeRange, labels,
+    write_log_block,
 };
 use krabka_observability::{
     InMemoryWalSink, LogWalSink as _, QuerierState, WalLogRecord, loki_router,
@@ -18,40 +16,103 @@ use krabka_observability::{
 use krabka_units::convert::ByteSizeExt as _;
 use serde_json::json;
 use support::{
-    assert_loki_error, expected_loki_stats, expected_loki_stats_with, json_body, text_body,
+    BlockSpan, LogEntry, LokiSuccess, Tenant, assert_loki_error, expected_loki_stats,
+    expected_loki_stats_with, json_body, log_entry, post_form, text_body,
 };
-use tower::ServiceExt as _;
+
+/// A querier over one tenant-a block at offsets 10-19 that holds `entries`
+/// of the series `series_labels`. Returns the router and the block's size in
+/// bytes.
+fn one_block_app(series_labels: LogLabels, entries: &[LogEntry<'_>]) -> (Router, u64) {
+    block_app(
+        series_labels,
+        BlockSpan {
+            first: 10,
+            last: 19,
+        },
+        entries,
+    )
+}
+
+/// A querier over one tenant-a block at `span` that holds `entries` of the
+/// series `series_labels`. Returns the router and the block's size in bytes.
+fn block_app(series_labels: LogLabels, span: BlockSpan, entries: &[LogEntry<'_>]) -> (Router, u64) {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let mut label_index = LabelIndex::default();
+    let series = label_index.insert_series("tenant-a", series_labels);
+    let block = write_log_block(
+        &dir,
+        &BlockKey::new(
+            "tenant-a",
+            0,
+            span.first,
+            span.last,
+            TimeRange::new(span.first, span.last).unwrap(),
+        ),
+        entries
+            .iter()
+            .map(|entry| LogRow::new(series, entry.timestamp_ns, entry.line, BTreeMap::new()))
+            .collect(),
+    )
+    .unwrap();
+    let bytes = block.size.bytes_u64();
+    let mut block_index = BlockIndex::default();
+    block_index.insert(block);
+    (
+        loki_router(QuerierState::new(dir, label_index, block_index)),
+        bytes,
+    )
+}
+
+fn api_and_worker_series() -> (LabelIndex, u64, u64) {
+    let mut label_index = LabelIndex::default();
+    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let worker =
+        label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
+    (label_index, api, worker)
+}
+
+/// The `api` rows the detected-fields tests scan: a JSON line that carries a
+/// `trace_id` in structured metadata, then a logfmt line.
+fn detected_field_rows(api: u64) -> Vec<LogRow> {
+    vec![
+        LogRow::new(
+            api,
+            10,
+            r#"{"status":500,"ok":false,"path":"/checkout"}"#,
+            BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
+        ),
+        LogRow::new(
+            api,
+            11,
+            "level=warn duration=12ms bytes=1.5MiB status=503",
+            BTreeMap::new(),
+        ),
+    ]
+}
+
+/// A querier over one tenant-a block at offsets 10-20 that holds `rows`.
+fn detected_fields_app(label_index: LabelIndex, rows: Vec<LogRow>) -> Router {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let block = write_log_block(
+        &dir,
+        &BlockKey::new("tenant-a", 0, 10, 20, TimeRange::new(10, 20).unwrap()),
+        rows,
+    )
+    .unwrap();
+    let mut block_index = BlockIndex::default();
+    block_index.insert(block);
+    loki_router(QuerierState::new(dir, label_index, block_index))
+}
 
 #[tokio::test]
 async fn index_stats_endpoint_returns_stream_chunk_entry_and_byte_counts() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
-        ],
-    )
-    .unwrap();
-    let expected_block_bytes = api_block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    let (app, expected_block_bytes) = one_block_app(
+        labels([("app", "api"), ("env", "prod")]),
+        &[log_entry(10, "api ok"), log_entry(19, "api error")],
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019").await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -67,30 +128,9 @@ async fn index_stats_endpoint_returns_stream_chunk_entry_and_byte_counts() {
 
 #[tokio::test]
 async fn index_shards_endpoint_returns_loki_compatible_bounds_and_stats() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
-    let block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![LogRow::new(api, 10, "api ok", BTreeMap::new())],
-    )
-    .unwrap();
-    let bytes = block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(block);
-    let app = loki_router(QuerierState::new(dir, label_index, block_index));
+    let (app, bytes) = one_block_app(labels([("app", "api")]), &[log_entry(10, "api ok")]);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/shards?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019&targetBytesPerShard=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/shards?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019&targetBytesPerShard=1").await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -108,38 +148,17 @@ async fn index_shards_endpoint_returns_loki_compatible_bounds_and_stats() {
 
 #[tokio::test]
 async fn index_stats_endpoint_accepts_form_encoded_post_body() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![
-            LogRow::new(api, 10, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19, "api error", BTreeMap::new()),
-        ],
-    )
-    .unwrap();
-    let expected_block_bytes = api_block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    let (app, expected_block_bytes) = one_block_app(
+        labels([("app", "api"), ("env", "prod")]),
+        &[log_entry(10, "api ok"), log_entry(19, "api error")],
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/index/stats")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(
+        &app,
+        "/loki/api/v1/index/stats",
+        "query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019",
+    )
+    .await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -156,10 +175,7 @@ async fn index_stats_endpoint_accepts_form_encoded_post_body() {
 #[tokio::test]
 async fn index_volume_endpoint_returns_series_vector_bytes() {
     let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker =
-        label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
+    let (label_index, api, worker) = api_and_worker_series();
     let api_block = write_log_block(
         &dir,
         &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
@@ -179,192 +195,120 @@ async fn index_volume_endpoint_returns_series_vector_bytes() {
     let state = QuerierState::new(dir, label_index, block_index);
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019").await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
         json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "value": [0.000_000_019, expected_block_bytes.to_string()]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(expected_block_bytes, 0, 1)
-                }
-            })
+            == LokiSuccess {
+                result_type: "vector",
+                data_result: json!([
+                    {
+                        "metric": {
+                            "app": "api",
+                            "env": "prod"
+                        },
+                        "value": [0.000_000_019, expected_block_bytes.to_string()]
+                    }
+                ]),
+                stats: expected_loki_stats_with(expected_block_bytes, 0, 1),
+            }
+            .json()
     );
 }
 
 #[tokio::test]
 async fn index_volume_range_endpoint_returns_matrix_with_target_labels() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![LogRow::new(api, 19, "api error", BTreeMap::new())],
-    )
-    .unwrap();
-    let expected_block_bytes = api_block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    let (app, expected_block_bytes) = one_block_app(
+        labels([("app", "api"), ("env", "prod")]),
+        &[log_entry(19, "api error")],
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/index/volume_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&step=10ns&targetLabels=app",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(
+        &app,
+        "/loki/api/v1/index/volume_range",
+        "query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&step=10ns&targetLabels=app",
+    )
+    .await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
         json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "matrix",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api"
-                            },
-                            "values": [[0.000_000_01, expected_block_bytes.to_string()]]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(expected_block_bytes, 0, 1)
-                }
-            })
+            == LokiSuccess {
+                result_type: "matrix",
+                data_result: json!([
+                    {
+                        "metric": {
+                            "app": "api"
+                        },
+                        "values": [[0.000_000_01, expected_block_bytes.to_string()]]
+                    }
+                ]),
+                stats: expected_loki_stats_with(expected_block_bytes, 0, 1),
+            }
+            .json()
     );
 }
 
 #[tokio::test]
 async fn index_volume_range_endpoint_accepts_form_post_query_with_raw_ampersand() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api&edge")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![LogRow::new(api, 19, "api edge error", BTreeMap::new())],
-    )
-    .unwrap();
-    let expected_block_bytes = api_block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    let (app, expected_block_bytes) = one_block_app(
+        labels([("app", "api&edge")]),
+        &[log_entry(19, "api edge error")],
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/index/volume_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api&edge"}&start=0.000000010&end=0.000000030&step=10ns"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(
+        &app,
+        "/loki/api/v1/index/volume_range",
+        r#"query={app="api&edge"}&start=0.000000010&end=0.000000030&step=10ns"#,
+    )
+    .await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
         json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "matrix",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api&edge"
-                            },
-                            "values": [[0.000_000_01, expected_block_bytes.to_string()]]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(expected_block_bytes, 0, 1)
-                }
-            })
+            == LokiSuccess {
+                result_type: "matrix",
+                data_result: json!([
+                    {
+                        "metric": {
+                            "app": "api&edge"
+                        },
+                        "values": [[0.000_000_01, expected_block_bytes.to_string()]]
+                    }
+                ]),
+                stats: expected_loki_stats_with(expected_block_bytes, 0, 1),
+            }
+            .json()
     );
 }
 
 #[tokio::test]
 async fn index_volume_range_endpoint_returns_matrix_without_target_labels() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![LogRow::new(api, 19, "api error", BTreeMap::new())],
-    )
-    .unwrap();
-    let expected_block_bytes = api_block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    let (app, expected_block_bytes) = one_block_app(
+        labels([("app", "api"), ("env", "prod")]),
+        &[log_entry(19, "api error")],
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/volume_range?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&step=10ns")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/volume_range?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&step=10ns").await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
         json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "matrix",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": "api",
-                                "env": "prod"
-                            },
-                            "values": [[0.000_000_01, expected_block_bytes.to_string()]]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(expected_block_bytes, 0, 1)
-                }
-            })
+            == LokiSuccess {
+                result_type: "matrix",
+                data_result: json!([
+                    {
+                        "metric": {
+                            "app": "api",
+                            "env": "prod"
+                        },
+                        "values": [[0.000_000_01, expected_block_bytes.to_string()]]
+                    }
+                ]),
+                stats: expected_loki_stats_with(expected_block_bytes, 0, 1),
+            }
+            .json()
     );
 }
 
@@ -378,31 +322,22 @@ async fn index_volume_endpoints_default_missing_start_to_recent_range() {
     let app = loki_router(state);
 
     for endpoint in ["index/volume", "index/volume_range"] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!(
-                        "/loki/api/v1/{endpoint}?query=%7Bapp%3D%22api%22%7D&end=1.0&step=1s"
-                    ))
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
+        let response = Tenant("tenant-a")
+            .get(
+                &app,
+                &format!("/loki/api/v1/{endpoint}?query=%7Bapp%3D%22api%22%7D&end=1.0&step=1s"),
             )
-            .await
-            .unwrap();
+            .await;
 
         assert!(response.status() == StatusCode::OK);
         assert!(
             json_body(response).await
-                == json!({
-                    "status": "success",
-                    "data": {
-                        "resultType": "vector",
-                        "result": [],
-                        "stats": expected_loki_stats()
-                    }
-                })
+                == LokiSuccess {
+                    result_type: "vector",
+                    data_result: json!([]),
+                    stats: expected_loki_stats(),
+                }
+                .json()
         );
     }
 }
@@ -416,16 +351,12 @@ async fn index_stats_endpoint_requires_start_parameter() {
     );
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&end=1.0")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&end=1.0",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(
@@ -445,19 +376,12 @@ async fn index_volume_endpoints_default_missing_end_to_current_time() {
     let app = loki_router(state);
 
     for endpoint in ["index/volume", "index/volume_range"] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!(
-                        "/loki/api/v1/{endpoint}?query=%7Bapp%3D%22api%22%7D&start=0.000000000"
-                    ))
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
+        let response = Tenant("tenant-a")
+            .get(
+                &app,
+                &format!("/loki/api/v1/{endpoint}?query=%7Bapp%3D%22api%22%7D&start=0.000000000"),
             )
-            .await
-            .unwrap();
+            .await;
 
         assert!(response.status() == StatusCode::BAD_REQUEST);
         assert!(
@@ -477,16 +401,12 @@ async fn index_stats_endpoint_requires_end_parameter() {
     );
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000000")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000000",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(
@@ -505,16 +425,7 @@ async fn index_stats_endpoint_rejects_loki_query_ranges_over_limit() {
     );
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/stats?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000").await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(
@@ -532,16 +443,7 @@ async fn index_volume_range_endpoint_returns_loki_error_for_zero_step() {
     );
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/volume_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=1.0&step=0")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/volume_range?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=1.0&step=0").await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
@@ -560,16 +462,7 @@ async fn index_volume_endpoint_returns_loki_error_for_invalid_aggregate_by() {
     );
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=1.0&aggregateBy=bogus")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=1.0&aggregateBy=bogus").await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
@@ -586,19 +479,14 @@ async fn index_endpoints_return_loki_error_for_invalid_logql() {
     let app = loki_router(state);
 
     for endpoint in ["index/stats", "index/volume", "index/volume_range"] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!(
-                        "/loki/api/v1/{endpoint}?query=%7Bapp%3D&start=0.000000000&end=0.000000001"
-                    ))
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
+        let response = Tenant("tenant-a")
+            .get(
+                &app,
+                &format!(
+                    "/loki/api/v1/{endpoint}?query=%7Bapp%3D&start=0.000000000&end=0.000000001"
+                ),
             )
-            .await
-            .unwrap();
+            .await;
 
         assert!(response.status() == StatusCode::BAD_REQUEST);
         assert!(
@@ -610,50 +498,29 @@ async fn index_endpoints_return_loki_error_for_invalid_logql() {
 
 #[tokio::test]
 async fn index_volume_endpoint_supports_label_aggregation_and_limit() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(10, 19).unwrap()),
-        vec![LogRow::new(api, 19, "api error", BTreeMap::new())],
-    )
-    .unwrap();
-    let expected_block_bytes = api_block.size.bytes_u64();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    let (app, expected_block_bytes) = one_block_app(
+        labels([("app", "api"), ("env", "prod")]),
+        &[log_entry(19, "api error")],
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019&aggregateBy=labels&targetLabels=app,env&limit=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000019&aggregateBy=labels&targetLabels=app,env&limit=1").await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
         json_body(response).await
-            == json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [
-                        {
-                            "metric": {
-                                "app": ""
-                            },
-                            "value": [0.000_000_019, expected_block_bytes.to_string()]
-                        }
-                    ],
-                    "stats": expected_loki_stats_with(expected_block_bytes, 0, 1)
-                }
-            })
+            == LokiSuccess {
+                result_type: "vector",
+                data_result: json!([
+                    {
+                        "metric": {
+                            "app": ""
+                        },
+                        "value": [0.000_000_019, expected_block_bytes.to_string()]
+                    }
+                ]),
+                stats: expected_loki_stats_with(expected_block_bytes, 0, 1),
+            }
+            .json()
     );
 }
 
@@ -699,16 +566,12 @@ async fn patterns_endpoint_groups_matching_logs_by_detected_pattern() {
     let state = QuerierState::new(dir, label_index, block_index);
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/patterns?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2.0&step=1s")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/patterns?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2.0&step=1s",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -762,16 +625,7 @@ async fn patterns_endpoint_collapses_json_logs_differing_only_by_timestamp() {
     let state = QuerierState::new(dir, label_index, block_index);
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/patterns?query=%7Bservice_name%3D%22broker%22%7D&start=0.000000000&end=2.0&step=1s")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/patterns?query=%7Bservice_name%3D%22broker%22%7D&start=0.000000000&end=2.0&step=1s").await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -792,49 +646,24 @@ async fn patterns_endpoint_collapses_json_logs_differing_only_by_timestamp() {
 
 #[tokio::test]
 async fn patterns_endpoint_excludes_entries_at_end_bound() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new(
-            "tenant-a",
-            0,
-            1_000_000_000,
-            2_000_000_000,
-            TimeRange::new(1_000_000_000, 2_000_000_000).unwrap(),
-        ),
-        vec![
-            LogRow::new(
-                api,
-                1_000_000_000,
-                "status=500 user=100 route=/checkout",
-                BTreeMap::new(),
-            ),
-            LogRow::new(
-                api,
-                2_000_000_000,
-                "status=200 user=200 route=/checkout",
-                BTreeMap::new(),
-            ),
+    let (app, _) = block_app(
+        labels([("app", "api")]),
+        BlockSpan {
+            first: 1_000_000_000,
+            last: 2_000_000_000,
+        },
+        &[
+            log_entry(1_000_000_000, "status=500 user=100 route=/checkout"),
+            log_entry(2_000_000_000, "status=200 user=200 route=/checkout"),
         ],
-    )
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/patterns?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2.0&step=1s")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/patterns?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2.0&step=1s",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -855,53 +684,24 @@ async fn patterns_endpoint_excludes_entries_at_end_bound() {
 
 #[tokio::test]
 async fn patterns_endpoint_accepts_form_encoded_post_body() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new(
-            "tenant-a",
-            0,
-            100_000_000,
-            1_100_000_000,
-            TimeRange::new(100_000_000, 1_100_000_000).unwrap(),
-        ),
-        vec![
-            LogRow::new(
-                api,
-                100_000_000,
-                "status=500 user=100 route=/checkout",
-                BTreeMap::new(),
-            ),
-            LogRow::new(
-                api,
-                1_100_000_000,
-                "status=200 user=200 route=/checkout",
-                BTreeMap::new(),
-            ),
+    let (app, _) = block_app(
+        labels([("app", "api")]),
+        BlockSpan {
+            first: 100_000_000,
+            last: 1_100_000_000,
+        },
+        &[
+            log_entry(100_000_000, "status=500 user=100 route=/checkout"),
+            log_entry(1_100_000_000, "status=200 user=200 route=/checkout"),
         ],
-    )
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/patterns")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2.0&step=1s",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(
+        &app,
+        "/loki/api/v1/patterns",
+        "query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2.0&step=1s",
+    )
+    .await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -923,53 +723,24 @@ async fn patterns_endpoint_accepts_form_encoded_post_body() {
 
 #[tokio::test]
 async fn patterns_endpoint_accepts_form_post_query_with_raw_ampersand() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api&edge")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new(
-            "tenant-a",
-            0,
-            100_000_000,
-            1_100_000_000,
-            TimeRange::new(100_000_000, 1_100_000_000).unwrap(),
-        ),
-        vec![
-            LogRow::new(
-                api,
-                100_000_000,
-                "status=500 user=100 route=/checkout",
-                BTreeMap::new(),
-            ),
-            LogRow::new(
-                api,
-                1_100_000_000,
-                "status=200 user=200 route=/checkout",
-                BTreeMap::new(),
-            ),
+    let (app, _) = block_app(
+        labels([("app", "api&edge")]),
+        BlockSpan {
+            first: 100_000_000,
+            last: 1_100_000_000,
+        },
+        &[
+            log_entry(100_000_000, "status=500 user=100 route=/checkout"),
+            log_entry(1_100_000_000, "status=200 user=200 route=/checkout"),
         ],
-    )
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/patterns")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api&edge"}&start=0.000000000&end=2.0&step=1s"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(
+        &app,
+        "/loki/api/v1/patterns",
+        r#"query={app="api&edge"}&start=0.000000000&end=2.0&step=1s"#,
+    )
+    .await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -998,16 +769,12 @@ async fn patterns_endpoint_returns_loki_error_for_invalid_logql() {
     );
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/patterns?query=%7Bapp%3D&start=0.000000000&end=0.000000001")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/patterns?query=%7Bapp%3D&start=0.000000000&end=0.000000001",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(
@@ -1018,43 +785,11 @@ async fn patterns_endpoint_returns_loki_error_for_invalid_logql() {
 
 #[tokio::test]
 async fn detected_fields_stops_scanning_at_the_line_limit() {
-    let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
     let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 20, TimeRange::new(10, 20).unwrap()),
-        vec![
-            LogRow::new(
-                api,
-                10,
-                r#"{"status":500,"ok":false,"path":"/checkout"}"#,
-                BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
-            ),
-            LogRow::new(
-                api,
-                11,
-                "level=warn duration=12ms bytes=1.5MiB status=503",
-                BTreeMap::new(),
-            ),
-        ],
-    )
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    let app = detected_fields_app(label_index, detected_field_rows(api));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&limit=10&line_limit=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&limit=10&line_limit=1").await;
 
     assert!(response.status() == StatusCode::OK);
     // Only the first row is scanned, so the second row's logfmt fields --
@@ -1099,51 +834,17 @@ async fn detected_fields_stops_scanning_at_the_line_limit() {
 
 #[tokio::test]
 async fn detected_fields_endpoint_discovers_json_logfmt_and_structured_metadata() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker =
-        label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 20, TimeRange::new(10, 20).unwrap()),
-        vec![
-            LogRow::new(
-                api,
-                10,
-                r#"{"status":500,"ok":false,"path":"/checkout"}"#,
-                BTreeMap::from([("trace_id".to_string(), "abc".to_string())]),
-            ),
-            LogRow::new(
-                api,
-                11,
-                "level=warn duration=12ms bytes=1.5MiB status=503",
-                BTreeMap::new(),
-            ),
-            LogRow::new(
-                worker,
-                12,
-                r#"{"status":200,"worker_field":"ignored"}"#,
-                BTreeMap::new(),
-            ),
-        ],
-    )
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    let (label_index, api, worker) = api_and_worker_series();
+    let mut rows = detected_field_rows(api);
+    rows.push(LogRow::new(
+        worker,
+        12,
+        r#"{"status":200,"worker_field":"ignored"}"#,
+        BTreeMap::new(),
+    ));
+    let app = detected_fields_app(label_index, rows);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&limit=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&limit=10").await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -1226,16 +927,7 @@ async fn detected_labels_endpoint_reports_stream_label_cardinality() {
     let state = QuerierState::new(dir, label_index, block_index);
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_labels?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&limit=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_labels?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&limit=10").await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -1257,30 +949,16 @@ async fn detected_labels_endpoint_reports_stream_label_cardinality() {
 
 #[tokio::test]
 async fn detected_labels_endpoint_returns_empty_object_without_matches() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 20, TimeRange::new(10, 20).unwrap()),
-        vec![LogRow::new(api, 10, "api prod", BTreeMap::new())],
-    )
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    let (app, _) = block_app(
+        labels([("app", "api"), ("env", "prod")]),
+        BlockSpan {
+            first: 10,
+            last: 20,
+        },
+        &[log_entry(10, "api prod")],
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_labels?query=%7Bapp%3D%22missing%22%7D&start=0.000000010&end=0.000000020")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_labels?query=%7Bapp%3D%22missing%22%7D&start=0.000000010&end=0.000000020").await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(json_body(response).await == json!({}));
@@ -1307,16 +985,12 @@ async fn detected_labels_endpoint_defaults_missing_query_to_all_streams() {
     let state = QuerierState::new(dir, label_index, block_index);
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_labels?start=0.000000010&end=0.000000020&limit=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/detected_labels?start=0.000000010&end=0.000000020&limit=10",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -1357,16 +1031,7 @@ async fn detected_labels_endpoint_ignores_malformed_step_and_limit_like_loki() {
     let state = QuerierState::new(dir, label_index, block_index);
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_labels?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&step=not-a-duration&limit=not-a-limit")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_labels?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&step=not-a-duration&limit=not-a-limit").await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -1388,37 +1053,24 @@ async fn detected_labels_endpoint_ignores_malformed_step_and_limit_like_loki() {
 
 #[tokio::test]
 async fn detected_field_values_endpoint_accepts_form_post_body() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 20, TimeRange::new(10, 20).unwrap()),
-        vec![
-            LogRow::new(api, 10, r#"{"status":500}"#, BTreeMap::new()),
-            LogRow::new(api, 11, "status=503", BTreeMap::new()),
+    let (app, _) = block_app(
+        labels([("app", "api")]),
+        BlockSpan {
+            first: 10,
+            last: 20,
+        },
+        &[
+            log_entry(10, r#"{"status":500}"#),
+            log_entry(11, "status=503"),
         ],
-    )
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/detected_field/status/values")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&limit=1",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(
+        &app,
+        "/loki/api/v1/detected_field/status/values",
+        "query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&limit=1",
+    )
+    .await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -1432,37 +1084,24 @@ async fn detected_field_values_endpoint_accepts_form_post_body() {
 
 #[tokio::test]
 async fn detected_field_values_endpoint_accepts_form_post_query_with_raw_ampersand() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api&edge")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 20, TimeRange::new(10, 20).unwrap()),
-        vec![
-            LogRow::new(api, 10, r#"{"status":500}"#, BTreeMap::new()),
-            LogRow::new(api, 11, "status=503", BTreeMap::new()),
+    let (app, _) = block_app(
+        labels([("app", "api&edge")]),
+        BlockSpan {
+            first: 10,
+            last: 20,
+        },
+        &[
+            log_entry(10, r#"{"status":500}"#),
+            log_entry(11, "status=503"),
         ],
-    )
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/loki/api/v1/detected_field/status/values")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    r#"query={app="api&edge"}&start=0.000000010&end=0.000000020&limit=1"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(
+        &app,
+        "/loki/api/v1/detected_field/status/values",
+        r#"query={app="api&edge"}&start=0.000000010&end=0.000000020&limit=1"#,
+    )
+    .await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -1476,33 +1115,24 @@ async fn detected_field_values_endpoint_accepts_form_post_query_with_raw_ampersa
 
 #[tokio::test]
 async fn detected_fields_endpoint_derives_start_from_since_when_start_is_omitted() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 20, TimeRange::new(10, 20).unwrap()),
-        vec![
-            LogRow::new(api, 10, r#"{"old_field":"ignored"}"#, BTreeMap::new()),
-            LogRow::new(api, 20, r#"{"new_field":"kept"}"#, BTreeMap::new()),
+    let (app, _) = block_app(
+        labels([("app", "api")]),
+        BlockSpan {
+            first: 10,
+            last: 20,
+        },
+        &[
+            log_entry(10, r#"{"old_field":"ignored"}"#),
+            log_entry(20, r#"{"new_field":"kept"}"#),
         ],
-    )
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&end=0.000000020&since=5ns")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&end=0.000000020&since=5ns",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -1525,30 +1155,16 @@ async fn detected_fields_endpoint_derives_start_from_since_when_start_is_omitted
 
 #[tokio::test]
 async fn detected_field_values_endpoint_accepts_step_duration_parameter() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api")]));
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 20, TimeRange::new(10, 20).unwrap()),
-        vec![LogRow::new(api, 20, r#"{"status":"200"}"#, BTreeMap::new())],
-    )
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    let (app, _) = block_app(
+        labels([("app", "api")]),
+        BlockSpan {
+            first: 10,
+            last: 20,
+        },
+        &[log_entry(20, r#"{"status":"200"}"#)],
+    );
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_field/status/values?query=%7Bapp%3D%22api%22%7D&end=0.000000020&since=1m&step=30s")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_field/status/values?query=%7Bapp%3D%22api%22%7D&end=0.000000020&since=1m&step=30s").await;
 
     assert!(response.status() == StatusCode::OK);
     assert!(
@@ -1569,16 +1185,12 @@ async fn detected_fields_endpoint_rejects_invalid_step_parameter() {
     );
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&step=not-a-duration")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&step=not-a-duration",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(
@@ -1597,16 +1209,12 @@ async fn detected_fields_endpoint_returns_loki_error_for_zero_step() {
     );
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&step=0")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&step=0",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(
@@ -1624,16 +1232,9 @@ async fn detected_fields_endpoint_returns_loki_error_for_invalid_logql() {
     );
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_fields?query=%7Bapp%3D")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a")
+        .get(&app, "/loki/api/v1/detected_fields?query=%7Bapp%3D")
+        .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(
@@ -1651,16 +1252,7 @@ async fn detected_fields_endpoint_rejects_loki_query_ranges_over_limit() {
     );
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000").await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(
@@ -1678,16 +1270,12 @@ async fn detected_labels_endpoint_rejects_loki_query_ranges_over_limit() {
     );
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_labels?start=0.000000000&end=2595601000000000")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let response = Tenant("tenant-a")
+        .get(
+            &app,
+            "/loki/api/v1/detected_labels?start=0.000000000&end=2595601000000000",
         )
-        .await
-        .unwrap();
+        .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(
@@ -1705,16 +1293,7 @@ async fn detected_field_values_endpoint_rejects_loki_query_ranges_over_limit() {
     );
     let app = loki_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/detected_field/status/values?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_field/status/values?query=%7Bapp%3D%22api%22%7D&start=0.000000000&end=2595601000000000").await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(
@@ -1777,39 +1356,25 @@ async fn analytics_endpoints_read_entries_still_in_the_hot_tail() {
         ),
         (
             "/loki/api/v1/index/volume?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&targetLabels=app",
-            json!({
-                "status": "success",
-                "data": {
-                    "resultType": "vector",
-                    "result": [{"metric": {"app": "api"}, "value": [0.000_000_03, "28"]}],
-                    "stats": expected_loki_stats()
-                }
-            }),
+            LokiSuccess {
+                result_type: "vector",
+                data_result: json!([{"metric": {"app": "api"}, "value": [0.000_000_03, "28"]}]),
+                stats: expected_loki_stats(),
+            }
+            .json(),
         ),
         (
             "/loki/api/v1/index/volume_range?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000030&step=10ns&targetLabels=app",
-            json!({
-                "status": "success",
-                "data": {
-                    "resultType": "matrix",
-                    "result": [{"metric": {"app": "api"}, "values": [[0.000_000_02, "28"]]}],
-                    "stats": expected_loki_stats()
-                }
-            }),
+            LokiSuccess {
+                result_type: "matrix",
+                data_result: json!([{"metric": {"app": "api"}, "values": [[0.000_000_02, "28"]]}]),
+                stats: expected_loki_stats(),
+            }
+            .json(),
         ),
     ];
     for (uri, expected) in cases {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = Tenant("tenant-a").get(&app, uri).await;
         check!(response.status() == StatusCode::OK, "{uri}");
         check!(json_body(response).await == expected, "{uri}");
     }

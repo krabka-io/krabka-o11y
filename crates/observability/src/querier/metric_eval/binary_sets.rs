@@ -23,6 +23,7 @@ mod apply_metric_scalar_comparison_to_loki_result;
 mod apply_metric_scalar_comparison_to_sample;
 mod apply_metric_scalar_comparison_to_series;
 mod apply_metric_selection;
+mod apply_scalar_to_loki_result;
 mod default_metric_range_step;
 mod execute_http_metric_range_query;
 mod include_metric_group_labels;
@@ -52,6 +53,7 @@ pub(crate) use apply_metric_scalar_comparison_to_sample::apply_scalar_comparison
 pub(crate) use apply_metric_scalar_comparison_to_series::apply_metric_scalar_comparison_to_series;
 pub(crate) use apply_metric_scalar_comparison_to_series::apply_scalar_comparison_to_series;
 pub(crate) use apply_metric_selection::apply_metric_selection;
+pub(crate) use apply_scalar_to_loki_result::{ScalarLiteral, apply_scalar_to_loki_result};
 pub(crate) use default_metric_range_step::default_metric_range_step;
 pub(crate) use execute_http_metric_range_query::execute_http_metric_range_query;
 pub(crate) use include_metric_group_labels::include_metric_group_labels;

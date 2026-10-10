@@ -19,6 +19,7 @@ mod connect_with_startup_retry_gives_up_after_deadline;
 mod connect_with_startup_retry_retries_then_succeeds;
 mod connect_with_startup_retry_succeeds_on_first_try;
 mod distributor_policy_uses_defaults_and_cli_overrides;
+mod four_cold_api_blocks;
 mod metadata_index_range_defaults_empty_metadata_requests_to_recent_window;
 mod missing_timestamp_fallback_age_is_exact;
 mod object_store_metric_query_batches_cold_block_reads;
@@ -28,3 +29,4 @@ mod querier_state_with_request_tenant_index_lists_shards_from_query_window_offse
 mod querier_state_with_request_tenant_index_reuses_shard_indexes_for_moving_ranges;
 
 pub(crate) use acl_entry::acl_entry;
+pub(crate) use four_cold_api_blocks::FourColdApiBlocks;

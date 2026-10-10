@@ -14,65 +14,109 @@ pub async fn run_compactor_until_idle(
     dependencies: ServiceDependencies,
     object_store: Option<&dyn ObjectStore>,
 ) -> Result<Vec<BlockDescriptor>, ServiceRuntimeError> {
-    validate_compactor_policy(config)?;
-    let compaction_metrics = dependencies
-        .compaction_metrics()
-        .unwrap_or_else(crate::compaction_metrics::CompactionMetrics::unregistered);
-    let configured_store = build_compactor_configured_object_store(
+    CompactorRun {
         config,
+        dependencies,
         object_store,
-        dependencies
-            .object_store_metrics()
-            .unwrap_or_else(krabka_blockstore::ObjectStoreMetrics::unregistered),
-    )
-    .await?;
-    let (store, object_store_prefix) =
-        compactor_object_store(object_store, configured_store.as_ref())?;
-    let index_prefix = config
-        .index_prefix
-        .as_deref()
-        .ok_or(ServiceConfigError::MissingCompactorIndexPrefix)?;
-    let prefix = effective_object_store_prefix(object_store_prefix, index_prefix);
-    let compaction_frontier = dependencies.compaction_frontier.unwrap_or_default();
-    let delete_requests =
-        compactor_delete_requests_for_config(config, dependencies.delete_requests)?;
-    load_existing_compaction_frontier(store, &prefix, &compaction_frontier).await?;
-    materialize_delete_requests_in_existing_local_manifest_blocks(
-        &config.data_root,
-        &delete_requests,
-    )?;
-    let consumer = dependencies
-        .wal_consumer
-        .ok_or(ServiceConfigError::MissingWalConsumer)?;
-    let mut consumer = consumer.lock().await;
-    let mut descriptors = Vec::new();
-    let mut tenant_indexes = TenantCompactionIndexCache::new();
+    }
+    .run(CompactorBatches::UntilIdle)
+    .await
+}
 
-    loop {
-        let batch_descriptors = materialize_deletes_then_compact_next_kafka_wal_batch(
-            store,
-            &prefix,
-            consumer.as_mut(),
-            config.compactor_wal_poll_timeout,
-            &delete_requests,
-            &mut tenant_indexes,
-            &compaction_metrics,
+/// How many WAL batches one compactor run compacts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CompactorBatches {
+    /// Only the next batch, which may be empty.
+    Next,
+    /// Every batch, until the consumer is drained.
+    UntilIdle,
+}
+
+/// What one compactor run reads its WAL and writes its blocks with.
+pub(crate) struct CompactorRun<'a> {
+    pub(crate) config: &'a ServiceConfig,
+    pub(crate) dependencies: ServiceDependencies,
+    pub(crate) object_store: Option<&'a dyn ObjectStore>,
+}
+
+impl CompactorRun<'_> {
+    /// Compacts `batches` of the WAL, and advances the compaction frontier
+    /// past each block it writes.
+    pub(crate) async fn run(
+        self,
+        batches: CompactorBatches,
+    ) -> Result<Vec<BlockDescriptor>, ServiceRuntimeError> {
+        let Self {
+            config,
+            dependencies,
+            object_store,
+        } = self;
+        validate_compactor_policy(config)?;
+        let compaction_metrics = dependencies
+            .compaction_metrics()
+            .unwrap_or_else(crate::compaction_metrics::CompactionMetrics::unregistered);
+        let configured_store = build_compactor_configured_object_store(
+            config,
+            object_store,
+            dependencies
+                .object_store_metrics()
+                .unwrap_or_else(krabka_blockstore::ObjectStoreMetrics::unregistered),
         )
         .await?;
-        if batch_descriptors.is_empty() && consumer.is_drained().await {
-            break;
-        }
-        for descriptor in batch_descriptors {
-            advance_and_persist_compaction_frontier(
+        let (store, object_store_prefix) =
+            compactor_object_store(object_store, configured_store.as_ref())?;
+        let index_prefix = config
+            .index_prefix
+            .as_deref()
+            .ok_or(ServiceConfigError::MissingCompactorIndexPrefix)?;
+        let prefix = effective_object_store_prefix(object_store_prefix, index_prefix);
+        let compaction_frontier = dependencies.compaction_frontier.unwrap_or_default();
+        let delete_requests =
+            compactor_delete_requests_for_config(config, dependencies.delete_requests)?;
+        load_existing_compaction_frontier(store, &prefix, &compaction_frontier).await?;
+        materialize_delete_requests_in_existing_local_manifest_blocks(
+            &config.data_root,
+            &delete_requests,
+        )?;
+        let consumer = dependencies
+            .wal_consumer
+            .ok_or(ServiceConfigError::MissingWalConsumer)?;
+        let mut consumer = consumer.lock().await;
+        let mut descriptors = Vec::new();
+        let mut tenant_indexes = TenantCompactionIndexCache::new();
+
+        loop {
+            let batch_descriptors = materialize_deletes_then_compact_next_kafka_wal_batch(
                 store,
                 &prefix,
-                &compaction_frontier,
-                &descriptor,
+                consumer.as_mut(),
+                config.compactor_wal_poll_timeout,
+                &delete_requests,
+                &mut tenant_indexes,
+                &compaction_metrics,
             )
             .await?;
-            descriptors.push(descriptor);
+            if batches == CompactorBatches::UntilIdle
+                && batch_descriptors.is_empty()
+                && consumer.is_drained().await
+            {
+                break;
+            }
+            for descriptor in batch_descriptors {
+                advance_and_persist_compaction_frontier(
+                    store,
+                    &prefix,
+                    &compaction_frontier,
+                    &descriptor,
+                )
+                .await?;
+                descriptors.push(descriptor);
+            }
+            if batches == CompactorBatches::Next {
+                break;
+            }
         }
-    }
 
-    Ok(descriptors)
+        Ok(descriptors)
+    }
 }

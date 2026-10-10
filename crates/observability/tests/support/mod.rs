@@ -4,18 +4,26 @@
 
 use std::collections::BTreeMap;
 
-use assert2::assert;
+use assert2::{assert, check};
 use async_trait::async_trait;
-use axum::body::to_bytes;
+pub use axum::http::Method;
+use axum::{
+    Router,
+    body::{Body, to_bytes},
+    http::{Request, StatusCode},
+};
+use datafusion::arrow::record_batch::RecordBatch;
+use futures_util::StreamExt as _;
 use krabka_blockstore::{
     BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogRow, TenantId, TimeRange, labels,
     write_log_block, write_log_block_to_object_store,
     write_tenant_log_index_shards_to_object_store,
 };
 use krabka_observability::{
-    IngestLimitError, LogIngestLimiter, LogQueryAuthorizer, LogWalSink, QuerierIndexSource,
-    QuerierState, QueryAuthorizationError, Role, ServiceConfig, WalLogRecord, WalSinkError,
-    build_querier_state,
+    IngestLimitError, KafkaWalHeader, KafkaWalRecord, LogIngestLimiter, LogQueryAuthorizer,
+    LogWalSink, Offset, PartitionIndex, QuerierIndexSource, QuerierState, QueryAuthorizationError,
+    Role, ServiceConfig, WalLogRecord, WalSinkError, build_kafka_wal_record, build_querier_state,
+    loki_router,
 };
 use krabka_units::convert::ByteSizeExt as _;
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
@@ -25,7 +33,10 @@ use opentelemetry_proto::tonic::{
     logs::v1::{LogRecord, ResourceLogs, ScopeLogs},
     resource::v1::Resource,
 };
+use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use serde_json::{Value, json};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
+use tower::ServiceExt as _;
 
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LokiProtoPushRequest {
@@ -184,48 +195,54 @@ pub fn loki_forwarded_fixture() -> QuerierState {
 fn fixture_with_time_scale(scale: i64) -> QuerierState {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker =
-        label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
+    let blocks = api_and_worker_blocks(&mut label_index, scale);
     label_index.insert_series("tenant-b", labels([("app", "api"), ("env", "prod")]));
 
     let mut block_index = BlockIndex::default();
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new(
-            "tenant-a",
-            0,
-            10 * scale,
-            19 * scale,
-            TimeRange::new(10 * scale, 19 * scale).unwrap(),
-        ),
-        vec![
-            LogRow::new(api, 10 * scale, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19 * scale, "api error", BTreeMap::new()),
-        ],
-    )
-    .unwrap();
-    let worker_block = write_log_block(
-        &dir,
-        &BlockKey::new(
-            "tenant-a",
-            1,
-            20 * scale,
-            29 * scale,
-            TimeRange::new(20 * scale, 29 * scale).unwrap(),
-        ),
-        vec![LogRow::new(
-            worker,
-            25 * scale,
-            "worker error",
-            BTreeMap::new(),
-        )],
-    )
-    .unwrap();
-    block_index.insert(api_block);
-    block_index.insert(worker_block);
+    for (key, rows) in blocks {
+        block_index.insert(write_log_block(&dir, &key, rows).unwrap());
+    }
 
     QuerierState::new(dir, label_index, block_index)
+}
+
+/// Adds tenant-a's `api` and `worker` series to `label_index`, and returns
+/// the key and rows of an `api` block at 10-19 and a `worker` block at 20-29,
+/// both in units of `scale` nanoseconds.
+fn api_and_worker_blocks(label_index: &mut LabelIndex, scale: i64) -> [(BlockKey, Vec<LogRow>); 2] {
+    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let worker =
+        label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
+    [
+        (
+            BlockKey::new(
+                "tenant-a",
+                0,
+                10 * scale,
+                19 * scale,
+                TimeRange::new(10 * scale, 19 * scale).unwrap(),
+            ),
+            vec![
+                LogRow::new(api, 10 * scale, "api ok", BTreeMap::new()),
+                LogRow::new(api, 19 * scale, "api error", BTreeMap::new()),
+            ],
+        ),
+        (
+            BlockKey::new(
+                "tenant-a",
+                1,
+                20 * scale,
+                29 * scale,
+                TimeRange::new(20 * scale, 29 * scale).unwrap(),
+            ),
+            vec![LogRow::new(
+                worker,
+                25 * scale,
+                "worker error",
+                BTreeMap::new(),
+            )],
+        ),
+    ]
 }
 
 pub fn multi_tenant_fixture() -> (QuerierState, u64, u64) {
@@ -317,70 +334,14 @@ async fn tenant_object_store_shard_catalog_service_fixture_with_time_scale(
     let store = LocalFileSystem::new_with_prefix(&dir).unwrap();
     let prefix = ObjectPath::from("indexes");
     let mut label_index = LabelIndex::default();
-    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker =
-        label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
-
-    let api_block = write_log_block(
-        &dir,
-        &BlockKey::new(
-            "tenant-a",
-            0,
-            10 * scale,
-            19 * scale,
-            TimeRange::new(10 * scale, 19 * scale).unwrap(),
-        ),
-        vec![
-            LogRow::new(api, 10 * scale, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19 * scale, "api error", BTreeMap::new()),
-        ],
-    )
-    .unwrap();
-    write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &api_block.key,
-        vec![
-            LogRow::new(api, 10 * scale, "api ok", BTreeMap::new()),
-            LogRow::new(api, 19 * scale, "api error", BTreeMap::new()),
-        ],
-    )
-    .await
-    .unwrap();
-    let worker_block = write_log_block(
-        &dir,
-        &BlockKey::new(
-            "tenant-a",
-            1,
-            20 * scale,
-            29 * scale,
-            TimeRange::new(20 * scale, 29 * scale).unwrap(),
-        ),
-        vec![LogRow::new(
-            worker,
-            25 * scale,
-            "worker error",
-            BTreeMap::new(),
-        )],
-    )
-    .unwrap();
-    write_log_block_to_object_store(
-        &store,
-        &prefix,
-        &worker_block.key,
-        vec![LogRow::new(
-            worker,
-            25 * scale,
-            "worker error",
-            BTreeMap::new(),
-        )],
-    )
-    .await
-    .unwrap();
-
     let mut block_index = BlockIndex::default();
-    block_index.insert(api_block);
-    block_index.insert(worker_block);
+    for (key, rows) in api_and_worker_blocks(&mut label_index, scale) {
+        let block = write_log_block(&dir, &key, rows.clone()).unwrap();
+        write_log_block_to_object_store(&store, &prefix, &block.key, rows)
+            .await
+            .unwrap();
+        block_index.insert(block);
+    }
     write_tenant_log_index_shards_to_object_store(
         &store,
         &prefix,
@@ -501,6 +462,164 @@ pub async fn json_body(response: axum::response::Response) -> Value {
     value
 }
 
+/// A service config for `target` that names no object store, WAL broker,
+/// tenant, or query limit.
+pub fn minimal_service_config(target: Role) -> ServiceConfig {
+    ServiceConfig {
+        target,
+        listen_addr: "127.0.0.1:0".parse().unwrap(),
+        object_store_url: None,
+        wal_bootstrap_server: None,
+        wal_topic: "__krabka_observability_logs_wal".to_string(),
+        wal_group_id: "krabka-observability-block-builder".to_string(),
+        data_root: ".".into(),
+        querier_index_source: QuerierIndexSource::LocalManifest,
+        tenant: None,
+        index_prefix: None,
+        query_start_ns: None,
+        query_end_ns: None,
+        max_query_range: None,
+        max_query_series: None,
+        max_query_read: None,
+        max_query_string_bytes: None,
+        max_ingest_body: None,
+        wal_append_timeout: None,
+        ..ServiceConfig::default()
+    }
+}
+
+/// A POST to `uri` for tenant-a, ready for its headers and body.
+pub fn tenant_a_post(uri: &str) -> axum::http::request::Builder {
+    Request::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("X-Scope-OrgID", "tenant-a")
+}
+
+/// A form-encoded POST of `body` to `uri` for tenant-a.
+pub async fn post_form(app: &Router, uri: &str, body: impl Into<Body>) -> axum::response::Response {
+    send(
+        app,
+        tenant_a_post(uri)
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(body.into())
+            .unwrap(),
+    )
+    .await
+}
+
+pub type TailSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Serves `app` on a loopback listener, and builds a tenant-a websocket
+/// request for `path_and_query` against it.
+pub async fn serve_for_websocket(
+    app: Router,
+    path_and_query: &str,
+) -> (
+    tokio_tungstenite::tungstenite::handshake::client::Request,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let mut request = format!("ws://{addr}{path_and_query}")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert("X-Scope-OrgID", "tenant-a".parse().unwrap());
+    (request, server)
+}
+
+/// Serves `app` and opens a tenant-a tail websocket at `path_and_query`.
+pub async fn open_tail(
+    app: Router,
+    path_and_query: &str,
+) -> (TailSocket, tokio::task::JoinHandle<()>) {
+    let (request, server) = serve_for_websocket(app, path_and_query).await;
+    let (socket, response) = tokio_tungstenite::connect_async(request).await.unwrap();
+    assert!(response.status() == StatusCode::SWITCHING_PROTOCOLS);
+    (socket, server)
+}
+
+/// The next text frame on `socket`, parsed as JSON.
+pub async fn next_frame(socket: &mut TailSocket) -> Value {
+    let message = socket.next().await.unwrap().unwrap();
+    serde_json::from_str(message.to_text().unwrap()).unwrap()
+}
+
+/// The next text frame on `socket`, parsed as JSON, which must arrive within
+/// two seconds.
+pub async fn next_frame_within_two_seconds(socket: &mut TailSocket) -> Value {
+    let message = tokio::time::timeout(std::time::Duration::from_secs(2), socket.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    serde_json::from_str(message.to_text().unwrap()).unwrap()
+}
+
+/// The tenant a request names in `X-Scope-OrgID`.
+#[derive(Clone, Copy)]
+pub struct Tenant<'a>(pub &'a str);
+
+impl Tenant<'_> {
+    /// A bodiless request with `method` to `uri` for this tenant.
+    pub fn request(self, method: Method, uri: &str) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("X-Scope-OrgID", self.0)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    /// Sends this tenant's bodiless `method` request to `uri`.
+    pub async fn send(self, app: &Router, method: Method, uri: &str) -> axum::response::Response {
+        send(app, self.request(method, uri)).await
+    }
+
+    /// Sends this tenant's GET of `uri`.
+    pub async fn get(self, app: &Router, uri: &str) -> axum::response::Response {
+        self.send(app, Method::GET, uri).await
+    }
+
+    /// Sends this tenant's GET of `uri`, and reads back its status and JSON.
+    pub async fn get_json(self, app: &Router, uri: &str) -> (StatusCode, Value) {
+        let response = self.get(app, uri).await;
+        (response.status(), json_body(response).await)
+    }
+}
+
+pub async fn send(app: &Router, request: Request<Body>) -> axum::response::Response {
+    app.clone().oneshot(request).await.unwrap()
+}
+
+/// A bodiless request with `method` to `uri` that names no tenant.
+pub async fn send_bare(app: &Router, method: Method, uri: &str) -> axum::response::Response {
+    send(
+        app,
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+}
+
+/// Checks that `response` is a 200 whose JSON body, with its timing stats
+/// zeroed, is `expected`.
+pub async fn assert_json_ok(response: axum::response::Response, expected: &Value) {
+    assert!(response.status() == StatusCode::OK);
+    assert!(json_body(response).await == *expected);
+}
+
 pub async fn text_body(response: axum::response::Response) -> String {
     let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
     String::from_utf8(body.to_vec()).unwrap()
@@ -593,42 +712,158 @@ fn expected_api_error_at_with_stats(timestamp_ns: &str, stats: &Value) -> Value 
     })
 }
 
+/// A tenant-a WAL record of the `{app="api", env="prod"}` series, with no
+/// structured metadata and no WAL position.
+pub fn api_prod_wal_record(timestamp_ns: i64, line: &str) -> WalLogRecord {
+    WalLogRecord {
+        tenant: "tenant-a".to_string(),
+        labels: labels([("app", "api"), ("env", "prod")]),
+        timestamp_ns,
+        line: line.to_string(),
+        structured_metadata: BTreeMap::new(),
+        position: None,
+    }
+}
+
+/// A streams result that holds one `{app="api", env="prod"}` stream.
+pub fn api_prod_streams(values: Value) -> Value {
+    let mut stream = json!({ "stream": { "app": "api", "env": "prod" } });
+    stream["values"] = values;
+    Value::Array(vec![stream])
+}
+
+/// A querier over one tenant-a block that holds `api ok` at 10 s and
+/// `api error` at 19 s. Returns the router and the block's size in bytes.
+pub fn api_seconds_block_app() -> (Router, u64) {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let mut label_index = LabelIndex::default();
+    let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
+    let api_block = write_log_block(
+        &dir,
+        &BlockKey::new(
+            "tenant-a",
+            0,
+            10_000_000_000,
+            19_000_000_000,
+            TimeRange::new(10_000_000_000, 19_000_000_000).unwrap(),
+        ),
+        vec![
+            LogRow::new(api, 10_000_000_000, "api ok", BTreeMap::new()),
+            LogRow::new(api, 19_000_000_000, "api error", BTreeMap::new()),
+        ],
+    )
+    .unwrap();
+    let bytes = api_block.size.bytes_u64();
+    let mut block_index = BlockIndex::default();
+    block_index.insert(api_block);
+    (
+        loki_router(QuerierState::new(dir, label_index, block_index)),
+        bytes,
+    )
+}
+
+/// Checks the stats of a query that read one line from one stored block of
+/// `block_bytes`.
+pub fn check_one_stored_line_stats(body: &Value, block_bytes: u64) {
+    let stats = &body["data"]["stats"];
+    check!(stats["store"]["compressedBytes"] == block_bytes);
+    check!(stats["store"]["decompressedBytes"] == block_bytes);
+    check!(stats["store"]["decompressedLines"] == 1);
+    check!(stats["store"]["totalChunksRef"] == 1);
+    check!(stats["store"]["totalChunksDownloaded"] == 1);
+    check!(stats["summary"]["totalBytesProcessed"] == block_bytes);
+    check!(stats["summary"]["totalLinesProcessed"] == 1);
+}
+
+/// Requests `uri` for tenant-a as Parquet, checks the response says so, and
+/// returns its one record batch.
+pub async fn parquet_batch(app: Router, uri: &str) -> RecordBatch {
+    let response = send(
+        &app,
+        Request::builder()
+            .uri(uri)
+            .header("X-Scope-OrgID", "tenant-a")
+            .header("accept", "application/vnd.apache.parquet")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+
+    assert!(response.status() == StatusCode::OK);
+    assert!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            == Some("application/vnd.apache.parquet")
+    );
+    let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+    let mut reader = ParquetRecordBatchReader::try_new(body, 1024).unwrap();
+    let batch = reader.next().unwrap().unwrap();
+    assert!(reader.next().is_none());
+    batch
+}
+
+/// A Loki success envelope.
+pub struct LokiSuccess<'a> {
+    /// `streams`, `matrix`, `vector` or `scalar`.
+    pub result_type: &'a str,
+    /// The `data.result` member.
+    pub data_result: Value,
+    pub stats: Value,
+}
+
+impl LokiSuccess<'_> {
+    /// The envelope as the JSON body Loki sends.
+    pub fn json(self) -> Value {
+        let mut body = json!({
+            "status": "success",
+            "data": {
+                "resultType": self.result_type
+            }
+        });
+        body["data"]["result"] = self.data_result;
+        body["data"]["stats"] = self.stats;
+        body
+    }
+}
+
 pub fn expected_loki_stats() -> Value {
     expected_loki_stats_with(0, 0, 0)
 }
 
 pub fn expected_loki_stats_with(bytes: u64, lines: u64, chunks: u64) -> Value {
-    json!({
-        "ingester": {
-            "compressedBytes": 0,
-            "decompressedBytes": 0,
-            "decompressedLines": 0,
-            "headChunkBytes": 0,
-            "headChunkLines": 0,
-            "totalBatches": 0,
-            "totalChunksMatched": 0,
-            "totalDuplicates": 0,
-            "totalLinesSent": 0,
-            "totalReached": 0
-        },
-        "store": {
-            "compressedBytes": bytes,
-            "decompressedBytes": bytes,
-            "decompressedLines": lines,
-            "chunksDownloadTime": 0.0,
-            "totalChunksRef": chunks,
-            "totalChunksDownloaded": chunks,
-            "totalDuplicates": 0
-        },
-        "summary": {
-            "bytesProcessedPerSecond": 0,
-            "execTime": 0.0,
-            "linesProcessedPerSecond": 0,
-            "queueTime": 0.0,
-            "totalBytesProcessed": bytes,
-            "totalLinesProcessed": lines
-        }
-    })
+    expected_loki_mixed_stats_with(bytes, lines, 0, chunks)
+}
+
+/// The stats of a query that only the ingester's hot tail answered.
+pub fn expected_loki_ingester_stats_with(lines: u64) -> Value {
+    expected_loki_mixed_stats_with(0, 0, lines, 0)
+}
+
+/// The Kafka record the WAL producer writes for `record`, as a consumer reads
+/// it back at `partition` and `offset`.
+pub fn kafka_wal_record(
+    record: &WalLogRecord,
+    partition: PartitionIndex,
+    offset: Offset,
+) -> KafkaWalRecord {
+    let producer_record =
+        build_kafka_wal_record("__krabka_observability_logs_wal", record).expect("producer record");
+    KafkaWalRecord {
+        value: producer_record.value.expect("producer value").to_vec(),
+        partition,
+        offset,
+        timestamp_ms: producer_record.timestamp_ms,
+        headers: producer_record
+            .headers
+            .into_iter()
+            .map(|header| KafkaWalHeader {
+                key: header.key,
+                value: header.value.map(|value| value.to_vec()),
+            })
+            .collect(),
+    }
 }
 
 pub fn expected_loki_mixed_stats_with(
@@ -668,4 +903,108 @@ pub fn expected_loki_mixed_stats_with(
             "totalLinesProcessed": store_lines + ingester_lines
         }
     })
+}
+
+/// A block's first and last WAL offset. The fixtures give each block the same
+/// span in nanoseconds, so it is the block's time range too.
+#[derive(Clone, Copy)]
+pub struct BlockSpan {
+    pub first: i64,
+    pub last: i64,
+}
+
+/// One log line and its timestamp in nanoseconds.
+#[derive(Clone, Copy)]
+pub struct LogEntry<'a> {
+    pub timestamp_ns: i64,
+    pub line: &'a str,
+}
+
+pub const fn log_entry(timestamp_ns: i64, line: &str) -> LogEntry<'_> {
+    LogEntry { timestamp_ns, line }
+}
+
+/// What one push did: the response status and body, and the records the
+/// WAL sink holds afterwards.
+pub struct PushOutcome {
+    pub status: StatusCode,
+    pub body: String,
+    pub records: Vec<WalLogRecord>,
+}
+
+impl PushOutcome {
+    pub fn accepted(&self) -> &[WalLogRecord] {
+        assert!(self.status == StatusCode::NO_CONTENT);
+        &self.records
+    }
+
+    pub fn accepted_without_records(&self) {
+        check!(self.status == StatusCode::NO_CONTENT);
+        check!(self.body.is_empty());
+        check!(self.records.is_empty());
+    }
+
+    pub fn rejected_with(&self, status: StatusCode, body: &str) {
+        check!(self.status == status);
+        check!(self.body == body);
+        check!(self.records.is_empty());
+    }
+
+    pub fn rejected_containing(&self, fragments: &[&str]) {
+        assert!(self.status == StatusCode::BAD_REQUEST);
+        for fragment in fragments {
+            check!(self.body.contains(fragment));
+        }
+        check!(self.records.is_empty());
+    }
+
+    pub fn rejected_as_loki_error(&self, expected: &ExpectedLokiError) {
+        assert!(self.status == expected.status);
+        assert_loki_error(
+            &serde_json::from_str(&self.body).unwrap(),
+            expected.error_type,
+            expected.contains,
+        );
+        assert!(self.records.is_empty());
+    }
+}
+
+/// The Loki error a rejected push answers with.
+pub struct ExpectedLokiError<'a> {
+    pub status: StatusCode,
+    pub error_type: &'a str,
+    /// A fragment the error message holds.
+    pub contains: &'a str,
+}
+
+/// The headers that describe a push body.
+#[derive(Clone, Copy)]
+pub struct BodyHeaders<'a> {
+    pub content_type: &'a str,
+    pub content_encoding: Option<&'a str>,
+}
+
+/// A tenant-a push of `body` to `uri`, described by `headers`.
+pub fn push_request(uri: &str, headers: BodyHeaders, body: impl Into<Body>) -> Request<Body> {
+    let mut builder = tenant_a_post(uri).header("content-type", headers.content_type);
+    if let Some(encoding) = headers.content_encoding {
+        builder = builder.header("content-encoding", encoding);
+    }
+    builder.body(body.into()).unwrap()
+}
+
+/// One stream of a JSON push.
+pub struct JsonStream {
+    pub stream: Value,
+    pub values: Value,
+}
+
+impl JsonStream {
+    /// The push body that carries only this stream.
+    pub fn payload(self) -> Value {
+        let mut stream = serde_json::Map::new();
+        stream.insert("stream".to_string(), self.stream);
+        stream.insert("values".to_string(), self.values);
+        json!({ "streams": [Value::Object(stream)] })
+    }
 }

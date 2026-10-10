@@ -11,6 +11,9 @@
 //! server future that returned -- rather than on the signal being received.
 #![cfg(unix)]
 
+#[path = "support/parquet_files.rs"]
+mod parquet_files;
+
 use std::{
     collections::BTreeMap,
     process::Command,
@@ -28,6 +31,8 @@ use krabka_observability::{
 };
 use krabka_units::Time;
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
+
+use self::parquet_files::parquet_files_under;
 
 /// Set on the child re-execution of this test binary, and holds the directory
 /// the child and the parent communicate through.
@@ -221,24 +226,5 @@ fn wait_for_exit(child: &mut std::process::Child, within: Duration) -> std::proc
 
 /// Every block the compactor physically wrote under the index prefix.
 fn block_paths(store_root: &std::path::Path) -> Vec<std::path::PathBuf> {
-    fn walk(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, found);
-            } else if path.extension().is_some_and(|ext| ext == "parquet") {
-                found.push(path);
-            }
-        }
-    }
-
-    let mut found = Vec::new();
-    walk(
-        &store_root.join(ObjectPath::from(INDEX_PREFIX).to_string()),
-        &mut found,
-    );
-    found
+    parquet_files_under(&store_root.join(ObjectPath::from(INDEX_PREFIX).to_string()))
 }
