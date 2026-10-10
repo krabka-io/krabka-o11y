@@ -23,18 +23,12 @@ pub(crate) async fn instant_bottomk_without_selects_smallest_sample_per_group_wi
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "bottomk without (instance) (1, memory_bytes)",
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(
+        &engine,
+        "bottomk without (instance) (1, memory_bytes)",
+        10_000,
+    )
+    .await;
     check!(samples.len() == 2);
     check!(samples.iter().any(|sample| {
         sample.labels.get("__name__") == Some("memory_bytes")

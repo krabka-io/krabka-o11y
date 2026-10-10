@@ -108,13 +108,11 @@ impl<S: MetricStore> PromqlEngine<S> {
     pub(crate) async fn eval_rate_range_via_planner(
         &self,
         tenant: &str,
-        selector: &MatrixSelector,
-        time_ms: i64,
+        at: MatrixSelectorAt<'_>,
         kind: RateUdfKind,
     ) -> Result<QueryResult> {
-        let planned = self
-            .plan_rate_range(tenant, selector, time_ms, kind)
-            .await?;
+        let time_ms = at.time_ms;
+        let planned = self.plan_rate_range(tenant, at, kind).await?;
         self.assemble_planned_instant(planned, time_ms).await
     }
     #[cfg(test)]
@@ -313,30 +311,8 @@ impl<S: MetricStore> PromqlEngine<S> {
         aggregate: &AggregateExpr,
         time_ms: i64,
     ) -> Result<QueryResult> {
-        let Some(param) = &aggregate.param else {
-            return Err(PromqlError::Plan(
-                "count_values requires a label-name parameter".to_string(),
-            ));
-        };
-        let mut param = param.as_ref();
-        while let Expr::Paren(paren) = param {
-            param = paren.expr.as_ref();
-        }
-        let Some(label_name) = crate::planner::byte_string_expr::string_expr_value(param) else {
-            return Err(PromqlError::Plan(
-                "count_values label-name parameter must be a string".to_string(),
-            ));
-        };
-
-        let label_name = label_name
-            .utf8()
-            .filter(|name| !name.is_empty())
-            .ok_or_else(|| {
-                PromqlError::Exec(format!(
-                    "invalid label name {}",
-                    krabka_logql::quote_go_bytes(label_name.as_bytes())
-                ))
-            })?;
+        let label_name =
+            super::super::aggregate_plan::count_values_label_name(aggregate.param.as_deref())?;
 
         let input = self
             .eval_instant_expr(tenant, &aggregate.expr, time_ms)
@@ -349,7 +325,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         // Shared with the operator path (`plan_param_aggregate_expr`).
         Ok(QueryResult::InstantVector(apply_count_values_aggregate(
             samples,
-            label_name,
+            &label_name,
             aggregate.modifier.as_ref(),
             time_ms,
         )))
@@ -370,8 +346,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         let rhs = self.eval_instant_expr(tenant, &binary.rhs, time_ms).await?;
         combine_instant_binary(
             binary,
-            InstantValue::try_from_query(lhs)?,
-            InstantValue::try_from_query(rhs)?,
+            InstantOperands {
+                lhs: InstantValue::try_from_query(lhs)?,
+                rhs: InstantValue::try_from_query(rhs)?,
+            },
             time_ms,
         )
     }
@@ -400,42 +378,44 @@ impl<S: MetricStore> PromqlEngine<S> {
     ) -> Result<QueryResult> {
         if let Some(kind) = unary_float_function(call.func.name) {
             return self
-                .eval_unary_float_call(tenant, call, time_ms, kind)
+                .eval_unary_float_call(tenant, OracleCall { call, time_ms }, kind)
                 .await;
         }
         if let Some(kind) = calendar_function(call.func.name) {
             return self.eval_calendar_call(tenant, call, time_ms, kind).await;
         }
         if let Some(kind) = over_time_function(call.func.name) {
-            return self.eval_over_time_call(tenant, call, time_ms, kind).await;
+            return self
+                .eval_over_time_call(tenant, OracleCall { call, time_ms }, kind)
+                .await;
         }
         match call.func.name {
             "rate" => {
-                self.eval_range_function_call(tenant, call, time_ms, RangeFn::Rate)
+                self.eval_range_function_call(tenant, OracleCall { call, time_ms }, RangeFn::Rate)
                     .await
             }
             "increase" => {
-                self.eval_range_function_call(tenant, call, time_ms, RangeFn::Increase)
+                self.eval_range_function_call(tenant, OracleCall { call, time_ms }, RangeFn::Increase)
                     .await
             }
             "delta" => {
-                self.eval_range_function_call(tenant, call, time_ms, RangeFn::Delta)
+                self.eval_range_function_call(tenant, OracleCall { call, time_ms }, RangeFn::Delta)
                     .await
             }
             "changes" => {
-                self.eval_range_function_call(tenant, call, time_ms, RangeFn::Changes)
+                self.eval_range_function_call(tenant, OracleCall { call, time_ms }, RangeFn::Changes)
                     .await
             }
             "resets" => {
-                self.eval_range_function_call(tenant, call, time_ms, RangeFn::Resets)
+                self.eval_range_function_call(tenant, OracleCall { call, time_ms }, RangeFn::Resets)
                     .await
             }
             "irate" => {
-                self.eval_instant_delta_call(tenant, call, time_ms, IrateFn::Irate)
+                self.eval_instant_delta_call(tenant, OracleCall { call, time_ms }, IrateFn::Irate)
                     .await
             }
             "idelta" => {
-                self.eval_instant_delta_call(tenant, call, time_ms, IrateFn::Idelta)
+                self.eval_instant_delta_call(tenant, OracleCall { call, time_ms }, IrateFn::Idelta)
                     .await
             }
             "deriv" => self.eval_deriv_call(tenant, call, time_ms).await,
@@ -502,23 +482,23 @@ impl<S: MetricStore> PromqlEngine<S> {
                     .to_string(),
             )),
             "histogram_count" => {
-                self.eval_histogram_accessor_call(tenant, call, time_ms, HistogramAccessor::Count)
+                self.eval_histogram_accessor_call(tenant, OracleCall { call, time_ms }, HistogramAccessor::Count)
                     .await
             }
             "histogram_sum" => {
-                self.eval_histogram_accessor_call(tenant, call, time_ms, HistogramAccessor::Sum)
+                self.eval_histogram_accessor_call(tenant, OracleCall { call, time_ms }, HistogramAccessor::Sum)
                     .await
             }
             "histogram_avg" => {
-                self.eval_histogram_accessor_call(tenant, call, time_ms, HistogramAccessor::Avg)
+                self.eval_histogram_accessor_call(tenant, OracleCall { call, time_ms }, HistogramAccessor::Avg)
                     .await
             }
             "histogram_stddev" => {
-                self.eval_histogram_accessor_call(tenant, call, time_ms, HistogramAccessor::Stddev)
+                self.eval_histogram_accessor_call(tenant, OracleCall { call, time_ms }, HistogramAccessor::Stddev)
                     .await
             }
             "histogram_stdvar" => {
-                self.eval_histogram_accessor_call(tenant, call, time_ms, HistogramAccessor::Stdvar)
+                self.eval_histogram_accessor_call(tenant, OracleCall { call, time_ms }, HistogramAccessor::Stdvar)
                     .await
             }
             "histogram_fraction" => {
@@ -540,11 +520,11 @@ impl<S: MetricStore> PromqlEngine<S> {
             "pi" => Self::eval_pi_call(call, time_ms),
             "round" => self.eval_round_call(tenant, call, time_ms).await,
             "sort" => {
-                self.eval_sort_call(tenant, call, time_ms, SortDirection::Ascending)
+                self.eval_sort_call(tenant, OracleCall { call, time_ms }, SortDirection::Ascending)
                     .await
             }
             "sort_desc" => {
-                self.eval_sort_call(tenant, call, time_ms, SortDirection::Descending)
+                self.eval_sort_call(tenant, OracleCall { call, time_ms }, SortDirection::Descending)
                     .await
             }
             "sort_by_label" => {
@@ -638,17 +618,11 @@ impl<S: MetricStore> PromqlEngine<S> {
     pub(crate) async fn eval_unary_float_call(
         &self,
         tenant: &str,
-        call: &Call,
-        time_ms: i64,
+        at: OracleCall<'_>,
         kind: UnaryFloatFn,
     ) -> Result<QueryResult> {
-        let [arg] = call.args.args.as_slice() else {
-            return Err(PromqlError::Plan(format!(
-                "{} expects exactly one argument, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        };
+        let OracleCall { call, time_ms } = at;
+        let arg = single_arg(call)?;
 
         match self.eval_instant_expr(tenant, arg, time_ms).await? {
             QueryResult::Scalar { value, .. } => Ok(QueryResult::Scalar {
@@ -730,17 +704,11 @@ impl<S: MetricStore> PromqlEngine<S> {
     pub(crate) async fn eval_sort_call(
         &self,
         tenant: &str,
-        call: &Call,
-        time_ms: i64,
+        at: OracleCall<'_>,
         direction: SortDirection,
     ) -> Result<QueryResult> {
-        let [arg] = call.args.args.as_slice() else {
-            return Err(PromqlError::Plan(format!(
-                "{} expects exactly one argument, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        };
+        let OracleCall { call, time_ms } = at;
+        let arg = single_arg(call)?;
 
         let QueryResult::InstantVector(samples) =
             self.eval_instant_expr(tenant, arg, time_ms).await?
@@ -924,19 +892,16 @@ impl<S: MetricStore> PromqlEngine<S> {
             )));
         };
 
-        let quantile = match self
-            .eval_instant_expr(tenant, quantile_arg, time_ms)
-            .await?
-        {
-            QueryResult::Scalar { value, .. } => value,
-            QueryResult::InstantVector(_)
-            | QueryResult::RangeMatrix(_)
-            | QueryResult::Str { .. } => {
-                return Err(PromqlError::Plan(
-                    "histogram_quantile quantile argument must be a scalar".to_string(),
-                ));
-            }
-        };
+        let quantile = self
+            .eval_oracle_scalar(
+                tenant,
+                OracleArg {
+                    expr: quantile_arg,
+                    time_ms,
+                },
+                "histogram_quantile quantile argument",
+            )
+            .await?;
 
         let input = self.eval_instant_expr(tenant, vector_arg, time_ms).await?;
         let QueryResult::InstantVector(samples) = input else {
@@ -990,10 +955,7 @@ impl<S: MetricStore> PromqlEngine<S> {
 
         // Shared with the operator path (`plan_histogram_quantiles_call`).
         Ok(QueryResult::InstantVector(apply_histogram_quantiles(
-            samples,
-            &label_name,
-            &quantiles,
-            time_ms,
+            samples, label_name, &quantiles, time_ms,
         )?))
     }
 
@@ -1001,17 +963,11 @@ impl<S: MetricStore> PromqlEngine<S> {
     pub(crate) async fn eval_histogram_accessor_call(
         &self,
         tenant: &str,
-        call: &Call,
-        time_ms: i64,
+        at: OracleCall<'_>,
         accessor: HistogramAccessor,
     ) -> Result<QueryResult> {
-        let [arg] = call.args.args.as_slice() else {
-            return Err(PromqlError::Plan(format!(
-                "{} expects exactly one argument, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        };
+        let OracleCall { call, time_ms } = at;
+        let arg = single_arg(call)?;
 
         let input = with_histogram_stats(self.eval_instant_expr(tenant, arg, time_ms)).await?;
         let QueryResult::InstantVector(samples) = input else {
@@ -1057,7 +1013,9 @@ impl<S: MetricStore> PromqlEngine<S> {
 
         // Shared with the operator path (`plan_histogram_fraction_call`).
         Ok(QueryResult::InstantVector(apply_histogram_fraction(
-            lower, upper, samples, time_ms,
+            FractionBounds { lower, upper },
+            samples,
+            time_ms,
         )?))
     }
     #[cfg(test)]
@@ -1172,17 +1130,11 @@ impl<S: MetricStore> PromqlEngine<S> {
     pub(crate) async fn eval_range_function_call(
         &self,
         tenant: &str,
-        call: &Call,
-        time_ms: i64,
+        at: OracleCall<'_>,
         kind: RangeFn,
     ) -> Result<QueryResult> {
-        let [arg] = call.args.args.as_slice() else {
-            return Err(PromqlError::Plan(format!(
-                "{} expects exactly one argument, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        };
+        let OracleCall { call, time_ms } = at;
+        let arg = single_arg(call)?;
         let range = self
             .eval_range_arg(tenant, arg, time_ms, call.func.name)
             .await?;
@@ -1194,17 +1146,11 @@ impl<S: MetricStore> PromqlEngine<S> {
     pub(crate) async fn eval_instant_delta_call(
         &self,
         tenant: &str,
-        call: &Call,
-        time_ms: i64,
+        at: OracleCall<'_>,
         kind: IrateFn,
     ) -> Result<QueryResult> {
-        let [arg] = call.args.args.as_slice() else {
-            return Err(PromqlError::Plan(format!(
-                "{} expects exactly one argument, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        };
+        let OracleCall { call, time_ms } = at;
+        let arg = single_arg(call)?;
         let range = self
             .eval_range_arg(tenant, arg, time_ms, call.func.name)
             .await?;
@@ -1219,13 +1165,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<QueryResult> {
-        let [arg] = call.args.args.as_slice() else {
-            return Err(PromqlError::Plan(format!(
-                "{} expects exactly one argument, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        };
+        let arg = single_arg(call)?;
         let range = self.eval_range_arg(tenant, arg, time_ms, "deriv").await?;
         let samples = apply_outer_range_fn(range, OuterRangeFn::Deriv, time_ms);
         Ok(QueryResult::InstantVector(samples))
@@ -1235,17 +1175,11 @@ impl<S: MetricStore> PromqlEngine<S> {
     pub(crate) async fn eval_over_time_call(
         &self,
         tenant: &str,
-        call: &Call,
-        time_ms: i64,
+        at: OracleCall<'_>,
         kind: OverTimeFn,
     ) -> Result<QueryResult> {
-        let [arg] = call.args.args.as_slice() else {
-            return Err(PromqlError::Plan(format!(
-                "{} expects exactly one argument, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        };
+        let OracleCall { call, time_ms } = at;
+        let arg = single_arg(call)?;
         let range = self
             .eval_range_arg(tenant, arg, time_ms, call.func.name)
             .await?;
@@ -1260,20 +1194,11 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<QueryResult> {
-        let [arg] = call.args.args.as_slice() else {
-            return Err(PromqlError::Plan(format!(
-                "{} expects exactly one argument, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        };
+        let arg = single_arg(call)?;
 
-        let input = self.eval_instant_expr(tenant, arg, time_ms).await?;
-        let QueryResult::InstantVector(samples) = input else {
-            return Err(PromqlError::Plan(
-                "absent expects an instant vector".to_string(),
-            ));
-        };
+        let samples = self
+            .eval_oracle_vector(tenant, OracleArg { expr: arg, time_ms }, "absent")
+            .await?;
         if !samples.is_empty() {
             return Ok(QueryResult::InstantVector(Vec::new()));
         }
@@ -1293,31 +1218,10 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<QueryResult> {
-        let [arg] = call.args.args.as_slice() else {
-            return Err(PromqlError::Plan(format!(
-                "{} expects exactly one argument, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        };
-
-        let range = self
-            .eval_range_arg(tenant, arg, time_ms, call.func.name)
-            .await?;
-        if range
-            .series
-            .iter()
-            .any(|series| range_has_samples(series, range.end_ms, range.range))
-        {
-            return Ok(QueryResult::InstantVector(Vec::new()));
-        }
-
-        Ok(QueryResult::InstantVector(vec![InstantSample {
-            labels: absent_labels(arg)?,
-            ts_ms: time_ms,
-            value: SampleValue::Float(1.0),
-            drop_name: false,
-        }]))
+        Ok(QueryResult::InstantVector(
+            self.absent_over_time_via_interpreter(tenant, call, time_ms)
+                .await?,
+        ))
     }
 
     #[cfg(test)]
@@ -1357,20 +1261,11 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<QueryResult> {
-        let [arg] = call.args.args.as_slice() else {
-            return Err(PromqlError::Plan(format!(
-                "{} expects exactly one argument, got {}",
-                call.func.name,
-                call.args.args.len()
-            )));
-        };
+        let arg = single_arg(call)?;
 
-        let input = self.eval_instant_expr(tenant, arg, time_ms).await?;
-        let QueryResult::InstantVector(samples) = input else {
-            return Err(PromqlError::Plan(
-                "timestamp expects an instant vector".to_string(),
-            ));
-        };
+        let samples = self
+            .eval_oracle_vector(tenant, OracleArg { expr: arg, time_ms }, "timestamp")
+            .await?;
         Ok(QueryResult::InstantVector(
             samples
                 .into_iter()
@@ -1398,19 +1293,16 @@ impl<S: MetricStore> PromqlEngine<S> {
                 call.args.args.len()
             )));
         };
-        let quantile = match self
-            .eval_instant_expr(tenant, quantile_arg, time_ms)
-            .await?
-        {
-            QueryResult::Scalar { value, .. } => value,
-            QueryResult::InstantVector(_)
-            | QueryResult::RangeMatrix(_)
-            | QueryResult::Str { .. } => {
-                return Err(PromqlError::Plan(
-                    "quantile_over_time quantile argument must be a scalar".to_string(),
-                ));
-            }
-        };
+        let quantile = self
+            .eval_oracle_scalar(
+                tenant,
+                OracleArg {
+                    expr: quantile_arg,
+                    time_ms,
+                },
+                "quantile_over_time quantile argument",
+            )
+            .await?;
         // An out-of-range / NaN `phi` is NOT an error (Prometheus returns signed
         // `±Inf` / `NaN` plus an `InvalidQuantileWarning`); keep this oracle in
         // parity with the planner path.
@@ -1500,4 +1392,66 @@ impl<S: MetricStore> PromqlEngine<S> {
         );
         Ok(QueryResult::InstantVector(samples))
     }
+
+    /// Evaluates `expr`, which must be a scalar; `argument` names it in the error.
+    async fn eval_oracle_scalar(
+        &self,
+        tenant: &str,
+        arg: OracleArg<'_>,
+        argument: &str,
+    ) -> Result<f64> {
+        let OracleArg { expr, time_ms } = arg;
+        match self.eval_instant_expr(tenant, expr, time_ms).await? {
+            QueryResult::Scalar { value, .. } => Ok(value),
+            QueryResult::InstantVector(_)
+            | QueryResult::RangeMatrix(_)
+            | QueryResult::Str { .. } => {
+                Err(PromqlError::Plan(format!("{argument} must be a scalar")))
+            }
+        }
+    }
+
+    /// Evaluates `expr`, which must be an instant vector; `function` names the
+    /// caller in the error.
+    async fn eval_oracle_vector(
+        &self,
+        tenant: &str,
+        arg: OracleArg<'_>,
+        function: &str,
+    ) -> Result<Vec<InstantSample>> {
+        let OracleArg { expr, time_ms } = arg;
+        let QueryResult::InstantVector(samples) =
+            self.eval_instant_expr(tenant, expr, time_ms).await?
+        else {
+            return Err(PromqlError::Plan(format!(
+                "{function} expects an instant vector"
+            )));
+        };
+        Ok(samples)
+    }
+}
+
+/// A function call the oracle evaluates, and the instant it evaluates it at.
+#[derive(Clone, Copy)]
+pub(crate) struct OracleCall<'a> {
+    call: &'a Call,
+    time_ms: i64,
+}
+
+/// A call argument and the instant the oracle evaluates it at.
+struct OracleArg<'a> {
+    expr: &'a Expr,
+    time_ms: i64,
+}
+
+/// The lone argument of a one-argument call, or the arity error.
+fn single_arg(call: &Call) -> Result<&Expr> {
+    let [arg] = call.args.args.as_slice() else {
+        return Err(PromqlError::Plan(format!(
+            "{} expects exactly one argument, got {}",
+            call.func.name,
+            call.args.args.len()
+        )));
+    };
+    Ok(arg)
 }

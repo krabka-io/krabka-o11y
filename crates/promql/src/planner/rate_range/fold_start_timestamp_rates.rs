@@ -1,16 +1,20 @@
 use num_traits::ToPrimitive;
 
-use super::{LabeledSeries, RateUdfKind, StepGrid, Time, TimeExt};
-use crate::functions::extrapolate::{
-    InstantKind, RangeKind, extrapolated_rate_with_starts, instant_delta, start_timestamp_reset,
+use super::{LabeledSeries, RateUdfKind, TimeExt};
+use crate::{
+    functions::extrapolate::{
+        InstantKind, RangeKind, RateWindow, WindowBounds, extrapolated_rate_with_starts,
+        instant_delta, start_timestamp_reset,
+    },
+    planner::RangeWindowGrid,
 };
 
 pub(super) fn fold_start_timestamp_rates(
     series: &mut [LabeledSeries],
-    grid: StepGrid,
-    range: Time,
+    windows: RangeWindowGrid,
     kind: RateUdfKind,
 ) {
+    let RangeWindowGrid { grid, range } = windows;
     for series in series {
         let starts = series
             .samples
@@ -48,12 +52,16 @@ pub(super) fn fold_start_timestamp_rates(
                         _ => RangeKind::Delta,
                     };
                     extrapolated_rate_with_starts(
-                        &timestamps,
-                        &values,
+                        RateWindow {
+                            timestamps: &timestamps,
+                            values: &values,
+                            bounds: WindowBounds {
+                                range_start_ms: start,
+                                range_end_ms: end,
+                            },
+                            range,
+                        },
                         &starts,
-                        start,
-                        end,
-                        range,
                         kind,
                     )
                 }

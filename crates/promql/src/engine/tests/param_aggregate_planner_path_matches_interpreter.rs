@@ -2,8 +2,6 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn param_aggregate_planner_path_matches_interpreter() {
-    use crate::{DurationExprContext, parse_promql_with_duration_context};
-
     // A float-only store exercising the parameterized aggregations:
     //  - `m{job,instance}`: a multi-instance gauge per job, with a TIE between
     //    two instances (api/0 and api/1 both 5.0) so topk/bottomk tie-breaks
@@ -107,33 +105,10 @@ pub(crate) async fn param_aggregate_planner_path_matches_interpreter() {
     ];
 
     for (query, time_ms) in queries {
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
-            .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
+        let (via_operators, via_interpreter) =
+            planned_and_interpreted(&engine, query, time_ms).await;
 
-        // Operator path: the recursive planner must claim this query.
-        let plan = engine
-            .plan_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("plan `{query}`: {error}"))
-            .unwrap_or_else(|| panic!("`{query}` did not route through the planner"));
-        let via_operators = engine
-            .assemble_planned_instant(plan, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("operator `{query}`: {error}"));
-
-        // Interpreter path: evaluate the same expression directly.
-        let via_interpreter = engine
-            .eval_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}"));
-
-        let normalize = |result: QueryResult| -> Vec<crate::InstantSample> {
-            let QueryResult::InstantVector(mut samples) = result else {
-                panic!("expected vector for `{query}`");
-            };
-            samples.sort_by_key(|sample| sample.labels.fingerprint());
-            samples
-        };
+        let normalize = |result: QueryResult| fingerprint_sorted(result, query);
 
         let via_interpreter = normalize(via_interpreter);
         let via_operators = normalize(via_operators);

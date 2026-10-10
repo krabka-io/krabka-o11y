@@ -33,7 +33,7 @@ use arrow::{
     datatypes::DataType,
 };
 use datafusion::{
-    common::{DataFusionError, Result as DfResult, ScalarValue},
+    common::{DataFusionError, Result as DfResult},
     logical_expr::{
         ColumnarValue, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Volatility,
     },
@@ -45,6 +45,7 @@ mod tests {
     use std::sync::Arc;
 
     use arrow::{array::Float64Array, datatypes::Field};
+    use datafusion::common::ScalarValue;
 
     use super::*;
 
@@ -209,7 +210,6 @@ mod tests {
 mod clamp_float;
 mod register_scalar_math_udfs;
 mod round_to_nearest;
-mod scalar_f64;
 mod scalar_math_op;
 mod scalar_math_udf;
 mod scalar_math_udfs;
@@ -217,9 +217,10 @@ mod scalar_math_udfs;
 use clamp_float::clamp_float;
 pub use register_scalar_math_udfs::register_scalar_math_udfs;
 use round_to_nearest::round_to_nearest;
-use scalar_f64::scalar_f64;
 pub use scalar_math_op::ScalarMathOp;
 #[cfg(test)]
 use scalar_math_udf::ScalarMathUdf;
 pub use scalar_math_udf::scalar_math_udf;
 pub use scalar_math_udfs::scalar_math_udfs;
+
+use super::udf_args::scalar_f64;

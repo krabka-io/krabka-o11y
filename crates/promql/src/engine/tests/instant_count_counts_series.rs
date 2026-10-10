@@ -17,14 +17,7 @@ pub(crate) async fn instant_count_counts_series() {
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "count(up)", 10_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "count(up)", 10_000).await;
     assert2::assert!(samples.len() == 1);
     assert2::assert!(approx_eq(float_value(&samples[0].value), 2.0));
 }

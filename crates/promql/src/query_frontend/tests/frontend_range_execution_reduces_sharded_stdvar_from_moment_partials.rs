@@ -30,18 +30,7 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_stdvar_from_moment_
         .expect("moment partial executor calls poisoned")
         .clone();
     assert2::assert!(
-        calls
-            .iter()
-            .map(|query| (query.query.as_str(), query.shard))
-            .collect::<Vec<_>>()
-            == vec![
-                ("sum(up)", Some(QueryShard { index: 1, total: 2 })),
-                ("sum(up)", Some(QueryShard { index: 2, total: 2 })),
-                ("count(up)", Some(QueryShard { index: 1, total: 2 })),
-                ("count(up)", Some(QueryShard { index: 2, total: 2 })),
-                ("sum((up) * (up))", Some(QueryShard { index: 1, total: 2 }),),
-                ("sum((up) * (up))", Some(QueryShard { index: 2, total: 2 }),),
-            ]
+        shard_calls(&calls) == on_both_shards(&["sum(up)", "count(up)", "sum((up) * (up))"])
     );
     let QueryResult::RangeMatrix(series) = result.result else {
         panic!("stdvar range matrix");

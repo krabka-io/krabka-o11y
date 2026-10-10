@@ -23,14 +23,7 @@ pub(crate) async fn instant_sum_by_groups_by_exact_labels_and_drops_metric_name(
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "sum by (job) (up)", 10_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "sum by (job) (up)", 10_000).await;
     assert2::assert!(samples.len() == 2);
     let api = samples
         .iter()

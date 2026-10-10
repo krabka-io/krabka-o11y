@@ -31,32 +31,11 @@ pub(crate) async fn vector_vector_group_left_fill_right_preserves_unmatched_many
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "http_requests_total + on (job) group_left(region) fill_right(0) target_info",
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
-    let values = samples
-        .iter()
-        .map(|sample| {
-            (
-                sample.labels.get("instance").expect("instance label"),
-                (sample.labels.get("region"), float_value(&sample.value)),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    assert2::assert!(values.len() == 3);
-    assert2::assert!(values["a"].0 == Some("east"));
-    assert2::assert!(approx_eq(values["a"].1, 110.0));
-    assert2::assert!(values["b"].0 == Some("east"));
-    assert2::assert!(approx_eq(values["b"].1, 60.0));
-    assert2::assert!(values["c"].0 == None);
-    assert2::assert!(approx_eq(values["c"].1, 7.0));
+    let samples = instant_vector(
+        &engine,
+        "http_requests_total + on (job) group_left(region) fill_right(0) target_info",
+        10_000,
+    )
+    .await;
+    assert_filled_many_side(&samples);
 }

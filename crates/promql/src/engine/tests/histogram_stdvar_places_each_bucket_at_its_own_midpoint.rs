@@ -41,14 +41,6 @@ pub(crate) async fn histogram_stdvar_places_each_bucket_at_its_own_midpoint() {
         ("histogram_stdvar(h)", 3.459_559_885_480_119_5),
         ("histogram_stddev(h)", 1.859_989_216_495_654_6),
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 10_000)
-            .await
-            .unwrap_or_else(|error| panic!("{query}: {error}"));
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected a vector for {query}");
-        };
-        assert2::assert!(samples.len() == 1, "{query}");
-        assert2::assert!(approx_eq(float_value(&samples[0].value), want), "{query}");
+        assert_lone_value(&engine, query, want).await;
     }
 }

@@ -2,55 +2,26 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn exemplars_reads_compacted_exemplar_sidecar_blocks() {
-    let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let base = url::Url::parse("memory:///").unwrap();
-    let writer_store = BlockStore::new(object_store.clone(), base.clone());
-
     let series_labels = labels(&[("__name__", "http_requests_total"), ("job", "api")]);
-    let fp = series_labels.fingerprint();
-    let batch = exemplar_batch(fp, 10_500, 7.0, "abc", "def", "kind", "slow");
-    let block_meta = writer_store
-        .writer()
-        .write_block(
-            "tenant-a",
-            "metrics/exemplars/0003.parquet",
-            exemplar_schema(),
-            &[batch],
-        )
-        .await
-        .unwrap();
-    let manifest = CompactionIndexManifest::from_block_meta(
-        MetricBlockKind::Exemplars,
-        &CompactionObjectPlan {
-            block_key: block_meta.object_key.clone(),
-            index_key: "metrics/exemplars/0003.index".to_string(),
-            first_offset: 0,
-            last_offset: 0,
-            row_count: block_meta.row_count,
-        },
-        &block_meta,
-        vec![CompactionSeriesLabels {
-            fingerprint: fp,
-            labels: series_labels.clone().into(),
-        }],
+    let batch = exemplar_batch(
+        series_labels.fingerprint(),
+        10_500,
+        7.0,
+        "abc",
+        "def",
+        "kind",
+        "slow",
     );
-
-    let fresh_store = BlockStore::new(object_store, base);
-    let store = MetricBlockStore::from_compaction_manifests(fresh_store, None, &[manifest]);
-    let exemplars = store
-        .exemplars(
-            "tenant-a",
-            &[crate::PromqlMatcher {
-                name: "job".to_string(),
-                op: krabka_blockstore::MatchOp::Eq,
-                value: "api".to_string().into(),
-            }],
-            10_000,
-            11_000,
-        )
-        .await
-        .unwrap()
-        .exemplars;
+    let store = manifest_store(ManifestBlock {
+        kind: MetricBlockKind::Exemplars,
+        block_key: "metrics/exemplars/0003.parquet",
+        schema: exemplar_schema(),
+        batch,
+        last_offset: 0,
+        series_labels: series_labels.clone(),
+    })
+    .await;
+    let exemplars = api_exemplars(&store).await;
 
     check!(exemplars.len() == 1);
     check!(exemplars[0].series_labels == series_labels);

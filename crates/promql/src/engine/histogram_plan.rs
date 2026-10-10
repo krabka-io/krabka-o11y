@@ -8,7 +8,7 @@ use super::planner_support::string_literal_value;
 use super::{
     PromqlEngine,
     histogram::{
-        HistogramAccessor, apply_histogram_accessor, apply_histogram_fraction,
+        FractionBounds, HistogramAccessor, apply_histogram_accessor, apply_histogram_fraction,
         apply_histogram_quantile,
     },
     planned::PlannedInstant,
@@ -215,7 +215,9 @@ impl<S: MetricStore> PromqlEngine<S> {
             return Ok(None);
         };
         Ok(Some(PlannedInstant::Precomputed(apply_histogram_fraction(
-            lower, upper, samples, time_ms,
+            FractionBounds { lower, upper },
+            samples,
+            time_ms,
         )?)))
     }
 

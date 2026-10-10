@@ -13,18 +13,7 @@ pub(crate) async fn instant_clamp_bounds_vector_values() {
     }
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "clamp(temperature_celsius, 0, 10)",
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "clamp(temperature_celsius, 0, 10)", 10_000).await;
     assert2::assert!(samples.len() == 3);
     let values = samples
         .iter()

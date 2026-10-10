@@ -35,6 +35,33 @@ impl Default for QueryFrontendCache {
     }
 }
 
+/// Writes the clock and metrics builder methods, which delegate to the inner
+/// cache's inherent methods of the same names.
+///
+/// The two inner cache types share these methods without a common trait, so a
+/// generic `impl` cannot reach them and each cache type takes the methods from
+/// this macro.
+macro_rules! cache_clock_and_metrics_methods {
+    () => {
+        #[must_use]
+        pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+            self.inner = self.inner.with_clock(clock);
+            self
+        }
+
+        #[must_use]
+        pub fn with_metrics(mut self, metrics: Arc<krabka_query_frontend::CacheMetrics>) -> Self {
+            self.inner = self.inner.with_metrics(metrics);
+            self
+        }
+
+        #[must_use]
+        pub fn metrics(&self) -> Arc<krabka_query_frontend::CacheMetrics> {
+            self.inner.metrics()
+        }
+    };
+}
+
 impl QueryFrontendCache {
     #[must_use]
     pub fn with_ttl(ttl: Time) -> Self {
@@ -44,39 +71,7 @@ impl QueryFrontendCache {
         }
     }
 
-    #[must_use]
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
-        self.inner = self.inner.with_clock(clock);
-        self
-    }
-
-    #[must_use]
-    pub fn with_metrics(mut self, metrics: Arc<krabka_query_frontend::CacheMetrics>) -> Self {
-        self.inner = self.inner.with_metrics(metrics);
-        self
-    }
-
-    #[must_use]
-    pub fn metrics(&self) -> Arc<krabka_query_frontend::CacheMetrics> {
-        self.inner.metrics()
-    }
-
-    pub async fn get(
-        &self,
-        tenant: &str,
-        query: &FrontendRangeQuery,
-    ) -> Result<Option<AnnotatedQueryResult>, PromqlError> {
-        QueryCache::get(self, &range_cache_key(tenant, query)).await
-    }
-
-    pub async fn insert(
-        &self,
-        tenant: &str,
-        query: &FrontendRangeQuery,
-        result: AnnotatedQueryResult,
-    ) -> Result<(), PromqlError> {
-        QueryCache::insert(self, &range_cache_key(tenant, query), &result).await
-    }
+    cache_clock_and_metrics_methods!();
 }
 
 impl ObjectStoreQueryFrontendCache {
@@ -94,23 +89,14 @@ impl ObjectStoreQueryFrontendCache {
         self
     }
 
-    #[must_use]
-    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
-        self.inner = self.inner.with_clock(clock);
-        self
-    }
+    cache_clock_and_metrics_methods!();
+}
 
-    #[must_use]
-    pub fn with_metrics(mut self, metrics: Arc<krabka_query_frontend::CacheMetrics>) -> Self {
-        self.inner = self.inner.with_metrics(metrics);
-        self
-    }
-
-    #[must_use]
-    pub fn metrics(&self) -> Arc<krabka_query_frontend::CacheMetrics> {
-        self.inner.metrics()
-    }
-
+impl<C> PromqlQueryFrontendCache<C>
+where
+    C: QueryCache<AnnotatedQueryResult>,
+    C::Error: Display,
+{
     pub async fn get(
         &self,
         tenant: &str,

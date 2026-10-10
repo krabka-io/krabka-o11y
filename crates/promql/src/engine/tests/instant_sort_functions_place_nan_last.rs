@@ -41,13 +41,7 @@ pub(crate) async fn instant_sort_functions_place_nan_last() {
             ["api-b", "api-n", "api-c", "api-a"],
         ),
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 10_000)
-            .await
-            .unwrap();
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected vector");
-        };
+        let samples = instant_vector(&engine, query, 10_000).await;
         let instances = samples
             .iter()
             .map(|sample| sample.labels.get("instance").unwrap())

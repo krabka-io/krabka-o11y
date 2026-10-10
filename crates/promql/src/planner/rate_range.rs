@@ -23,32 +23,15 @@
 //! `range_ms`. `RangeManipulate` re-derives the per-step window, and the UDF
 //! re-derives `range_start = eval_timestamp - range_ms`.
 
-use std::{collections::BTreeSet, sync::Arc};
-
-use arrow::{
-    array::{ArrayRef, BinaryBuilder, Float64Array, Int64Array},
-    datatypes::{DataType, Field, Schema},
-    record_batch::RecordBatch,
-};
 use datafusion::{
-    execution::FunctionRegistry,
-    logical_expr::{Expr, Extension, LogicalPlan, LogicalPlanBuilder, col, lit},
+    logical_expr::{Expr, LogicalPlan, LogicalPlanBuilder, col, lit},
     prelude::SessionContext,
 };
 use krabka_blockstore::SeriesFingerprint;
 use krabka_units::prelude::*;
 
-use super::{LabeledSeries, StepGrid, leaf::leaf_scan};
-use crate::{
-    PromqlError, PromqlLabels as Labels,
-    error::Result,
-    extension::{
-        normalize::SeriesNormalize,
-        planner::prom_session_context,
-        range_manipulate::{RANGE_SUFFIX, RangeManipulate},
-        series_divide::SeriesDivide,
-    },
-};
+use super::LabeledSeries;
+use crate::{PromqlLabels as Labels, error::Result, extension::planner::prom_session_context};
 
 #[cfg(test)]
 mod tests {
@@ -56,27 +39,10 @@ mod tests {
     use assert2::check;
 
     use super::*;
-    use crate::planner::TimedValue;
+    use crate::planner::RangeWindowGrid;
 
     fn approx_eq(left: f64, right: f64) -> bool {
         (left - right).abs() < 1e-9
-    }
-
-    fn labeled(job: &str, samples: &[(i64, f64)]) -> LabeledSeries {
-        let mut labels = Labels::new();
-        labels.insert("job", job);
-        LabeledSeries {
-            fp: labels.fingerprint(),
-            labels: Arc::new(labels),
-            samples: samples
-                .iter()
-                .map(|&(ts_ms, value)| TimedValue {
-                    ts_ms,
-                    value,
-                    start_timestamp_ms: None,
-                })
-                .collect(),
-        }
     }
 
     /// `rate(counter[5m])` over the engine's canonical counter window returns
@@ -85,20 +51,17 @@ mod tests {
     /// `extrapolate::rate_extrapolates_counter_window`.
     #[tokio::test]
     async fn rate_range_plan_reproduces_counter_window() {
-        let samples = vec![labeled(
-            "a",
-            &[
-                (0, 0.0),
-                (60_000, 1.0),
-                (120_000, 2.0),
-                (180_000, 3.0),
-                (240_000, 4.0),
-            ],
-        )];
+        let samples = vec![
+            LabeledSeries::with_job("a")
+                .at(0, 0.0)
+                .at(60_000, 1.0)
+                .at(120_000, 2.0)
+                .at(180_000, 3.0)
+                .at(240_000, 4.0),
+        ];
         let plan = plan_rate_range_selector(
             samples,
-            StepGrid::instant(300_000, 300_000),
-            millis(300_000),
+            RangeWindowGrid::since_epoch(300_000),
             RateUdfKind::Rate,
         )
         .await
@@ -141,11 +104,15 @@ mod tests {
     /// `increase` reset correction flows through the chain: 1,2,1 -> 2.0.
     #[tokio::test]
     async fn increase_range_plan_corrects_reset() {
-        let samples = vec![labeled("a", &[(0, 1.0), (60_000, 2.0), (120_000, 1.0)])];
+        let samples = vec![
+            LabeledSeries::with_job("a")
+                .at(0, 1.0)
+                .at(60_000, 2.0)
+                .at(120_000, 1.0),
+        ];
         let plan = plan_rate_range_selector(
             samples,
-            StepGrid::instant(120_000, 120_000),
-            millis(120_000),
+            RangeWindowGrid::since_epoch(120_000),
             RateUdfKind::Increase,
         )
         .await
@@ -174,11 +141,10 @@ mod tests {
     async fn single_sample_window_yields_null() {
         use arrow::array::Array;
 
-        let samples = vec![labeled("a", &[(60_000, 1.0)])];
+        let samples = vec![LabeledSeries::with_job("a").at(60_000, 1.0)];
         let plan = plan_rate_range_selector(
             samples,
-            StepGrid::instant(60_000, 60_000),
-            millis(60_000),
+            RangeWindowGrid::since_epoch(60_000),
             RateUdfKind::Rate,
         )
         .await
@@ -201,8 +167,6 @@ mod tests {
     }
 }
 
-mod build_leaf_batch;
-mod leaf_schema;
 mod plan_rate_range_selector;
 mod rate_range_plan;
 mod rate_udf_kind;
@@ -210,8 +174,6 @@ mod rate_value_column;
 mod time_column;
 mod value_column;
 
-use build_leaf_batch::build_leaf_batch;
-use leaf_schema::leaf_schema;
 pub use plan_rate_range_selector::plan_rate_range_selector;
 pub use rate_range_plan::RateRangePlan;
 pub use rate_udf_kind::RateUdfKind;

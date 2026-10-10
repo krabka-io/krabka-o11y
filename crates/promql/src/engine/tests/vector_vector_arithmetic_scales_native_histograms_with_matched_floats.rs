@@ -51,16 +51,7 @@ pub(crate) async fn vector_vector_arithmetic_scales_native_histograms_with_match
         assert_single_on_x_float_sample(&sum, expected_sum, query);
     }
 
-    let invalid = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "histogram_count(factor / on (x) duration)",
-            10_000,
-        )
-        .await
-        .unwrap();
-    let QueryResult::InstantVector(samples) = invalid else {
-        panic!("expected vector");
-    };
+    let samples =
+        instant_vector(&engine, "histogram_count(factor / on (x) duration)", 10_000).await;
     assert2::assert!(samples.is_empty());
 }

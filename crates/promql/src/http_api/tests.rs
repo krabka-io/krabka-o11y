@@ -19,7 +19,7 @@ use tower::ServiceExt;
 use super::{request::unix_now_ms, *};
 use crate::{
     ExemplarScan, InMemoryMetricStore, LabelNameCardinality, LabelValueCardinality, MetadataScan,
-    PromqlMatcher as LabelMatcher, ScanResult, TsdbBlock, TsdbHeadStats, TsdbStats,
+    PromqlMatcher as LabelMatcher, ScanResult, TsdbBlock, TsdbStats,
 };
 
 // Every request reaches the handlers through the authentication layer, as it
@@ -40,6 +40,7 @@ mod discovery_rejects_label_counts_over_tenant_series_limit;
 mod expand_alert_template_substitutions;
 mod float_formatting_matches_go;
 mod instant_query_without_time_defaults_to_current_time;
+mod limited_get;
 mod mimir_alertmanager_api;
 mod promql_evaluation_rejects_series_over_tenant_limit;
 mod query_annotations_reach_the_response_envelope;
@@ -64,5 +65,6 @@ mod two_series_store;
 use annotated_query_body::annotated_query_body;
 use annotation_query_uri::annotation_query_uri;
 use annotation_store::annotation_store;
+use limited_get::{assert_execution_error, limited_get};
 use slow_empty_store::SlowEmptyStore;
 use two_series_store::two_series_store;

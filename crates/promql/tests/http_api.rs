@@ -35,6 +35,334 @@ fn prometheus_router<S: MetricStore + 'static>(state: Arc<PrometheusApiState<S>>
     )
 }
 
+const TENANT_HEADER: &str = "X-Scope-OrgID";
+
+/// A native histogram's observation count and sum.
+#[derive(Clone, Copy)]
+struct HistogramTotals {
+    count: f64,
+    sum: f64,
+}
+
+/// A schema-0 float native histogram with `totals`, no buckets, no zero
+/// bucket, and no counter-reset hint.
+fn float_histogram(totals: HistogramTotals) -> NativeHistogram {
+    NativeHistogram {
+        schema: 0,
+        is_float: true,
+        reset_hint: ResetHint::No,
+        zero_threshold: 0.0,
+        zero_count: 0.0,
+        count: totals.count,
+        sum: totals.sum,
+        positive_spans: Vec::new(),
+        positive_counts: Vec::new(),
+        negative_spans: Vec::new(),
+        negative_counts: Vec::new(),
+        custom_values: None,
+        start_timestamp_ms: None,
+    }
+}
+
+fn api_state<S: MetricStore + 'static>(store: S) -> Arc<PrometheusApiState<S>> {
+    Arc::new(PrometheusApiState::new(
+        Arc::new(store),
+        EngineOpts::default(),
+    ))
+}
+
+/// `up{job="api"}` at 60s (value 1) and 120s (value 2).
+fn up_api_at_60_and_120() -> TenantFloats {
+    TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 60_000, 1.0)
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 120_000, 2.0)
+}
+
+/// Checks the matrix a 60s-step range query returns over [`up_api_at_60_and_120`].
+fn assert_up_api_matrix(body: &Value) {
+    assert_result_type(body, "matrix");
+    assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
+    assert2::assert!(
+        body["data"]["result"][0]["values"].clone() == serde_json::json!([[60, "1"], [120, "2"]])
+    );
+}
+
+/// `up{job="api",instance="a"}` and `up{job="web",instance="b"}`, both 1 at 10s.
+fn up_api_a_and_web_b() -> TenantFloats {
+    TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
+            10_000,
+            1.0,
+        )
+}
+
+/// Checks a `/series` body that holds only the `job="api"` series of [`up_api_a_and_web_b`].
+fn assert_only_up_api_a_series(body: &Value) {
+    assert2::assert!(body["status"] == "success");
+    assert2::assert!(body["data"].as_array().expect("data array").len() == 1);
+    assert2::assert!(body["data"][0]["__name__"] == "up");
+    assert2::assert!(body["data"][0]["job"] == "api");
+    assert2::assert!(body["data"][0]["instance"] == "a");
+}
+
+/// `tenant-a` float samples for a test store, added one sample at a time.
+struct TenantFloats {
+    store: InMemoryMetricStore,
+}
+
+impl TenantFloats {
+    fn new() -> Self {
+        Self {
+            store: InMemoryMetricStore::new(),
+        }
+    }
+
+    /// Adds the float `sample_value` of the series `series` at `ts_ms`.
+    fn sample(mut self, series: Labels, ts_ms: i64, sample_value: f64) -> Self {
+        self.store
+            .push_float("tenant-a", series, ts_ms, sample_value);
+        self
+    }
+
+    fn store(self) -> InMemoryMetricStore {
+        self.store
+    }
+
+    /// Routes the store with default engine options.
+    fn app(self) -> axum::Router {
+        prometheus_router(api_state(self.store))
+    }
+
+    /// Routes the store under the given per-tenant query limits.
+    fn limited_app(self, limits: Limits) -> axum::Router {
+        let state = Arc::new(
+            PrometheusApiState::new(Arc::new(self.store), EngineOpts::default())
+                .with_query_limits(OverridesProvider::new(limits)),
+        );
+        prometheus_router(state)
+    }
+}
+
+async fn send(app: &axum::Router, request: Request<Body>) -> axum::response::Response {
+    app.clone().oneshot(request).await.expect("router response")
+}
+
+/// Sends a `tenant-a` GET request.
+async fn get(app: &axum::Router, uri: impl AsRef<str>) -> axum::response::Response {
+    let request = Request::builder()
+        .uri(uri.as_ref())
+        .header(TENANT_HEADER, "tenant-a")
+        .body(Body::empty())
+        .expect("GET request");
+    send(app, request).await
+}
+
+/// The body formats the tests POST.
+#[derive(Clone, Copy)]
+enum BodyFormat {
+    Form,
+    Yaml,
+}
+
+impl BodyFormat {
+    fn content_type(self) -> &'static str {
+        match self {
+            Self::Form => "application/x-www-form-urlencoded",
+            Self::Yaml => "application/yaml",
+        }
+    }
+}
+
+/// A `tenant-a` POST request builder for a `body_format` body.
+fn tenant_post(uri: &str, body_format: BodyFormat) -> axum::http::request::Builder {
+    Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(TENANT_HEADER, "tenant-a")
+        .header("Content-Type", body_format.content_type())
+}
+
+async fn post_form(
+    app: &axum::Router,
+    uri: &str,
+    form: impl Into<Body>,
+) -> axum::response::Response {
+    let request = tenant_post(uri, BodyFormat::Form)
+        .body(form.into())
+        .expect("form POST request");
+    send(app, request).await
+}
+
+async fn post_yaml(
+    app: &axum::Router,
+    uri: &str,
+    yaml: impl Into<Body>,
+) -> axum::response::Response {
+    let request = tenant_post(uri, BodyFormat::Yaml)
+        .body(yaml.into())
+        .expect("YAML POST request");
+    send(app, request).await
+}
+
+/// Stores a rule group in the `team-a` namespace and checks it was accepted.
+async fn configure_team_a_rules(app: &axum::Router, yaml: &'static str) {
+    let response = post_yaml(app, "/prometheus/config/v1/rules/team-a", yaml).await;
+    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+}
+
+/// Sends `request` to `/api/v1/read` as a snappy-compressed `tenant-a` protobuf body.
+async fn remote_read(
+    app: &axum::Router,
+    request: &pb::v1::ReadRequest,
+) -> axum::response::Response {
+    let compressed = SnappyEncoder::new()
+        .compress_vec(&request.encode_to_vec())
+        .expect("snappy request");
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/v1/read")
+        .header(TENANT_HEADER, "tenant-a")
+        .header("Content-Type", "application/x-protobuf")
+        .header("Content-Encoding", "snappy")
+        .body(Body::from(compressed))
+        .expect("remote read request");
+    send(app, request).await
+}
+
+fn eq_matcher(name: &str, value: &str) -> pb::v1::LabelMatcher {
+    pb::v1::LabelMatcher {
+        r#type: pb::v1::label_matcher::Type::Eq as i32,
+        name: name.into(),
+        value: value.into(),
+    }
+}
+
+/// A closed window of epoch milliseconds.
+#[derive(Clone, Copy)]
+struct MillisRange {
+    start_ms: i64,
+    end_ms: i64,
+}
+
+/// A remote-read query over `window`, without hints.
+fn read_query(window: MillisRange, matchers: Vec<pb::v1::LabelMatcher>) -> pb::v1::Query {
+    pb::v1::Query {
+        start_timestamp_ms: window.start_ms,
+        end_timestamp_ms: window.end_ms,
+        matchers,
+        hints: None,
+    }
+}
+
+/// A samples-typed remote read of `up{job="api"}` over `[10s, end_ms]`.
+fn up_api_samples_request(end_ms: i64) -> pb::v1::ReadRequest {
+    pb::v1::ReadRequest {
+        queries: vec![read_query(
+            MillisRange {
+                start_ms: 10_000,
+                end_ms,
+            },
+            vec![eq_matcher("__name__", "up"), eq_matcher("job", "api")],
+        )],
+        accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
+    }
+}
+
+async fn assert_execution_error_containing(response: axum::response::Response, fragment: &str) {
+    let body = json_with_status(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert2::assert!(body["status"].as_str() == Some("error"));
+    assert2::assert!(body["errorType"].as_str() == Some("execution"));
+    assert2::assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|error| error.contains(fragment))
+    );
+}
+
+async fn decode_read_response(response: axum::response::Response) -> pb::v1::ReadResponse {
+    let bytes = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("response body");
+    let decoded = SnappyDecoder::new()
+        .decompress_vec(&bytes)
+        .expect("snappy response");
+    pb::v1::ReadResponse::decode(decoded.as_slice()).expect("remote read response")
+}
+
+async fn json_with_status(response: axum::response::Response, status: StatusCode) -> Value {
+    assert2::assert!(response.status() == status);
+    response_json(response).await
+}
+
+/// Checks a `parse_query` body that describes the `up` vector selector.
+fn assert_up_vector_selector(body: &Value, matchers: &Value) {
+    assert2::assert!(body["status"].as_str() == Some("success"));
+    assert2::assert!(body["data"]["type"].as_str() == Some("vectorSelector"));
+    assert2::assert!(body["data"]["name"].as_str() == Some("up"));
+    assert2::assert!(body["data"]["matchers"] == *matchers);
+}
+
+/// Serves an unauthenticated `/api/v1/status/walreplay` from a WAL-head-backed state.
+async fn walreplay_status(head: WalHead, wal_tail: krabka_observability::ReadinessGate) -> Value {
+    let state = Arc::new(
+        PrometheusApiState::new(Arc::new(head.clone()), EngineOpts::default())
+            .with_wal_head_status(head, wal_tail),
+    );
+    let app = prometheus_router(state);
+    let request = Request::builder()
+        .uri("/api/v1/status/walreplay")
+        .body(Body::empty())
+        .expect("walreplay request");
+    json_with_status(send(&app, request).await, StatusCode::OK).await
+}
+
+/// A Prometheus API error envelope's `errorType` and `error` message.
+#[derive(Clone, Copy)]
+struct ApiError<'a> {
+    error_type: &'a str,
+    message: &'a str,
+}
+
+fn assert_error_envelope(body: &Value, expected: ApiError<'_>) {
+    assert2::assert!(body["status"] == "error");
+    assert2::assert!(body["errorType"] == expected.error_type);
+    assert2::assert!(body["error"] == expected.message);
+}
+
+fn assert_result_type(body: &Value, result_type: &str) {
+    assert2::assert!(body["status"] == "success");
+    assert2::assert!(body["data"]["resultType"] == result_type);
+}
+
+const INSTANCE_DOWN_PAGE_YAML: &str = "
+name: availability
+rules:
+  - alert: InstanceDown
+    expr: up > 0
+    labels:
+      severity: page
+    annotations:
+      summary: instance down
+";
+
+/// Checks the alert [`INSTANCE_DOWN_PAGE_YAML`] raises for `up{job="api",instance="a"} 1` at 0s.
+fn assert_firing_instance_down_alert(alert: &Value) {
+    assert2::assert!(alert["labels"]["alertname"].as_str() == Some("InstanceDown"));
+    assert2::assert!(alert["labels"]["job"].as_str() == Some("api"));
+    assert2::assert!(alert["labels"]["instance"].as_str() == Some("a"));
+    assert2::assert!(alert["labels"]["severity"].as_str() == Some("page"));
+    assert2::assert!(alert["annotations"]["summary"].as_str() == Some("instance down"));
+    assert2::assert!(alert["state"].as_str() == Some("firing"));
+    assert2::assert!(alert["activeAt"].as_str() == Some("1970-01-01T00:00:00Z"));
+    assert2::assert!(alert["value"].as_str() == Some("1"));
+}
+
 const RULE_GROUP_YAML: &str = "
 name: latency
 interval: 30s
@@ -88,34 +416,14 @@ async fn response_text(response: axum::response::Response) -> String {
 
 #[tokio::test]
 async fn query_endpoint_returns_prometheus_vector_envelope() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+        .app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query?query=up&time=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query?query=up&time=10").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"]["resultType"].as_str() == Some("vector"));
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_result_type(&body, "vector");
     assert2::assert!(body["data"]["result"][0]["metric"]["__name__"].as_str() == Some("up"));
     assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
     assert2::assert!(
@@ -127,34 +435,14 @@ async fn query_endpoint_returns_prometheus_vector_envelope() {
 
 #[tokio::test]
 async fn query_endpoint_accepts_rfc3339_time_parameter() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+        .app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query?query=up&time=1970-01-01T00%3A00%3A10Z")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query?query=up&time=1970-01-01T00%3A00%3A10Z").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"]["resultType"].as_str() == Some("vector"));
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_result_type(&body, "vector");
     assert2::assert!(body["data"]["result"][0]["value"][0].as_i64() == Some(10));
     assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
 }
@@ -166,43 +454,21 @@ async fn query_endpoint_returns_native_histogram_envelope() {
         "tenant-a",
         labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
         10_000,
-        NativeHistogram {
-            schema: 0,
-            is_float: true,
-            reset_hint: ResetHint::No,
-            zero_threshold: 0.0,
-            zero_count: -1.0,
-            count: 4.0,
-            sum: 10.0,
-            positive_spans: Vec::new(),
-            positive_counts: Vec::new(),
-            negative_spans: Vec::new(),
-            negative_counts: Vec::new(),
-            custom_values: None,
-            start_timestamp_ms: None,
+        {
+            let mut histogram = float_histogram(HistogramTotals {
+                count: 4.0,
+                sum: 10.0,
+            });
+            histogram.zero_count = -1.0;
+            histogram
         },
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query?query=request_duration_seconds&time=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query?query=request_duration_seconds&time=10").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"]["resultType"].as_str() == Some("vector"));
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_result_type(&body, "vector");
     assert2::assert!(body["data"]["result"][0].get("value").is_none());
     assert2::assert!(
         body["data"]["result"][0]["metric"]["__name__"].as_str()
@@ -225,47 +491,31 @@ async fn query_endpoint_returns_native_histogram_buckets() {
         "tenant-a",
         labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
         10_000,
-        NativeHistogram {
-            schema: 0,
-            is_float: true,
-            reset_hint: ResetHint::No,
-            zero_threshold: 0.25,
-            zero_count: 3.0,
-            count: 10.0,
-            sum: 7.0,
-            positive_spans: vec![BucketSpan {
+        {
+            let mut histogram = float_histogram(HistogramTotals {
+                count: 10.0,
+                sum: 7.0,
+            });
+            histogram.zero_threshold = 0.25;
+            histogram.zero_count = 3.0;
+            histogram.positive_spans = vec![BucketSpan {
                 offset: 0,
                 length: 4,
-            }],
-            positive_counts: vec![2.0, 0.0, -1.0, 4.0],
-            negative_spans: vec![BucketSpan {
+            }];
+            histogram.positive_counts = vec![2.0, 0.0, -1.0, 4.0];
+            histogram.negative_spans = vec![BucketSpan {
                 offset: 0,
                 length: 1,
-            }],
-            negative_counts: vec![1.0],
-            custom_values: None,
-            start_timestamp_ms: None,
+            }];
+            histogram.negative_counts = vec![1.0];
+            histogram
         },
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query?query=request_duration_seconds&time=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query?query=request_duration_seconds&time=10").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(
         body["data"]["result"][0]["histogram"][1]["buckets"]
             == serde_json::json!([
@@ -285,44 +535,26 @@ async fn query_endpoint_returns_native_histogram_custom_buckets() {
         "tenant-a",
         labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
         10_000,
-        NativeHistogram {
-            schema: -53,
-            is_float: true,
-            reset_hint: ResetHint::No,
-            zero_threshold: 0.0,
-            zero_count: 0.0,
-            count: 6.0,
-            sum: 2.3,
-            positive_spans: vec![BucketSpan {
+        {
+            let mut histogram = float_histogram(HistogramTotals {
+                count: 6.0,
+                sum: 2.3,
+            });
+            histogram.schema = -53;
+            histogram.positive_spans = vec![BucketSpan {
                 offset: 0,
                 length: 3,
-            }],
-            positive_counts: vec![1.0, 2.0, 3.0],
-            negative_spans: Vec::new(),
-            negative_counts: Vec::new(),
-            custom_values: Some(vec![0.1, 0.5]),
-            start_timestamp_ms: None,
+            }];
+            histogram.positive_counts = vec![1.0, 2.0, 3.0];
+            histogram.custom_values = Some(vec![0.1, 0.5]);
+            histogram
         },
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query?query=request_duration_seconds&time=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query?query=request_duration_seconds&time=10").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(
         body["data"]["result"][0]["histogram"][1]["buckets"]
             == serde_json::json!([
@@ -335,36 +567,14 @@ async fn query_endpoint_returns_native_histogram_custom_buckets() {
 
 #[tokio::test]
 async fn query_endpoint_accepts_post_form_body() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+        .app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/query")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(Body::from("query=up&time=10"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(&app, "/api/v1/query", "query=up&time=10").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"]["resultType"].as_str() == Some("vector"));
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_result_type(&body, "vector");
     assert2::assert!(body["data"]["result"][0]["metric"]["__name__"].as_str() == Some("up"));
     assert2::assert!(body["data"]["result"][0]["value"][0].as_i64() == Some(10));
     assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
@@ -372,175 +582,69 @@ async fn query_endpoint_accepts_post_form_body() {
 
 #[tokio::test]
 async fn query_endpoint_honors_limit_parameter_for_vectors() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web")]),
-        10_000,
-        2.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 2.0)
+        .app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query?query=up&time=10&limit=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query?query=up&time=10&limit=1").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"]["resultType"] == "vector");
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_result_type(&body, "vector");
     assert2::assert!(body["data"]["result"].as_array().unwrap().len() == 1);
 }
 
 #[tokio::test]
 async fn query_endpoint_treats_zero_limit_as_disabled() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web")]),
-        10_000,
-        2.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 2.0)
+        .app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query?query=up&time=10&limit=0")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query?query=up&time=10&limit=0").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"]["resultType"] == "vector");
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_result_type(&body, "vector");
     assert2::assert!(body["data"]["result"].as_array().unwrap().len() == 2);
 }
 
 #[tokio::test]
 async fn query_endpoint_rejects_invalid_limit_parameter() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query?query=up&time=10&limit=abc")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query?query=up&time=10&limit=abc").await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "error");
-    assert2::assert!(body["errorType"] == "bad_data");
-    assert2::assert!(body["error"] == "invalid limit parameter");
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
+    assert_error_envelope(
+        &body,
+        ApiError {
+            error_type: "bad_data",
+            message: "invalid limit parameter",
+        },
+    );
 }
 
 #[tokio::test]
 async fn query_range_endpoint_is_available_under_mimir_prefix() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        60_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        120_000,
-        2.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = up_api_at_60_and_120().app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/query_range?query=up&start=60&end=120&step=60")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/prometheus/api/v1/query_range?query=up&start=60&end=120&step=60",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"]["resultType"].as_str() == Some("matrix"));
-    assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
-    assert2::assert!(
-        body["data"]["result"][0]["values"].clone() == serde_json::json!([[60, "1"], [120, "2"]])
-    );
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_up_api_matrix(&body);
 }
 
 #[tokio::test]
 async fn matrix_integral_second_ts_is_bare_integer() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        60_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 60_000, 1.0)
+        .app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=up&start=60&end=60&step=60")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query_range?query=up&start=60&end=60&step=60").await;
 
     assert2::assert!(response.status() == StatusCode::OK);
     let text = response_text(response).await;
@@ -574,21 +678,10 @@ async fn query_range_endpoint_can_use_query_frontend_split_and_merge() {
     );
     let app = prometheus_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=up&start=0&end=120&step=60")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query_range?query=up&start=0&end=120&step=60").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"]["resultType"] == "matrix");
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_result_type(&body, "matrix");
     assert2::assert!(body["data"]["result"][0]["metric"]["job"] == "api");
     assert2::assert!(body["data"]["result"][0]["values"][0][1] == "1");
     assert2::assert!(body["data"]["result"][0]["values"][1][1] == "2");
@@ -641,114 +734,80 @@ fn labels_on_uneven_query_shards() -> (Labels, Labels, Labels) {
     )
 }
 
-#[tokio::test]
-async fn query_range_endpoint_query_frontend_reduces_sharded_sum() {
-    let (shard_one, shard_two) = labels_on_two_query_shards();
-
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", shard_one, 0, 1.0);
-    store.push_float("tenant-a", shard_two, 0, 2.0);
+/// Runs an instant-width `query_range` at `t=0` through a two-shard query
+/// frontend over `samples` (taken at `t=0`), and returns the matrix body.
+async fn sharded_query_range(samples: TenantFloats, encoded_query: &str) -> Value {
     let state = Arc::new(
-        PrometheusApiState::new(Arc::new(store), EngineOpts::default()).with_query_frontend(
-            QueryFrontendOptions {
+        PrometheusApiState::new(Arc::new(samples.store()), EngineOpts::default())
+            .with_query_frontend(QueryFrontendOptions {
                 split_interval: millis(60_000),
                 shard_count: 2,
-            },
-        ),
+            }),
     );
     let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=sum%28up%29&start=0&end=0&step=60")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"]["resultType"] == "matrix");
-    assert2::assert!(body["data"]["result"][0]["metric"] == serde_json::json!({}));
-    assert2::assert!(body["data"]["result"][0]["values"][0][0] == 0);
-    assert2::assert!(body["data"]["result"][0]["values"][0][1] == "3");
+    let response = get(
+        &app,
+        format!("/api/v1/query_range?query={encoded_query}&start=0&end=0&step=60"),
+    )
+    .await;
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_result_type(&body, "matrix");
+    body
 }
 
 #[tokio::test]
-async fn query_range_endpoint_query_frontend_reduces_sharded_avg() {
+async fn query_range_endpoint_query_frontend_reduces_sharded_aggregations() {
+    let (shard_one, shard_two) = labels_on_two_query_shards();
     let (first_even, second_even, odd) = labels_on_uneven_query_shards();
-
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", first_even, 0, 2.0);
-    store.push_float("tenant-a", second_even, 0, 10.0);
-    store.push_float("tenant-a", odd, 0, 3.0);
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(store), EngineOpts::default()).with_query_frontend(
-            QueryFrontendOptions {
-                split_interval: millis(60_000),
-                shard_count: 2,
-            },
+    let two_shards = |one_value, two_value| {
+        TenantFloats::new()
+            .sample(shard_one.clone(), 0, one_value)
+            .sample(shard_two.clone(), 0, two_value)
+    };
+    let cases = [
+        ("sum%28up%29", two_shards(1.0, 2.0), "3"),
+        (
+            "avg%28up%29",
+            TenantFloats::new()
+                .sample(first_even.clone(), 0, 2.0)
+                .sample(second_even.clone(), 0, 10.0)
+                .sample(odd.clone(), 0, 3.0),
+            "5",
         ),
-    );
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=avg%28up%29&start=0&end=0&step=60")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"]["resultType"] == "matrix");
-    assert2::assert!(body["data"]["result"][0]["metric"] == serde_json::json!({}));
-    assert2::assert!(body["data"]["result"][0]["values"][0][0] == 0);
-    assert2::assert!(body["data"]["result"][0]["values"][0][1] == "5");
+        ("min%28up%29", two_shards(5.0, 2.0), "2"),
+        ("max%28up%29", two_shards(5.0, 2.0), "5"),
+        ("group%28up%29", two_shards(5.0, 2.0), "1"),
+    ];
+    for (encoded_query, series, expected) in cases {
+        let body = sharded_query_range(series, encoded_query).await;
+        assert2::assert!(
+            body["data"]["result"][0]["metric"] == serde_json::json!({}),
+            "{encoded_query}"
+        );
+        assert2::assert!(
+            body["data"]["result"][0]["values"][0][0] == 0,
+            "{encoded_query}"
+        );
+        assert2::assert!(
+            body["data"]["result"][0]["values"][0][1] == expected,
+            "{encoded_query}"
+        );
+    }
 }
 
 #[tokio::test]
 async fn query_range_endpoint_query_frontend_reduces_sharded_stdvar() {
     let (first_even, second_even, odd) = labels_on_uneven_query_shards();
 
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", first_even, 0, 2.0);
-    store.push_float("tenant-a", second_even, 0, 10.0);
-    store.push_float("tenant-a", odd, 0, 3.0);
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(store), EngineOpts::default()).with_query_frontend(
-            QueryFrontendOptions {
-                split_interval: millis(60_000),
-                shard_count: 2,
-            },
-        ),
-    );
-    let app = prometheus_router(state);
+    let body = sharded_query_range(
+        TenantFloats::new()
+            .sample(first_even, 0, 2.0)
+            .sample(second_even, 0, 10.0)
+            .sample(odd, 0, 3.0),
+        "stdvar%28up%29",
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=stdvar%28up%29&start=0&end=0&step=60")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"]["resultType"] == "matrix");
     assert2::assert!(body["data"]["result"][0]["metric"] == serde_json::json!({}));
     assert2::assert!(body["data"]["result"][0]["values"][0][0] == 0);
     let value = body["data"]["result"][0]["values"][0][1]
@@ -771,35 +830,15 @@ async fn query_range_endpoint_query_frontend_reduces_sharded_topk() {
         .expect("mid value series label")
         .to_string();
 
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", first_even, 0, 2.0);
-    store.push_float("tenant-a", second_even, 0, 10.0);
-    store.push_float("tenant-a", odd, 0, 3.0);
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(store), EngineOpts::default()).with_query_frontend(
-            QueryFrontendOptions {
-                split_interval: millis(60_000),
-                shard_count: 2,
-            },
-        ),
-    );
-    let app = prometheus_router(state);
+    let body = sharded_query_range(
+        TenantFloats::new()
+            .sample(first_even, 0, 2.0)
+            .sample(second_even, 0, 10.0)
+            .sample(odd, 0, 3.0),
+        "topk%282%2C%20up%29",
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=topk%282%2C%20up%29&start=0&end=0&step=60")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"]["resultType"] == "matrix");
     let mut selected = body["data"]["result"]
         .as_array()
         .expect("topk result array")
@@ -825,235 +864,50 @@ async fn query_range_endpoint_query_frontend_reduces_sharded_topk() {
 }
 
 #[tokio::test]
-async fn query_range_endpoint_query_frontend_reduces_sharded_min() {
-    let (shard_one, shard_two) = labels_on_two_query_shards();
-
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", shard_one, 0, 5.0);
-    store.push_float("tenant-a", shard_two, 0, 2.0);
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(store), EngineOpts::default()).with_query_frontend(
-            QueryFrontendOptions {
-                split_interval: millis(60_000),
-                shard_count: 2,
-            },
-        ),
-    );
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=min%28up%29&start=0&end=0&step=60")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"]["resultType"] == "matrix");
-    assert2::assert!(body["data"]["result"][0]["metric"] == serde_json::json!({}));
-    assert2::assert!(body["data"]["result"][0]["values"][0][0] == 0);
-    assert2::assert!(body["data"]["result"][0]["values"][0][1] == "2");
-}
-
-#[tokio::test]
-async fn query_range_endpoint_query_frontend_reduces_sharded_max() {
-    let (shard_one, shard_two) = labels_on_two_query_shards();
-
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", shard_one, 0, 5.0);
-    store.push_float("tenant-a", shard_two, 0, 2.0);
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(store), EngineOpts::default()).with_query_frontend(
-            QueryFrontendOptions {
-                split_interval: millis(60_000),
-                shard_count: 2,
-            },
-        ),
-    );
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=max%28up%29&start=0&end=0&step=60")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"]["resultType"] == "matrix");
-    assert2::assert!(body["data"]["result"][0]["metric"] == serde_json::json!({}));
-    assert2::assert!(body["data"]["result"][0]["values"][0][0] == 0);
-    assert2::assert!(body["data"]["result"][0]["values"][0][1] == "5");
-}
-
-#[tokio::test]
-async fn query_range_endpoint_query_frontend_reduces_sharded_group() {
-    let (shard_one, shard_two) = labels_on_two_query_shards();
-
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", shard_one, 0, 5.0);
-    store.push_float("tenant-a", shard_two, 0, 2.0);
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(store), EngineOpts::default()).with_query_frontend(
-            QueryFrontendOptions {
-                split_interval: millis(60_000),
-                shard_count: 2,
-            },
-        ),
-    );
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=group%28up%29&start=0&end=0&step=60")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"]["resultType"] == "matrix");
-    assert2::assert!(body["data"]["result"][0]["metric"] == serde_json::json!({}));
-    assert2::assert!(body["data"]["result"][0]["values"][0][0] == 0);
-    assert2::assert!(body["data"]["result"][0]["values"][0][1] == "1");
-}
-
-#[tokio::test]
 async fn query_range_endpoint_honors_limit_parameter_for_matrices() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        60_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web")]),
-        60_000,
-        2.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 60_000, 1.0)
+        .sample(labels(&[("__name__", "up"), ("job", "web")]), 60_000, 2.0)
+        .app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=up&start=60&end=60&step=60&limit=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/api/v1/query_range?query=up&start=60&end=60&step=60&limit=1",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"]["resultType"] == "matrix");
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_result_type(&body, "matrix");
     assert2::assert!(body["data"]["result"].as_array().unwrap().len() == 1);
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_post_form_body() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        60_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        120_000,
-        2.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = up_api_at_60_and_120().app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/query_range")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(Body::from("query=up&start=60&end=120&step=60"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(
+        &app,
+        "/api/v1/query_range",
+        "query=up&start=60&end=120&step=60",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"]["resultType"].as_str() == Some("matrix"));
-    assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
-    assert2::assert!(
-        body["data"]["result"][0]["values"].clone() == serde_json::json!([[60, "1"], [120, "2"]])
-    );
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_up_api_matrix(&body);
 }
 
 #[tokio::test]
 async fn query_range_endpoint_accepts_duration_literal_step() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        60_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        120_000,
-        2.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = up_api_at_60_and_120().app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=up&start=60&end=120&step=1m")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/api/v1/query_range?query=up&start=60&end=120&step=1m",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"]["resultType"] == "matrix");
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_result_type(&body, "matrix");
     assert2::assert!(body["data"]["result"][0]["values"][0][0] == 60);
     assert2::assert!(body["data"]["result"][0]["values"][0][1] == "1");
     assert2::assert!(body["data"]["result"][0]["values"][1][0] == 120);
@@ -1062,101 +916,74 @@ async fn query_range_endpoint_accepts_duration_literal_step() {
 
 #[tokio::test]
 async fn query_range_endpoint_rejects_end_before_start() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=up&start=120&end=60&step=60")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/api/v1/query_range?query=up&start=120&end=60&step=60",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "error");
-    assert2::assert!(body["errorType"] == "bad_data");
-    assert2::assert!(body["error"] == "end timestamp must not be before start time");
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
+    assert_error_envelope(
+        &body,
+        ApiError {
+            error_type: "bad_data",
+            message: "end timestamp must not be before start time",
+        },
+    );
 }
 
 #[tokio::test]
 async fn query_range_endpoint_rejects_invalid_limit_parameter() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=up&start=60&end=120&step=60&limit=abc")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/api/v1/query_range?query=up&start=60&end=120&step=60&limit=abc",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "error");
-    assert2::assert!(body["errorType"] == "bad_data");
-    assert2::assert!(body["error"] == "invalid limit parameter");
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
+    assert_error_envelope(
+        &body,
+        ApiError {
+            error_type: "bad_data",
+            message: "invalid limit parameter",
+        },
+    );
 }
 
 #[tokio::test]
 async fn query_range_endpoint_returns_prometheus_error_for_missing_step() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_range?query=up&start=60&end=120")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query_range?query=up&start=60&end=120").await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "error");
-    assert2::assert!(body["errorType"] == "bad_data");
-    assert2::assert!(body["error"] == "missing step parameter");
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
+    assert_error_envelope(
+        &body,
+        ApiError {
+            error_type: "bad_data",
+            message: "missing step parameter",
+        },
+    );
 }
 
 /// Grafana Mimir answers a query without `X-Scope-OrgID` with `401` and the
 /// plain-text body `no org id`, before its Prometheus API handler runs.
 #[tokio::test]
 async fn query_endpoint_requires_scope_org_id() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query?query=up&time=10")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        Request::builder()
+            .uri("/api/v1/query?query=up&time=10")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
 
     assert2::assert!(response.status() == StatusCode::UNAUTHORIZED);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -1165,19 +992,10 @@ async fn query_endpoint_requires_scope_org_id() {
 
 #[tokio::test]
 async fn query_endpoint_returns_422_when_max_samples_is_exceeded() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web")]),
-        10_000,
-        1.0,
-    );
+    let store = TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
+        .store();
     let state = Arc::new(PrometheusApiState::new(
         Arc::new(store),
         EngineOpts {
@@ -1187,148 +1005,81 @@ async fn query_endpoint_returns_422_when_max_samples_is_exceeded() {
     ));
     let app = prometheus_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query?query=up&time=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query?query=up&time=10").await;
 
-    assert2::assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "error");
-    assert2::assert!(body["errorType"] == "execution");
-    assert2::assert!(body["error"] == "samples per query exceeded: observed 2 above limit 1");
+    let body = json_with_status(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_error_envelope(
+        &body,
+        ApiError {
+            error_type: "execution",
+            message: "samples per query exceeded: observed 2 above limit 1",
+        },
+    );
 }
 
 #[tokio::test]
 async fn query_endpoint_applies_runtime_max_samples_per_query() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web")]),
-        10_000,
-        1.0,
-    );
-    let limits = Limits {
-        max_samples_per_query: 1,
-        ..Limits::default()
-    };
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(store), EngineOpts::default())
-            .with_query_limits(OverridesProvider::new(limits)),
-    );
-    let app = prometheus_router(state);
+    let app = TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
+        .limited_app(Limits {
+            max_samples_per_query: 1,
+            ..Limits::default()
+        });
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query?query=up&time=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query?query=up&time=10").await;
 
-    assert2::assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "error");
-    assert2::assert!(body["errorType"] == "execution");
-    assert2::assert!(body["error"] == "samples per query exceeded: observed 2 above limit 1");
+    let body = json_with_status(response, StatusCode::UNPROCESSABLE_ENTITY).await;
+    assert_error_envelope(
+        &body,
+        ApiError {
+            error_type: "execution",
+            message: "samples per query exceeded: observed 2 above limit 1",
+        },
+    );
 }
 
 #[tokio::test]
 async fn series_endpoint_returns_matching_label_sets() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = up_api_a_and_web_b().app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/series?match%5B%5D=up%7Bjob%3D%22api%22%7D&start=10&end=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/api/v1/series?match%5B%5D=up%7Bjob%3D%22api%22%7D&start=10&end=10",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"].as_array().expect("data array").len() == 1);
-    assert2::assert!(body["data"][0]["__name__"] == "up");
-    assert2::assert!(body["data"][0]["job"] == "api");
-    assert2::assert!(body["data"][0]["instance"] == "a");
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_only_up_api_a_series(&body);
 }
 
 #[tokio::test]
 async fn series_endpoint_accepts_or_label_matchers() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "db"), ("instance", "c")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/series?match%5B%5D=up%7Bjob%3D%22api%22%20or%20job%3D%22web%22%7D&start=10&end=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
         )
-        .await
-        .unwrap();
+        .sample(
+            labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "db"), ("instance", "c")]),
+            10_000,
+            1.0,
+        )
+        .app();
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(
+        &app,
+        "/api/v1/series?match%5B%5D=up%7Bjob%3D%22api%22%20or%20job%3D%22web%22%7D&start=10&end=10",
+    )
+    .await;
+
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     let data = body["data"].as_array().expect("data array");
     assert2::assert!(data.len() == 2);
@@ -1341,245 +1092,127 @@ async fn series_endpoint_accepts_or_label_matchers() {
 
 #[tokio::test]
 async fn series_endpoint_accepts_post_form_body() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = up_api_a_and_web_b().app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/series")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "match%5B%5D=up%7Bjob%3D%22api%22%7D&start=10&end=10",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(
+        &app,
+        "/api/v1/series",
+        "match%5B%5D=up%7Bjob%3D%22api%22%7D&start=10&end=10",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "success");
-    assert2::assert!(body["data"].as_array().expect("data array").len() == 1);
-    assert2::assert!(body["data"][0]["__name__"] == "up");
-    assert2::assert!(body["data"][0]["job"] == "api");
-    assert2::assert!(body["data"][0]["instance"] == "a");
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_only_up_api_a_series(&body);
 }
 
 #[tokio::test]
 async fn series_endpoint_honors_limit_parameter() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = up_api_a_and_web_b().app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/series?match%5B%5D=up&start=10&end=10&limit=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/api/v1/series?match%5B%5D=up&start=10&end=10&limit=1",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     assert2::assert!(body["data"].as_array().expect("data array").len() == 1);
 }
 
 #[tokio::test]
 async fn series_endpoint_rejects_invalid_limit_parameter() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/series?limit=abc")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/series?limit=abc").await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "error");
-    assert2::assert!(body["errorType"] == "bad_data");
-    assert2::assert!(body["error"] == "invalid limit parameter");
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
+    assert_error_envelope(
+        &body,
+        ApiError {
+            error_type: "bad_data",
+            message: "invalid limit parameter",
+        },
+    );
 }
 
 #[tokio::test]
 async fn series_endpoint_rejects_end_before_start() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/series?match%5B%5D=up&start=20&end=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/series?match%5B%5D=up&start=20&end=10").await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "error");
-    assert2::assert!(body["errorType"] == "bad_data");
-    assert2::assert!(body["error"] == "end timestamp must not be before start time");
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
+    assert_error_envelope(
+        &body,
+        ApiError {
+            error_type: "bad_data",
+            message: "end timestamp must not be before start time",
+        },
+    );
 }
 
 #[tokio::test]
 async fn labels_endpoint_returns_label_names_for_matchers() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "errors_total"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/labels?match%5B%5D=up&start=10&end=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
         )
-        .await
-        .unwrap();
+        .sample(
+            labels(&[("__name__", "errors_total"), ("job", "api")]),
+            10_000,
+            1.0,
+        )
+        .app();
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(&app, "/api/v1/labels?match%5B%5D=up&start=10&end=10").await;
+
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     assert2::assert!(body["data"] == serde_json::json!(["__name__", "instance", "job"]));
 }
 
 #[tokio::test]
 async fn labels_endpoint_accepts_post_form_body() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "errors_total"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/labels")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(Body::from("match%5B%5D=up&start=10&end=10"))
-                .unwrap(),
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
         )
-        .await
-        .unwrap();
+        .sample(
+            labels(&[("__name__", "errors_total"), ("job", "api")]),
+            10_000,
+            1.0,
+        )
+        .app();
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = post_form(&app, "/api/v1/labels", "match%5B%5D=up&start=10&end=10").await;
+
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     assert2::assert!(body["data"] == serde_json::json!(["__name__", "instance", "job"]));
 }
 
 #[tokio::test]
 async fn labels_endpoint_honors_limit_parameter() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/labels?match%5B%5D=up&start=10&end=10&limit=2")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
         )
-        .await
-        .unwrap();
+        .app();
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(
+        &app,
+        "/api/v1/labels?match%5B%5D=up&start=10&end=10&limit=2",
+    )
+    .await;
+
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     assert2::assert!(body["data"] == serde_json::json!(["__name__", "instance"]));
 }
@@ -1595,25 +1228,15 @@ async fn label_values_endpoint_is_available_under_mimir_prefix() {
             1.0,
         );
     }
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/label/job/values?match%5B%5D=up&start=10&end=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/prometheus/api/v1/label/job/values?match%5B%5D=up&start=10&end=10",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     assert2::assert!(body["data"] == serde_json::json!(["api", "web"]));
 }
@@ -1635,27 +1258,16 @@ async fn label_values_endpoint_accepts_post_form_body() {
         10_000,
         1.0,
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/label/job/values")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(Body::from("match%5B%5D=up&start=10&end=10"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(
+        &app,
+        "/api/v1/label/job/values",
+        "match%5B%5D=up&start=10&end=10",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     assert2::assert!(body["data"] == serde_json::json!(["api", "web"]));
 }
@@ -1671,50 +1283,26 @@ async fn label_values_endpoint_honors_limit_parameter() {
             1.0,
         );
     }
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/label/job/values?match%5B%5D=up&start=10&end=10&limit=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/api/v1/label/job/values?match%5B%5D=up&start=10&end=10&limit=1",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     assert2::assert!(body["data"] == serde_json::json!(["api"]));
 }
 
 #[tokio::test]
 async fn metadata_endpoint_is_available_under_mimir_prefix() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/metadata")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/prometheus/api/v1/metadata").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     assert2::assert!(body["data"] == serde_json::json!({}));
 }
@@ -1736,25 +1324,11 @@ async fn metadata_endpoint_returns_metric_metadata() {
         "Wrong tenant.",
         "",
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/metadata?metric=http_requests_total")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/metadata?metric=http_requests_total").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     assert2::assert!(
         body["data"]["http_requests_total"]
@@ -1779,25 +1353,11 @@ async fn metadata_endpoint_honors_limit_parameter() {
         "requests",
     );
     store.push_metadata("tenant-a", "up", "gauge", "Target health.", "");
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/metadata?limit=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/metadata?limit=1").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     assert2::assert!(body["data"].as_object().unwrap().len() == 1);
     assert2::assert!(body["data"]["http_requests_total"][0]["type"] == "counter");
@@ -1814,53 +1374,29 @@ async fn metadata_endpoint_treats_zero_limit_as_disabled() {
         "requests",
     );
     store.push_metadata("tenant-a", "up", "gauge", "Target health.", "");
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/metadata?limit=0")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/metadata?limit=0").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     assert2::assert!(body["data"].as_object().unwrap().len() == 2);
 }
 
 #[tokio::test]
 async fn metadata_endpoint_rejects_invalid_limit_parameter_with_prometheus_error() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/metadata?limit=abc")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/metadata?limit=abc").await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"] == "error");
-    assert2::assert!(body["errorType"] == "bad_data");
-    assert2::assert!(body["error"] == "invalid limit parameter");
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
+    assert_error_envelope(
+        &body,
+        ApiError {
+            error_type: "bad_data",
+            message: "invalid limit parameter",
+        },
+    );
 }
 
 #[tokio::test]
@@ -1881,25 +1417,11 @@ async fn metadata_endpoint_honors_limit_per_metric_parameter() {
         "requests",
     );
     store.push_metadata("tenant-a", "up", "gauge", "Target health.", "");
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/metadata?limit_per_metric=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/metadata?limit_per_metric=1").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     assert2::assert!(body["data"].as_object().unwrap().len() == 2);
     assert2::assert!(
@@ -1914,50 +1436,22 @@ async fn metadata_endpoint_honors_limit_per_metric_parameter() {
 
 #[tokio::test]
 async fn rules_endpoint_returns_empty_groups() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/rules")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/rules").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"]["groups"].clone() == serde_json::json!([]));
 }
 
 #[tokio::test]
 async fn rules_endpoint_rejects_invalid_exclude_alerts_parameter_with_prometheus_error() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/rules?exclude_alerts=maybe")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/rules?exclude_alerts=maybe").await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
     assert2::assert!(body["status"].as_str() == Some("error"));
     assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
     assert2::assert!(body["error"].as_str() == Some("invalid exclude_alerts parameter"));
@@ -1965,39 +1459,13 @@ async fn rules_endpoint_rejects_invalid_exclude_alerts_parameter_with_prometheus
 
 #[tokio::test]
 async fn rules_endpoint_returns_loaded_recording_rules() {
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    )));
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(RULE_GROUP_YAML))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+    configure_team_a_rules(&app, RULE_GROUP_YAML).await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/rules")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/rules").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     let group = &body["data"]["groups"][0];
     let rule = &group["rules"][0];
     assert2::assert!(body["status"].as_str() == Some("success"));
@@ -2025,26 +1493,10 @@ async fn rules_endpoint_returns_loaded_recording_rules() {
 
 #[tokio::test]
 async fn rules_endpoint_reports_group_last_evaluation_from_ruler_state() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
+    let state = api_state(InMemoryMetricStore::new());
     let app = prometheus_router(Arc::clone(&state));
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(RULE_GROUP_YAML))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+    configure_team_a_rules(&app, RULE_GROUP_YAML).await;
 
     state.apply_ruler_group_state(RulerGroupStateRecord {
         tenant: "tenant-a".to_string(),
@@ -2053,57 +1505,20 @@ async fn rules_endpoint_reports_group_last_evaluation_from_ruler_state() {
         last_eval_ms: 90_000,
     });
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/rules")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/rules").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["data"]["groups"][0]["lastEvaluation"] == "1970-01-01T00:01:30Z");
 }
 
 #[tokio::test]
 async fn rules_endpoint_filters_by_rule_type() {
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    )));
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(RULE_GROUP_YAML))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+    configure_team_a_rules(&app, RULE_GROUP_YAML).await;
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/rules?type=alert")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(&app, "/api/v1/rules?type=alert").await;
+    let body = json_with_status(response, StatusCode::OK).await;
     let alert_rules = body["data"]["groups"][0]["rules"].as_array().unwrap();
     assert2::assert!(alert_rules.len() == 1);
     assert2::assert!(alert_rules[0]["type"].as_str() == Some("alerting"));
@@ -2112,18 +1527,8 @@ async fn rules_endpoint_filters_by_rule_type() {
     assert2::assert!(alert_rules[0]["labels"]["severity"].as_str() == Some("page"));
     assert2::assert!(alert_rules[0]["annotations"]["summary"].as_str() == Some("high latency"));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/rules?type=record")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(&app, "/api/v1/rules?type=record").await;
+    let body = json_with_status(response, StatusCode::OK).await;
     let recording_rules = body["data"]["groups"][0]["rules"].as_array().unwrap();
     assert2::assert!(recording_rules.len() == 1);
     assert2::assert!(recording_rules[0]["type"].as_str() == Some("recording"));
@@ -2134,25 +1539,11 @@ async fn rules_endpoint_filters_by_rule_type() {
 
 #[tokio::test]
 async fn rules_endpoint_rejects_invalid_type_parameter() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/rules?type=notify")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/rules?type=notify").await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
     assert2::assert!(body["status"].as_str() == Some("error"));
     assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
     assert2::assert!(body["error"].as_str() == Some("not supported value \"notify\""));
@@ -2160,54 +1551,17 @@ async fn rules_endpoint_rejects_invalid_type_parameter() {
 
 #[tokio::test]
 async fn rules_endpoint_can_exclude_alert_payloads() {
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    )));
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(RULE_GROUP_YAML))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+    configure_team_a_rules(&app, RULE_GROUP_YAML).await;
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/rules?type=alert")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(&app, "/api/v1/rules?type=alert").await;
+    let body = json_with_status(response, StatusCode::OK).await;
     let alert_rule = &body["data"]["groups"][0]["rules"][0];
     assert2::assert!(alert_rule.get("alerts").is_some());
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/rules?type=alert&exclude_alerts=true")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(&app, "/api/v1/rules?type=alert&exclude_alerts=true").await;
+    let body = json_with_status(response, StatusCode::OK).await;
     let alert_rule = &body["data"]["groups"][0]["rules"][0];
     assert2::assert!(alert_rule["type"].as_str() == Some("alerting"));
     assert2::assert!(alert_rule["name"].as_str() == Some("HighLatency"));
@@ -2216,97 +1570,41 @@ async fn rules_endpoint_can_exclude_alert_payloads() {
 
 #[tokio::test]
 async fn rules_endpoint_embeds_evaluated_alerts() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        0,
-        1.0,
-    );
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    )));
-
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(
-                    "
-name: availability
-rules:
-  - alert: InstanceDown
-    expr: up > 0
-    labels:
-      severity: page
-    annotations:
-      summary: instance down
-",
-                ))
-                .unwrap(),
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            0,
+            1.0,
         )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+        .app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/rules?type=alert")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    configure_team_a_rules(&app, INSTANCE_DOWN_PAGE_YAML).await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(&app, "/api/v1/rules?type=alert").await;
+
+    let body = json_with_status(response, StatusCode::OK).await;
     let rule = &body["data"]["groups"][0]["rules"][0];
     let alerts = rule["alerts"].as_array().unwrap();
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(rule["name"].as_str() == Some("InstanceDown"));
     assert2::assert!(rule["lastEvaluation"].as_str() == Some("1970-01-01T00:00:00Z"));
     assert2::assert!(alerts.len() == 1);
-    assert2::assert!(alerts[0]["labels"]["alertname"].as_str() == Some("InstanceDown"));
-    assert2::assert!(alerts[0]["labels"]["job"].as_str() == Some("api"));
-    assert2::assert!(alerts[0]["labels"]["instance"].as_str() == Some("a"));
-    assert2::assert!(alerts[0]["labels"]["severity"].as_str() == Some("page"));
-    assert2::assert!(alerts[0]["annotations"]["summary"].as_str() == Some("instance down"));
-    assert2::assert!(alerts[0]["state"].as_str() == Some("firing"));
-    assert2::assert!(alerts[0]["activeAt"].as_str() == Some("1970-01-01T00:00:00Z"));
-    assert2::assert!(alerts[0]["value"].as_str() == Some("1"));
+    assert_firing_instance_down_alert(&alerts[0]);
 }
 
 #[tokio::test]
 async fn rules_endpoint_expands_value_and_labels_in_alert_templates() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        0,
-        2.0,
-    );
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    )));
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            0,
+            2.0,
+        )
+        .app();
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(
-                    "
+    configure_team_a_rules(
+        &app,
+        "
 name: availability
 rules:
   - alert: InstanceDown
@@ -2317,26 +1615,12 @@ rules:
       summary: '{{ $labels.job }} is {{ $value }}'
       passthrough: '{{ humanize $value }}'
 ",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/rules?type=alert")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/rules?type=alert").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     let alerts = body["data"]["groups"][0]["rules"][0]["alerts"]
         .as_array()
         .unwrap();
@@ -2349,46 +1633,22 @@ rules:
 
 #[tokio::test]
 async fn rules_endpoint_reports_alert_evaluation_errors_per_rule() {
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    )));
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(
-                    "
+    configure_team_a_rules(
+        &app,
+        "
 name: unsupported
 rules:
   - alert: UnsupportedAlert
     expr: label_replace(up, \"dst\", \"$1\", \"src\", \"(\")
 ",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/rules?type=alert")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/rules?type=alert").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     let rule = &body["data"]["groups"][0]["rules"][0];
     assert2::assert!(rule["name"].as_str() == Some("UnsupportedAlert"));
@@ -2403,64 +1663,24 @@ rules:
 
 #[tokio::test]
 async fn alerts_endpoint_returns_empty_alerts_under_mimir_prefix() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/prometheus/api/v1/alerts").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"]["alerts"].clone() == serde_json::json!([]));
 }
 
 #[tokio::test]
 async fn alerts_endpoint_omits_inactive_configured_alerting_rules() {
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    )));
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(RULE_GROUP_YAML))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+    configure_team_a_rules(&app, RULE_GROUP_YAML).await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/prometheus/api/v1/alerts").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     let alerts = body["data"]["alerts"].as_array().unwrap();
     assert2::assert!(alerts.is_empty());
@@ -2468,123 +1688,53 @@ async fn alerts_endpoint_omits_inactive_configured_alerting_rules() {
 
 #[tokio::test]
 async fn alerts_endpoint_evaluates_alerting_rules() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        0,
-        1.0,
-    );
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    )));
-
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(
-                    "
-name: availability
-rules:
-  - alert: InstanceDown
-    expr: up > 0
-    labels:
-      severity: page
-    annotations:
-      summary: instance down
-",
-                ))
-                .unwrap(),
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            0,
+            1.0,
         )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+        .app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    configure_team_a_rules(&app, INSTANCE_DOWN_PAGE_YAML).await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(&app, "/prometheus/api/v1/alerts").await;
+
+    let body = json_with_status(response, StatusCode::OK).await;
     let alerts = body["data"]["alerts"].as_array().unwrap();
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(alerts.len() == 1);
     assert2::assert!(alerts[0]["name"].as_str() == Some("InstanceDown"));
     assert2::assert!(alerts[0]["query"].as_str() == Some("up > 0"));
     assert2::assert!(alerts[0]["duration"].as_i64() == Some(0));
-    assert2::assert!(alerts[0]["labels"]["alertname"].as_str() == Some("InstanceDown"));
-    assert2::assert!(alerts[0]["labels"]["job"].as_str() == Some("api"));
-    assert2::assert!(alerts[0]["labels"]["instance"].as_str() == Some("a"));
-    assert2::assert!(alerts[0]["labels"]["severity"].as_str() == Some("page"));
-    assert2::assert!(alerts[0]["annotations"]["summary"].as_str() == Some("instance down"));
-    assert2::assert!(alerts[0]["state"].as_str() == Some("firing"));
-    assert2::assert!(alerts[0]["activeAt"].as_str() == Some("1970-01-01T00:00:00Z"));
-    assert2::assert!(alerts[0]["value"].as_str() == Some("1"));
+    assert_firing_instance_down_alert(&alerts[0]);
 }
 
 #[tokio::test]
 async fn alerts_endpoint_marks_for_duration_alerts_pending() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        0,
-        1.0,
-    );
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    )));
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            0,
+            1.0,
+        )
+        .app();
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(
-                    "
+    configure_team_a_rules(
+        &app,
+        "
 name: availability
 rules:
   - alert: InstanceDown
     expr: up > 0
     for: 5m
 ",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+    )
+    .await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/prometheus/api/v1/alerts").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     let alerts = body["data"]["alerts"].as_array().unwrap();
     assert2::assert!(alerts.len() == 1);
@@ -2596,79 +1746,43 @@ rules:
 
 #[tokio::test]
 async fn alerts_endpoint_fires_for_duration_alerts_after_active_duration() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        0,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        300_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
+    let store = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            0,
+            1.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            300_000,
+            1.0,
+        )
+        .store();
+    let state = api_state(store);
     let app = prometheus_router(Arc::clone(&state));
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(
-                    "
+    configure_team_a_rules(
+        &app,
+        "
 name: availability
 rules:
   - alert: InstanceDown
     expr: up > 0
     for: 5m
 ",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+    )
+    .await;
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(&app, "/prometheus/api/v1/alerts").await;
+    let body = json_with_status(response, StatusCode::OK).await;
     let alerts = body["data"]["alerts"].as_array().unwrap();
     assert2::assert!(alerts.len() == 1);
     assert2::assert!(alerts[0]["state"].as_str() == Some("pending"));
     assert2::assert!(alerts[0]["activeAt"].as_str() == Some("1970-01-01T00:00:00Z"));
 
     state.set_ruler_evaluation_time_ms(300_000);
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(&app, "/prometheus/api/v1/alerts").await;
+    let body = json_with_status(response, StatusCode::OK).await;
     let alerts = body["data"]["alerts"].as_array().unwrap();
     assert2::assert!(alerts.len() == 1);
     assert2::assert!(alerts[0]["duration"].as_i64() == Some(300));
@@ -2679,42 +1793,28 @@ rules:
 
 #[tokio::test]
 async fn alerts_endpoint_replays_compacted_alert_state() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        300_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
+    let store = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            300_000,
+            1.0,
+        )
+        .store();
+    let state = api_state(store);
     state.set_ruler_evaluation_time_ms(300_000);
     let app = prometheus_router(Arc::clone(&state));
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(
-                    "
+    configure_team_a_rules(
+        &app,
+        "
 name: availability
 rules:
   - alert: InstanceDown
     expr: up > 0
     for: 5m
 ",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+    )
+    .await;
 
     let alert_labels = BTreeMap::from([
         ("alertname".to_string(), "InstanceDown".to_string()),
@@ -2729,19 +1829,9 @@ rules:
         keep_firing_until_ms: None,
     });
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alerts")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/prometheus/api/v1/alerts").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     let alerts = body["data"]["alerts"].as_array().unwrap();
     assert2::assert!(alerts.len() == 1);
     assert2::assert!(alerts[0]["state"].as_str() == Some("firing"));
@@ -2750,24 +1840,18 @@ rules:
 
 #[tokio::test]
 async fn alertmanagers_endpoint_returns_empty_discovery_lists() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/alertmanagers")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        Request::builder()
+            .uri("/prometheus/api/v1/alertmanagers")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"]["activeAlertmanagers"].clone() == serde_json::json!([]));
     assert2::assert!(body["data"]["droppedAlertmanagers"].clone() == serde_json::json!([]));
@@ -2775,24 +1859,18 @@ async fn alertmanagers_endpoint_returns_empty_discovery_lists() {
 
 #[tokio::test]
 async fn targets_endpoint_returns_empty_discovery_lists() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/targets")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        Request::builder()
+            .uri("/prometheus/api/v1/targets")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"]["activeTargets"].clone() == serde_json::json!([]));
     assert2::assert!(body["data"]["droppedTargets"].clone() == serde_json::json!([]));
@@ -2801,49 +1879,33 @@ async fn targets_endpoint_returns_empty_discovery_lists() {
 
 #[tokio::test]
 async fn scrape_pools_endpoint_returns_empty_pool_list() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/scrape_pools")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        Request::builder()
+            .uri("/prometheus/api/v1/scrape_pools")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"].clone() == serde_json::json!([]));
 }
 
 #[tokio::test]
 async fn target_metadata_endpoint_returns_empty_metadata_list() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/targets/metadata?metric=up&limit=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/prometheus/api/v1/targets/metadata?metric=up&limit=1",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"].clone() == serde_json::json!([]));
 }
@@ -2859,25 +1921,15 @@ async fn target_metadata_endpoint_returns_metric_metadata() {
         "requests",
     );
     store.push_metadata("tenant-a", "up", "gauge", "Target health.", "");
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/targets/metadata?metric=http_requests_total&limit=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/prometheus/api/v1/targets/metadata?metric=http_requests_total&limit=1",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"].as_array().unwrap().len() == 1);
     assert2::assert!(
@@ -2894,91 +1946,50 @@ async fn target_metadata_endpoint_returns_metric_metadata() {
 
 #[tokio::test]
 async fn format_query_endpoint_accepts_post_form_body() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/format_query")
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(Body::from("query=sum%28up%29"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/format_query")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(Body::from("query=sum%28up%29"))
+            .unwrap(),
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"].as_str() == Some("sum(up)"));
 }
 
 #[tokio::test]
 async fn parse_query_endpoint_accepts_post_form_body() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/parse_query")
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(Body::from("query=up"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/parse_query")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(Body::from("query=up"))
+            .unwrap(),
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"]["type"].as_str() == Some("vectorSelector"));
-    assert2::assert!(body["data"]["name"].as_str() == Some("up"));
-    assert2::assert!(body["data"]["matchers"].clone() == serde_json::json!([]));
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_up_vector_selector(&body, &serde_json::json!([]));
 }
 
 #[tokio::test]
 async fn ruler_config_rules_crud_round_trips_yaml_groups() {
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    )));
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(RULE_GROUP_YAML))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::ACCEPTED);
+    configure_team_a_rules(&app, RULE_GROUP_YAML).await;
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/config/v1/rules")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/prometheus/config/v1/rules").await;
     assert2::assert!(response.status() == StatusCode::OK);
     assert2::assert!(response.headers()["Content-Type"].to_str().unwrap() == "application/yaml");
     let yaml: serde_yaml::Value =
@@ -2990,62 +2001,39 @@ async fn ruler_config_rules_crud_round_trips_yaml_groups() {
             == Some("job:http_request_duration_seconds:p99")
     );
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/config/v1/rules/team-a/latency")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/prometheus/config/v1/rules/team-a/latency").await;
     assert2::assert!(response.status() == StatusCode::OK);
     let yaml: serde_yaml::Value =
         serde_yaml::from_str(&response_text(response).await).expect("group yaml");
     assert2::assert!(yaml["name"] == "latency");
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/config/v1/rules")
-                .header("X-Scope-OrgID", "tenant-b")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        Request::builder()
+            .uri("/prometheus/config/v1/rules")
+            .header("X-Scope-OrgID", "tenant-b")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
     assert2::assert!(response.status() == StatusCode::OK);
     let yaml: serde_yaml::Value =
         serde_yaml::from_str(&response_text(response).await).expect("tenant yaml");
     assert2::assert!(yaml == serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
-                .uri("/prometheus/config/v1/rules/team-a/latency")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        Request::builder()
+            .method("DELETE")
+            .uri("/prometheus/config/v1/rules/team-a/latency")
+            .header("X-Scope-OrgID", "tenant-a")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
     assert2::assert!(response.status() == StatusCode::ACCEPTED);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/prometheus/config/v1/rules/team-a").await;
     assert2::assert!(response.status() == StatusCode::OK);
     let yaml: serde_yaml::Value =
         serde_yaml::from_str(&response_text(response).await).expect("namespace yaml");
@@ -3054,66 +2042,36 @@ async fn ruler_config_rules_crud_round_trips_yaml_groups() {
 
 #[tokio::test]
 async fn ruler_config_rejects_invalid_rule_groups() {
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    )));
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(
-                    "
+    let response = post_yaml(
+        &app,
+        "/prometheus/config/v1/rules/team-a",
+        "
 name: broken
 rules:
   - record: missing_expr
 ",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    )
+    .await;
     assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
     assert2::assert!(response_text(response).await.contains("expr"));
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/team-a")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(
-                    "
+    let response = post_yaml(
+        &app,
+        "/prometheus/config/v1/rules/team-a",
+        "
 name: broken
 rules:
   - record: bad_query
     expr: sum(
 ",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    )
+    .await;
     assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
     assert2::assert!(response_text(response).await.contains("PromQL"));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/config/v1/rules")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/prometheus/config/v1/rules").await;
     assert2::assert!(response.status() == StatusCode::OK);
     let yaml: serde_yaml::Value =
         serde_yaml::from_str(&response_text(response).await).expect("tenant yaml");
@@ -3122,38 +2080,24 @@ rules:
 
 #[tokio::test]
 async fn query_exemplars_endpoint_returns_empty_list() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_exemplars?query=up&start=10&end=20")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query_exemplars?query=up&start=10&end=20").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     assert2::assert!(body["data"] == serde_json::json!([]));
 }
 
 #[tokio::test]
 async fn query_exemplars_endpoint_returns_matching_exemplars() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "http_requests_total"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
+    let mut store = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "http_requests_total"), ("job", "api")]),
+            10_000,
+            1.0,
+        )
+        .store();
     store.push_exemplar(
         "tenant-a",
         labels(&[("__name__", "http_requests_total"), ("job", "api")]),
@@ -3168,25 +2112,15 @@ async fn query_exemplars_endpoint_returns_matching_exemplars() {
         10_500,
         9.0,
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_exemplars?query=http_requests_total%7Bjob%3D%22api%22%7D&start=10&end=11")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/api/v1/query_exemplars?query=http_requests_total%7Bjob%3D%22api%22%7D&start=10&end=11",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"].as_array().expect("data array").len() == 1);
     assert2::assert!(
@@ -3223,25 +2157,11 @@ async fn query_exemplars_endpoint_accepts_or_label_matchers() {
         10_700,
         11.0,
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_exemplars?query=http_requests_total%7Bjob%3D%22api%22%20or%20job%3D%22web%22%7D&start=10&end=11")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query_exemplars?query=http_requests_total%7Bjob%3D%22api%22%20or%20job%3D%22web%22%7D&start=10&end=11").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"] == "success");
     let data = body["data"].as_array().expect("data array");
     assert2::assert!(data.len() == 2);
@@ -3254,13 +2174,13 @@ async fn query_exemplars_endpoint_accepts_or_label_matchers() {
 
 #[tokio::test]
 async fn query_exemplars_endpoint_accepts_post_form_body() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "http_requests_total"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
+    let mut store = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "http_requests_total"), ("job", "api")]),
+            10_000,
+            1.0,
+        )
+        .store();
     store.push_exemplar(
         "tenant-a",
         labels(&[("__name__", "http_requests_total"), ("job", "api")]),
@@ -3268,29 +2188,16 @@ async fn query_exemplars_endpoint_accepts_post_form_body() {
         10_500,
         7.0,
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/query_exemplars")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(Body::from(
-                    "query=http_requests_total%7Bjob%3D%22api%22%7D&start=10&end=11",
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(
+        &app,
+        "/api/v1/query_exemplars",
+        "query=http_requests_total%7Bjob%3D%22api%22%7D&start=10&end=11",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"].as_array().expect("data array").len() == 1);
     assert2::assert!(body["data"][0]["seriesLabels"]["job"].as_str() == Some("api"));
@@ -3300,25 +2207,11 @@ async fn query_exemplars_endpoint_accepts_post_form_body() {
 
 #[tokio::test]
 async fn query_exemplars_endpoint_rejects_end_before_start() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/query_exemplars?query=up&start=20&end=10")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/query_exemplars?query=up&start=20&end=10").await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
     assert2::assert!(body["status"].as_str() == Some("error"));
     assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
     assert2::assert!(body["error"].as_str() == Some("end timestamp must not be before start time"));
@@ -3346,56 +2239,25 @@ async fn remote_read_endpoint_applies_configured_body_cap() {
 
 #[tokio::test]
 async fn remote_read_endpoint_returns_snappy_protobuf_response() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
     let request = pb::v1::ReadRequest {
         queries: Vec::new(),
         accepted_response_types: Vec::new(),
     };
-    let compressed = SnappyEncoder::new()
-        .compress_vec(&request.encode_to_vec())
-        .expect("snappy request");
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/read")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-protobuf")
-                .header("Content-Encoding", "snappy")
-                .body(Body::from(compressed))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = remote_read(&app, &request).await;
 
     assert2::assert!(response.status() == StatusCode::OK);
     assert2::assert!(
         response.headers()["Content-Type"].to_str().unwrap() == "application/x-protobuf"
     );
     assert2::assert!(response.headers()["Content-Encoding"].to_str().unwrap() == "snappy");
-    let bytes = to_bytes(response.into_body(), 1024 * 1024)
-        .await
-        .expect("response body");
-    let decoded = SnappyDecoder::new()
-        .decompress_vec(&bytes)
-        .expect("snappy response");
-    let read_response =
-        pb::v1::ReadResponse::decode(decoded.as_slice()).expect("remote read response");
+    let read_response = decode_read_response(response).await;
     assert2::assert!(read_response.results.is_empty());
 }
 
 #[tokio::test]
 async fn remote_read_endpoint_accepts_listed_snappy_content_encoding() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
     let request = pb::v1::ReadRequest {
         queries: Vec::new(),
         accepted_response_types: Vec::new(),
@@ -3404,59 +2266,38 @@ async fn remote_read_endpoint_accepts_listed_snappy_content_encoding() {
         .compress_vec(&request.encode_to_vec())
         .expect("snappy request");
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/read")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-protobuf")
-                .header("Content-Encoding", "identity, snappy")
-                .body(Body::from(compressed))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/read")
+            .header("X-Scope-OrgID", "tenant-a")
+            .header("Content-Type", "application/x-protobuf")
+            .header("Content-Encoding", "identity, snappy")
+            .body(Body::from(compressed))
+            .unwrap(),
+    )
+    .await;
 
     assert2::assert!(response.status() == StatusCode::OK);
 }
 
 #[tokio::test]
 async fn remote_read_endpoint_rejects_end_before_start() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
     let request = pb::v1::ReadRequest {
-        queries: vec![pb::v1::Query {
-            start_timestamp_ms: 20_000,
-            end_timestamp_ms: 10_000,
-            matchers: Vec::new(),
-            hints: None,
-        }],
+        queries: vec![read_query(
+            MillisRange {
+                start_ms: 20_000,
+                end_ms: 10_000,
+            },
+            Vec::new(),
+        )],
         accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
     };
-    let compressed = SnappyEncoder::new()
-        .compress_vec(&request.encode_to_vec())
-        .expect("snappy request");
+    let response = remote_read(&app, &request).await;
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/read")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-protobuf")
-                .header("Content-Encoding", "snappy")
-                .body(Body::from(compressed))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
     assert2::assert!(body["status"].as_str() == Some("error"));
     assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
     assert2::assert!(body["error"].as_str() == Some("end timestamp must not be before start time"));
@@ -3490,23 +2331,7 @@ async fn remote_read_endpoint_rejects_invalid_or_oversized_hint_ranges() {
             }],
             accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
         };
-        let compressed = SnappyEncoder::new()
-            .compress_vec(&request.encode_to_vec())
-            .expect("snappy request");
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/read")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .body(Body::from(compressed))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = remote_read(&app, &request).await;
         assert2::assert!(response.status() == expected_status);
         let body = response_json(response).await;
         assert2::assert!(body["status"] == "error");
@@ -3515,36 +2340,28 @@ async fn remote_read_endpoint_rejects_invalid_or_oversized_hint_ranges() {
 
 #[tokio::test]
 async fn remote_read_endpoint_returns_matching_float_samples() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        20_000,
-        2.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        30_000,
-        3.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-        20_000,
-        9.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            20_000,
+            2.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            30_000,
+            3.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
+            20_000,
+            9.0,
+        )
+        .app();
     let request = pb::v1::ReadRequest {
         queries: [
             None,
@@ -3558,18 +2375,7 @@ async fn remote_read_endpoint_returns_matching_float_samples() {
         .map(|bounds| pb::v1::Query {
             start_timestamp_ms: 10_000,
             end_timestamp_ms: 20_000,
-            matchers: vec![
-                pb::v1::LabelMatcher {
-                    r#type: pb::v1::label_matcher::Type::Eq as i32,
-                    name: "__name__".into(),
-                    value: "up".into(),
-                },
-                pb::v1::LabelMatcher {
-                    r#type: pb::v1::label_matcher::Type::Eq as i32,
-                    name: "job".into(),
-                    value: "api".into(),
-                },
-            ],
+            matchers: vec![eq_matcher("__name__", "up"), eq_matcher("job", "api")],
             hints: bounds.map(|(start_ms, end_ms)| pb::v1::ReadHints {
                 start_ms,
                 end_ms,
@@ -3579,33 +2385,10 @@ async fn remote_read_endpoint_returns_matching_float_samples() {
         .collect(),
         accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
     };
-    let compressed = SnappyEncoder::new()
-        .compress_vec(&request.encode_to_vec())
-        .expect("snappy request");
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/read")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-protobuf")
-                .header("Content-Encoding", "snappy")
-                .body(Body::from(compressed))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = remote_read(&app, &request).await;
 
     assert2::assert!(response.status() == StatusCode::OK);
-    let bytes = to_bytes(response.into_body(), 1024 * 1024)
-        .await
-        .expect("response body");
-    let decoded = SnappyDecoder::new()
-        .decompress_vec(&bytes)
-        .expect("snappy response");
-    let read_response =
-        pb::v1::ReadResponse::decode(decoded.as_slice()).expect("remote read response");
+    let read_response = decode_read_response(response).await;
     let series = &read_response.results[0].timeseries[0];
     assert2::assert!(read_response.results.len() == 6);
     assert2::assert!(read_response.results[0].timeseries.len() == 1);
@@ -3643,163 +2426,63 @@ async fn remote_read_endpoint_returns_matching_float_samples() {
 
 #[tokio::test]
 async fn remote_read_endpoint_rejects_selected_series_over_tenant_limit() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "b")]),
-        10_000,
-        1.0,
-    );
-    let limits = Limits {
-        max_fetched_series_per_query: 1,
-        ..Limits::default()
-    };
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(store), EngineOpts::default())
-            .with_query_limits(OverridesProvider::new(limits)),
-    );
-    let app = prometheus_router(state);
-    let request = pb::v1::ReadRequest {
-        queries: vec![pb::v1::Query {
-            start_timestamp_ms: 10_000,
-            end_timestamp_ms: 10_000,
-            matchers: vec![
-                pb::v1::LabelMatcher {
-                    r#type: pb::v1::label_matcher::Type::Eq as i32,
-                    name: "__name__".into(),
-                    value: "up".into(),
-                },
-                pb::v1::LabelMatcher {
-                    r#type: pb::v1::label_matcher::Type::Eq as i32,
-                    name: "job".into(),
-                    value: "api".into(),
-                },
-            ],
-            hints: None,
-        }],
-        accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
-    };
-    let compressed = SnappyEncoder::new()
-        .compress_vec(&request.encode_to_vec())
-        .expect("snappy request");
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/read")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-protobuf")
-                .header("Content-Encoding", "snappy")
-                .body(Body::from(compressed))
-                .unwrap(),
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
         )
-        .await
-        .unwrap();
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "b")]),
+            10_000,
+            1.0,
+        )
+        .limited_app(Limits {
+            max_fetched_series_per_query: 1,
+            ..Limits::default()
+        });
+    let request = up_api_samples_request(10_000);
+    let response = remote_read(&app, &request).await;
 
-    assert2::assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("error"));
-    assert2::assert!(body["errorType"].as_str() == Some("execution"));
-    assert2::assert!(
-        body["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("series per query exceeded"))
-    );
+    assert_execution_error_containing(response, "series per query exceeded").await;
 }
 
 #[tokio::test]
 async fn remote_read_endpoint_rejects_samples_over_tenant_limit() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        20_000,
-        2.0,
-    );
-    let limits = Limits {
-        max_samples_per_query: 1,
-        ..Limits::default()
-    };
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(store), EngineOpts::default())
-            .with_query_limits(OverridesProvider::new(limits)),
-    );
-    let app = prometheus_router(state);
-    let request = pb::v1::ReadRequest {
-        queries: vec![pb::v1::Query {
-            start_timestamp_ms: 10_000,
-            end_timestamp_ms: 20_000,
-            matchers: vec![
-                pb::v1::LabelMatcher {
-                    r#type: pb::v1::label_matcher::Type::Eq as i32,
-                    name: "__name__".into(),
-                    value: "up".into(),
-                },
-                pb::v1::LabelMatcher {
-                    r#type: pb::v1::label_matcher::Type::Eq as i32,
-                    name: "job".into(),
-                    value: "api".into(),
-                },
-            ],
-            hints: None,
-        }],
-        accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
-    };
-    let compressed = SnappyEncoder::new()
-        .compress_vec(&request.encode_to_vec())
-        .expect("snappy request");
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/read")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-protobuf")
-                .header("Content-Encoding", "snappy")
-                .body(Body::from(compressed))
-                .unwrap(),
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
         )
-        .await
-        .unwrap();
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            20_000,
+            2.0,
+        )
+        .limited_app(Limits {
+            max_samples_per_query: 1,
+            ..Limits::default()
+        });
+    let request = up_api_samples_request(20_000);
+    let response = remote_read(&app, &request).await;
 
-    assert2::assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("error"));
-    assert2::assert!(body["errorType"].as_str() == Some("execution"));
-    assert2::assert!(
-        body["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("samples per query exceeded"))
-    );
+    assert_execution_error_containing(response, "samples per query exceeded").await;
 }
 
 #[tokio::test]
 async fn remote_read_endpoint_returns_matching_exemplars() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[
-            ("__name__", "http_requests_total"),
-            ("job", "api"),
-            ("instance", "a"),
-        ]),
-        10_000,
-        1.0,
-    );
+    let mut store = TenantFloats::new()
+        .sample(
+            labels(&[
+                ("__name__", "http_requests_total"),
+                ("job", "api"),
+                ("instance", "a"),
+            ]),
+            10_000,
+            1.0,
+        )
+        .store();
     store.push_exemplar(
         "tenant-a",
         labels(&[
@@ -3811,51 +2494,21 @@ async fn remote_read_endpoint_returns_matching_exemplars() {
         10_500,
         7.0,
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
     let request = pb::v1::ReadRequest {
-        queries: vec![pb::v1::Query {
-            start_timestamp_ms: 10_000,
-            end_timestamp_ms: 11_000,
-            matchers: vec![pb::v1::LabelMatcher {
-                r#type: pb::v1::label_matcher::Type::Eq as i32,
-                name: "__name__".into(),
-                value: "http_requests_total".into(),
-            }],
-            hints: None,
-        }],
+        queries: vec![read_query(
+            MillisRange {
+                start_ms: 10_000,
+                end_ms: 11_000,
+            },
+            vec![eq_matcher("__name__", "http_requests_total")],
+        )],
         accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
     };
-    let compressed = SnappyEncoder::new()
-        .compress_vec(&request.encode_to_vec())
-        .expect("snappy request");
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/read")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-protobuf")
-                .header("Content-Encoding", "snappy")
-                .body(Body::from(compressed))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = remote_read(&app, &request).await;
 
     assert2::assert!(response.status() == StatusCode::OK);
-    let bytes = to_bytes(response.into_body(), 1024 * 1024)
-        .await
-        .expect("response body");
-    let decoded = SnappyDecoder::new()
-        .decompress_vec(&bytes)
-        .expect("snappy response");
-    let read_response =
-        pb::v1::ReadResponse::decode(decoded.as_slice()).expect("remote read response");
+    let read_response = decode_read_response(response).await;
     let series = &read_response.results[0].timeseries[0];
     assert2::assert!(series.exemplars.len() == 1);
     assert2::assert!(series.exemplars[0].timestamp == 10_500);
@@ -3877,60 +2530,27 @@ async fn remote_read_endpoint_returns_matching_native_histograms() {
         "tenant-a",
         labels(&[("__name__", "request_duration_seconds"), ("job", "api")]),
         10_000,
-        NativeHistogram {
-            schema: 0,
-            is_float: true,
-            reset_hint: ResetHint::No,
-            zero_threshold: 0.0,
-            zero_count: 0.0,
+        float_histogram(HistogramTotals {
             count: 4.0,
             sum: 10.0,
-            positive_spans: Vec::new(),
-            positive_counts: Vec::new(),
-            negative_spans: Vec::new(),
-            negative_counts: Vec::new(),
-            custom_values: None,
-            start_timestamp_ms: None,
-        },
+        }),
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
+    let state = api_state(store);
     let app = prometheus_router(Arc::clone(&state));
     let request = pb::v1::ReadRequest {
-        queries: vec![pb::v1::Query {
-            start_timestamp_ms: 10_000,
-            end_timestamp_ms: 10_000,
-            matchers: vec![pb::v1::LabelMatcher {
-                r#type: pb::v1::label_matcher::Type::Eq as i32,
-                name: "__name__".into(),
-                value: "request_duration_seconds".into(),
-            }],
-            hints: None,
-        }],
+        queries: vec![read_query(
+            MillisRange {
+                start_ms: 10_000,
+                end_ms: 10_000,
+            },
+            vec![eq_matcher("__name__", "request_duration_seconds")],
+        )],
         accepted_response_types: vec![
             pb::v1::ResponseType::StreamedXorChunks as i32,
             pb::v1::ResponseType::Samples as i32,
         ],
     };
-    let compressed = SnappyEncoder::new()
-        .compress_vec(&request.encode_to_vec())
-        .expect("snappy request");
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/read")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-protobuf")
-                .header("Content-Encoding", "snappy")
-                .body(Body::from(compressed))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = remote_read(&app, &request).await;
 
     assert2::assert!(response.status() == StatusCode::OK);
     assert2::assert!(
@@ -3949,16 +2569,13 @@ async fn remote_read_endpoint_returns_matching_native_histograms() {
     assert2::assert!(chunk.data.starts_with(&[0, 1, 0x40]));
 
     let request = pb::v1::ReadRequest {
-        queries: vec![pb::v1::Query {
-            start_timestamp_ms: 10_000,
-            end_timestamp_ms: 10_000,
-            matchers: vec![pb::v1::LabelMatcher {
-                r#type: pb::v1::label_matcher::Type::Eq as i32,
-                name: "__name__".into(),
-                value: "request_duration_seconds".into(),
-            }],
-            hints: None,
-        }],
+        queries: vec![read_query(
+            MillisRange {
+                start_ms: 10_000,
+                end_ms: 10_000,
+            },
+            vec![eq_matcher("__name__", "request_duration_seconds")],
+        )],
         accepted_response_types: vec![pb::v1::ResponseType::StreamedXorChunks as i32],
     };
     let compressed = SnappyEncoder::new()
@@ -3992,51 +2609,27 @@ async fn remote_read_endpoint_returns_matching_native_histograms() {
 
 #[tokio::test]
 async fn remote_read_endpoint_streams_prometheus_xor_frames() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        7_200_000,
-        12_000.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api")]),
+            7_200_000,
+            12_000.0,
+        )
+        .app();
     let request = pb::v1::ReadRequest {
-        queries: vec![pb::v1::Query {
-            start_timestamp_ms: 7_200_000,
-            end_timestamp_ms: 7_200_000,
-            matchers: vec![pb::v1::LabelMatcher {
-                r#type: pb::v1::label_matcher::Type::Eq as i32,
-                name: "__name__".into(),
-                value: "up".into(),
-            }],
-            hints: None,
-        }],
+        queries: vec![read_query(
+            MillisRange {
+                start_ms: 7_200_000,
+                end_ms: 7_200_000,
+            },
+            vec![eq_matcher("__name__", "up")],
+        )],
         accepted_response_types: vec![
             pb::v1::ResponseType::StreamedXorChunks as i32,
             pb::v1::ResponseType::Samples as i32,
         ],
     };
-    let compressed = SnappyEncoder::new()
-        .compress_vec(&request.encode_to_vec())
-        .expect("snappy request");
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/read")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-protobuf")
-                .header("Content-Encoding", "snappy")
-                .body(Body::from(compressed))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = remote_read(&app, &request).await;
 
     assert2::assert!(response.status() == StatusCode::OK);
     assert2::assert!(
@@ -4060,44 +2653,25 @@ async fn remote_read_endpoint_streams_prometheus_xor_frames() {
 
 #[tokio::test]
 async fn cardinality_label_names_endpoint_returns_label_name_counts() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web")]),
-        10_000,
-        1.0,
-    );
+    let mut store = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
+        )
+        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
+        .store();
     store.push_float(
         "tenant-b",
         labels(&[("__name__", "up"), ("job", "other"), ("zone", "hidden")]),
         10_000,
         1.0,
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/cardinality/label_names")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/cardinality/label_names").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     // Mimir returns the cardinality object directly, with no status envelope.
     assert2::assert!(body.get("status").is_none());
     assert2::assert!(body["label_names_count"].as_i64() == Some(3));
@@ -4114,38 +2688,18 @@ async fn cardinality_label_names_endpoint_returns_label_name_counts() {
 
 #[tokio::test]
 async fn cardinality_label_names_endpoint_honors_limit_parameter() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/cardinality/label_names?limit=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
         )
-        .await
-        .unwrap();
+        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
+        .app();
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(&app, "/api/v1/cardinality/label_names?limit=1").await;
+
+    let body = json_with_status(response, StatusCode::OK).await;
     // job has two distinct values, so it sorts first under the limit.
     assert2::assert!(
         body["cardinality"]
@@ -4160,38 +2714,26 @@ async fn cardinality_label_names_endpoint_honors_limit_parameter() {
 
 #[tokio::test]
 async fn cardinality_label_names_endpoint_filters_selector_parameter() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("zone", "us")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/cardinality/label_names?selector=up%7Bjob%3D%22api%22%7D")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
         )
-        .await
-        .unwrap();
+        .sample(
+            labels(&[("__name__", "up"), ("job", "web"), ("zone", "us")]),
+            10_000,
+            1.0,
+        )
+        .app();
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(
+        &app,
+        "/api/v1/cardinality/label_names?selector=up%7Bjob%3D%22api%22%7D",
+    )
+    .await;
+
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["label_names_count"].as_i64() == Some(3));
     assert2::assert!(body["label_values_count_total"].as_i64() == Some(3));
     assert2::assert!(
@@ -4206,40 +2748,18 @@ async fn cardinality_label_names_endpoint_filters_selector_parameter() {
 
 #[tokio::test]
 async fn cardinality_label_names_endpoint_accepts_post_form_body() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/cardinality/label_names")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(Body::from("limit=1"))
-                .unwrap(),
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
         )
-        .await
-        .unwrap();
+        .sample(labels(&[("__name__", "up"), ("job", "web")]), 10_000, 1.0)
+        .app();
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = post_form(&app, "/api/v1/cardinality/label_names", "limit=1").await;
+
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(
         body["cardinality"]
             .as_array()
@@ -4252,25 +2772,11 @@ async fn cardinality_label_names_endpoint_accepts_post_form_body() {
 
 #[tokio::test]
 async fn cardinality_label_names_endpoint_rejects_invalid_limit_parameter() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/cardinality/label_names?limit=abc")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/cardinality/label_names?limit=abc").await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
     assert2::assert!(body["status"].as_str() == Some("error"));
     assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
     assert2::assert!(body["error"].as_str() == Some("invalid limit parameter"));
@@ -4278,36 +2784,18 @@ async fn cardinality_label_names_endpoint_rejects_invalid_limit_parameter() {
 
 #[tokio::test]
 async fn cardinality_label_names_endpoint_accepts_documented_count_methods() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+        .app();
 
     for count_method in ["inmemory", "active"] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!(
-                        "/api/v1/cardinality/label_names?count_method={count_method}"
-                    ))
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = get(
+            &app,
+            format!("/api/v1/cardinality/label_names?count_method={count_method}"),
+        )
+        .await;
 
-        assert2::assert!(response.status() == StatusCode::OK);
-        let body = response_json(response).await;
+        let body = json_with_status(response, StatusCode::OK).await;
         assert2::assert!(
             body["cardinality"]
                 .as_array()
@@ -4320,25 +2808,11 @@ async fn cardinality_label_names_endpoint_accepts_documented_count_methods() {
 
 #[tokio::test]
 async fn cardinality_label_names_endpoint_rejects_invalid_count_method_parameter() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/cardinality/label_names?count_method=blocks")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/cardinality/label_names?count_method=blocks").await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
     assert2::assert!(body["status"].as_str() == Some("error"));
     assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
     assert2::assert!(body["error"].as_str() == Some("invalid count_method parameter"));
@@ -4346,50 +2820,34 @@ async fn cardinality_label_names_endpoint_rejects_invalid_count_method_parameter
 
 #[tokio::test]
 async fn cardinality_active_series_endpoint_returns_series_labels_under_mimir_prefix() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        20_000,
-        2.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-        10_000,
-        1.0,
-    );
+    let mut store = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            20_000,
+            2.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
+            10_000,
+            1.0,
+        )
+        .store();
     store.push_float(
         "tenant-b",
         labels(&[("__name__", "up"), ("job", "hidden"), ("instance", "z")]),
         10_000,
         1.0,
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/cardinality/active_series")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/prometheus/api/v1/cardinality/active_series").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     // Mimir active_series returns a bare object whose `data` array holds flat
     // label maps -- no status envelope, no seriesLabels/metric wrapper.
     assert2::assert!(body.get("status").is_none());
@@ -4404,40 +2862,15 @@ async fn cardinality_active_series_endpoint_returns_series_labels_under_mimir_pr
 
 #[tokio::test]
 async fn cardinality_active_series_endpoint_filters_selector_parameter() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = up_api_a_and_web_b().app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri(
-                    "/prometheus/api/v1/cardinality/active_series?selector=up%7Bjob%3D%22api%22%7D",
-                )
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/prometheus/api/v1/cardinality/active_series?selector=up%7Bjob%3D%22api%22%7D",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body.get("status").is_none());
     assert2::assert!(
         body["data"].clone()
@@ -4449,78 +2882,27 @@ async fn cardinality_active_series_endpoint_filters_selector_parameter() {
 
 #[tokio::test]
 async fn cardinality_active_series_endpoint_honors_limit_parameter() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = up_api_a_and_web_b().app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/cardinality/active_series?limit=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/prometheus/api/v1/cardinality/active_series?limit=1").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body.get("status").is_none());
     assert2::assert!(body["data"].as_array().expect("data array").len() == 1);
 }
 
 #[tokio::test]
 async fn cardinality_active_series_endpoint_accepts_post_form_body() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = up_api_a_and_web_b().app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/api/v1/cardinality/active_series")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(Body::from("selector=up%7Bjob%3D%22api%22%7D"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(
+        &app,
+        "/prometheus/api/v1/cardinality/active_series",
+        "selector=up%7Bjob%3D%22api%22%7D",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body.get("status").is_none());
     assert2::assert!(
         body["data"].clone()
@@ -4532,56 +2914,39 @@ async fn cardinality_active_series_endpoint_accepts_post_form_body() {
 
 #[tokio::test]
 async fn cardinality_label_values_endpoint_returns_label_value_counts() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        20_000,
-        2.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "b")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "c")]),
-        10_000,
-        1.0,
-    );
+    let mut store = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            20_000,
+            2.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "b")]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "web"), ("instance", "c")]),
+            10_000,
+            1.0,
+        )
+        .store();
     store.push_float(
         "tenant-b",
         labels(&[("__name__", "up"), ("job", "hidden"), ("instance", "z")]),
         10_000,
         1.0,
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/cardinality/label_values")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/cardinality/label_values").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     // Mimir nests per-value cardinality under each label, with no envelope.
     assert2::assert!(body.get("status").is_none());
     assert2::assert!(body["series_count_total"].as_i64() == Some(3));
@@ -4619,38 +2984,15 @@ async fn cardinality_label_values_endpoint_returns_label_value_counts() {
 
 #[tokio::test]
 async fn cardinality_label_values_endpoint_filters_label_names_parameter() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = up_api_a_and_web_b().app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/cardinality/label_values?label_names%5B%5D=job")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/api/v1/cardinality/label_values?label_names%5B%5D=job",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["series_count_total"].as_i64() == Some(2));
     assert2::assert!(
         body["labels"].clone()
@@ -4670,38 +3012,26 @@ async fn cardinality_label_values_endpoint_filters_label_names_parameter() {
 
 #[tokio::test]
 async fn cardinality_label_values_endpoint_filters_selector_parameter() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("zone", "us")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/cardinality/label_values?selector=up%7Bjob%3D%22api%22%7D&label_names%5B%5D=job")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
+    let app = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
         )
-        .await
-        .unwrap();
+        .sample(
+            labels(&[("__name__", "up"), ("job", "web"), ("zone", "us")]),
+            10_000,
+            1.0,
+        )
+        .app();
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(
+        &app,
+        "/api/v1/cardinality/label_values?selector=up%7Bjob%3D%22api%22%7D&label_names%5B%5D=job",
+    )
+    .await;
+
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["series_count_total"].as_i64() == Some(1));
     assert2::assert!(
         body["labels"].clone()
@@ -4718,38 +3048,11 @@ async fn cardinality_label_values_endpoint_filters_selector_parameter() {
 
 #[tokio::test]
 async fn cardinality_label_values_endpoint_honors_limit_parameter() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = up_api_a_and_web_b().app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/cardinality/label_values?limit=1")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/cardinality/label_values?limit=1").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     // limit caps each label's nested per-value cardinality array.
     let labels = body["labels"].as_array().expect("labels array");
     assert2::assert!(!labels.is_empty());
@@ -4766,40 +3069,11 @@ async fn cardinality_label_values_endpoint_honors_limit_parameter() {
 
 #[tokio::test]
 async fn cardinality_label_values_endpoint_accepts_post_form_body() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-        10_000,
-        1.0,
-    );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = up_api_a_and_web_b().app();
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/cardinality/label_values")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(Body::from("limit=2"))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = post_form(&app, "/api/v1/cardinality/label_values", "limit=2").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     let labels = body["labels"].as_array().expect("labels array");
     // __name__ has the highest series_count, so it sorts first.
     assert2::assert!(body.get("status").is_none());
@@ -4810,25 +3084,11 @@ async fn cardinality_label_values_endpoint_accepts_post_form_body() {
 
 #[tokio::test]
 async fn cardinality_label_values_endpoint_rejects_invalid_limit_parameter() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/cardinality/label_values?limit=abc")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/cardinality/label_values?limit=abc").await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
     assert2::assert!(body["status"].as_str() == Some("error"));
     assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
     assert2::assert!(body["error"].as_str() == Some("invalid limit parameter"));
@@ -4836,25 +3096,11 @@ async fn cardinality_label_values_endpoint_rejects_invalid_limit_parameter() {
 
 #[tokio::test]
 async fn format_query_endpoint_returns_formatted_expression() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/format_query?query=foo%2Fbar")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/format_query?query=foo%2Fbar").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"].as_str() == Some("foo / bar"));
 }
@@ -4867,29 +3113,20 @@ async fn histogram_trim_round_trips_through_get_and_post_ast_apis_and_evaluation
         "tenant-a",
         labels(&[("__name__", "h"), ("job", "api")]),
         10_000,
-        NativeHistogram {
-            schema: 0,
-            is_float: true,
-            reset_hint: ResetHint::No,
-            zero_threshold: 0.0,
-            zero_count: 0.0,
-            count: 4.0,
-            sum: 5.0,
-            positive_spans: vec![BucketSpan {
+        {
+            let mut histogram = float_histogram(HistogramTotals {
+                count: 4.0,
+                sum: 5.0,
+            });
+            histogram.positive_spans = vec![BucketSpan {
                 offset: 0,
                 length: 2,
-            }],
-            positive_counts: vec![1.0, 3.0],
-            negative_spans: vec![],
-            negative_counts: vec![],
-            custom_values: None,
-            start_timestamp_ms: None,
+            }];
+            histogram.positive_counts = vec![1.0, 3.0];
+            histogram
         },
     );
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    )));
+    let app = prometheus_router(api_state(store));
     let query = "sum(histogram_count((h </ 2) >/ 1)) + 1";
     let encoded = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("query", query)
@@ -4901,25 +3138,22 @@ async fn histogram_trim_round_trips_through_get_and_post_ast_apis_and_evaluation
             } else {
                 format!("/prometheus/api/v1/{endpoint}")
             };
-            let response = app
-                .clone()
-                .oneshot(
-                    Request::builder()
-                        .method(method)
-                        .uri(uri)
-                        .header("X-Scope-OrgID", "tenant-a")
-                        .header("Content-Type", "application/x-www-form-urlencoded")
-                        .body(if method == "POST" {
-                            Body::from(encoded.clone())
-                        } else {
-                            Body::empty()
-                        })
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert2::assert!(response.status() == StatusCode::OK);
-            let body = response_json(response).await;
+            let response = send(
+                &app,
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("X-Scope-OrgID", "tenant-a")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(if method == "POST" {
+                        Body::from(encoded.clone())
+                    } else {
+                        Body::empty()
+                    })
+                    .unwrap(),
+            )
+            .await;
+            let body = json_with_status(response, StatusCode::OK).await;
             if endpoint == "format_query" {
                 assert2::assert!(body["data"] == query);
             } else {
@@ -4931,17 +3165,7 @@ async fn histogram_trim_round_trips_through_get_and_post_ast_apis_and_evaluation
             }
         }
     }
-    let response = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/v1/query?{encoded}&time=10"))
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, format!("/api/v1/query?{encoded}&time=10")).await;
     assert2::assert!(response.status() == StatusCode::OK);
     assert2::assert!(
         response_json(response).await["data"]["result"]
@@ -4956,78 +3180,41 @@ async fn histogram_trim_round_trips_through_get_and_post_ast_apis_and_evaluation
         let encoded = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("query", query)
             .finish();
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/api/v1/{endpoint}?{encoded}&time=10"))
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = get(&app, format!("/api/v1/{endpoint}?{encoded}&time=10")).await;
         assert2::assert!(response.status() == status, "{query}");
     }
 }
 
 #[tokio::test]
 async fn parse_query_endpoint_is_available_under_mimir_prefix() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/parse_query?query=up%7Bjob%3D%22api%22%7D")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(
+        &app,
+        "/prometheus/api/v1/parse_query?query=up%7Bjob%3D%22api%22%7D",
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
-    assert2::assert!(body["status"].as_str() == Some("success"));
-    assert2::assert!(body["data"]["type"].as_str() == Some("vectorSelector"));
-    assert2::assert!(body["data"]["name"].as_str() == Some("up"));
-    assert2::assert!(
-        body["data"]["matchers"].clone()
-            == serde_json::json!([
-                {
-                    "name": "job",
-                    "type": "=",
-                    "value": "api"
-                }
-            ])
+    let body = json_with_status(response, StatusCode::OK).await;
+    assert_up_vector_selector(
+        &body,
+        &serde_json::json!([
+            {
+                "name": "job",
+                "type": "=",
+                "value": "api"
+            }
+        ]),
     );
 }
 
 #[tokio::test]
 async fn parse_query_endpoint_returns_prometheus_error_for_missing_query() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/parse_query")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/parse_query").await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
     assert2::assert!(body["status"].as_str() == Some("error"));
     assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
     assert2::assert!(body["error"].as_str() == Some("missing query parameter"));
@@ -5035,25 +3222,11 @@ async fn parse_query_endpoint_returns_prometheus_error_for_missing_query() {
 
 #[tokio::test]
 async fn status_buildinfo_endpoint_returns_prometheus_envelope() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/status/buildinfo")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/status/buildinfo").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"]["version"].as_str() == Some(env!("CARGO_PKG_VERSION")));
     assert2::assert!(
@@ -5092,18 +3265,16 @@ async fn status_flags_endpoint_returns_prometheus_flag_strings() {
     );
     let app = prometheus_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/status/flags")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        Request::builder()
+            .uri("/api/v1/status/flags")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"]["query.lookback-delta"].as_str() == Some("7m"));
     assert2::assert!(body["data"]["query.max-concurrency"].as_str() == Some("11"));
@@ -5120,18 +3291,16 @@ async fn status_config_endpoint_is_available_under_mimir_prefix() {
     );
     let app = prometheus_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/status/config")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        Request::builder()
+            .uri("/prometheus/api/v1/status/config")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"]["yaml"].as_str().is_some_and(|yaml| {
         yaml.contains("scrape_config: not applicable")
@@ -5143,50 +3312,34 @@ async fn status_config_endpoint_is_available_under_mimir_prefix() {
 
 #[tokio::test]
 async fn status_tsdb_endpoint_returns_tenant_cardinality_stats() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
-        20_000,
-        2.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "errors_total"), ("job", "api")]),
-        30_000,
-        3.0,
-    );
+    let mut store = TenantFloats::new()
+        .sample(
+            labels(&[("__name__", "up"), ("job", "api"), ("instance", "a")]),
+            10_000,
+            1.0,
+        )
+        .sample(
+            labels(&[("__name__", "up"), ("job", "web"), ("instance", "b")]),
+            20_000,
+            2.0,
+        )
+        .sample(
+            labels(&[("__name__", "errors_total"), ("job", "api")]),
+            30_000,
+            3.0,
+        )
+        .store();
     store.push_float(
         "tenant-b",
         labels(&[("__name__", "hidden"), ("job", "ignored")]),
         10_000,
         1.0,
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/status/tsdb?limit=2")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/status/tsdb?limit=2").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"]["headStats"]["numSeries"].as_i64() == Some(3));
     assert2::assert!(body["data"]["headStats"]["minTime"].as_i64() == Some(10_000));
@@ -5216,25 +3369,11 @@ async fn status_tsdb_endpoint_returns_tenant_cardinality_stats() {
 
 #[tokio::test]
 async fn status_tsdb_endpoint_rejects_invalid_limit_parameter_with_prometheus_error() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/status/tsdb?limit=abc")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/status/tsdb?limit=abc").await;
 
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
     assert2::assert!(body["status"].as_str() == Some("error"));
     assert2::assert!(body["errorType"].as_str() == Some("bad_data"));
     assert2::assert!(body["error"].as_str() == Some("invalid limit parameter"));
@@ -5242,25 +3381,11 @@ async fn status_tsdb_endpoint_rejects_invalid_limit_parameter_with_prometheus_er
 
 #[tokio::test]
 async fn status_tsdb_blocks_endpoint_returns_empty_block_list() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/status/tsdb/blocks")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/prometheus/api/v1/status/tsdb/blocks").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"]["blocks"].clone() == serde_json::json!([]));
 }
@@ -5276,25 +3401,11 @@ async fn status_tsdb_blocks_endpoint_returns_compacted_blocks() {
         42,
         3,
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(store));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/status/tsdb/blocks")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/api/v1/status/tsdb/blocks").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(
         body["data"]["blocks"][0]["ulid"].as_str() == Some("metrics/tenant-a/float/0001.parquet")
@@ -5324,24 +3435,7 @@ async fn status_walreplay_endpoint_reports_live_materialized_offsets_without_cla
     );
     let wal_tail = RoleReadiness::new().gate("wal-head");
     wal_tail.mark_ready();
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(head.clone()), EngineOpts::default())
-            .with_wal_head_status(head, wal_tail),
-    );
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/status/walreplay")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = walreplay_status(head, wal_tail).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"]["min"].as_i64() == Some(41));
     assert2::assert!(body["data"]["max"].is_null());
@@ -5356,48 +3450,25 @@ async fn status_walreplay_endpoint_reports_live_materialized_offsets_without_cla
 async fn status_walreplay_reports_a_configured_tail_that_has_not_attached() {
     let head = WalHead::with_retention(minutes(12));
     let wal_tail = RoleReadiness::new().gate("wal-head");
-    let state = Arc::new(
-        PrometheusApiState::new(Arc::new(head.clone()), EngineOpts::default())
-            .with_wal_head_status(head, wal_tail),
-    );
-    let app = prometheus_router(state);
-
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/status/walreplay")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = walreplay_status(head, wal_tail).await;
     assert2::assert!(body["data"]["current"].is_null());
     assert2::assert!(body["data"]["state"].as_str() == Some("waiting (WAL tail is not attached)"));
 }
 
 #[tokio::test]
 async fn status_walreplay_without_a_tail_is_explicitly_not_applicable() {
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(InMemoryMetricStore::new()),
-        EngineOpts::default(),
-    ));
-    let app = prometheus_router(state);
+    let app = prometheus_router(api_state(InMemoryMetricStore::new()));
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/status/walreplay")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = send(
+        &app,
+        Request::builder()
+            .uri("/api/v1/status/walreplay")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["data"]["min"].is_null());
     assert2::assert!(body["data"]["max"].is_null());
     assert2::assert!(body["data"]["current"].is_null());
@@ -5408,19 +3479,14 @@ async fn status_walreplay_without_a_tail_is_explicitly_not_applicable() {
 
 #[tokio::test]
 async fn status_runtimeinfo_endpoint_is_available_under_mimir_prefix() {
-    let mut store = InMemoryMetricStore::new();
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "up"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
-    store.push_float(
-        "tenant-a",
-        labels(&[("__name__", "errors_total"), ("job", "api")]),
-        10_000,
-        1.0,
-    );
+    let mut store = TenantFloats::new()
+        .sample(labels(&[("__name__", "up"), ("job", "api")]), 10_000, 1.0)
+        .sample(
+            labels(&[("__name__", "errors_total"), ("job", "api")]),
+            10_000,
+            1.0,
+        )
+        .store();
     store.push_float(
         "tenant-b",
         labels(&[("__name__", "hidden"), ("job", "ignored")]),
@@ -5433,19 +3499,9 @@ async fn status_runtimeinfo_endpoint_is_available_under_mimir_prefix() {
     );
     let app = prometheus_router(state);
 
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/prometheus/api/v1/status/runtimeinfo")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let response = get(&app, "/prometheus/api/v1/status/runtimeinfo").await;
 
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let body = json_with_status(response, StatusCode::OK).await;
     assert2::assert!(body["status"].as_str() == Some("success"));
     assert2::assert!(body["data"]["startTime"].as_str().is_some());
     assert2::assert!(body["data"]["serverTime"].as_str().is_some());
@@ -5474,10 +3530,7 @@ async fn byte_label_identity_is_preserved_until_the_http_json_boundary() {
         labels.insert("raw", krabka_promql::PromqlString::from(bytes));
         store.push_float("tenant-a", labels, 10_000, 2.0);
     }
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    )));
+    let app = prometheus_router(api_state(store));
     for (query, expected) in [
         (
             "count(byte_input)",
@@ -5500,19 +3553,17 @@ async fn byte_label_identity_is_preserved_until_the_http_json_boundary() {
             .append_pair("query", query)
             .append_pair("time", "10")
             .finish();
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/query")
-                    .header("x-scope-orgid", "tenant-a")
-                    .header("content-type", "application/x-www-form-urlencoded")
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = send(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/query")
+                .header("x-scope-orgid", "tenant-a")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await;
         assert2::assert!(response.status() == StatusCode::OK, "{query}");
         let body = response_json(response).await;
         assert2::assert!(body["data"] == expected, "{query}");
@@ -5527,17 +3578,15 @@ async fn byte_label_identity_is_preserved_until_the_http_json_boundary() {
             serde_json::json!([{"__name__":"byte_input","raw":"�"}]),
         ),
     ] {
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(path)
-                    .header("x-scope-orgid", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = send(
+            &app,
+            Request::builder()
+                .uri(path)
+                .header("x-scope-orgid", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
         assert2::assert!(response.status() == StatusCode::OK);
         assert2::assert!(response_json(response).await["data"] == expected);
     }
@@ -5545,20 +3594,18 @@ async fn byte_label_identity_is_preserved_until_the_http_json_boundary() {
         .append_pair("query", r#"byte_input{raw=~"\xff"}"#)
         .append_pair("time", "10")
         .finish();
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/query")
-                .header("x-scope-orgid", "tenant-a")
-                .header("content-type", "application/x-www-form-urlencoded")
-                .body(Body::from(body))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::BAD_REQUEST);
-    let body = response_json(response).await;
+    let response = send(
+        &app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/query")
+            .header("x-scope-orgid", "tenant-a")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(body))
+            .unwrap(),
+    )
+    .await;
+    let body = json_with_status(response, StatusCode::BAD_REQUEST).await;
     assert2::assert!(body["status"] == "error" && body["errorType"] == "bad_data");
 }
 
@@ -5575,10 +3622,7 @@ async fn remote_read_preserves_go_byte_labels_in_samples_and_chunked_frames() {
         labels.insert("raw", krabka_promql::PromqlString::from(bytes));
         store.push_float("tenant-a", labels, 10_000, value);
     }
-    let app = prometheus_router(Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    )));
+    let app = prometheus_router(api_state(store));
     for (response_type, selected) in [
         (0, None),
         (0, Some(vec![0xff])),
@@ -5609,20 +3653,18 @@ async fn remote_read_preserves_go_byte_labels_in_samples_and_chunked_frames() {
         let compressed = SnappyEncoder::new()
             .compress_vec(&request.encode_to_vec())
             .unwrap();
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/read")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .body(Body::from(compressed))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = send(
+            &app,
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/read")
+                .header("X-Scope-OrgID", "tenant-a")
+                .header("Content-Type", "application/x-protobuf")
+                .header("Content-Encoding", "snappy")
+                .body(Body::from(compressed))
+                .unwrap(),
+        )
+        .await;
         assert2::assert!(response.status() == StatusCode::OK);
         let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let mut actual = Vec::new();
@@ -5704,10 +3746,7 @@ async fn http_alert_templates_reuse_byte_identity_and_replayed_start_times() {
         labels.insert("raw", krabka_promql::PromqlString::from(bytes.clone()));
         store.push_float("tenant-a", labels, 60_000, 2.0);
     }
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
+    let state = api_state(store);
     state.set_ruler_evaluation_time_ms(60_000);
     for (index, bytes) in values.iter().enumerate() {
         let mut labels = krabka_promql::PromqlLabels::from_pairs([("alertname", "ByteAlert")]);
@@ -5747,35 +3786,12 @@ rules:
       scalar_query: '{{ query "7" | first | value }}'
 
 "#;
-    let configured = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/bytes")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(rule))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let configured = post_yaml(&app, "/prometheus/config/v1/rules/bytes", rule).await;
     assert2::assert!(configured.status() == StatusCode::ACCEPTED);
     for time in [60_000, 120_000] {
         state.set_ruler_evaluation_time_ms(time);
-        let response = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v1/alerts")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert2::assert!(response.status() == StatusCode::OK);
-        let body = response_json(response).await;
+        let response = get(&app, "/api/v1/alerts").await;
+        let body = json_with_status(response, StatusCode::OK).await;
         let alerts = body["data"]["alerts"].as_array().unwrap();
         assert2::assert!(alerts.len() == 4);
         let mut starts = alerts
@@ -5828,29 +3844,23 @@ async fn http_alerts_keep_histogram_expressions_and_typed_query_template_values(
         "tenant-a",
         krabka_promql::PromqlLabels::from_pairs([("__name__", "native_input"), ("job", "api")]),
         60_000,
-        krabka_metrics::NativeHistogram {
-            schema: -53,
-            is_float: true,
-            reset_hint: krabka_metrics::ResetHint::Gauge,
-            zero_threshold: 0.0,
-            zero_count: 0.0,
-            count: 5.0,
-            sum: 9.0,
-            positive_spans: vec![krabka_metrics::BucketSpan {
+        {
+            let mut histogram = float_histogram(HistogramTotals {
+                count: 5.0,
+                sum: 9.0,
+            });
+            histogram.schema = -53;
+            histogram.reset_hint = ResetHint::Gauge;
+            histogram.positive_spans = vec![BucketSpan {
                 offset: 0,
                 length: 3,
-            }],
-            positive_counts: vec![2.0, 0.0, 3.0],
-            negative_spans: vec![],
-            negative_counts: vec![],
-            custom_values: Some(vec![1.0, 2.0]),
-            start_timestamp_ms: None,
+            }];
+            histogram.positive_counts = vec![2.0, 0.0, 3.0];
+            histogram.custom_values = Some(vec![1.0, 2.0]);
+            histogram
         },
     );
-    let state = Arc::new(PrometheusApiState::new(
-        Arc::new(store),
-        EngineOpts::default(),
-    ));
+    let state = api_state(store);
     state.set_ruler_evaluation_time_ms(60_000);
     let app = prometheus_router(state);
     let rule = r#"
@@ -5866,32 +3876,10 @@ rules:
       queried: '{{ query "native_input" | first | value }}'
       invalid_numeric: '{{ $value | humanize }}'
 "#;
-    let configured = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/prometheus/config/v1/rules/native")
-                .header("X-Scope-OrgID", "tenant-a")
-                .header("Content-Type", "application/yaml")
-                .body(Body::from(rule))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let configured = post_yaml(&app, "/prometheus/config/v1/rules/native", rule).await;
     assert2::assert!(configured.status() == StatusCode::ACCEPTED);
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/api/v1/alerts")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert2::assert!(response.status() == StatusCode::OK);
-    let body = response_json(response).await;
+    let response = get(&app, "/api/v1/alerts").await;
+    let body = json_with_status(response, StatusCode::OK).await;
     let alerts = body["data"]["alerts"].as_array().unwrap();
     assert2::assert!(alerts.len() == 1);
     let alert = &alerts[0];

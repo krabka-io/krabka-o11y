@@ -70,27 +70,11 @@ pub(crate) async fn structural_node_planner_path_matches_interpreter() {
     ];
 
     for &(query, time_ms) in queries {
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
-            .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
-
         // The recursive planner must claim every one of these.
-        let plan = engine
-            .plan_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("plan `{query}`: {error}"))
-            .unwrap_or_else(|| panic!("`{query}` did not route through the planner"));
-        let via_operators = sort_instant_result(
-            engine
-                .assemble_planned_instant(plan, time_ms)
-                .await
-                .unwrap_or_else(|error| panic!("operator `{query}`: {error}")),
-        );
-        let via_interpreter = sort_instant_result(
-            engine
-                .eval_instant_expr("t", &expr, time_ms)
-                .await
-                .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}")),
-        );
+        let (via_operators, via_interpreter) =
+            planned_and_interpreted(&engine, query, time_ms).await;
+        let via_operators = sort_instant_result(via_operators);
+        let via_interpreter = sort_instant_result(via_interpreter);
 
         assert2::assert!(query_results_match(&via_interpreter, &via_operators));
     }

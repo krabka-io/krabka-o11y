@@ -34,11 +34,11 @@
 use std::sync::Arc;
 
 use arrow::{
-    array::{Array, ArrayRef, DictionaryArray, Float64Array, Float64Builder, Int64Array},
-    datatypes::{DataType, Int64Type},
+    array::{ArrayRef, Float64Builder},
+    datatypes::DataType,
 };
 use datafusion::{
-    common::{DataFusionError, Result as DfResult, ScalarValue},
+    common::{DataFusionError, Result as DfResult},
     logical_expr::{
         ColumnarValue, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Volatility,
     },
@@ -46,14 +46,23 @@ use datafusion::{
 };
 use num_traits::ToPrimitive;
 
-use crate::range_array::RangeArray;
-
 #[cfg(test)]
 mod tests {
-    use arrow::datatypes::Field;
+    use arrow::{
+        array::{Array, Float64Array, Int64Array},
+        datatypes::Field,
+    };
     use assert2::check;
+    use datafusion::common::ScalarValue;
 
     use super::*;
+    use crate::{
+        functions::{
+            udf_args::decode_range_column,
+            udf_test_support::{WindowStep, nullable_floats, window_columns},
+        },
+        range_array::RangeArray,
+    };
 
     fn approx_eq(left: f64, right: f64) -> bool {
         (left - right).abs() < 1e-9
@@ -66,33 +75,11 @@ mod tests {
     /// quantile family.
     fn run_udf_nullable(
         family: OverTimeFamily,
-        steps: &[(i64, &[i64], &[f64])],
+        steps: &[WindowStep<'_>],
         phi: f64,
     ) -> Vec<Option<f64>> {
         let udf = OverTimeUdf::new(family);
-        let mut all_ts = Vec::new();
-        let mut all_val = Vec::new();
-        let mut ranges = Vec::new();
-        let mut eval = Vec::new();
-        let mut offset = 0_u32;
-        for (eval_ts, ts, val) in steps {
-            assert2::assert!(ts.len() == val.len());
-            let len = u32::try_from(ts.len()).unwrap();
-            all_ts.extend_from_slice(ts);
-            all_val.extend_from_slice(val);
-            ranges.push((offset, len));
-            offset += len;
-            eval.push(*eval_ts);
-        }
-        let (value_ra, ts_ra) = RangeArray::from_paired_ranges(
-            Float64Array::from(all_val),
-            Int64Array::from(all_ts),
-            ranges,
-        )
-        .unwrap();
-        let ts_dict: ArrayRef = Arc::new(ts_ra.into_dict_array().unwrap());
-        let val_dict: ArrayRef = Arc::new(value_ra.into_dict_array().unwrap());
-        let eval_col: ArrayRef = Arc::new(Int64Array::from(eval.clone()));
+        let [eval_col, ts_dict, val_dict] = window_columns(steps);
 
         let rows = steps.len();
         let return_field = Arc::new(Field::new("out", DataType::Float64, true));
@@ -128,25 +115,14 @@ mod tests {
             return_field,
             config_options: Arc::new(datafusion::config::ConfigOptions::default()),
         };
-        let out = udf.invoke_with_args(args).unwrap();
-        let array = out.into_array(rows).unwrap();
-        let floats = array.as_any().downcast_ref::<Float64Array>().unwrap();
-        (0..floats.len())
-            .map(|i| {
-                if floats.is_null(i) {
-                    None
-                } else {
-                    Some(floats.value(i))
-                }
-            })
-            .collect()
+        nullable_floats(udf.invoke_with_args(args).unwrap(), rows)
     }
 
     /// Wrapper that asserts every step produced a non-null value.
     ///
     /// This function returns the unwrapped floats. Tests for the no-value NULL
     /// case call [`run_udf_nullable`] directly.
-    fn run_udf(family: OverTimeFamily, steps: &[(i64, &[i64], &[f64])], phi: f64) -> Vec<f64> {
+    fn run_udf(family: OverTimeFamily, steps: &[WindowStep<'_>], phi: f64) -> Vec<f64> {
         run_udf_nullable(family, steps, phi)
             .into_iter()
             .map(|value| value.expect("expected a non-null value cell"))
@@ -159,7 +135,11 @@ mod tests {
     /// `instant_basic_over_time_functions_reduce_range_samples`.
     #[test]
     fn basic_reductions_match_engine() {
-        let window: &[(i64, &[i64], &[f64])] = &[(120_000, &[60_000, 120_000], &[3.0, 5.0])];
+        let window: &[WindowStep<'_>] = &[WindowStep {
+            eval_ts_ms: 120_000,
+            timestamps: &[60_000, 120_000],
+            sample_values: &[3.0, 5.0],
+        }];
         for (family, want) in [
             (OverTimeFamily::Sum, 8.0),
             (OverTimeFamily::Avg, 4.0),
@@ -185,7 +165,11 @@ mod tests {
         let ts: Vec<i64> = (0..i64::try_from(vals.len()).unwrap())
             .map(|i| (i + 1) * 60_000)
             .collect();
-        let window: &[(i64, &[i64], &[f64])] = &[(480_000, &ts, vals)];
+        let window: &[WindowStep<'_>] = &[WindowStep {
+            eval_ts_ms: 480_000,
+            timestamps: &ts,
+            sample_values: vals,
+        }];
         for (family, phi, want) in [
             (OverTimeFamily::Stdvar, 0.0, 4.0),
             (OverTimeFamily::Stddev, 0.0, 2.0),
@@ -368,8 +352,11 @@ mod tests {
     /// `last_over_time` returns the latest sample's value from an unordered window.
     #[test]
     fn last_uses_max_timestamp() {
-        let window: &[(i64, &[i64], &[f64])] =
-            &[(300_000, &[60_000, 300_000, 120_000], &[1.0, 9.0, 2.0])];
+        let window: &[WindowStep<'_>] = &[WindowStep {
+            eval_ts_ms: 300_000,
+            timestamps: &[60_000, 300_000, 120_000],
+            sample_values: &[1.0, 9.0, 2.0],
+        }];
         assert2::assert!(approx_eq(
             run_udf(OverTimeFamily::Last, window, 0.0)[0],
             9.0
@@ -382,7 +369,11 @@ mod tests {
     /// aggregates skip it.
     #[test]
     fn empty_window_yields_null() {
-        let window: &[(i64, &[i64], &[f64])] = &[(60_000, &[], &[])];
+        let window: &[WindowStep<'_>] = &[WindowStep {
+            eval_ts_ms: 60_000,
+            timestamps: &[],
+            sample_values: &[],
+        }];
         for (family, phi) in [
             (OverTimeFamily::Sum, 0.0),
             (OverTimeFamily::Count, 0.0),
@@ -401,7 +392,11 @@ mod tests {
     fn genuine_nan_reduction_is_kept_non_null() {
         // sum over [NaN, 1.0] is a genuine NaN value (the window is non-empty, so
         // this is not the no-value case).
-        let window: &[(i64, &[i64], &[f64])] = &[(120_000, &[60_000, 120_000], &[f64::NAN, 1.0])];
+        let window: &[WindowStep<'_>] = &[WindowStep {
+            eval_ts_ms: 120_000,
+            timestamps: &[60_000, 120_000],
+            sample_values: &[f64::NAN, 1.0],
+        }];
         let out = run_udf_nullable(OverTimeFamily::Sum, window, 0.0);
         assert2::assert!(out[0].is_some());
         assert2::assert!(out[0].unwrap().is_nan());
@@ -426,7 +421,11 @@ mod tests {
             let ts: Vec<i64> = (1..=i64::try_from(vals.len()).unwrap())
                 .map(|i| i * 60_000)
                 .collect();
-            let window: &[(i64, &[i64], &[f64])] = &[(*ts.last().unwrap(), &ts, vals)];
+            let window: &[WindowStep<'_>] = &[WindowStep {
+                eval_ts_ms: *ts.last().unwrap(),
+                timestamps: &ts,
+                sample_values: vals,
+            }];
             for (family, want) in [
                 (OverTimeFamily::Min, want_min),
                 (OverTimeFamily::Max, want_max),
@@ -451,7 +450,11 @@ mod tests {
     fn over_time_variance_is_stable_for_large_offset_window() {
         let vals: &[f64] = &[1e8, 1e8 + 1.0, 1e8 + 2.0];
         let ts: &[i64] = &[60_000, 120_000, 180_000];
-        let window: &[(i64, &[i64], &[f64])] = &[(180_000, ts, vals)];
+        let window: &[WindowStep<'_>] = &[WindowStep {
+            eval_ts_ms: 180_000,
+            timestamps: ts,
+            sample_values: vals,
+        }];
         // population variance of {0,1,2} == 2/3; stddev == sqrt(2/3). Pinning
         // the exact positive value also rules out the cancellation failure
         // (a negative variance whose sqrt is NaN).
@@ -468,7 +471,11 @@ mod tests {
     #[test]
     fn avg_over_time_does_not_overflow() {
         let vals: &[f64] = &[f64::MAX, f64::MAX];
-        let window: &[(i64, &[i64], &[f64])] = &[(120_000, &[60_000, 120_000], vals)];
+        let window: &[WindowStep<'_>] = &[WindowStep {
+            eval_ts_ms: 120_000,
+            timestamps: &[60_000, 120_000],
+            sample_values: vals,
+        }];
         let avg = run_udf(OverTimeFamily::Avg, window, 0.0)[0];
         // The naive `(MAX + MAX) / 2` overflows to +Inf; the mean of two equal
         // values is the value itself.
@@ -482,8 +489,16 @@ mod tests {
         let out = run_udf(
             OverTimeFamily::Sum,
             &[
-                (120_000, &[60_000, 120_000], &[1.0, 2.0]),
-                (240_000, &[180_000, 240_000], &[3.0, 4.0]),
+                WindowStep {
+                    eval_ts_ms: 120_000,
+                    timestamps: &[60_000, 120_000],
+                    sample_values: &[1.0, 2.0],
+                },
+                WindowStep {
+                    eval_ts_ms: 240_000,
+                    timestamps: &[180_000, 240_000],
+                    sample_values: &[3.0, 4.0],
+                },
             ],
             0.0,
         );
@@ -531,7 +546,6 @@ mod tests {
     }
 }
 
-mod decode_range_column;
 mod extremum;
 mod fold_extremum;
 mod kahan_sum_inc;
@@ -544,9 +558,7 @@ mod over_time_udf;
 mod over_time_variance;
 mod quantile_value;
 mod register_over_time_udfs;
-mod scalar_f64;
 
-use decode_range_column::decode_range_column;
 use extremum::Extremum;
 use fold_extremum::fold_extremum;
 use kahan_sum_inc::kahan_sum_inc;
@@ -561,4 +573,5 @@ pub use over_time_udf::over_time_udf;
 use over_time_variance::over_time_variance;
 use quantile_value::quantile_value;
 pub use register_over_time_udfs::register_over_time_udfs;
-use scalar_f64::scalar_f64;
+
+use super::udf_args::{WindowColumns, scalar_f64};

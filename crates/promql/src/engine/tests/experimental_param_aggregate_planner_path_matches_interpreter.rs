@@ -39,37 +39,10 @@ pub(crate) async fn experimental_param_aggregate_planner_path_matches_interprete
     let time_ms = 120_000_i64;
 
     for &query in queries {
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
-            .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
-
-        // Operator path, scoped so the InvalidRatioWarning is captured.
-        let (via_operators, operator_annotations) = super::super::ANNOTATIONS
-            .scope(std::cell::RefCell::new(crate::Annotations::new()), async {
-                let plan = engine
-                    .plan_instant_expr("t", &expr, time_ms)
-                    .await
-                    .unwrap_or_else(|error| panic!("plan `{query}`: {error}"))
-                    .unwrap_or_else(|| panic!("`{query}` did not route through the planner"));
-                let result = engine
-                    .assemble_planned_instant(plan, time_ms)
-                    .await
-                    .unwrap_or_else(|error| panic!("operator `{query}`: {error}"));
-                let annotations = super::super::ANNOTATIONS.with(|sink| sink.borrow().clone());
-                (sort_instant_result(result), annotations)
-            })
-            .await;
-
-        // Interpreter path, scoped identically.
-        let (via_interpreter, interpreter_annotations) = super::super::ANNOTATIONS
-            .scope(std::cell::RefCell::new(crate::Annotations::new()), async {
-                let result = engine
-                    .eval_instant_expr("t", &expr, time_ms)
-                    .await
-                    .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}"));
-                let annotations = super::super::ANNOTATIONS.with(|sink| sink.borrow().clone());
-                (sort_instant_result(result), annotations)
-            })
-            .await;
+        let ((via_operators, operator_annotations), (via_interpreter, interpreter_annotations)) =
+            annotated_planned_and_interpreted(&engine, query, time_ms).await;
+        let via_operators = sort_instant_result(via_operators);
+        let via_interpreter = sort_instant_result(via_interpreter);
 
         assert2::assert!(query_results_match(&via_interpreter, &via_operators));
         assert2::assert!(operator_annotations == interpreter_annotations);

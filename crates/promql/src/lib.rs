@@ -9,6 +9,7 @@
 
 mod block_store;
 mod conformance;
+mod duration_terms;
 mod engine;
 mod error;
 mod extension;
@@ -23,6 +24,7 @@ mod query_frontend;
 mod range_array;
 mod result;
 mod ruler;
+mod series_stats;
 mod store;
 #[cfg(test)]
 mod test_support;

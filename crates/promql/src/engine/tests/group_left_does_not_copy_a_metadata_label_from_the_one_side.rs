@@ -22,18 +22,7 @@ pub(crate) async fn group_left_does_not_copy_a_metadata_label_from_the_one_side(
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "a + on (job) group_left(__name__) b",
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "a + on (job) group_left(__name__) b", 10_000).await;
     assert2::assert!(samples.len() == 2);
     for sample in &samples {
         assert2::assert!(sample.labels.get("__name__") == None);

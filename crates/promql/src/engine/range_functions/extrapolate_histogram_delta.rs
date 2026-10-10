@@ -1,4 +1,5 @@
 use super::{RangeFn, TimeExt, ToPrimitive};
+use crate::functions::extrapolate::{WindowBounds, WindowSpacing, window_spacing};
 
 pub(crate) fn extrapolate_histogram_delta(
     extrapolation: &super::HistogramExtrapolation<'_>,
@@ -15,17 +16,20 @@ pub(crate) fn extrapolate_histogram_delta(
         ..
     } = *extrapolation;
     let n = timestamps.len();
-    let first_ts = timestamps[0];
     let last_ts = timestamps[n - 1];
-    let mut sampled_interval = (last_ts - first_ts).to_f64()? / 1000.0;
-    let average_duration_between_samples = if n > 1 {
-        sampled_interval / (n - 1).to_f64()?
-    } else {
-        0.0
-    };
-    let extrapolation_threshold = average_duration_between_samples * 1.1;
-    let mut duration_to_start = (first_ts - range_start_ms).to_f64()? / 1000.0;
-    let mut duration_to_end = (range_end_ms - last_ts).to_f64()? / 1000.0;
+    let WindowSpacing {
+        mut sampled_interval,
+        average_duration_between_samples,
+        extrapolation_threshold,
+        mut duration_to_start,
+        mut duration_to_end,
+    } = window_spacing(
+        timestamps,
+        WindowBounds {
+            range_start_ms,
+            range_end_ms,
+        },
+    )?;
 
     if let Some(start) = start_timestamp_ms {
         duration_to_start = 0.0;

@@ -33,13 +33,7 @@ pub(crate) async fn instant_sort_functions_order_vector_by_sample_value() {
             ["api-b", "api-c", "api-a"],
         ),
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 10_000)
-            .await
-            .unwrap();
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected vector");
-        };
+        let samples = instant_vector(&engine, query, 10_000).await;
         assert2::assert!(samples.len() == 3);
         let instances = samples
             .iter()

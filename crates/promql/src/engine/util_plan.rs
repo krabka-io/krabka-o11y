@@ -220,6 +220,30 @@ impl<S: MetricStore> PromqlEngine<S> {
         Ok(Some(PlannedInstant::Precomputed(out)))
     }
 
+    /// Plans and assembles the lone argument of a one-argument call.
+    ///
+    /// `None` falls back to the interpreter: for a wrong arity, a non-plannable
+    /// argument, or one that does not assemble to an instant vector.
+    async fn plan_lone_vector_arg<'call>(
+        &self,
+        tenant: &str,
+        call: &'call Call,
+        time_ms: i64,
+    ) -> Result<Option<(&'call Expr, Vec<InstantSample>)>> {
+        let [arg] = call.args.args.as_slice() else {
+            return Ok(None);
+        };
+        let Some(planned) = self.plan_instant_expr(tenant, arg, time_ms).await? else {
+            return Ok(None);
+        };
+        let QueryResult::InstantVector(samples) =
+            self.assemble_planned_instant(planned, time_ms).await?
+        else {
+            return Ok(None);
+        };
+        Ok(Some((arg, samples)))
+    }
+
     /// Plans `scalar(v)`.
     ///
     /// This method recurses `v` through the planner, assembles it, and returns
@@ -233,15 +257,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<Option<PlannedInstant>> {
-        let [arg] = call.args.args.as_slice() else {
-            return Ok(None);
-        };
-        let Some(planned) = self.plan_instant_expr(tenant, arg, time_ms).await? else {
-            return Ok(None);
-        };
-        let QueryResult::InstantVector(samples) =
-            self.assemble_planned_instant(planned, time_ms).await?
-        else {
+        let Some((_, samples)) = self.plan_lone_vector_arg(tenant, call, time_ms).await? else {
             return Ok(None);
         };
         // `funcScalar` counts only the float samples: a vector of one float and
@@ -302,15 +318,7 @@ impl<S: MetricStore> PromqlEngine<S> {
         call: &Call,
         time_ms: i64,
     ) -> Result<Option<PlannedInstant>> {
-        let [arg] = call.args.args.as_slice() else {
-            return Ok(None);
-        };
-        let Some(planned) = self.plan_instant_expr(tenant, arg, time_ms).await? else {
-            return Ok(None);
-        };
-        let QueryResult::InstantVector(samples) =
-            self.assemble_planned_instant(planned, time_ms).await?
-        else {
+        let Some((arg, samples)) = self.plan_lone_vector_arg(tenant, call, time_ms).await? else {
             return Ok(None);
         };
         if !samples.is_empty() {
@@ -398,7 +406,7 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// identical, and so is the per-shape or wrong-arity error. The planner
     /// stays self-recursive and does not re-enter the interpreter dispatch, and
     /// these shapes still go through `Precomputed`.
-    async fn absent_over_time_via_interpreter(
+    pub(super) async fn absent_over_time_via_interpreter(
         &self,
         tenant: &str,
         call: &Call,

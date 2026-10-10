@@ -7,6 +7,15 @@ use object_store::memory::InMemory;
 use super::*;
 use crate::{MergedMetricStore, MetricBlockStore};
 
+/// Merges `head` over an empty cold block store.
+fn merged_with_empty_cold(head: WalHead) -> MergedMetricStore<MetricBlockStore, WalHead> {
+    let blocks = BlockStore::new(
+        Arc::new(InMemory::new()),
+        url::Url::parse("memory:///").unwrap(),
+    );
+    MergedMetricStore::new(MetricBlockStore::new(blocks), head)
+}
+
 #[test]
 fn shared_series_summary_keeps_row_keys_and_histogram_owners() {
     let first = Arc::new(lbls(&[("__name__", "up"), ("job", "first")]));
@@ -479,11 +488,7 @@ async fn equal_fingerprints_do_not_reuse_matchers_for_different_labels() {
                 start_timestamp_ms: None,
             });
     }
-    let blocks = BlockStore::new(
-        Arc::new(InMemory::new()),
-        url::Url::parse("memory:///").unwrap(),
-    );
-    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), WalHead::from_store(hot));
+    let store = merged_with_empty_cold(WalHead::from_store(hot));
     let scan = store
         .try_latest_float_scan(
             "tenant-a",
@@ -639,11 +644,7 @@ async fn eligible_summary_keeps_old_rows_boundaries_raw_counts_and_future_fallba
     // Old retained rows count conservatively; labels-only rows contribute zero.
     assert!(summary_ledger(&hot, "t", &matchers, 9_000, 9_001, 12_000) == Some((expected, 5)));
     let head = WalHead::from_store(hot);
-    let blocks = BlockStore::new(
-        Arc::new(InMemory::new()),
-        url::Url::parse("memory:///").unwrap(),
-    );
-    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), head.clone());
+    let store = merged_with_empty_cold(head.clone());
     let scan = store
         .try_latest_float_scan("t", &matchers, 9_000, 9_001, 12_000, 5)
         .await
@@ -723,11 +724,7 @@ async fn latest_summary_preserves_first_tie_stale_bits_and_optional_zero_start()
         ),
     ]);
     assert!(summary_ledger(&hot, "t", &matchers, 9_000, 9_001, 12_000) == Some((expected, 6)));
-    let blocks = BlockStore::new(
-        Arc::new(InMemory::new()),
-        url::Url::parse("memory:///").unwrap(),
-    );
-    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), WalHead::from_store(hot));
+    let store = merged_with_empty_cold(WalHead::from_store(hot));
     let scan = store
         .try_latest_float_scan("t", &matchers, 9_000, 9_001, 12_000, 6)
         .await
@@ -753,6 +750,25 @@ async fn latest_summary_preserves_first_tie_stale_bits_and_optional_zero_start()
                 .map(|labels| (labels.fingerprint(), Arc::new(labels)))
                 .collect::<BTreeMap<_, _>>()
     );
+}
+
+/// Prunes `hot` at 10s, which drops one sample, and checks that the latest
+/// `up` sample in `(9s, 12s]` then takes the row path and answers the 7 at 11s
+/// under the very `owner` label set.
+async fn assert_pruned_scan_shares_owner(mut hot: InMemoryMetricStore, owner: &Arc<Labels>) {
+    let fp = owner.fingerprint();
+    let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
+    assert!(hot.prune(10_000).samples_dropped == 1);
+    assert!(summary_ledger(&hot, "t", &matchers, 9_000, 9_001, 12_000).is_none());
+    let store = merged_with_empty_cold(WalHead::from_store(hot));
+    let scan = store
+        .try_latest_float_scan("t", &matchers, 9_000, 9_001, 12_000, 2)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(scan.samples == vec![(fp, 11_000, 7.0, Some(0))]);
+    assert!(scan.labels == BTreeMap::from([(fp, Arc::clone(owner))]));
+    assert!(Arc::ptr_eq(&scan.labels[&fp], owner));
 }
 
 #[tokio::test]
@@ -781,23 +797,10 @@ async fn summary_falls_back_after_direct_append_and_rebuilt_label_identity_colli
         value: 99.0,
         start_timestamp_ms: None,
     });
-    assert!(hot.prune(10_000).samples_dropped == 1);
     // Pruning rebuilds a complete summary; the two distinct label Arcs still
     // require the row path, including the rejected newer 'down' sample.
-    assert!(summary_ledger(&hot, "t", &matchers, 9_000, 9_001, 12_000).is_none());
-    let blocks = BlockStore::new(
-        Arc::new(InMemory::new()),
-        url::Url::parse("memory:///").unwrap(),
-    );
-    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), WalHead::from_store(hot));
-    let scan = store
-        .try_latest_float_scan("t", &matchers, 9_000, 9_001, 12_000, 2)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(scan.samples == vec![(fp, 11_000, 7.0, Some(0))]);
-    assert!(scan.labels == BTreeMap::from([(fp, Arc::new(wanted))]));
-    assert!(Arc::ptr_eq(&scan.labels[&fp], &wanted_arc));
+    assert!(*wanted_arc == wanted);
+    assert_pruned_scan_shares_owner(hot, &wanted_arc).await;
 
     let wanted = lbls(&[("__name__", "up"), ("job", "api")]);
     let in_window = Arc::new(wanted.clone());
@@ -811,21 +814,7 @@ async fn summary_falls_back_after_direct_append_and_rebuilt_label_identity_colli
         value: 7.0,
         start_timestamp_ms: Some(0),
     });
-    assert!(hot.prune(10_000).samples_dropped == 1);
-    assert!(summary_ledger(&hot, "t", &matchers, 9_000, 9_001, 12_000).is_none());
-    let blocks = BlockStore::new(
-        Arc::new(InMemory::new()),
-        url::Url::parse("memory:///").unwrap(),
-    );
-    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), WalHead::from_store(hot));
-    let scan = store
-        .try_latest_float_scan("t", &matchers, 9_000, 9_001, 12_000, 2)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(scan.samples == vec![(fp, 11_000, 7.0, Some(0))]);
-    assert!(scan.labels == BTreeMap::from([(fp, Arc::clone(&in_window))]));
-    assert!(Arc::ptr_eq(&scan.labels[&fp], &in_window));
+    assert_pruned_scan_shares_owner(hot, &in_window).await;
 }
 
 #[tokio::test]
@@ -868,11 +857,7 @@ async fn byte_labels_remain_distinct_in_interning_and_latest_scan_snapshots() {
         assert!(Arc::ptr_eq(&pair[0].labels, &pair[1].labels));
     }
     assert!(snapshot.series_labels["tenant-a"].len() == 3);
-    let blocks = BlockStore::new(
-        Arc::new(InMemory::new()),
-        url::Url::parse("memory:///").unwrap(),
-    );
-    let store = MergedMetricStore::new(MetricBlockStore::new(blocks), head.clone());
+    let store = merged_with_empty_cold(head.clone());
     let captured = store
         .try_latest_float_scan("tenant-a", &[], 9_000, 9_001, 11_000, 6)
         .await

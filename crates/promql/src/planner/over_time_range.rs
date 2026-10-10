@@ -21,75 +21,40 @@
 //! `over_time_sample_from_series`, which filters on `range_start < ts <=
 //! range_end`.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::collections::BTreeMap;
 
-use arrow::{
-    array::{ArrayRef, BinaryBuilder, Float64Array, Int64Array},
-    datatypes::{DataType, Field, Schema},
-    record_batch::RecordBatch,
-};
 use datafusion::{
-    execution::FunctionRegistry,
-    logical_expr::{Expr, Extension, LogicalPlan, LogicalPlanBuilder, col, lit},
+    logical_expr::{Expr, LogicalPlan, lit},
     prelude::SessionContext,
 };
 use krabka_blockstore::SeriesFingerprint;
-use krabka_units::prelude::*;
 
-use super::{LabeledSeries, StepGrid, leaf::leaf_scan};
+use super::LabeledSeries;
 use crate::{
-    PromqlError, PromqlLabels as Labels,
-    error::Result,
-    extension::{
-        normalize::SeriesNormalize,
-        planner::prom_session_context,
-        range_manipulate::{RANGE_SUFFIX, RangeManipulate},
-        series_divide::SeriesDivide,
-    },
+    PromqlLabels as Labels, error::Result, extension::planner::prom_session_context,
     functions::OverTimeFamily,
 };
 
 #[cfg(test)]
 mod tests {
-    use arrow::array::BinaryArray;
+    use arrow::array::{BinaryArray, Float64Array};
     use assert2::check;
 
     use super::*;
-    use crate::planner::TimedValue;
+    use crate::planner::RangeWindowGrid;
 
     fn approx_eq(left: f64, right: f64) -> bool {
         (left - right).abs() < 1e-9
     }
 
-    fn labeled(job: &str, samples: &[(i64, f64)]) -> LabeledSeries {
-        let mut labels = Labels::new();
-        labels.insert("job", job);
-        LabeledSeries {
-            fp: labels.fingerprint(),
-            labels: Arc::new(labels),
-            samples: samples
-                .iter()
-                .map(|&(ts_ms, value)| TimedValue {
-                    ts_ms,
-                    value,
-                    start_timestamp_ms: None,
-                })
-                .collect(),
-        }
-    }
-
+    /// Runs `fold` at `eval_time_ms` over the window `(0, eval_time_ms]`.
     async fn run(
         samples: Vec<LabeledSeries>,
         eval_time_ms: i64,
-        range: Time,
-        family: OverTimeFamily,
-        phi: f64,
+        fold: OverTimeFold,
     ) -> Vec<(String, f64)> {
-        let grid = StepGrid::instant(eval_time_ms, range.millis_i64());
-        let plan = plan_over_time_range_selector(samples, grid, range, family, phi)
+        let windows = RangeWindowGrid::since_epoch(eval_time_ms);
+        let plan = plan_over_time_range_selector(samples, windows, fold)
             .await
             .unwrap();
         let batches = plan
@@ -127,8 +92,20 @@ mod tests {
     /// `avg_over_time` over the engine's basic window (3,5 -> 4.0) runs the full chain.
     #[tokio::test]
     async fn avg_over_time_plan_reduces_window() {
-        let samples = vec![labeled("a", &[(60_000, 3.0), (120_000, 5.0)])];
-        let got = run(samples, 120_000, millis(120_000), OverTimeFamily::Avg, 0.0).await;
+        let samples = vec![
+            LabeledSeries::with_job("a")
+                .at(60_000, 3.0)
+                .at(120_000, 5.0),
+        ];
+        let got = run(
+            samples,
+            120_000,
+            OverTimeFold {
+                family: OverTimeFamily::Avg,
+                phi: 0.0,
+            },
+        )
+        .await;
         check!(got.len() == 1);
         check!(got[0].0 == "a");
         check!(approx_eq(got[0].1, 4.0));
@@ -161,18 +138,20 @@ mod tests {
     #[tokio::test]
     async fn quantile_over_time_plan_threads_phi() {
         let values = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
-        let points = values
+        let series = values
             .iter()
             .enumerate()
-            .map(|(i, v)| ((i64::try_from(i).unwrap() + 1) * 60_000, *v))
-            .collect::<Vec<_>>();
-        let samples = vec![labeled("a", &points)];
+            .fold(LabeledSeries::with_job("a"), |series, (i, v)| {
+                series.at((i64::try_from(i).unwrap() + 1) * 60_000, *v)
+            });
+        let samples = vec![series];
         let got = run(
             samples,
             480_000,
-            millis(480_000),
-            OverTimeFamily::Quantile,
-            0.5,
+            OverTimeFold {
+                family: OverTimeFamily::Quantile,
+                phi: 0.5,
+            },
         )
         .await;
         assert2::assert!(got.len() == 1);
@@ -182,13 +161,14 @@ mod tests {
     /// `present_over_time` gives 1.0 when the window has samples.
     #[tokio::test]
     async fn present_over_time_plan_signals_presence() {
-        let samples = vec![labeled("a", &[(60_000, 42.0)])];
+        let samples = vec![LabeledSeries::with_job("a").at(60_000, 42.0)];
         let got = run(
             samples,
             120_000,
-            millis(120_000),
-            OverTimeFamily::Present,
-            0.0,
+            OverTimeFold {
+                family: OverTimeFamily::Present,
+                phi: 0.0,
+            },
         )
         .await;
         assert2::assert!(approx_eq(got[0].1, 1.0));
@@ -203,13 +183,14 @@ mod tests {
 
         // A sample on the left edge (ts == range_start) is excluded by the
         // left-open window, leaving the window empty.
-        let samples = vec![labeled("a", &[(0, 5.0)])];
+        let samples = vec![LabeledSeries::with_job("a").at(0, 5.0)];
         let plan = plan_over_time_range_selector(
             samples,
-            StepGrid::instant(120_000, 120_000),
-            millis(120_000),
-            OverTimeFamily::Sum,
-            0.0,
+            RangeWindowGrid::since_epoch(120_000),
+            OverTimeFold {
+                family: OverTimeFamily::Sum,
+                phi: 0.0,
+            },
         )
         .await
         .unwrap();
@@ -232,18 +213,16 @@ mod tests {
     }
 }
 
-mod build_leaf_batch;
-mod leaf_schema;
 mod over_time_family_from_function_name;
+mod over_time_fold;
 mod over_time_range_plan;
 mod over_time_value_column;
 mod plan_over_time_range_selector;
 mod time_column;
 mod value_column;
 
-use build_leaf_batch::build_leaf_batch;
-use leaf_schema::leaf_schema;
 pub use over_time_family_from_function_name::over_time_family_from_function_name;
+pub use over_time_fold::OverTimeFold;
 pub use over_time_range_plan::OverTimeRangePlan;
 pub use over_time_value_column::OVER_TIME_VALUE_COLUMN;
 pub use plan_over_time_range_selector::plan_over_time_range_selector;

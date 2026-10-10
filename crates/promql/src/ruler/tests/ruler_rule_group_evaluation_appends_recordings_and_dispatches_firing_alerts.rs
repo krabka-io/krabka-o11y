@@ -15,11 +15,7 @@ rules:
 ",
     )
     .expect("rule group yaml");
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", labels("up", "api"), 60_000, 1.0);
-    store.push_float("tenant-a", labels("up", "api"), 360_000, 1.0);
-    let store = Arc::new(store);
-    let engine = PromqlEngine::new(store, EngineOpts::default());
+    let engine = up_api_engine(&[60_000, 360_000]);
     let wal_sink = RecordingSink::default();
     let alert_sink = RecordingAlertmanagerSink::default();
     let mut state = super::super::RulerAlertState::default();
@@ -67,45 +63,9 @@ rules:
     assert2::assert!(
         wal_sink.records()
             == vec![
-                WalRecord {
-                    tenant: "tenant-a".to_string(),
-                    labels: vec![
-                        ("__name__".to_string(), "job:up:current".into()),
-                        ("job".to_string(), "api".into()),
-                    ],
-                    payload: SamplePayload::Float {
-                        timestamp_ms: 60_000,
-                        value: 1.0,
-                        start_timestamp_ms: None,
-                    },
-                    exemplars: Vec::new(),
-                },
-                WalRecord {
-                    tenant: "tenant-a".to_string(),
-                    labels: vec![
-                        ("__name__".to_string(), "job:up:current".into()),
-                        ("job".to_string(), "api".into()),
-                    ],
-                    payload: SamplePayload::Float {
-                        timestamp_ms: 360_000,
-                        value: 1.0,
-                        start_timestamp_ms: None,
-                    },
-                    exemplars: Vec::new(),
-                },
+                job_up_current_record(60_000),
+                job_up_current_record(360_000),
             ]
     );
-    assert2::assert!(
-        alert_sink.alerts()
-            == vec![super::super::AlertmanagerAlert {
-                labels: BTreeMap::from([
-                    ("alertname".to_string(), "InstanceUp".into()),
-                    ("job".to_string(), "api".into()),
-                ]),
-                annotations: BTreeMap::new(),
-                starts_at_ms: 60_000,
-                ends_at_ms: None,
-                generator_url: String::new(),
-            }]
-    );
+    assert2::assert!(alert_sink.alerts() == vec![instance_up_alert(60_000)]);
 }

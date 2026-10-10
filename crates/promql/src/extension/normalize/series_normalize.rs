@@ -1,4 +1,6 @@
-use super::{DataFusionError, DfResult, Expr, LogicalPlan, UserDefinedLogicalNodeCore, fmt};
+use datafusion::logical_expr::{Expr, LogicalPlan, UserDefinedLogicalNodeCore};
+
+use super::{DataFusionError, DfResult, fmt};
 
 /// Logical node that normalizes each single-series batch.
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd)]

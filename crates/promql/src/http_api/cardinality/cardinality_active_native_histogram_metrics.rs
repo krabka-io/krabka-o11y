@@ -12,10 +12,10 @@ use num_traits::ToPrimitive;
 use serde::Serialize;
 
 use super::{
-    ApiError, Arc, CardinalityParams, MetricStore, Principal, PrometheusApiState,
-    authorized_tenant_from_headers, cardinality_series, decode_float_samples,
-    decode_native_histograms, enforce_selected_series_limit, parse_cardinality_form,
-    parse_cardinality_params, selector_matchers,
+    ApiError, Arc, CardinalityParams, MetricStore, Principal, PrometheusApiState, RequestAuth,
+    authorized_cardinality_series, decode_float_samples, decode_native_histograms,
+    enforce_selected_series_limit, parse_cardinality_form, parse_cardinality_params,
+    selector_matchers,
 };
 
 #[derive(Serialize)]
@@ -60,7 +60,15 @@ pub(crate) async fn cardinality_active_native_histogram_metrics<S: MetricStore>(
         Ok(params) => params,
         Err(error) => return error.into_response(),
     };
-    cardinality_active_native_histogram_metrics_inner(state, headers, principal, params).await
+    cardinality_active_native_histogram_metrics_inner(
+        &state,
+        RequestAuth {
+            headers: &headers,
+            principal: &principal,
+        },
+        params,
+    )
+    .await
 }
 
 pub(crate) async fn cardinality_active_native_histogram_metrics_post<S: MetricStore>(
@@ -73,24 +81,27 @@ pub(crate) async fn cardinality_active_native_histogram_metrics_post<S: MetricSt
         Ok(params) => params,
         Err(error) => return error.into_response(),
     };
-    cardinality_active_native_histogram_metrics_inner(state, headers, principal, params).await
+    cardinality_active_native_histogram_metrics_inner(
+        &state,
+        RequestAuth {
+            headers: &headers,
+            principal: &principal,
+        },
+        params,
+    )
+    .await
 }
 
 async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
-    state: Arc<PrometheusApiState<S>>,
-    headers: HeaderMap,
-    principal: Principal,
+    state: &Arc<PrometheusApiState<S>>,
+    auth: RequestAuth<'_>,
     params: CardinalityParams,
 ) -> Response {
-    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
-        Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
+    let (tenant, series) = match authorized_cardinality_series(state, auth, &params).await {
+        Ok(selected) => selected,
+        Err(rejection) => return rejection.into_response(),
     };
-    let series = match cardinality_series(&state, tenant.as_str(), &params).await {
-        Ok(series) => series,
-        Err(error) => return error.into_response(),
-    };
-    if let Err(error) = enforce_selected_series_limit(&state, &tenant, series.len()) {
+    if let Err(error) = enforce_selected_series_limit(state, &tenant, series.len()) {
         return error.into_response();
     }
     let active = match state.store.cardinality_active_series(tenant.as_str()).await {
@@ -127,13 +138,9 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
             Err(error) => return ApiError::from(error).into_response(),
         };
         if let Some(table) = scan.float_table {
-            let dataframe = match scan.ctx.sql(&format!("SELECT * FROM {table}")).await {
-                Ok(dataframe) => dataframe,
-                Err(error) => return ApiError::internal(error.to_string()).into_response(),
-            };
-            let batches = match dataframe.collect().await {
+            let batches = match table_batches(&scan.ctx, &table).await {
                 Ok(batches) => batches,
-                Err(error) => return ApiError::internal(error.to_string()).into_response(),
+                Err(error) => return error.into_response(),
             };
             for batch in batches {
                 let decoded = match decode_float_samples(&batch) {
@@ -154,13 +161,9 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
         let Some(table) = scan.histogram_table else {
             continue;
         };
-        let dataframe = match scan.ctx.sql(&format!("SELECT * FROM {table}")).await {
-            Ok(dataframe) => dataframe,
-            Err(error) => return ApiError::internal(error.to_string()).into_response(),
-        };
-        let batches = match dataframe.collect().await {
+        let batches = match table_batches(&scan.ctx, &table).await {
             Ok(batches) => batches,
-            Err(error) => return ApiError::internal(error.to_string()).into_response(),
+            Err(error) => return error.into_response(),
         };
         for batch in batches {
             let decoded = match decode_native_histograms(&batch) {
@@ -240,4 +243,19 @@ async fn cardinality_active_native_histogram_metrics_inner<S: MetricStore>(
         serde_json::to_vec(&response).expect("cardinality response is serializable"),
     )
         .into_response()
+}
+
+/// Reads every row of a scan's registered `table`.
+async fn table_batches(
+    session: &datafusion::prelude::SessionContext,
+    table: &str,
+) -> Result<Vec<arrow::record_batch::RecordBatch>, ApiError> {
+    let dataframe = session
+        .sql(&format!("SELECT * FROM {table}"))
+        .await
+        .map_err(|error| ApiError::internal(error.to_string()))?;
+    dataframe
+        .collect()
+        .await
+        .map_err(|error| ApiError::internal(error.to_string()))
 }

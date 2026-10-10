@@ -22,6 +22,73 @@ fn vector(time_ms: i64, rows: &[(&[(&str, &str)], f64)]) -> QueryResult {
     )
 }
 
+/// The order a test store receives its samples in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InsertionOrder {
+    Forward,
+    Reversed,
+}
+
+/// A store holding `m{instance="<index>"}` at 10s for each of `sample_values`
+/// by position, inserted in `order`, for tenant `t`.
+fn instance_store(sample_values: &[f64], order: InsertionOrder) -> InMemoryMetricStore {
+    let mut indexed = sample_values
+        .iter()
+        .copied()
+        .enumerate()
+        .collect::<Vec<_>>();
+    if order == InsertionOrder::Reversed {
+        indexed.reverse();
+    }
+    let mut store = InMemoryMetricStore::new();
+    for (index, sample_value) in indexed {
+        store.push_float(
+            "t",
+            labels(&[("__name__", "m"), ("instance", &index.to_string())]),
+            10_000,
+            sample_value,
+        );
+    }
+    store
+}
+
+/// Checks that the public instant `query` for tenant `t` at 10s returns the
+/// interpreter's single float sample bit-for-bit, and nothing else, without
+/// annotations. A value mismatch names the query and the `inserted` values,
+/// in insertion order.
+async fn assert_scalar_aggregate_matches_interpreter<S: crate::MetricStore>(
+    engine: &PromqlEngine<S>,
+    query: &str,
+    inserted: &[f64],
+) {
+    let expr = promql_parser::parser::parse(query).unwrap();
+    let (actual, annotations) = engine
+        .query_instant_with_annotations(&tenant_id("t"), query, 10_000)
+        .await
+        .unwrap();
+    let expected = engine.eval_instant_expr("t", &expr, 10_000).await.unwrap();
+    let QueryResult::InstantVector(mut actual) = actual else {
+        panic!("expected vector")
+    };
+    let QueryResult::InstantVector(mut expected) = expected else {
+        panic!("expected vector")
+    };
+    assert2::assert!(actual.len() == 1 && expected.len() == 1);
+    let SampleValue::Float(actual_value) = &actual[0].value else {
+        panic!("expected float")
+    };
+    let SampleValue::Float(expected_value) = &expected[0].value else {
+        panic!("expected float")
+    };
+    assert2::assert!(
+        actual_value.to_bits() == expected_value.to_bits(),
+        "{query}: {inserted:?}"
+    );
+    actual[0].value = SampleValue::Float(0.0);
+    expected[0].value = SampleValue::Float(0.0);
+    assert2::assert!((actual, annotations) == (expected, Annotations::default()));
+}
+
 #[test]
 fn last_over_time_operation_folds_match_finite_aggregate_bits() {
     let tiny = f64::from_bits(1);
@@ -60,9 +127,11 @@ fn last_over_time_operation_folds_match_finite_aggregate_bits() {
         }
     }
     // These inputs distinguish compensation and canonical accumulation order.
-    assert2::assert!(over_time_sum([1e16, 1.0, -1e16].into_iter()) == 1.0);
+    assert2::assert!(over_time_sum([1e16, 1.0, -1e16].into_iter()).to_bits() == 1.0_f64.to_bits());
     assert2::assert!(over_time_sum([f64::MAX, f64::MAX, -f64::MAX].into_iter()).is_infinite());
-    assert2::assert!(over_time_sum([f64::MAX, -f64::MAX, f64::MAX].into_iter()) == f64::MAX);
+    assert2::assert!(
+        over_time_sum([f64::MAX, -f64::MAX, f64::MAX].into_iter()).to_bits() == f64::MAX.to_bits()
+    );
 }
 
 #[tokio::test]
@@ -83,46 +152,13 @@ async fn last_over_time_aggregate_keeps_nonfinite_sign_and_payload_bits() {
         vec![f64::INFINITY, f64::NEG_INFINITY, 0.0],
         vec![f64::NEG_INFINITY, f64::INFINITY, -0.0],
     ] {
-        let mut store = InMemoryMetricStore::new();
-        for (index, value) in values.iter().enumerate() {
-            store.push_float(
-                "t",
-                labels(&[("__name__", "m"), ("instance", &index.to_string())]),
-                10_000,
-                *value,
-            );
-        }
+        let store = instance_store(&values, InsertionOrder::Forward);
         let engine = PromqlEngine::new(
             Arc::new(MergedMetricStore::new(InMemoryMetricStore::new(), store)),
             EngineOpts::default(),
         );
         for query in ["sum(last_over_time(m[30m]))", "avg(last_over_time(m[30m]))"] {
-            let expr = promql_parser::parser::parse(query).unwrap();
-            let (actual, annotations) = engine
-                .query_instant_with_annotations(&tenant_id("t"), query, 10_000)
-                .await
-                .unwrap();
-            let expected = engine.eval_instant_expr("t", &expr, 10_000).await.unwrap();
-            let QueryResult::InstantVector(mut actual) = actual else {
-                panic!("expected vector")
-            };
-            let QueryResult::InstantVector(mut expected) = expected else {
-                panic!("expected vector")
-            };
-            assert2::assert!(actual.len() == 1 && expected.len() == 1);
-            let SampleValue::Float(actual_value) = &actual[0].value else {
-                panic!("expected float")
-            };
-            let SampleValue::Float(expected_value) = &expected[0].value else {
-                panic!("expected float")
-            };
-            assert2::assert!(
-                actual_value.to_bits() == expected_value.to_bits(),
-                "{query}: {values:?}"
-            );
-            actual[0].value = SampleValue::Float(0.0);
-            expected[0].value = SampleValue::Float(0.0);
-            assert2::assert!((actual, annotations) == (expected, Annotations::default()));
+            assert_scalar_aggregate_matches_interpreter(&engine, query, &values).await;
         }
     }
 }
@@ -136,20 +172,12 @@ async fn last_over_time_aggregate_keeps_finite_interpreter_bits_in_both_insertio
         vec![1e16, 1.0, -1e16],
         vec![1e16, -1e16, 1.0],
     ] {
-        for reverse in [false, true] {
-            let mut rows = values.iter().enumerate().collect::<Vec<_>>();
-            if reverse {
-                rows.reverse();
+        for order in [InsertionOrder::Forward, InsertionOrder::Reversed] {
+            let mut inserted = values.clone();
+            if order == InsertionOrder::Reversed {
+                inserted.reverse();
             }
-            let mut store = InMemoryMetricStore::new();
-            for (index, &value) in rows {
-                store.push_float(
-                    "t",
-                    labels(&[("__name__", "m"), ("instance", &index.to_string())]),
-                    10_000,
-                    value,
-                );
-            }
+            let store = instance_store(&values, order);
             let engine = PromqlEngine::new(
                 Arc::new(MergedMetricStore::new(
                     InMemoryMetricStore::new(),
@@ -158,32 +186,7 @@ async fn last_over_time_aggregate_keeps_finite_interpreter_bits_in_both_insertio
                 EngineOpts::default(),
             );
             for query in ["sum(last_over_time(m[30m]))", "avg(last_over_time(m[30m]))"] {
-                let expr = promql_parser::parser::parse(query).unwrap();
-                let (actual, annotations) = engine
-                    .query_instant_with_annotations(&tenant_id("t"), query, 10_000)
-                    .await
-                    .unwrap();
-                let expected = engine.eval_instant_expr("t", &expr, 10_000).await.unwrap();
-                let QueryResult::InstantVector(mut actual) = actual else {
-                    panic!("expected vector")
-                };
-                let QueryResult::InstantVector(mut expected) = expected else {
-                    panic!("expected vector")
-                };
-                assert2::assert!(actual.len() == 1 && expected.len() == 1);
-                let SampleValue::Float(actual_value) = &actual[0].value else {
-                    panic!("expected float")
-                };
-                let SampleValue::Float(expected_value) = &expected[0].value else {
-                    panic!("expected float")
-                };
-                assert2::assert!(
-                    actual_value.to_bits() == expected_value.to_bits(),
-                    "{query}: {values:?}, reverse={reverse}"
-                );
-                actual[0].value = SampleValue::Float(0.0);
-                expected[0].value = SampleValue::Float(0.0);
-                assert2::assert!((actual, annotations) == (expected, Annotations::default()));
+                assert_scalar_aggregate_matches_interpreter(&engine, query, &inserted).await;
             }
         }
     }
@@ -386,15 +389,7 @@ async fn last_over_time_aggregate_keeps_float_bits_and_compensation() {
         (vec![f64::INFINITY, f64::NEG_INFINITY], f64::NAN, f64::NAN),
         (vec![1e16, 1.0, -1e16], 1.0, 1.0 / 3.0),
     ] {
-        let mut store = InMemoryMetricStore::new();
-        for (index, value) in values.iter().enumerate() {
-            store.push_float(
-                "t",
-                labels(&[("__name__", "m"), ("instance", &index.to_string())]),
-                10_000,
-                *value,
-            );
-        }
+        let store = instance_store(&values, InsertionOrder::Forward);
         let engine = PromqlEngine::new(
             Arc::new(MergedMetricStore::new(InMemoryMetricStore::new(), store)),
             EngineOpts::default(),

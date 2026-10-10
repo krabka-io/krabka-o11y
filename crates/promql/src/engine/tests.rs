@@ -5,7 +5,9 @@ use krabka_blockstore::Labels;
 use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
 use krabka_units::prelude::*;
 
-use super::{MAX_RESOLUTION_POINTS, check_resolution_points, match_rate_range_call};
+use super::{
+    MAX_RESOLUTION_POINTS, MatrixSelectorAt, check_resolution_points, match_rate_range_call,
+};
 use crate::{
     EngineOpts, InMemoryMetricStore, PromqlEngine, PromqlError, QueryResult, SampleValue,
     test_support::tenant_id,
@@ -21,7 +23,9 @@ mod aggregate_genuine_nan_group_parity;
 mod anchored_increase_does_not_treat_a_flat_counter_step_as_a_reset;
 mod approx_eq;
 mod assert_aggregate_nan_staleness;
+mod assert_filled_many_side;
 mod assert_minmax_nan_ignoring;
+mod assert_one_unnamed_float;
 mod assert_single_float_sample;
 mod assert_single_on_x_float_sample;
 mod assert_sparse_aggregate_excludes_no_value;
@@ -29,8 +33,10 @@ mod avg_over_time_carries_infinities_and_keeps_its_compensation;
 mod avg_over_time_scales_a_native_histogram_by_one_over_the_count;
 mod binary_planner_path_matches_interpreter;
 mod byte_strings_keep_identity_through_composed_queries;
+mod case_values;
 mod changes_compares_histogram_counts_bitwise_and_the_zero_threshold_numerically;
 mod check_resolution_points_enforces_cap;
+mod classic_bucket_store;
 mod classic_histogram_quantile_planner_path_matches_interpreter;
 mod clean_query_raises_no_annotations;
 mod comparison_bool_returns_one_or_zero;
@@ -160,13 +166,16 @@ mod instant_topk_keeps_largest_samples_with_original_labels;
 mod instant_trigonometric_functions_transform_vector_values;
 mod instant_ts_of_over_time_functions_return_sample_timestamps_seconds;
 mod instant_unary_numeric_functions_transform_vector_values;
+mod instant_vector;
 mod kahan_sum_inc_recovers_lost_bits_on_both_branches;
 mod label_ops_planner_path_matches_interpreter;
 mod labels;
 mod last_over_time_aggregate;
 mod limit_ratio_over_bound_emits_capping_warning;
 mod matching_on_a_metadata_label_keeps_it_out_of_the_result;
+mod memory_bytes_engine;
 mod mixed_histogram_store;
+mod nan_equal_samples;
 mod native_histogram;
 mod native_histogram_bucket_bounds_follow_the_schema;
 mod native_histogram_planner_path_matches_interpreter;
@@ -177,6 +186,7 @@ mod one_to_one_fill_subtracts_in_the_declared_operand_order;
 mod over_time_range_planner_path_matches_interpreter;
 mod param_aggregate_planner_path_matches_interpreter;
 mod plan_instant_expr_is_total_over_construct_sweep;
+mod planned_and_interpreted;
 mod quantile_out_of_range_phi_returns_signed_inf_with_warning;
 mod query_results_match;
 mod range_at_start_end_selector_planner_matches_interpreter;
@@ -202,8 +212,10 @@ mod scalar_math_planner_path_matches_interpreter;
 mod scalar_max_of_min_of_require_experimental_feature;
 mod scalar_max_of_min_of_return_larger_and_smaller_scalar;
 mod scalar_pi_function_returns_pi_constant;
+mod series_store;
 mod set_op_store;
 mod shared_series_labels_follow_snapshots_and_limits;
+mod short_lookback_up_engine;
 mod simple_aggregate_planner_path_matches_interpreter;
 mod smoothed_delta_extrapolates_only_within_the_sample_interval_slack;
 mod sort_instant_result;
@@ -212,6 +224,7 @@ mod stdvar_over_time_adds_back_each_of_its_compensations;
 mod structural_node_planner_path_matches_interpreter;
 mod subquery_planner_path_matches_interpreter;
 mod sum_avg_collapsed_is_deterministic_and_matches_interpreter;
+mod target_info_engine;
 mod the_histogram_folds_refuse_their_degenerate_inputs;
 mod topk_refuses_a_k_that_does_not_fit_an_int64;
 mod unary_minus_negates_native_histogram_values_and_marks_gauge;
@@ -238,20 +251,36 @@ mod vector_vector_group_right_fill_left_preserves_unmatched_many_side;
 
 use approx_eq::approx_eq;
 use assert_aggregate_nan_staleness::assert_aggregate_nan_staleness;
+use assert_filled_many_side::assert_filled_many_side;
 use assert_minmax_nan_ignoring::assert_minmax_nan_ignoring;
+use assert_one_unnamed_float::{ExpectedLabel, assert_one_unnamed_float};
 use assert_single_float_sample::assert_single_float_sample;
 use assert_single_on_x_float_sample::assert_single_on_x_float_sample;
 use assert_sparse_aggregate_excludes_no_value::assert_sparse_aggregate_excludes_no_value;
+use case_values::{CaseValue, assert_case_values, push_cases};
+use classic_bucket_store::classic_bucket_store;
 use float_value::float_value;
 use instant_samples_match::instant_samples_match;
+use instant_vector::{assert_lone_value, instant_vector};
 use labels::labels;
+use memory_bytes_engine::memory_bytes_engine;
 use mixed_histogram_store::mixed_histogram_store;
+use nan_equal_samples::nan_equal_samples;
 use native_histogram::native_histogram;
-use native_histogram_store::native_histogram_store;
+use native_histogram_store::{
+    InstanceHistograms, assert_histogram_series_reduction, instance_histogram_store,
+    native_histogram_store, two_bucket_histogram_store,
+};
+use planned_and_interpreted::{
+    annotated_planned_and_interpreted, fingerprint_sorted, planned_and_interpreted,
+};
 use query_results_match::query_results_match;
 use range_matrices_match::range_matrices_match;
 #[cfg(feature = "experimental-functions")]
-use sample_instances::sample_instances;
+use sample_instances::{sample_instances, selected_memory_instances};
+use series_store::SeriesFixture;
 use set_op_store::set_op_store;
+use short_lookback_up_engine::short_lookback_up_engine;
 use sort_instant_result::sort_instant_result;
 use stale_nan::stale_nan;
+use target_info_engine::target_info_engine;

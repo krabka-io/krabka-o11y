@@ -2,86 +2,32 @@
 
 use std::{fmt, sync::Arc};
 
-use arrow::{
-    array::{ArrayRef, Float64Array, Int64Array, UInt32Array},
-    compute::take,
-    record_batch::RecordBatch,
-};
+use arrow::{array::Float64Array, record_batch::RecordBatch};
 use datafusion::{
     common::{DataFusionError, Result as DfResult},
     execution::TaskContext,
-    logical_expr::{Expr, LogicalPlan, UserDefinedLogicalNodeCore},
     physical_plan::{
         DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, SendableRecordBatchStream,
-        stream::RecordBatchStreamAdapter,
     },
 };
-use futures::StreamExt;
 
 #[cfg(test)]
 mod tests {
-    use arrow::{
-        array::{Array, Float64Array, Int64Array},
-        compute::concat_batches,
-        datatypes::{DataType, Field, Schema},
-    };
     use assert2::check;
     use datafusion::{
-        catalog::MemTable,
-        common::{plan_err, tree_node::TreeNodeRecursion},
-        datasource::memory::MemorySourceConfig,
-        logical_expr::{Extension, UserDefinedLogicalNodeCore, col},
-        physical_plan::{
-            ChildrenPropertiesMode, ReplaceChildrenOptions, collect,
-            display::DisplayableExecutionPlan,
-        },
-        prelude::SessionContext,
+        logical_expr::{Extension, LogicalPlan, UserDefinedLogicalNodeCore, col},
+        physical_plan::display::DisplayableExecutionPlan,
     };
 
     use super::*;
-
-    async fn logical_input() -> LogicalPlan {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("timestamp", DataType::Int64, false),
-            Field::new("value", DataType::Float64, false),
-        ]));
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(Int64Array::from(vec![100_i64])),
-                Arc::new(Float64Array::from(vec![1.0])),
-            ],
-        )
-        .unwrap();
-        let ctx = SessionContext::new();
-        let table = MemTable::try_new(schema, vec![vec![batch]]).unwrap();
-        ctx.register_table("leaf", Arc::new(table)).unwrap();
-        ctx.table("leaf")
-            .await
-            .unwrap()
-            .into_optimized_plan()
-            .unwrap()
-    }
-
-    fn physical_input() -> Arc<dyn ExecutionPlan> {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("timestamp", DataType::Int64, false),
-            Field::new("value", DataType::Float64, false),
-        ]));
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(Int64Array::from(vec![100_i64])),
-                Arc::new(Float64Array::from(vec![1.0])),
-            ],
-        )
-        .unwrap();
-        MemorySourceConfig::try_new_exec(&[vec![batch]], schema, None).unwrap()
-    }
+    use crate::extension::test_support::{
+        check_single_child_exec, checked_rewrite, collect_concat, int64_values, logical_leaf,
+        physical_leaf, time_value_batch,
+    };
 
     #[tokio::test]
     async fn logical_node_reports_identity_explain_and_rejects_bad_rewrites() {
-        let input = logical_input().await;
+        let input = logical_leaf(time_value_batch(vec![100], vec![1.0])).await;
         let node = SeriesNormalize {
             offset_ms: 123,
             time_index: "timestamp".to_string(),
@@ -106,14 +52,7 @@ mod tests {
             need_filter_out_nan: true,
             input: input.clone(),
         };
-        check!(
-            node.with_exprs_and_inputs(vec![col("timestamp")], vec![input.clone()])
-                .is_err()
-        );
-        check!(node.with_exprs_and_inputs(vec![], vec![]).is_err());
-        let rewritten = node
-            .with_exprs_and_inputs(vec![], vec![input.clone()])
-            .expect("valid rewrite");
+        let rewritten = checked_rewrite(&node, &input, col("timestamp"));
         assert2::assert!(
             rewritten
                 == SeriesNormalize {
@@ -127,8 +66,8 @@ mod tests {
 
     #[test]
     fn physical_node_reports_identity_display_ordering_and_rejects_bad_children() {
-        let input = physical_input();
-        let exec = Arc::new(SeriesNormalizeExec::new(
+        let input = physical_leaf(vec![time_value_batch(vec![100], vec![1.0])]);
+        let exec: Arc<dyn ExecutionPlan> = Arc::new(SeriesNormalizeExec::new(
             123,
             "timestamp".to_string(),
             true,
@@ -143,58 +82,19 @@ mod tests {
             ) == "PromSeriesNormalizeExec: time=timestamp, offset_ms=123, filter_nan=true\n  DataSourceExec: partitions=1, partition_sizes=[1]\n"
         );
         check!(exec.maintains_input_order() == vec![false]);
-        // The plan owns no expression, so a visitor that fails must never run.
-        let walk = exec.apply_expressions(&mut |_| plan_err!("visited an expression"));
-        check!(let Ok(TreeNodeRecursion::Continue) = walk);
-        check!(
-            Arc::clone(&exec)
-                .replace_children(
-                    vec![],
-                    ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute)
-                )
-                .is_err()
-        );
-        check!(
-            Arc::clone(&exec)
-                .replace_children(
-                    vec![input],
-                    ReplaceChildrenOptions::new(ChildrenPropertiesMode::Recompute)
-                )
-                .expect("valid child rewrite")
-                .name()
-                == "SeriesNormalizeExec"
-        );
+        check_single_child_exec(&exec, input, "SeriesNormalizeExec");
     }
 
     #[tokio::test]
     async fn sorts_by_time_and_drops_nan() {
-        let ts = Int64Array::from(vec![300_i64, 100, 200]);
-        let val = Float64Array::from(vec![3.0, f64::NAN, 2.0]);
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("timestamp", DataType::Int64, false),
-            Field::new("value", DataType::Float64, false),
-        ]));
-        let batch =
-            RecordBatch::try_new(schema.clone(), vec![Arc::new(ts), Arc::new(val)]).unwrap();
-        let mem = MemorySourceConfig::try_new_exec(&[vec![batch]], schema, None).unwrap();
+        let mem = physical_leaf(vec![time_value_batch(
+            vec![300, 100, 200],
+            vec![3.0, f64::NAN, 2.0],
+        )]);
 
         let exec = SeriesNormalizeExec::new(0, "timestamp".into(), true, mem);
-        let ctx = SessionContext::new();
-        let out = collect(Arc::new(exec), ctx.task_ctx()).await.unwrap();
-
-        let merged = concat_batches(&out[0].schema(), &out).unwrap();
-        let ts = merged
-            .column_by_name("timestamp")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        assert2::assert!(
-            (0..ts.len())
-                .map(|index| ts.value(index))
-                .collect::<Vec<_>>()
-                == vec![200, 300]
-        );
+        let merged = collect_concat(Arc::new(exec)).await;
+        assert2::assert!(int64_values(&merged, "timestamp") == vec![200, 300]);
     }
 }
 

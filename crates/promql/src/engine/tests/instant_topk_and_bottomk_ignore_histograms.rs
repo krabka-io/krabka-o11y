@@ -23,14 +23,7 @@ pub(crate) async fn instant_topk_and_bottomk_ignore_histograms() {
         ("topk(1, memory_bytes)", "b", 3.0),
         ("bottomk(1, memory_bytes)", "a", 1.0),
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 10_000)
-            .await
-            .unwrap();
-
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected vector");
-        };
+        let samples = instant_vector(&engine, query, 10_000).await;
         assert2::assert!(samples.len() == 1);
         assert2::assert!(samples[0].labels.get("__name__") == Some("memory_bytes"));
         assert2::assert!(samples[0].labels.get("instance") == Some(expected_instance));

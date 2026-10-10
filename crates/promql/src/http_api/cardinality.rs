@@ -10,13 +10,15 @@ use axum::{
 use krabka_metrics::{decode_float_samples, decode_native_histograms};
 
 use super::{
-    ApiError, CardinalityParams, Extension, Principal, PrometheusApiState, active_series_response,
-    apply_limit, authorized_tenant_from_headers, cardinality_label_names_response,
-    cardinality_label_values_response, enforce_selected_series_limit, labels_key,
-    parse_cardinality_form, parse_cardinality_params, selector_matchers,
+    ApiError, CardinalityParams, Extension, Principal, PrometheusApiState, Rejection, RequestAuth,
+    active_series_response, apply_limit, authorized_tenant_from_headers,
+    cardinality_label_names_response, cardinality_label_values_response,
+    enforce_selected_series_limit, labels_key, parse_cardinality_form, parse_cardinality_params,
+    selector_matchers,
 };
 use crate::{MetricStore, PromqlLabels as Labels};
 
+mod authorized_cardinality_series;
 mod cardinality_active_native_histogram_metrics;
 mod cardinality_active_series;
 mod cardinality_active_series_inner;
@@ -30,6 +32,7 @@ mod cardinality_label_values_post;
 mod cardinality_series;
 mod cardinality_series_for_params;
 
+use authorized_cardinality_series::authorized_cardinality_series;
 pub(super) use cardinality_active_native_histogram_metrics::{
     cardinality_active_native_histogram_metrics, cardinality_active_native_histogram_metrics_post,
 };

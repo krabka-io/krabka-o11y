@@ -1,11 +1,10 @@
-use datafusion::{common::tree_node::TreeNodeRecursion, physical_expr::PhysicalExpr};
-
 use super::{
     Arc, ArrayRef, DataFusionError, DfResult, DisplayAs, DisplayFormatType, EquivalenceProperties,
-    ExecutionPlan, Float64Array, Int64Array, PlanProperties, RangeArray, RecordBatch,
-    RecordBatchStreamAdapter, SchemaRef, SendableRecordBatchStream, StepWindows, StreamExt,
-    TaskContext, UInt32Array, build_extended_range_schema, fmt, take,
+    ExecutionPlan, Float64Array, Int64Array, PlanProperties, RangeArray, RecordBatch, SchemaRef,
+    SendableRecordBatchStream, StepWindows, TaskContext, UInt32Array, build_extended_range_schema,
+    fmt, take,
 };
+use crate::extension::{map_batches, only_child};
 
 /// Physical node that folds samples into per-eval-step range windows.
 #[derive(Debug)]
@@ -201,34 +200,17 @@ impl ExecutionPlan for RangeManipulateExec {
         "RangeManipulateExec"
     }
 
-    fn properties(&self) -> &Arc<PlanProperties> {
-        &self.properties
-    }
-
-    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
-        vec![&self.input]
-    }
+    single_input_exec_plumbing!();
 
     fn maintains_input_order(&self) -> Vec<bool> {
         vec![false]
     }
 
-    fn apply_expressions(
-        &self,
-        _f: &mut dyn FnMut(&Arc<dyn PhysicalExpr>) -> DfResult<TreeNodeRecursion>,
-    ) -> DfResult<TreeNodeRecursion> {
-        Ok(TreeNodeRecursion::Continue)
-    }
-
     fn with_new_children(
         self: Arc<Self>,
-        mut children: Vec<Arc<dyn ExecutionPlan>>,
+        children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> DfResult<Arc<dyn ExecutionPlan>> {
-        if children.len() != 1 {
-            return Err(DataFusionError::Plan(
-                "RangeManipulateExec expects one child".to_string(),
-            ));
-        }
+        let input = only_child(children, self.name())?;
         Ok(Arc::new(Self::new(
             self.start_ms,
             self.end_ms,
@@ -236,7 +218,7 @@ impl ExecutionPlan for RangeManipulateExec {
             self.range_ms,
             self.time_index.clone(),
             self.field_column.clone(),
-            children.swap_remove(0),
+            input,
         )))
     }
 
@@ -258,7 +240,8 @@ impl ExecutionPlan for RangeManipulateExec {
             input: Arc::clone(&self.input),
             properties: Arc::clone(&self.properties),
         };
-        let stream = input.map(move |batch| batch.and_then(|batch| this.manipulate_batch(&batch)));
-        Ok(Box::pin(RecordBatchStreamAdapter::new(schema, stream)))
+        Ok(map_batches(input, schema, move |batch| {
+            this.manipulate_batch(batch)
+        }))
     }
 }

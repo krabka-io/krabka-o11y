@@ -29,18 +29,7 @@ pub(crate) async fn frontend_range_execution_reduces_sharded_avg_from_sum_and_co
         .lock()
         .expect("avg partial executor calls poisoned")
         .clone();
-    assert2::assert!(
-        calls
-            .iter()
-            .map(|query| (query.query.as_str(), query.shard))
-            .collect::<Vec<_>>()
-            == vec![
-                ("sum(up)", Some(QueryShard { index: 1, total: 2 })),
-                ("sum(up)", Some(QueryShard { index: 2, total: 2 })),
-                ("count(up)", Some(QueryShard { index: 1, total: 2 })),
-                ("count(up)", Some(QueryShard { index: 2, total: 2 })),
-            ]
-    );
+    assert2::assert!(shard_calls(&calls) == on_both_shards(&["sum(up)", "count(up)"]));
     assert2::assert!(
         result
             == unannotated(QueryResult::RangeMatrix(vec![RangeSeries {

@@ -1,19 +1,19 @@
 use futures::{FutureExt, future::BoxFuture};
 use krabka_units::prelude::*;
 use promql_parser::parser::{
-    AggregateExpr, BinaryExpr, Call, Expr, MatrixSelector, UnaryExpr, VectorSelector,
+    AggregateExpr, BinaryExpr, Call, Expr, UnaryExpr, VectorSelector,
     token::{T_BOTTOMK, T_COUNT_VALUES, T_LIMIT_RATIO, T_LIMITK, T_QUANTILE, T_TOPK},
 };
 
 use super::{
-    AggregateOp, HistogramAccessor, InstantValue, IrateFn, OuterRangeFn, OverTimeFn, PromqlEngine,
-    RangeFn, apply_count_values_aggregate, apply_histogram_accessor, apply_histogram_fraction,
+    AggregateOp, FractionBounds, HistogramAccessor, InstantOperands, InstantValue, IrateFn,
+    MatrixSelectorAt, OuterRangeFn, OverTimeFn, PromqlEngine, RangeFn,
+    apply_count_values_aggregate, apply_histogram_accessor, apply_histogram_fraction,
     apply_histogram_quantile, apply_info, apply_k_aggregate, apply_outer_range_fn,
     apply_quantile_aggregate, apply_simple_aggregate, combine_instant_binary, emit_warning,
     info::parse_info_call,
     invalid_quantile_warning, is_valid_quantile, label_ops,
     labels::{absent_labels, labels_without_metric_name},
-    range_functions::range_has_samples,
     scalar::{
         CalendarFn, ClampKind, SortDirection, UnaryFloatFn, clamp_float, negate_query_result,
         round_to_nearest,

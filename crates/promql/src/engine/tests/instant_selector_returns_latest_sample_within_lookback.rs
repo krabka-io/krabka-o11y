@@ -31,13 +31,7 @@ pub(crate) async fn instant_selector_returns_latest_sample_within_lookback() {
         },
     );
 
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "up", 30_000)
-        .await
-        .unwrap();
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "up", 30_000).await;
     check!(
         (
             samples.len(),

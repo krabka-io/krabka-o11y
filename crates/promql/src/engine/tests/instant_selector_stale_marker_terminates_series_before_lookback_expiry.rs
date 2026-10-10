@@ -24,13 +24,6 @@ pub(crate) async fn instant_selector_stale_marker_terminates_series_before_lookb
             ..EngineOpts::default()
         },
     );
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "up", 30_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "up", 30_000).await;
     assert2::assert!(samples.is_empty());
 }

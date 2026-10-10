@@ -276,11 +276,19 @@ pub mod testkit {
                     let evaluation_error = result.as_ref().err().map(ToString::to_string);
                     let case = handle_instant_eval_result(
                         result,
-                        expect,
-                        annotations,
-                        *ordered,
-                        range_expect.as_ref(),
-                        fail_message.as_ref(),
+                        InstantEvalExpect {
+                            lines: expect,
+                            outcome: EvalOutcomeExpect {
+                                annotations,
+                                fail_message: fail_message.as_ref(),
+                            },
+                            order: if *ordered {
+                                ResultOrder::AsWritten
+                            } else {
+                                ResultOrder::Any
+                            },
+                            range_expect: range_expect.as_ref(),
+                        },
                     )
                     .map_err(|error| add_eval_context(error, "instant", expr));
                     record_case(
@@ -322,11 +330,17 @@ pub mod testkit {
                     let evaluation_error = result.as_ref().err().map(ToString::to_string);
                     let case = handle_range_eval_result(
                         result,
-                        expect,
-                        annotations,
-                        fail_message.as_ref(),
-                        *start_ms,
-                        *step,
+                        RangeEvalExpect {
+                            lines: expect,
+                            outcome: EvalOutcomeExpect {
+                                annotations,
+                                fail_message: fail_message.as_ref(),
+                            },
+                            grid: RangeExpect {
+                                start_ms: *start_ms,
+                                step: *step,
+                            },
+                        },
                     )
                     .map_err(|error| add_eval_context(error, "range", expr));
                     record_case(
@@ -694,43 +708,90 @@ pub mod testkit {
         labels
     }
 
+    /// How an instant evaluation's result must compare with its expectation.
+    #[derive(Clone, Copy)]
+    struct InstantEvalExpect<'a> {
+        /// The expected result lines.
+        lines: &'a [ExpectLine],
+        /// The annotations or failure the evaluation must produce.
+        outcome: EvalOutcomeExpect<'a>,
+        /// Whether the `expect ordered` directive applies.
+        order: ResultOrder,
+        /// The sample grid when the instant query returns a range vector.
+        range_expect: Option<&'a RangeExpect>,
+    }
+
+    /// Whether an instant vector must match its expectation position by position.
+    #[derive(Clone, Copy)]
+    enum ResultOrder {
+        /// `expect ordered`: compare samples in the order written.
+        AsWritten,
+        /// Compare samples irrespective of order.
+        Any,
+    }
+
     fn handle_instant_eval_result(
         result: Result<(QueryResult, Annotations)>,
-        expect: &[ExpectLine],
-        annotations: &[AnnotationExpect],
-        ordered: bool,
-        range_expect: Option<&RangeExpect>,
-        fail_message: Option<&ExpectedFailure>,
+        expectation: InstantEvalExpect<'_>,
     ) -> Result<()> {
-        match (result, fail_message) {
-            (Ok(_), Some(_)) => Err(PromqlError::Exec(
-                "query succeeded but test expected failure".to_string(),
-            )),
-            (Err(error), Some(expected)) => compare_expected_failure(&error, expected),
-            (Err(error), None) => Err(error),
-            (Ok((result, raised)), None) => {
-                compare_annotations(annotations, &raised)?;
-                match range_expect {
-                    Some(range_expect) => compare_range_result(
-                        result,
-                        expect,
-                        range_expect.start_ms,
-                        range_expect.step,
-                    ),
-                    None => compare_instant_result(result, expect, ordered),
-                }
+        let InstantEvalExpect {
+            lines,
+            outcome,
+            order,
+            range_expect,
+        } = expectation;
+        handle_eval_result(result, outcome, |result| match range_expect {
+            Some(range_expect) => {
+                compare_range_result(result, lines, range_expect.start_ms, range_expect.step)
             }
-        }
+            None => compare_instant_result(result, lines, order),
+        })
+    }
+
+    /// How a range evaluation's result must compare with its expectation.
+    struct RangeEvalExpect<'a> {
+        /// The expected result lines.
+        lines: &'a [ExpectLine],
+        /// The annotations or failure the evaluation must produce.
+        outcome: EvalOutcomeExpect<'a>,
+        /// The evaluation's first timestamp and step.
+        grid: RangeExpect,
     }
 
     fn handle_range_eval_result(
         result: Result<(QueryResult, Annotations)>,
-        expect: &[ExpectLine],
-        annotations: &[AnnotationExpect],
-        fail_message: Option<&ExpectedFailure>,
-        start_ms: i64,
-        step: Time,
+        expectation: RangeEvalExpect<'_>,
     ) -> Result<()> {
+        let RangeEvalExpect {
+            lines,
+            outcome,
+            grid,
+        } = expectation;
+        handle_eval_result(result, outcome, |result| {
+            compare_range_result(result, lines, grid.start_ms, grid.step)
+        })
+    }
+
+    /// What an evaluation directive expects of the outcome besides its value.
+    #[derive(Clone, Copy)]
+    struct EvalOutcomeExpect<'a> {
+        /// The annotation directives a successful evaluation must satisfy.
+        annotations: &'a [AnnotationExpect],
+        /// The failure the evaluation must raise instead, if any.
+        fail_message: Option<&'a ExpectedFailure>,
+    }
+
+    /// Checks an evaluation against an expected failure, or else checks its
+    /// annotations and hands the result to `compare_result`.
+    fn handle_eval_result(
+        result: Result<(QueryResult, Annotations)>,
+        expect: EvalOutcomeExpect<'_>,
+        compare_result: impl FnOnce(QueryResult) -> Result<()>,
+    ) -> Result<()> {
+        let EvalOutcomeExpect {
+            annotations,
+            fail_message,
+        } = expect;
         match (result, fail_message) {
             (Ok(_), Some(_)) => Err(PromqlError::Exec(
                 "query succeeded but test expected failure".to_string(),
@@ -739,7 +800,7 @@ pub mod testkit {
             (Err(error), None) => Err(error),
             (Ok((result, raised)), None) => {
                 compare_annotations(annotations, &raised)?;
-                compare_range_result(result, expect, start_ms, step)
+                compare_result(result)
             }
         }
     }
@@ -831,14 +892,14 @@ pub mod testkit {
 
     /// Compares an instant result against the expectation block.
     ///
-    /// `ordered` carries the `expect ordered` directive. It selects a
+    /// `order` carries the `expect ordered` directive. It selects a
     /// positional comparison of the instant vector, the way Prometheus
     /// promqltest does. Without it the comparison ignores the result order,
     /// because most queries do not promise one.
     fn compare_instant_result(
         result: QueryResult,
         expect: &[ExpectLine],
-        ordered: bool,
+        order: ResultOrder,
     ) -> Result<()> {
         if let QueryResult::Str { value, .. } = result {
             let expected = expect_single_string(expect)?;
@@ -894,7 +955,7 @@ pub mod testkit {
                 actual.len()
             )));
         }
-        if ordered {
+        if matches!(order, ResultOrder::AsWritten) {
             return compare_ordered_instant_samples(&actual, &expected);
         }
 
@@ -1405,7 +1466,20 @@ pub mod testkit {
         /// with satisfied annotations passes.
         #[test]
         fn a_range_evaluation_routes_its_outcome_by_what_the_test_expected() {
-            let step = krabka_units::minutes(1);
+            fn range_expectation<'a>(
+                lines: &'a [ExpectLine],
+                outcome: EvalOutcomeExpect<'a>,
+            ) -> RangeEvalExpect<'a> {
+                RangeEvalExpect {
+                    lines,
+                    outcome,
+                    grid: RangeExpect {
+                        start_ms: 0,
+                        step: krabka_units::minutes(1),
+                    },
+                }
+            }
+
             let expect = vec![ExpectLine {
                 metric: r#"up{job="api"}"#.to_owned(),
                 values: vec![SampleSpec::Value(7.0)],
@@ -1419,15 +1493,17 @@ pub mod testkit {
                 }])
             };
             let raised = Annotations::default();
-
+            let boom = ExpectedFailure::Message("boom".into());
             check!(
                 handle_range_eval_result(
                     Ok((matrix(7.0), raised.clone())),
-                    &expect,
-                    &[],
-                    None,
-                    0,
-                    step
+                    range_expectation(
+                        &expect,
+                        EvalOutcomeExpect {
+                            annotations: &[],
+                            fail_message: None,
+                        },
+                    ),
                 )
                 .is_ok(),
                 "a matching result passes"
@@ -1435,11 +1511,13 @@ pub mod testkit {
             check!(
                 handle_range_eval_result(
                     Ok((matrix(8.0), raised.clone())),
-                    &expect,
-                    &[],
-                    None,
-                    0,
-                    step
+                    range_expectation(
+                        &expect,
+                        EvalOutcomeExpect {
+                            annotations: &[],
+                            fail_message: None,
+                        },
+                    ),
                 )
                 .is_err(),
                 "a differing result is refused"
@@ -1447,11 +1525,13 @@ pub mod testkit {
             check!(
                 handle_range_eval_result(
                     Ok((matrix(7.0), raised.clone())),
-                    &expect,
-                    &[],
-                    Some(&ExpectedFailure::Message("boom".into())),
-                    0,
-                    step
+                    range_expectation(
+                        &expect,
+                        EvalOutcomeExpect {
+                            annotations: &[],
+                            fail_message: Some(&boom),
+                        },
+                    ),
                 )
                 .is_err(),
                 "a success where failure was expected is refused"
@@ -1459,11 +1539,13 @@ pub mod testkit {
             check!(
                 handle_range_eval_result(
                     Err(PromqlError::Exec("boom happened".to_owned())),
-                    &expect,
-                    &[],
-                    Some(&ExpectedFailure::Message("boom".into())),
-                    0,
-                    step
+                    range_expectation(
+                        &expect,
+                        EvalOutcomeExpect {
+                            annotations: &[],
+                            fail_message: Some(&boom),
+                        },
+                    ),
                 )
                 .is_ok(),
                 "the expected failure passes"
@@ -1471,11 +1553,13 @@ pub mod testkit {
             check!(
                 handle_range_eval_result(
                     Err(PromqlError::Exec("boom happened".to_owned())),
-                    &expect,
-                    &[],
-                    None,
-                    0,
-                    step
+                    range_expectation(
+                        &expect,
+                        EvalOutcomeExpect {
+                            annotations: &[],
+                            fail_message: None,
+                        },
+                    ),
                 )
                 .is_err(),
                 "an unexpected failure is refused"
@@ -1483,11 +1567,13 @@ pub mod testkit {
             check!(
                 handle_range_eval_result(
                     Ok((matrix(7.0), raised)),
-                    &expect,
-                    &[AnnotationExpect::AnyWarn],
-                    None,
-                    0,
-                    step
+                    range_expectation(
+                        &expect,
+                        EvalOutcomeExpect {
+                            annotations: &[AnnotationExpect::AnyWarn],
+                            fail_message: None,
+                        },
+                    ),
                 )
                 .is_err(),
                 "an unsatisfied annotation is refused"
@@ -1669,16 +1755,24 @@ eval instant at 2m down{job="api"}
                 expected_line(r#"up{job="b"}"#, 2.0),
             ];
 
-            check!(compare_instant_result(result(), &written_in_result_order, true).is_ok());
-            check!(compare_instant_result(result(), &written_in_result_order, false).is_ok());
             check!(
-                compare_instant_result(result(), &written_in_another_order, false).is_ok(),
+                compare_instant_result(result(), &written_in_result_order, ResultOrder::AsWritten)
+                    .is_ok()
+            );
+            check!(
+                compare_instant_result(result(), &written_in_result_order, ResultOrder::Any)
+                    .is_ok()
+            );
+            check!(
+                compare_instant_result(result(), &written_in_another_order, ResultOrder::Any)
+                    .is_ok(),
                 "without the directive the order does not matter"
             );
 
-            let message = compare_instant_result(result(), &written_in_another_order, true)
-                .expect_err("the written order is not the result order")
-                .to_string();
+            let message =
+                compare_instant_result(result(), &written_in_another_order, ResultOrder::AsWritten)
+                    .expect_err("the written order is not the result order")
+                    .to_string();
             check!(
                 message
                     == "execution error: order mismatch at position 1: \
@@ -2647,7 +2741,6 @@ mod annotation_expect;
 mod case_features;
 mod case_outcome;
 mod chunk_reset_hints;
-mod compact_spanned_histogram_counts;
 mod compacted_native_histogram;
 mod conformance_labels_key;
 mod cumulative_to_bucket_counts;
@@ -2691,7 +2784,6 @@ mod parse_start_offset_token;
 mod parse_test_file;
 mod range_expect;
 mod sample_spec;
-mod spanned_histogram_counts;
 mod split_metric_and_tail;
 mod split_once_whitespace;
 mod split_sample_tokens;
@@ -2703,7 +2795,6 @@ use add_histogram_step::add_histogram_step;
 pub use annotation_expect::AnnotationExpect;
 pub use case_outcome::CaseOutcome;
 use chunk_reset_hints::ChunkResetHints;
-use compact_spanned_histogram_counts::compact_spanned_histogram_counts;
 use compacted_native_histogram::compacted_native_histogram;
 use conformance_labels_key::conformance_labels_key;
 use cumulative_to_bucket_counts::cumulative_to_bucket_counts;
@@ -2746,10 +2837,11 @@ use parse_sample_token::parse_sample_token;
 pub use parse_test_file::parse_test_file;
 pub use range_expect::RangeExpect;
 pub use sample_spec::SampleSpec;
-use spanned_histogram_counts::spanned_histogram_counts;
 use split_metric_and_tail::split_metric_and_tail;
 use split_once_whitespace::split_once_whitespace;
 use split_sample_tokens::split_sample_tokens;
 pub use statement::Statement;
 pub use test_file::TestFile;
 use test_parser::TestParser;
+
+use crate::engine::{compact_spanned_histogram_counts, spanned_histogram_counts};

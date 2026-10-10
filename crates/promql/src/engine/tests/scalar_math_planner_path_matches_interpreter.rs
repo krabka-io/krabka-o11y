@@ -2,26 +2,6 @@ use super::*;
 
 #[tokio::test]
 pub(crate) async fn scalar_math_planner_path_matches_interpreter() {
-    use crate::{DurationExprContext, parse_promql_with_duration_context};
-
-    // NaN-aware sample comparison: labels and ts must match exactly; values
-    // match when bit-equal or both NaN (Prometheus treats all NaNs alike).
-    fn samples_match(left: &[crate::InstantSample], right: &[crate::InstantSample]) -> bool {
-        if left.len() != right.len() {
-            return false;
-        }
-        left.iter().zip(right).all(|(a, b)| {
-            a.labels == b.labels
-                && a.ts_ms == b.ts_ms
-                && match (&a.value, &b.value) {
-                    (SampleValue::Float(x), SampleValue::Float(y)) => {
-                        x.to_bits() == y.to_bits() || (x.is_nan() && y.is_nan())
-                    }
-                    _ => false,
-                }
-        })
-    }
-
     // A float-only store: a multi-label gauge with negatives (for
     // `sqrt`/`ln` NaN/-inf edges), a genuine-NaN series (must survive the
     // operator path), an up-like series for the nested aggregate case, and a
@@ -81,37 +61,14 @@ pub(crate) async fn scalar_math_planner_path_matches_interpreter() {
     ];
 
     for (query, time_ms) in queries {
-        let expr = parse_promql_with_duration_context(query, DurationExprContext::instant(time_ms))
-            .unwrap_or_else(|error| panic!("parse `{query}`: {error}"));
+        let (via_operators, via_interpreter) =
+            planned_and_interpreted(&engine, query, time_ms).await;
 
-        // Operator path: the recursive planner must claim this query.
-        let plan = engine
-            .plan_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("plan `{query}`: {error}"))
-            .unwrap_or_else(|| panic!("`{query}` did not route through the planner"));
-        let via_operators = engine
-            .assemble_planned_instant(plan, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("operator `{query}`: {error}"));
-
-        // Interpreter path: evaluate the same expression directly.
-        let via_interpreter = engine
-            .eval_instant_expr("t", &expr, time_ms)
-            .await
-            .unwrap_or_else(|error| panic!("interpreter `{query}`: {error}"));
-
-        let normalize = |result: QueryResult| -> Vec<crate::InstantSample> {
-            let QueryResult::InstantVector(mut samples) = result else {
-                panic!("expected vector for `{query}`");
-            };
-            samples.sort_by_key(|sample| sample.labels.fingerprint());
-            samples
-        };
+        let normalize = |result: QueryResult| fingerprint_sorted(result, query);
 
         let interpreter = normalize(via_interpreter);
         let operators = normalize(via_operators);
-        assert2::assert!(samples_match(&interpreter, &operators));
+        assert2::assert!(nan_equal_samples(&interpreter, &operators));
     }
 
     // A bare matrix selector now routes through the planner as a

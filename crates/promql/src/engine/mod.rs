@@ -12,6 +12,9 @@ mod binary;
 mod binary_plan;
 mod execution;
 mod grid_leaf;
+mod matrix_selector_at;
+#[cfg(test)]
+use matrix_selector_at::MatrixSelectorAt;
 mod histogram;
 mod histogram_plan;
 mod histogram_stats_scope;
@@ -59,13 +62,14 @@ pub(crate) use annotations::emit_warning;
 #[cfg(test)]
 use annotations::{invalid_quantile_warning, is_valid_quantile};
 #[cfg(test)]
-use binary::{InstantValue, combine_instant_binary};
+use binary::{InstantOperands, InstantValue, combine_instant_binary};
 pub(crate) use histogram::add_compatible_native_histogram;
 #[cfg(all(test, feature = "experimental-functions"))]
 use histogram::apply_histogram_quantiles;
 #[cfg(test)]
 use histogram::{
-    HistogramAccessor, apply_histogram_accessor, apply_histogram_fraction, apply_histogram_quantile,
+    FractionBounds, HistogramAccessor, apply_histogram_accessor, apply_histogram_fraction,
+    apply_histogram_quantile,
 };
 use histogram::{
     native_histograms_are_range_compatible, reconcile_native_histogram_layouts,
@@ -127,9 +131,14 @@ mod range_eval;
 pub use check_resolution_points::check_resolution_points;
 use current_at_modifier_bounds::current_at_modifier_bounds;
 pub use engine_opts::EngineOpts;
-pub(crate) use histogram::{standard_histogram_bound, template_histogram_value};
+pub(crate) use histogram::{
+    compact_spanned_histogram_counts, spanned_histogram_counts, standard_histogram_bound,
+    template_histogram_value,
+};
+pub(crate) use labels::aggregate_labels;
 pub use max_resolution_points::MAX_RESOLUTION_POINTS;
 pub use promql_engine::PromqlEngine;
 #[cfg(feature = "experimental-functions")]
 pub(super) use query_range_context::QueryRangeContext;
 use range_eval::RangeEval;
+pub(crate) use range_functions::over_time_mean;

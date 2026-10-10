@@ -4,6 +4,7 @@ use super::{
     extended_histogram_range_value, extrapolated_rate_with_starts, mixed_floats_histograms_warning,
     range_histogram_sample,
 };
+use crate::functions::extrapolate::{RateWindow, WindowBounds};
 
 pub(crate) fn range_function_sample_from_series(
     series: &RangeSeries,
@@ -132,12 +133,16 @@ pub(crate) fn range_function_sample_from_series(
         RangeFn::Changes => count_changes(&values),
         RangeFn::Resets => count_resets(&values),
         RangeFn::Rate | RangeFn::Increase | RangeFn::Delta => extrapolated_rate_with_starts(
-            &timestamps,
-            &values,
+            RateWindow {
+                timestamps: &timestamps,
+                values: &values,
+                bounds: WindowBounds {
+                    range_start_ms,
+                    range_end_ms,
+                },
+                range,
+            },
             &series.start_timestamps_ms,
-            range_start_ms,
-            range_end_ms,
-            range,
             kind,
         ),
     }?;

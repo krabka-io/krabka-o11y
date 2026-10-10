@@ -9,17 +9,14 @@ pub(crate) async fn native_histogram_scalar_arithmetic_scales_histograms() {
         ("histogram_count(request_duration_seconds / 2)", 2.0),
         ("histogram_sum(request_duration_seconds / 2)", 5.0),
     ] {
-        let result = engine
-            .query_instant(&tenant_id("tenant-a"), query, 10_000)
-            .await
-            .unwrap();
-
-        let QueryResult::InstantVector(samples) = result else {
-            panic!("expected vector");
-        };
-        assert2::assert!(samples.len() == 1);
-        assert2::assert!(samples[0].labels.get("__name__") == None);
-        assert2::assert!(samples[0].labels.get("job") == Some("api"));
-        assert2::assert!(approx_eq(float_value(&samples[0].value), expected));
+        let samples = instant_vector(&engine, query, 10_000).await;
+        assert_one_unnamed_float(
+            &samples,
+            ExpectedLabel {
+                name: "job",
+                label_value: "api",
+            },
+            expected,
+        );
     }
 }

@@ -6,12 +6,21 @@ use super::{Array, BinaryArray, Labels, RecordBatch, StringArray, leaf};
 /// This function treats `Utf8` and `Binary` columns as labels and skips the
 /// `timestamp`/`value` columns.
 pub(crate) fn labels_from_batch(batch: &RecordBatch, row: usize) -> Labels {
+    labels_from_batch_columns(batch, row, |name| {
+        name == leaf::TIME_COLUMN || name == leaf::VALUE_COLUMN || name == leaf::SAMPLE_TIME_COLUMN
+    })
+}
+
+/// Reconstructs a [`Labels`] set from the `Utf8` and `Binary` columns of one
+/// row, skipping each column whose name `is_value_column` accepts.
+pub(super) fn labels_from_batch_columns(
+    batch: &RecordBatch,
+    row: usize,
+    is_value_column: impl Fn(&str) -> bool,
+) -> Labels {
     let mut labels = Labels::new();
     for (index, field) in batch.schema().fields().iter().enumerate() {
-        if field.name() == leaf::TIME_COLUMN
-            || field.name() == leaf::VALUE_COLUMN
-            || field.name() == leaf::SAMPLE_TIME_COLUMN
-        {
+        if is_value_column(field.name()) {
             continue;
         }
         if let Some(column) = batch.column(index).as_any().downcast_ref::<BinaryArray>()

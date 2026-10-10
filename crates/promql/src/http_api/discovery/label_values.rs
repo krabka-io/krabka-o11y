@@ -1,6 +1,7 @@
 use super::{
-    Arc, Extension, HeaderMap, IntoResponse, MetricStore, Path, Principal, PrometheusApiState,
-    RawQuery, Response, State, label_values_inner, parse_discovery_params,
+    Arc, Extension, HeaderMap, IntoResponse, LabelValuesQuery, MetricStore, Path, Principal,
+    PrometheusApiState, RawQuery, RequestAuth, Response, State, label_values_inner,
+    parse_discovery_params,
 };
 
 pub(crate) async fn label_values<S: MetricStore>(
@@ -14,5 +15,13 @@ pub(crate) async fn label_values<S: MetricStore>(
         Ok(params) => params,
         Err(error) => return error.into_response(),
     };
-    label_values_inner(state, headers, principal, name, params).await
+    label_values_inner(
+        &state,
+        RequestAuth {
+            headers: &headers,
+            principal: &principal,
+        },
+        LabelValuesQuery { name, params },
+    )
+    .await
 }

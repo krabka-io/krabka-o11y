@@ -23,8 +23,12 @@ pub(crate) async fn instant_absent_over_time_returns_one_when_range_is_empty() {
     let QueryResult::InstantVector(samples) = result else {
         panic!("expected vector");
     };
-    check!(samples.len() == 1);
-    check!(samples[0].labels.get("__name__").is_none());
-    check!(samples[0].labels.get("job") == Some("api"));
-    check!(approx_eq(float_value(&samples[0].value), 1.0));
+    assert_one_unnamed_float(
+        &samples,
+        ExpectedLabel {
+            name: "job",
+            label_value: "api",
+        },
+        1.0,
+    );
 }

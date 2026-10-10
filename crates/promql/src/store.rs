@@ -138,19 +138,7 @@ mod tests {
         }
 
         async fn tsdb_stats(&self, _tenant: &str) -> Result<TsdbStats, PromqlError> {
-            Ok(TsdbStats {
-                head_stats: TsdbHeadStats {
-                    num_series: 0,
-                    num_samples: 0,
-                    num_chunks: 0,
-                    min_time: 0,
-                    max_time: 0,
-                },
-                series_count_by_metric_name: Vec::new(),
-                label_value_count_by_label_name: Vec::new(),
-                memory_in_bytes_by_label_name: Vec::new(),
-                series_count_by_label_value_pair: Vec::new(),
-            })
+            Ok(TsdbStats::empty())
         }
 
         async fn tsdb_blocks(&self, _tenant: &str) -> Result<Vec<TsdbBlock>, PromqlError> {

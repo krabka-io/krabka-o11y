@@ -1,6 +1,6 @@
 use super::{
-    DurationExprContext, DurationExprParser, Result, consume_ident, is_ident_char, is_zero,
-    matching_delimiter, ms_to_seconds, normalize_range_duration_content, offset_operand,
+    DurationExprContext, DurationExprParser, QuotedCopy, Result, consume_ident, is_ident_char,
+    is_zero, matching_delimiter, ms_to_seconds, normalize_range_duration_content, offset_operand,
     seconds_to_duration_literal, skip_ws, starts_offset_keyword,
 };
 
@@ -11,31 +11,13 @@ pub(crate) fn normalize_duration_expressions(
     let chars = query.chars().collect::<Vec<_>>();
     let mut out = String::with_capacity(query.len());
     let mut index = 0;
-    let mut quote = None;
+    let mut quoted = QuotedCopy::default();
 
     while index < chars.len() {
+        if quoted.copy(&chars, &mut index, &mut out) {
+            continue;
+        }
         let ch = chars[index];
-        if let Some(quote_ch) = quote {
-            out.push(ch);
-            if ch == '\\' {
-                if let Some(next) = chars.get(index + 1) {
-                    out.push(*next);
-                    index += 2;
-                    continue;
-                }
-            } else if ch == quote_ch {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-
-        if ch == '"' || ch == '\'' || ch == '`' {
-            quote = Some(ch);
-            out.push(ch);
-            index += 1;
-            continue;
-        }
 
         if cfg!(feature = "experimental-functions")
             && matches!(ch, 's' | 'e')

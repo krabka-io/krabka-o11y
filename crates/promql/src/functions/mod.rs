@@ -16,6 +16,9 @@ pub mod extrapolate;
 pub mod over_time;
 pub mod rate;
 pub mod scalar_math;
+mod udf_args;
+#[cfg(test)]
+mod udf_test_support;
 
 pub use aggregate_udaf::{prom_max_udaf, prom_min_udaf, register_aggregate_udafs};
 pub use over_time::{OverTimeFamily, register_over_time_udfs};

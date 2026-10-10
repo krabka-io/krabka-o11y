@@ -38,7 +38,6 @@ mod native_histogram_string;
 mod range_matrix_json;
 mod result_json;
 mod sample_string;
-mod standard_histogram_bound;
 mod success_data_response;
 mod success_response;
 mod success_response_with_stats;
@@ -69,8 +68,9 @@ pub(crate) use native_histogram_string::native_histogram_string;
 use range_matrix_json::range_matrix_json;
 use result_json::result_json;
 pub(super) use sample_string::sample_string;
-use standard_histogram_bound::standard_histogram_bound;
 pub(super) use success_data_response::success_data_response;
 pub(super) use success_response::success_response;
 pub(super) use success_response_with_stats::{QueryResponseStats, success_response_with_stats};
 use timestamp_seconds::timestamp_seconds;
+
+use crate::engine::standard_histogram_bound;

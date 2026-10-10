@@ -54,10 +54,8 @@ use datafusion::{
     physical_expr::EquivalenceProperties,
     physical_plan::{
         DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, SendableRecordBatchStream,
-        stream::RecordBatchStreamAdapter,
     },
 };
-use futures::StreamExt;
 
 use crate::range_array::RangeArray;
 

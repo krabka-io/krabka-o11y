@@ -5,6 +5,7 @@ use super::{
     PromqlEngine,
     annotations::{emit_warning, invalid_quantile_warning, is_valid_quantile},
     histogram::histogram_accessor_from_function_name,
+    matrix_selector_at::MatrixSelectorAt,
     planned::PlannedInstant,
     planner_support::{
         is_extended_range_fold_call, label_ops_kind_from_function_name,
@@ -18,10 +19,17 @@ use super::{
 use crate::{
     PromqlError,
     error::Result,
-    planner::{ExtendedSelectorExpr, ExtendedSelectorModifier},
+    planner::{ExtendedSelectorExpr, ExtendedSelectorModifier, over_time_range::OverTimeFold},
     result::QueryResult,
     store::MetricStore,
 };
+
+/// A call expression and the `Call` node it wraps.
+#[derive(Clone, Copy)]
+struct CallNode<'a> {
+    expr: &'a Expr,
+    call_expr: &'a Call,
+}
 
 impl<S: MetricStore> PromqlEngine<S> {
     /// Plans an instant expression onto the `DataFusion` operator chain.
@@ -99,7 +107,8 @@ impl<S: MetricStore> PromqlEngine<S> {
                     ))
                 }
                 Expr::Call(call_expr) => {
-                    self.plan_call_expr(tenant, expr, call_expr, time_ms).await
+                    self.plan_call_expr(tenant, CallNode { expr, call_expr }, time_ms)
+                        .await
                 }
                 Expr::Aggregate(aggregate) => {
                     // A simple (no-param) float aggregation lowers onto a
@@ -304,10 +313,10 @@ impl<S: MetricStore> PromqlEngine<S> {
     async fn plan_call_expr(
         &self,
         tenant: &str,
-        expr: &Expr,
-        call_expr: &Call,
+        call_node: CallNode<'_>,
         time_ms: i64,
     ) -> Result<Option<PlannedInstant>> {
+        let CallNode { expr, call_expr } = call_node;
         // A rate-family call over a bare matrix selector. A FLOAT-only selector
         // rides the RangeManipulate + rate-UDF operator chain. A HISTOGRAM-bearing
         // selector cannot (the operator leaf is float-only), so it assembles the
@@ -334,7 +343,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 ));
             }
             return Ok(Some(
-                self.plan_rate_range(tenant, selector, time_ms, kind)
+                self.plan_rate_range(tenant, MatrixSelectorAt { selector, time_ms }, kind)
                     .await?,
             ));
         }
@@ -385,8 +394,12 @@ impl<S: MetricStore> PromqlEngine<S> {
                 ));
             }
             return Ok(Some(
-                self.plan_over_time_range(tenant, selector, time_ms, family, phi)
-                    .await?,
+                self.plan_over_time_range(
+                    tenant,
+                    MatrixSelectorAt { selector, time_ms },
+                    OverTimeFold { family, phi },
+                )
+                .await?,
             ));
         }
         // An EXPERIMENTAL `*_over_time` member (`mad`/`first`/`ts_of_*_over_time`)

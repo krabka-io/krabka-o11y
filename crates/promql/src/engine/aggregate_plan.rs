@@ -391,33 +391,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 // messages the interpreter's `eval_count_values_aggregate` does
                 // (the total planner would otherwise surface the generic "planner
                 // returned no result" error).
-                let Some(param) = &aggregate.param else {
-                    return Err(PromqlError::Plan(
-                        "count_values requires a label-name parameter".to_string(),
-                    ));
-                };
-                // `count_values((("v")), x)` means `count_values("v", x)`:
-                // Prometheus keeps the parentheses in the AST and reads through
-                // them, so read through them here too.
-                let mut param = param.as_ref();
-                while let Expr::Paren(paren) = param {
-                    param = paren.expr.as_ref();
-                }
-                let Some(label_name) = crate::planner::byte_string_expr::string_expr_value(param)
-                else {
-                    return Err(PromqlError::Plan(
-                        "count_values label-name parameter must be a string".to_string(),
-                    ));
-                };
-                let label_name = label_name
-                    .utf8()
-                    .filter(|name| !name.is_empty())
-                    .ok_or_else(|| {
-                        PromqlError::Exec(format!(
-                            "invalid label name {}",
-                            krabka_logql::quote_go_bytes(label_name.as_bytes())
-                        ))
-                    })?;
+                let label_name = count_values_label_name(aggregate.param.as_deref())?;
                 let Some(samples) = self
                     .param_aggregate_inner_vector(tenant, &aggregate.expr, time_ms)
                     .await?
@@ -427,7 +401,7 @@ impl<S: MetricStore> PromqlEngine<S> {
                 Ok(Some(PlannedInstant::Precomputed(
                     apply_count_values_aggregate(
                         samples,
-                        label_name,
+                        &label_name,
                         aggregate.modifier.as_ref(),
                         time_ms,
                     ),
@@ -557,4 +531,36 @@ impl<S: MetricStore> PromqlEngine<S> {
         self.histogram_fold_inner_vector(tenant, value_arg, time_ms)
             .await
     }
+}
+
+/// Reads `count_values`' label-name parameter.
+///
+/// The parameter must be a string literal, read through any parentheses as
+/// Prometheus does: `count_values((("v")), x)` means `count_values("v", x)`.
+/// A missing or non-string parameter, or one that is not a valid UTF-8 label
+/// name, is a hard error with the canonical Prometheus message.
+pub(super) fn count_values_label_name(label_param: Option<&Expr>) -> Result<String> {
+    let Some(mut param) = label_param else {
+        return Err(PromqlError::Plan(
+            "count_values requires a label-name parameter".to_string(),
+        ));
+    };
+    while let Expr::Paren(paren) = param {
+        param = paren.expr.as_ref();
+    }
+    let Some(label_name) = crate::planner::byte_string_expr::string_expr_value(param) else {
+        return Err(PromqlError::Plan(
+            "count_values label-name parameter must be a string".to_string(),
+        ));
+    };
+    label_name
+        .utf8()
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            PromqlError::Exec(format!(
+                "invalid label name {}",
+                krabka_logql::quote_go_bytes(label_name.as_bytes())
+            ))
+        })
 }

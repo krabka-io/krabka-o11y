@@ -27,18 +27,12 @@ pub(crate) async fn vector_vector_group_left_carries_labels_from_one_side() {
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(
-            &tenant_id("tenant-a"),
-            "http_requests_total / on (job) group_left(region) target_info",
-            10_000,
-        )
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(
+        &engine,
+        "http_requests_total / on (job) group_left(region) target_info",
+        10_000,
+    )
+    .await;
     assert2::assert!(samples.len() == 2);
     for sample in samples {
         check!(sample.labels.get("__name__").is_none());

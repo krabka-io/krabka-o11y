@@ -1,4 +1,4 @@
-use super::{ExtendedSelectorModifier, PromqlError, Result, extended_modifier_at};
+use super::{ExtendedSelectorModifier, PromqlError, QuotedCopy, Result, extended_modifier_at};
 
 pub(crate) fn strip_extended_selector_modifiers(
     query: &str,
@@ -6,32 +6,14 @@ pub(crate) fn strip_extended_selector_modifiers(
     let chars = query.chars().collect::<Vec<_>>();
     let mut out = String::with_capacity(query.len());
     let mut index = 0;
-    let mut quote = None;
+    let mut quoted = QuotedCopy::default();
     let mut modifier = None;
 
     while index < chars.len() {
+        if quoted.copy(&chars, &mut index, &mut out) {
+            continue;
+        }
         let ch = chars[index];
-        if let Some(quote_ch) = quote {
-            out.push(ch);
-            if ch == '\\' {
-                if let Some(next) = chars.get(index + 1) {
-                    out.push(*next);
-                    index += 2;
-                    continue;
-                }
-            } else if ch == quote_ch {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-
-        if ch == '"' || ch == '\'' || ch == '`' {
-            quote = Some(ch);
-            out.push(ch);
-            index += 1;
-            continue;
-        }
 
         if let Some((found, end)) = extended_modifier_at(&chars, index) {
             if let Some(previous) = modifier

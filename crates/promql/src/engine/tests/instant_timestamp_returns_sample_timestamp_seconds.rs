@@ -11,14 +11,7 @@ pub(crate) async fn instant_timestamp_returns_sample_timestamp_seconds() {
     );
 
     let engine = PromqlEngine::new(Arc::new(store), EngineOpts::default());
-    let result = engine
-        .query_instant(&tenant_id("tenant-a"), "timestamp(up)", 120_000)
-        .await
-        .unwrap();
-
-    let QueryResult::InstantVector(samples) = result else {
-        panic!("expected vector");
-    };
+    let samples = instant_vector(&engine, "timestamp(up)", 120_000).await;
     check!(samples.len() == 1);
     check!(samples[0].labels.get("__name__").is_none());
     check!(samples[0].labels.get("job") == Some("api"));

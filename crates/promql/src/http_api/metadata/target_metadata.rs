@@ -1,7 +1,6 @@
 use super::{
-    ApiError, Arc, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState,
-    RawQuery, Response, State, apply_limit, authorized_tenant_from_headers, parse_metadata_params,
-    success_data_response, target_metadata_json,
+    Arc, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState, RawQuery,
+    RequestAuth, Response, State, limited_metadata, success_data_response, target_metadata_json,
 };
 
 pub(crate) async fn target_metadata<S: MetricStore>(
@@ -10,24 +9,17 @@ pub(crate) async fn target_metadata<S: MetricStore>(
     headers: HeaderMap,
     RawQuery(raw_query): RawQuery,
 ) -> Response {
-    let params = match parse_metadata_params(raw_query.as_deref()) {
-        Ok(params) => params,
-        Err(error) => return error.into_response(),
-    };
-    let tenant = match authorized_tenant_from_headers(&headers, &principal) {
-        Ok(tenant) => tenant,
-        Err(error) => return error.into_response(),
-    };
-    match state
-        .store
-        .metadata(tenant.as_str(), params.metric.as_deref())
-        .await
+    match limited_metadata(
+        &state,
+        RequestAuth {
+            headers: &headers,
+            principal: &principal,
+        },
+        raw_query.as_deref(),
+    )
+    .await
     {
-        Ok(scan) => {
-            let mut metadata = scan.metadata;
-            apply_limit(&mut metadata, params.limit);
-            success_data_response(target_metadata_json(metadata))
-        }
-        Err(error) => ApiError::from(error).into_response(),
+        Ok((_, metadata)) => success_data_response(target_metadata_json(metadata)),
+        Err(rejection) => rejection.into_response(),
     }
 }

@@ -24,24 +24,20 @@ rules:
             .or_insert_with(BTreeMap::new)
             .insert(group_name.to_string(), group);
     }
-    let mut group_state = super::super::RulerGroupState::default();
-    group_state.apply_records(vec![
-        super::super::RulerGroupStateRecord {
-            tenant: "tenant-a".to_string(),
-            namespace: "team-a".to_string(),
-            group: "not-yet".to_string(),
+    let mut group_state = group_state(&[
+        GroupLastEval {
+            namespace: "team-a",
+            group: "not-yet",
             last_eval_ms: 120_000,
         },
-        super::super::RulerGroupStateRecord {
-            tenant: "tenant-a".to_string(),
-            namespace: "team-b".to_string(),
-            group: "due".to_string(),
+        GroupLastEval {
+            namespace: "team-b",
+            group: "due",
             last_eval_ms: 60_000,
         },
-        super::super::RulerGroupStateRecord {
-            tenant: "tenant-a".to_string(),
-            namespace: "team-c".to_string(),
-            group: "also-due".to_string(),
+        GroupLastEval {
+            namespace: "team-c",
+            group: "also-due",
             last_eval_ms: 90_000,
         },
     ]);
@@ -58,10 +54,7 @@ rules:
         .flat_map(|groups| groups.keys().cloned())
         .collect::<BTreeSet<_>>();
 
-    let mut store = InMemoryMetricStore::new();
-    store.push_float("tenant-a", labels("up", "api"), 180_000, 1.0);
-    let store = Arc::new(store);
-    let engine = PromqlEngine::new(store, EngineOpts::default());
+    let engine = up_api_engine(&[180_000]);
     let wal_sink = RecordingSink::default();
     let alert_sink = RecordingAlertmanagerSink::default();
     let state_sink = RecordingRulerStateSink::default();

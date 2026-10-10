@@ -1,6 +1,6 @@
 use super::{
     Arc, Extension, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState, RawQuery,
-    Response, State, parse_discovery_params, series_inner,
+    RequestAuth, Response, State, parse_discovery_params, series_inner,
 };
 
 pub(crate) async fn series<S: MetricStore>(
@@ -13,5 +13,13 @@ pub(crate) async fn series<S: MetricStore>(
         Ok(params) => params,
         Err(error) => return error.into_response(),
     };
-    series_inner(state, headers, principal, params).await
+    series_inner(
+        &state,
+        RequestAuth {
+            headers: &headers,
+            principal: &principal,
+        },
+        params,
+    )
+    .await
 }

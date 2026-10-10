@@ -18,6 +18,7 @@ use crate::{
 
 mod a_panicking_update_leaves_the_head_readable_and_writable;
 mod a_snapshot_never_sees_part_of_a_batch;
+mod assert_query_shard_selects;
 mod bulk_wal_replay_and_retention_are_observable;
 mod cloned_wal_head_sees_records_replayed_through_original_handle;
 mod count_rows;
@@ -55,6 +56,7 @@ mod wal_batch_ledger;
 mod wal_head_delegates_metadata_cardinality_stats_and_blocks;
 mod wal_head_delete_tenant;
 
+use assert_query_shard_selects::assert_query_shard_selects;
 use count_rows::count_rows;
 use expected_label_memory_stats::expected_label_memory_stats;
 use expected_label_name_cardinality::expected_label_name_cardinality;

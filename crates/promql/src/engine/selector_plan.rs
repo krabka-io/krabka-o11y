@@ -5,15 +5,15 @@ use super::{
     InstantShape, OuterRangeFn, PlannedInstant, PromqlEngine, RangeEval,
     annotations::emit_metric_might_not_be_counter_info, apply_outer_range_fn,
     apply_selector_time_modifier, current_at_modifier_bounds, label_matcher_sets,
-    selector_duration,
+    matrix_selector_at::MatrixSelectorAt, selector_duration,
 };
 use crate::{
     error::Result,
     functions::OverTimeFamily,
     planner::{
-        StepGrid,
+        RangeWindowGrid, StepGrid,
         leaf::{InstantSelectorPlan, plan_instant_vector_selector},
-        over_time_range::{OverTimeRangePlan, plan_over_time_range_selector},
+        over_time_range::{OverTimeFold, OverTimeRangePlan, plan_over_time_range_selector},
         rate_range::{RateRangePlan, RateUdfKind, plan_rate_range_selector},
     },
     store::MetricStore,
@@ -158,16 +158,13 @@ impl<S: MetricStore> PromqlEngine<S> {
     pub(super) async fn plan_rate_range(
         &self,
         tenant: &str,
-        selector: &MatrixSelector,
-        time_ms: i64,
+        at: MatrixSelectorAt<'_>,
         kind: RateUdfKind,
     ) -> Result<PlannedInstant> {
+        let MatrixSelectorAt { selector, time_ms } = at;
         // Inside a range query this leaf is planned once over the whole step
         // grid; see `plan_instant_selector`.
-        if let Some(samples) = self
-            .grid_rate_vector(tenant, selector, time_ms, kind)
-            .await?
-        {
+        if let Some(samples) = self.grid_rate_vector(tenant, at, kind).await? {
             return Ok(PlannedInstant::Precomputed(samples));
         }
         let range = selector_duration(selector.range)?;
@@ -201,8 +198,10 @@ impl<S: MetricStore> PromqlEngine<S> {
             labels_by_fp,
         } = plan_rate_range_selector(
             samples,
-            StepGrid::instant(eval_end_ms, range.millis_i64()),
-            range,
+            RangeWindowGrid {
+                grid: StepGrid::instant(eval_end_ms, range.millis_i64()),
+                range,
+            },
             kind,
         )
         .await?;
@@ -220,22 +219,18 @@ impl<S: MetricStore> PromqlEngine<S> {
     /// This plan shares the rate path's window semantics. The window is exactly
     /// `(eval_time - range, eval_time]`, left-open and right-closed, with no 5m
     /// lookback, and it matches the interpreter's `over_time_sample_from_series`.
-    /// This method passes the `phi` quantile literal through for
+    /// This method passes the `over_time.phi` quantile literal through for
     /// `quantile_over_time` and ignores it otherwise.
     pub(super) async fn plan_over_time_range(
         &self,
         tenant: &str,
-        selector: &MatrixSelector,
-        time_ms: i64,
-        family: OverTimeFamily,
-        phi: f64,
+        at: MatrixSelectorAt<'_>,
+        over_time: OverTimeFold,
     ) -> Result<PlannedInstant> {
+        let MatrixSelectorAt { selector, time_ms } = at;
         // Inside a range query this leaf is planned once over the whole step
         // grid; see `plan_instant_selector`.
-        if let Some(samples) = self
-            .grid_over_time_vector(tenant, selector, time_ms, family, phi)
-            .await?
-        {
+        if let Some(samples) = self.grid_over_time_vector(tenant, at, over_time).await? {
             return Ok(PlannedInstant::Precomputed(samples));
         }
         let range = selector_duration(selector.range)?;
@@ -260,10 +255,11 @@ impl<S: MetricStore> PromqlEngine<S> {
             labels_by_fp,
         } = plan_over_time_range_selector(
             samples,
-            StepGrid::instant(eval_end_ms, range.millis_i64()),
-            range,
-            family,
-            phi,
+            RangeWindowGrid {
+                grid: StepGrid::instant(eval_end_ms, range.millis_i64()),
+                range,
+            },
+            over_time,
         )
         .await?;
         Ok(PlannedInstant::operator(
@@ -273,9 +269,9 @@ impl<S: MetricStore> PromqlEngine<S> {
             InstantShape::OverTimeProjection {
                 // Only `last_over_time` preserves the metric name; every other
                 // family drops it (`OverTimeFn::preserves_metric_name`).
-                preserve_metric_name: matches!(family, OverTimeFamily::Last),
+                preserve_metric_name: matches!(over_time.family, OverTimeFamily::Last),
             },
-            !matches!(family, OverTimeFamily::Last),
+            !matches!(over_time.family, OverTimeFamily::Last),
         ))
     }
 
