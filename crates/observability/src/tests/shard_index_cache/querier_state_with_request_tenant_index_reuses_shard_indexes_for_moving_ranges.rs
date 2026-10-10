@@ -54,7 +54,10 @@ pub(crate) async fn querier_state_with_request_tenant_index_reuses_shard_indexes
         .unwrap();
 
     for state in [&first, &second] {
-        check!(state.label_index == labels_index && state.block_index == block_index);
+        check!(
+            state.label_index.as_ref() == &labels_index
+                && state.block_index.as_ref() == &block_index
+        );
     }
 
     // A rolling query never repeats its exact cache key. Expired merged

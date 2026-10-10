@@ -3,7 +3,8 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use krabka_blockstore::{
-    BlockKey, LabelIndex, LogBlockIndex, LogRow, TimeRange, labels, write_log_block_to_object_store,
+    BlockKey, LabelIndex, LogBlockIndex, LogRow, TimeRange, labels,
+    write_log_block_to_object_store, write_tenant_log_index_manifest_to_object_store,
 };
 use krabka_logql::{StreamPlan, parse_query, plan_stream_query};
 use object_store::{ObjectStore, memory::InMemory, path::Path as ObjectPath};
@@ -48,10 +49,17 @@ impl LogQueryFixture {
     /// # Panics
     /// Panics if the count is zero, does not fit its types, or fixture writing fails.
     pub async fn new(streams: usize) -> Self {
+        Self::new_in_store(streams, Arc::new(InMemory::new())).await
+    }
+
+    /// Persist the same fixture in a caller-supplied object store.
+    ///
+    /// # Panics
+    /// Panics if the count is zero, does not fit its types, or fixture writing fails.
+    pub async fn new_in_store(streams: usize, store: Arc<dyn ObjectStore>) -> Self {
         let streams = std::num::NonZeroUsize::new(streams)
             .expect("at least one stream")
             .get();
-        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
         let prefix = ObjectPath::from("logs");
         let mut label_index = LabelIndex::default();
         let mut ledger = Vec::with_capacity(streams);
@@ -111,6 +119,33 @@ impl LogQueryFixture {
             block_index,
             ledger,
         }
+    }
+
+    /// Persist the tenant indexes that frontend requests load and cache.
+    ///
+    /// # Panics
+    /// Panics if writing the deterministic fixture manifest fails.
+    pub async fn persist_indexes(&self) {
+        write_tenant_log_index_manifest_to_object_store(
+            self.store.as_ref(),
+            &self.prefix,
+            TENANT,
+            &self.label_index,
+            &self.block_index,
+        )
+        .await
+        .expect("the fixture indexes write");
+    }
+
+    /// Physical block size for configuring a fixed number of frontend shards.
+    #[must_use]
+    pub fn block_bytes(&self) -> u64 {
+        use krabka_units::convert::ByteSizeExt as _;
+        self.block_index
+            .blocks()
+            .iter()
+            .map(|block| block.size.bytes_u64())
+            .sum()
     }
 
     /// Plan one query and build its response directly from generated inputs.

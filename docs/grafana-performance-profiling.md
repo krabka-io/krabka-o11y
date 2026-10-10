@@ -1177,3 +1177,79 @@ verified library archives and build recovery failures. Native API observations
 above predate regex reuse; this round does not attribute native gains or
 performance parity to engine measurements. Ingest wait attribution, cloned
 query state and larger native comparisons remain unfinished.
+
+## Sharing immutable query indexes
+
+The preceding native log profile attributes 18.9% of cumulative samples to
+query-state cloning. Cache hits and request/shard clones copied complete label
+and block indexes. Krabka now shares immutable `Arc` snapshots, preserving
+tenant keys, TTLs and compaction-frontier cache generations. An active request
+keeps its captured indexes after cache replacement or clearing. Loki likewise
+reuses loaded index readers and cached index objects; the
+[source comparison](grafana-upstream-source-comparison.md#loki) records the
+pinned implementation.
+
+A new frontend fixture includes production HTTP preparation, selection,
+planning, shard execution, Parquet reads, serialization and body consumption.
+It persists real Parquet and tenant manifests on a private local filesystem.
+The index cache is warmed, the result cache is disabled, and fixture limits
+allow complete broad responses. Requests run through the router in-process,
+with filesystem pages warmed by verification. They do not measure network
+traffic or remote storage. Each process verifies the API envelope and all
+labels/rows against an independent input ledger before timing; variable
+execution statistics are excluded from equality.
+
+All 168 measurements completed on the current VM, with three alternating
+pairs for seven shapes at four sizes. No GCP benchmark VM was launched.
+At 100,000 streams and one million rows:
+
+| Request | Baseline median | Candidate median | Median paired ratio |
+| --- | --- | --- | --- |
+| All streams | 14.033 s | 13.851 s | 1.0127 |
+| All streams, small shard-byte budget | 20.441 s | 17.286 s | 0.8562 |
+| One quarter of streams | 4.355 s | 3.835 s | 0.8807 |
+| Rare selector | 1.375 s | 0.299 s | 0.2177 |
+| One stream | 1.094 s | 0.0167 s | 0.0146 |
+| Empty result | 1.164 s | 0.000182 s | 0.000141 |
+| Label values | 1.881 s | 1.685 s | 0.8859 |
+
+Ratios are medians of corresponding candidate/baseline pairs, rather than
+ratios of the two independent medians. The broad unsharded control has no
+established improvement: its paired ratio is 1.0127 at the largest size and
+1.0191 at the smallest. Every run range is retained in the record.
+
+Separate 199 Hz CPU captures include fixture construction, one verification
+request and 50 timed empty requests at 20,000 streams, with zero lost samples.
+The baseline's largest reported query-state clone entry accounts for 15.51%
+of cumulative samples. No candidate clone entry reaches the 0.5% threshold,
+but its capture has only 86 samples and is dominated by fixture construction.
+These captures establish attribution, not a query-only CPU ratio; cumulative
+caller percentages can overlap.
+
+Heap captures at 5,000 streams include fixture construction and one
+verification request. For 20 timed empty requests, allocation calls fall from
+6,791,531 to 615,145. For three timed sharded broad requests, calls fall from
+16,210,876 to 13,438,791. Peak heap remains approximately 57 MB and 80 MB,
+respectively. Empty-result RSS including heaptrack overhead increases from
+115.22 to 118.72 MB; sharded RSS falls from 256.86 to 248.77 MB. These are
+whole-process counts and instrumented peaks, not per-query allocations or
+general peak-memory savings.
+
+Validation passes 585 tests: 427 observability unit tests, 70 querier tests,
+22 object-store tests, 56 range-query tests and ten tenant-limit tests. Full
+unit coverage also caught a rule-filter fixture that used a `LabelMatcher`
+struct literal after the earlier regex cache change; it now uses the validated
+constructor. Scoped Clippy, formatting, all 28 new Criterion IDs, 31 ratchet
+self-tests, 46 dependency-pin checks and locked offline Linux metadata pass.
+The inventory contains 156 additional unseeded IDs across these rounds;
+all 85 historical numeric budgets are unchanged. The current inventory hash
+and the original seeded-file hash are recorded separately.
+
+The [qualification record](../qualification/query-state-sharing-2026-10-10.json)
+preserves all timing pairs, CPU/heap captures, source and binary identities,
+verified archives, reproduction commands and failed build recovery attempts.
+Direct builds reuse the exact cached Cargo dependency graph and remain
+separate from normal PR CI. This round adds no fresh native deployment
+comparison. Ingest wait attribution, bounded shard label-index rebuilding,
+metadata enumeration and larger native comparisons remain unfinished;
+overall performance parity is unqualified.

@@ -3591,6 +3591,7 @@ version = "0.0.0"
 dependencies = [
  "arrow",
  "assert2",
+ "axum",
  "criterion",
  "datafusion",
  "krabka-blockstore",
@@ -3604,6 +3605,7 @@ dependencies = [
  "object_store",
  "serde_json",
  "tokio",
+ "tower",
 ]
 
 [[package]]

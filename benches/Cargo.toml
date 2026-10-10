@@ -57,6 +57,7 @@ pedantic = { level = "warn", priority = -1 }
 # not lend its table to another workspace.
 [dependencies]
 arrow = { version = "60", default-features = false, features = ["ipc"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 # The log scan benchmark drives a `SessionContext`, which is DataFusion's own
 # type rather than anything //crates/blockstore re-exports. Pinned to the same
 # git revision //Cargo.toml pins, for the same reason every other version here
@@ -76,6 +77,7 @@ krabka-units = { version = "0.6.0" }
 object_store = { version = "0.14", features = ["aws", "azure", "gcp"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }
 
 [dev-dependencies]
 assert2 = "0.4"
@@ -143,6 +145,10 @@ harness = false
 
 [[bench]]
 name = "log_stream_query"
+harness = false
+
+[[bench]]
+name = "log_query_frontend"
 harness = false
 
 [patch.crates-io]

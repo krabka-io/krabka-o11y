@@ -52,7 +52,10 @@ pub(crate) async fn querier_state_lists_full_shard_prefix_and_filters_before_fet
 
     let mut expected_blocks = BlockIndex::default();
     expected_blocks.insert(matching_block);
-    assert!(state.label_index == labels_index && state.block_index == expected_blocks);
+    assert!(
+        state.label_index.as_ref() == &labels_index
+            && state.block_index.as_ref() == &expected_blocks
+    );
 
     let shard_prefix =
         krabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant).to_string();

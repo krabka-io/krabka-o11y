@@ -92,6 +92,29 @@ benches/target/release/examples/log_stream_query_profile 20000 1 all_exact
 This driver verifies one complete response before its timed queries. Whole
 process captures include fixture creation and that verification query.
 
+`tools/bench.sh --quick log_query_frontend` adds production Loki HTTP handlers
+to the same four stream counts. Requests use real Parquet and tenant manifests
+on a private local filesystem, a one-hour index cache, and a disabled result
+cache. Cases cover all streams, all streams with a small shard-byte budget,
+one quarter of streams, roughly one sixty-fourth, one stream, an empty result,
+and label values. Fixture limits allow the complete broad response.
+
+Each case checks the API envelope and every label and row against the input
+ledger before timing. Execution statistics are excluded from equality because
+request timings and cache counters vary. Handler preparation, selection,
+planning, Parquet reads, shard execution, serialization and body consumption
+are timed. Fixture construction and verification are excluded. These are
+in-process HTTP requests with warmed index snapshots and filesystem pages;
+they do not measure socket traffic or remote object storage.
+
+```bash
+cargo build --manifest-path benches/Cargo.toml --release --example log_query_frontend_profile
+benches/target/release/examples/log_query_frontend_profile 100000 1 single
+```
+
+This driver also verifies once before its timed requests. CPU and allocation
+captures include fixture creation and that verification request.
+
 ## Where they run
 
 The `bench` job in [//.github/workflows/ci.yml](../.github/workflows/ci.yml) runs them on a schedule, not on a pull request. This follows the fuzz run, which is scheduled for the same reason: the work is unbounded, and a pull request cannot pay for it.

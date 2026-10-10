@@ -310,6 +310,18 @@ than compiled state. This change reuses compilation; it does not add Loki's
 literal simplifications. Extracted-field comparisons, label-selection patterns
 and dynamic template regexes still have separate evaluation paths.
 
+Loki also reuses loaded index objects. Its
+[`TSDBIndex`](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/storage/stores/shipper/indexshipper/tsdb/single_file_index.go#L119-L147)
+holds an index reader, and
+[`indexSet.ForEach`](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/storage/stores/shipper/indexshipper/downloads/index_set.go#L180-L197)
+passes existing cached index objects to callbacks while holding a read lock.
+Krabka's request preparation previously copied complete label and block
+indexes on cache hits and state clones. It now shares immutable `Arc`
+snapshots. Replacing or evicting a cache entry leaves an active request's
+snapshot valid; tenant keys, TTLs and compaction-frontier generation handling
+are preserved. Bounded shard preparation still rebuilds a label index and
+remains a separate cost to investigate.
+
 ## Tempo
 
 Tempo checks Parquet dictionaries, column chunks and page bounds before it

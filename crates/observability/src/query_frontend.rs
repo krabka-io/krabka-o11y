@@ -417,7 +417,7 @@ fn state_for_bounds(state: &QuerierState, tenant: &str, bounds: FingerprintBound
         }
     }
     let mut state = state.clone();
-    state.label_index = label_index;
+    state.label_index = Arc::new(label_index);
     state.dynamic_index = None;
     state
 }

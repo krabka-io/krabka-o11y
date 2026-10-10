@@ -1,8 +1,8 @@
-use super::{BTreeMap, BlockIndex, LabelIndex};
+use super::{Arc, BTreeMap, BlockIndex, LabelIndex};
 
 pub(crate) fn merge_tenant_shard_indexes(
     tenant: &str,
-    indexes: impl IntoIterator<Item = (LabelIndex, BlockIndex)>,
+    indexes: impl IntoIterator<Item = (Arc<LabelIndex>, Arc<BlockIndex>)>,
 ) -> (LabelIndex, BlockIndex) {
     let mut merged_labels = LabelIndex::default();
     let mut merged_blocks = BTreeMap::new();
@@ -65,7 +65,10 @@ mod tests {
 
         let (actual_labels, actual_blocks) = merge_tenant_shard_indexes(
             "tenant",
-            [(first_labels, first_blocks), (second_labels, second_blocks)],
+            [
+                (first_labels.into(), first_blocks.into()),
+                (second_labels.into(), second_blocks.into()),
+            ],
         );
         let mut expected_labels = LabelIndex::default();
         expected_labels.insert_series("tenant", labels([("app", "api"), ("é", "🦀")]));

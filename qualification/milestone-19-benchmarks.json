@@ -26,7 +26,7 @@
   "artifact": {
     "name": "command-0/criterion.tar.gz",
     "sha256": "4aa77f0e7c6556550ddd2637d9f94e23bbcd1000ac7ece2123fcee93d95069c2",
-    "baseline_sha256": "39428e4cfa8c7ea0a159e7c42bf67a928d00c2c734c9249743fada96856677ec"
+    "baseline_sha256": "4876795b9a8240543afe1511faab49b8d137e72dbf970b6849934d9dca4048b9"
   },
   "gate": {
     "run_url": "https://github.com/krabka-io/krabka-o11y/actions/runs/35692500769",
@@ -42,8 +42,8 @@
   },
   "inventory_extension": {
     "date": "2026-10-10",
-    "seeded_baseline_sha256": "e6a583f8a703397b3a12c13b528e370854a8aab7c051ce700934a44b07c47e6c",
-    "unseeded_benchmark_count": 128,
-    "reason": "Add large matcher workloads, full profile queries with repeated stacks, and complete cold log queries with broad, sparse and regex line selections. All 85 historical numeric budgets and their run provenance are unchanged; new workloads require the recorded runner before seeding."
+    "seeded_baseline_sha256": "39428e4cfa8c7ea0a159e7c42bf67a928d00c2c734c9249743fada96856677ec",
+    "unseeded_benchmark_count": 156,
+    "reason": "Add large matcher workloads, full profile queries with repeated stacks, complete cold log engine queries, and production frontend requests with warmed tenant index snapshots. All 85 historical numeric budgets and their run provenance are unchanged; new workloads require the recorded runner before seeding."
   }
 }

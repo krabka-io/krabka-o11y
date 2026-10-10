@@ -45,8 +45,12 @@ pub(crate) async fn querier_state_with_request_tenant_index_caches_shard_indexes
         .await
         .unwrap();
 
-    assert!(first.label_index == labels_index && first.block_index == block_index);
-    assert!(second.label_index == labels_index && second.block_index == block_index);
+    assert!(
+        first.label_index.as_ref() == &labels_index && first.block_index.as_ref() == &block_index
+    );
+    assert!(
+        second.label_index.as_ref() == &labels_index && second.block_index.as_ref() == &block_index
+    );
 
     let shard_prefix =
         krabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant).to_string();
