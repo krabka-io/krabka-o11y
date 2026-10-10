@@ -63,7 +63,17 @@ async fn a_second_group_member_takes_partitions_and_the_watch_reports_it() {
     // A second member joins the same group. This fixture has no revoke listener
     // to flush the first member's buffered records.
     let mut second = join_second(&mut first, &group).await;
-    let rebalance = poll_until_revoked(&mut first, &mut second, &metrics, topic).await;
+    let rebalance = poll_until_revoked(
+        &mut GroupMembers {
+            first: &mut first,
+            second: &mut second,
+        },
+        RevocationWatch {
+            metrics: &metrics,
+            topic,
+        },
+    )
+    .await;
 
     // One partition of the two moved, and the instruments say which.
     check!(rebalance.revoked.len() == 1);
@@ -103,7 +113,18 @@ async fn the_group_reads_the_first_members_polled_records_again() {
     check!(held.len() == per_partition() * 2);
 
     let mut second = join_second(&mut first, &group).await;
-    let mut rebalance = poll_until_revoked(&mut first, &mut second, &metrics, topic).await;
+    let mut members = GroupMembers {
+        first: &mut first,
+        second: &mut second,
+    };
+    let rebalance = poll_until_revoked(
+        &mut members,
+        RevocationWatch {
+            metrics: &metrics,
+            topic,
+        },
+    )
+    .await;
     assert!(let Some(&lost) = rebalance.revoked.first());
 
     // The member that took the partition over reads it from the last COMMITTED
@@ -114,11 +135,12 @@ async fn the_group_reads_the_first_members_polled_records_again() {
     // cannot collapse: the two members pick different flush boundaries, so the
     // two keys differ.
     let replayed = drain_partition(
-        &mut first,
-        &mut second,
-        &mut rebalance.polled_by_second,
-        lost,
-        per_partition(),
+        &mut members,
+        rebalance.polled_by_second,
+        PartitionDrain {
+            partition: lost,
+            expected: per_partition(),
+        },
     )
     .await;
     let held_on_lost: Vec<i64> = held
@@ -192,6 +214,28 @@ async fn drain(consumer: &mut BlockBuilderConsumer, expected: usize) -> Vec<Cons
     panic!("timed out after {} records, wanted {expected}", out.len());
 }
 
+/// The two members of the group under test: the block builder's consumer
+/// that owned every partition, and the plain consumer that joined after it.
+struct GroupMembers<'a> {
+    first: &'a mut BlockBuilderConsumer,
+    second: &'a mut Consumer,
+}
+
+/// How many records of which partition [`drain_partition`] waits for.
+#[derive(Clone, Copy)]
+struct PartitionDrain {
+    partition: i32,
+    expected: usize,
+}
+
+/// Where [`poll_until_revoked`] watches for a revocation: the first member's
+/// consumer metrics, for the WAL topic.
+#[derive(Clone, Copy)]
+struct RevocationWatch<'a> {
+    metrics: &'a WalConsumerMetrics,
+    topic: &'a str,
+}
+
 /// Returns the offsets of `expected` records of `partition`, in the order the
 /// broker served them.
 ///
@@ -200,21 +244,23 @@ async fn drain(consumer: &mut BlockBuilderConsumer, expected: usize) -> Vec<Cons
 /// starts from them rather than polling for records that have already arrived.
 /// The first member keeps polling to finish the cooperative rebalance rounds.
 async fn drain_partition(
-    first: &mut BlockBuilderConsumer,
-    consumer: &mut Consumer,
-    already_polled: &mut Vec<ConsumerRecord>,
-    partition: i32,
-    expected: usize,
+    members: &mut GroupMembers<'_>,
+    already_polled: Vec<ConsumerRecord>,
+    drain: PartitionDrain,
 ) -> Vec<i64> {
+    let PartitionDrain {
+        partition,
+        expected,
+    } = drain;
     let deadline = Instant::now() + DEADLINE;
-    let mut out: Vec<i64> = std::mem::take(already_polled)
+    let mut out: Vec<i64> = already_polled
         .into_iter()
         .filter(|record| record.partition == partition)
         .map(|record| record.offset)
         .collect();
     while out.len() < expected && Instant::now() < deadline {
-        let _ = first.poll(millis(100)).await;
-        assert!(let Ok(polled) = consumer.poll(millis(250)).await);
+        let _ = members.first.poll(millis(100)).await;
+        assert!(let Ok(polled) = members.second.poll(millis(250)).await);
         out.extend(
             polled
                 .into_iter()
@@ -247,21 +293,20 @@ struct Rebalance {
 /// keeps what `second` polls, because those records are the replay the second
 /// test measures.
 async fn poll_until_revoked(
-    first: &mut BlockBuilderConsumer,
-    second: &mut Consumer,
-    metrics: &WalConsumerMetrics,
-    topic: &str,
+    members: &mut GroupMembers<'_>,
+    watch: RevocationWatch<'_>,
 ) -> Rebalance {
+    let RevocationWatch { metrics, topic } = watch;
     let deadline = Instant::now() + DEADLINE;
     let mut polled_by_second = Vec::new();
     while Instant::now() < deadline {
         // A poll that races the rebalance round can fail, and that failure is
         // not what these tests are about. The drive loop keeps going; `drain`
         // and `drain_partition` still hold their polls to `Ok`.
-        if let Ok(polled) = second.poll(millis(100)).await {
+        if let Ok(polled) = members.second.poll(millis(100)).await {
             polled_by_second.extend(polled);
         }
-        let _ = first.poll(millis(100)).await;
+        let _ = members.first.poll(millis(100)).await;
         let revoked: Vec<i32> = (0..PARTITIONS)
             .filter(|partition| metrics.partition_revocations(topic, *partition) > 0)
             .collect();

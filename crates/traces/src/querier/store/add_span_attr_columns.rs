@@ -1,7 +1,7 @@
 use super::{
     ATTR_PREFIX, AttrValue, DataType, INSTRUMENTATION_ATTR_PREFIX, MatchScope, MatchValue,
-    RESOURCE_ATTR_PREFIX, RecordBatch, SpanMatcher, TraceqlError, add_span_attr_columns_to_batch,
-    attr_values_with_resource, span_schema,
+    ProjectedAttrColumn, RESOURCE_ATTR_PREFIX, RecordBatch, ResourceAttrs, SpanMatcher,
+    TraceqlError, add_span_attr_columns_to_batch, attr_values_with_resource, span_schema,
 };
 
 /// Materialize the regular span and resource attribute columns, `attr.<key>`,
@@ -22,15 +22,17 @@ pub(crate) fn add_span_attr_columns(
     mut batches: Vec<RecordBatch>,
     projection_matchers: &[SpanMatcher],
 ) -> Result<Vec<RecordBatch>, TraceqlError> {
-    // (column_name, attr-array lookup key, include_resource, optional literal type).
-    let mut wanted: Vec<(String, String, bool, Option<DataType>)> = Vec::new();
+    let mut wanted: Vec<ProjectedAttrColumn<Option<DataType>>> = Vec::new();
     for matcher in projection_matchers {
-        let (lookup_key, include_resource) = match matcher.scope {
-            MatchScope::Span | MatchScope::Both => (matcher.key.clone(), false),
-            MatchScope::Resource => (format!("{RESOURCE_ATTR_PREFIX}{}", matcher.key), true),
+        let (lookup_key, resource) = match matcher.scope {
+            MatchScope::Span | MatchScope::Both => (matcher.key.clone(), ResourceAttrs::Exclude),
+            MatchScope::Resource => (
+                format!("{RESOURCE_ATTR_PREFIX}{}", matcher.key),
+                ResourceAttrs::Include,
+            ),
             MatchScope::Instrumentation => (
                 format!("{INSTRUMENTATION_ATTR_PREFIX}{}", matcher.key),
-                false,
+                ResourceAttrs::Exclude,
             ),
             _ => continue,
         };
@@ -49,9 +51,12 @@ pub(crate) fn add_span_attr_columns(
             MatchValue::Bool(_) => Some(DataType::Boolean),
             MatchValue::Nil => None,
         };
-        if let Some((_, _, _, existing)) = wanted
+        if let Some(ProjectedAttrColumn {
+            data_type: existing,
+            ..
+        }) = wanted
             .iter_mut()
-            .find(|(name, _, _, _)| name == &column_name)
+            .find(|wanted| wanted.column_name == column_name)
         {
             if let Some(next) = hint {
                 *existing = Some(match existing.as_ref() {
@@ -60,24 +65,34 @@ pub(crate) fn add_span_attr_columns(
                 });
             }
         } else {
-            wanted.push((column_name, lookup_key, include_resource, hint));
+            wanted.push(ProjectedAttrColumn {
+                column_name,
+                lookup_key,
+                resource,
+                data_type: hint,
+            });
         }
     }
     if wanted.is_empty() {
         return Ok(batches);
     }
     let mut typed = Vec::with_capacity(wanted.len());
-    for (column_name, lookup_key, include_resource, hint) in wanted {
+    for ProjectedAttrColumn {
+        column_name,
+        lookup_key,
+        resource,
+        data_type: hint,
+    } in wanted
+    {
         let data_type = if let Some(hint) = hint {
             hint
         } else {
             let mut inferred = None;
             for batch in &batches {
                 for row in 0..batch.num_rows() {
-                    if let Some((_, value)) =
-                        attr_values_with_resource(batch, row, include_resource)?
-                            .into_iter()
-                            .find(|(key, _)| key == &lookup_key)
+                    if let Some((_, value)) = attr_values_with_resource(batch, row, resource)?
+                        .into_iter()
+                        .find(|(key, _)| key == &lookup_key)
                     {
                         let next = match value {
                             AttrValue::Unsupported(_) | AttrValue::Array(_) | AttrValue::Str(_) => {
@@ -96,7 +111,12 @@ pub(crate) fn add_span_attr_columns(
             }
             inferred.unwrap_or(DataType::Utf8)
         };
-        typed.push((column_name, lookup_key, include_resource, data_type));
+        typed.push(ProjectedAttrColumn {
+            column_name,
+            lookup_key,
+            resource,
+            data_type,
+        });
     }
     // A schema-only batch keeps valid empty-store queries plannable, including
     // comparisons against absent numeric/boolean attributes.

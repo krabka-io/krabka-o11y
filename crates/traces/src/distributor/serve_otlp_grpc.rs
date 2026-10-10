@@ -1,6 +1,8 @@
+use tonic::service::Routes;
+
 use super::{
-    GrpcAuthenticationLayer, GrpcServer, OtlpGrpcService, ReceiverEndpoint, SocketAddr,
-    TraceServiceServer, bind_listener, grpc_incoming, spawn_server,
+    GrpcReceiver, OtlpGrpcService, ReceiverEndpoint, SocketAddr, TraceServiceServer,
+    serve_grpc_receiver,
 };
 
 /// Serve the OTLP/gRPC trace receiver until cancelled, returning the bound
@@ -9,7 +11,7 @@ use super::{
 /// The server accepts connections through a
 /// [`ServerListener`](krabka_observability::server_security::ServerListener), so it gets the
 /// TLS of `security`, and it authenticates each call with a
-/// [`GrpcAuthenticationLayer`]. It does not use tonic's own
+/// [`GrpcAuthenticationLayer`](krabka_observability::server_security::GrpcAuthenticationLayer). It does not use tonic's own
 /// `ServerTlsConfig`, which panics in a process that compiles in two rustls
 /// crypto providers, as this one does.
 ///
@@ -21,20 +23,12 @@ use super::{
 pub async fn serve_otlp_grpc(
     endpoint: ReceiverEndpoint<'_>,
 ) -> std::io::Result<(SocketAddr, tokio::task::JoinHandle<()>)> {
-    let ReceiverEndpoint {
-        addr,
-        state,
-        security,
-        shutdown,
-    } = endpoint;
-    let listener = bind_listener(addr, security).await?;
-    let bound = listener.local_addr();
-    let server = GrpcServer::builder()
-        .layer(GrpcAuthenticationLayer::new(security))
-        .add_service(TraceServiceServer::new(OtlpGrpcService::new(state)))
-        .serve_with_incoming_shutdown(grpc_incoming(listener), shutdown.cancelled_owned());
-    Ok((
-        bound,
-        spawn_server(server, "traces distributor OTLP/gRPC server"),
-    ))
+    serve_grpc_receiver(
+        endpoint,
+        GrpcReceiver {
+            routes: |state| Routes::new(TraceServiceServer::new(OtlpGrpcService::new(state))),
+            server_name: "traces distributor OTLP/gRPC server",
+        },
+    )
+    .await
 }

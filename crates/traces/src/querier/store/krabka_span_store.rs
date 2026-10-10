@@ -417,7 +417,14 @@ impl SpanStore for KrabkaSpanStore {
             return intrinsic_values_from_batches(tag, &batches);
         }
         let mut values = self
-            .cold_attribute_tag_values(tenant, tag, &index_tag, start_ns, end_ns)
+            .cold_attribute_tag_values(
+                tenant,
+                RequestedTag {
+                    tag,
+                    index_tag: &index_tag,
+                },
+                TimeRange { start_ns, end_ns },
+            )
             .await?;
         if let Some(live) = &self.live {
             values.extend(
@@ -459,13 +466,17 @@ impl KrabkaSpanStore {
     pub(crate) async fn cold_attribute_tag_values(
         &self,
         tenant: &str,
-        tag: &str,
-        index_tag: &str,
-        start_ns: i64,
-        end_ns: i64,
+        requested: RequestedTag<'_>,
+        range: TimeRange,
     ) -> Result<BTreeSet<(String, String)>, TraceqlError> {
         let trace_index = self.trace_index.load();
-        let keys = trace_index.prune_blocks_by_tag(tenant, index_tag, None, start_ns, end_ns);
+        let keys = trace_index.prune_blocks_by_tag(
+            tenant,
+            requested.index_tag,
+            None,
+            range.start_ns,
+            range.end_ns,
+        );
         let (ctx, table) = self
             .blocks
             .scan_block_keys(&keys, span_block_schema())
@@ -474,7 +485,7 @@ impl KrabkaSpanStore {
         let batches = collect_table(&ctx, &table).await?;
         let mut values = BTreeSet::new();
         for batch in &batches {
-            collect_attribute_tag_values(batch, RequestedTag { tag, index_tag }, &mut values)?;
+            collect_attribute_tag_values(batch, requested, &mut values)?;
         }
         Ok(values)
     }

@@ -4,9 +4,9 @@ use krabka_observability::RoleKind;
 use tokio::net::TcpListener;
 
 use super::{
-    AllRoleContext, AllRoleStage, ListeningRole, all_role_stage, log_role_outcome,
-    run_all_query_frontend, run_block_builder, run_compactor, run_distributor, run_live_store,
-    run_metrics_generator, run_querier,
+    AllRoleContext, AllRoleStage, DistributorRole, ListeningRole, PrimaryListen, all_role_stage,
+    log_role_outcome, run_all_query_frontend, run_block_builder, run_compactor, run_distributor,
+    run_live_store, run_metrics_generator, run_querier,
 };
 
 /// Every role `--target all` runs, keyed by name and not yet started.
@@ -45,14 +45,14 @@ pub(crate) fn all_role_stages(
         all_role_stage(move |token| async move {
             log_role_outcome(
                 RoleKind::Distributor,
-                run_distributor(
-                    distributor.cli,
-                    distributor.metrics,
-                    distributor.readiness.for_role(RoleKind::Distributor),
-                    token,
-                    false,
-                    &distributor.security,
-                )
+                run_distributor(DistributorRole {
+                    cli: distributor.cli,
+                    metrics: distributor.metrics,
+                    readiness: distributor.readiness.for_role(RoleKind::Distributor),
+                    shutdown: token,
+                    primary_listen: PrimaryListen::Skip,
+                    security: &distributor.security,
+                })
                 .await,
             );
         }),

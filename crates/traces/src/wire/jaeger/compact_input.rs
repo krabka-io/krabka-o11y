@@ -1,7 +1,7 @@
 use super::{
-    CollectionHeader, T_BINARY, T_BOOL_FALSE, T_BOOL_TRUE, T_BYTE, T_DOUBLE, T_I16, T_I32, T_I64,
-    T_LIST, T_MAP, T_SET, T_STOP, T_STRUCT, WireError, check_collection_header, take_bytes,
-    utf8_string,
+    CollectionHeader, MapHeader, T_BINARY, T_BOOL_FALSE, T_BOOL_TRUE, T_BYTE, T_DOUBLE, T_I16,
+    T_I32, T_I64, T_LIST, T_MAP, T_SET, T_STOP, T_STRUCT, WireError, check_collection_header,
+    check_map_header, take_bytes, utf8_string,
 };
 
 pub(crate) struct CompactInput<'a> {
@@ -92,9 +92,15 @@ impl<'a> CompactInput<'a> {
         }
         let types = self.read_u8()?;
         let (key_type, value_type) = (types >> 4, types & 0x0F);
-        self.check_collection_header(key_type, len)?;
-        self.check_collection_header(value_type, len)?;
-        Ok((key_type, value_type, len))
+        check_map_header(
+            MapHeader {
+                key_type,
+                value_type,
+                len,
+            },
+            T_STOP,
+            self.bytes.len().saturating_sub(self.pos),
+        )
     }
 
     pub(crate) fn read_string(&mut self) -> Result<String, WireError> {

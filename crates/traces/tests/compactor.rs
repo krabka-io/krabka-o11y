@@ -1,4 +1,6 @@
+mod api_span;
 mod span_fixture;
+mod tenant_key_check;
 
 use std::sync::Arc;
 
@@ -10,16 +12,19 @@ use arrow::{
 use assert2::check;
 use krabka_blockstore::{
     BlockLevel, BlockMeta, BlockWriter, CompactionJob, PromotedSpanAttr, SCOL_START_NANO,
-    SCOL_TRACE_ID, TraceIndex, level_above, read_block, unescape_object_path_segment,
+    SCOL_TRACE_ID, TraceIndex, level_above, read_block,
 };
 use krabka_traces::{
     AttrValue, KeyValue, SpanRecord,
     blockbuilder::{build_blocks, build_blocks_with_promoted_attrs},
     compactor::{compact_block_keys, planned_compacted_object_key},
 };
-use object_store::{ObjectStore, memory::InMemory, path::Path};
+use object_store::{ObjectStore, memory::InMemory};
 
-use self::span_fixture::FixtureSpan;
+use self::{
+    span_fixture::FixtureSpan,
+    tenant_key_check::{TenantKeyCase, check_tenant_key_round_trips},
+};
 
 /// The input keys and the output key of the compaction production would plan
 /// over `inputs`.
@@ -75,17 +80,7 @@ fn a_compacted_key_escapes_the_tenant_into_one_segment_that_reads_back() {
             key.starts_with(&format!("traces/{segment}/compacted/l1-10-20-")),
             "{name}: {key}"
         );
-        let path = Path::from(key.as_str());
-        check!(
-            path.as_ref() == key,
-            "{name}: the store keeps the key as written"
-        );
-        let parts: Vec<_> = path.parts().collect();
-        check!(parts.len() == 4, "{name}");
-        check!(
-            unescape_object_path_segment(parts[1].as_ref()) == Some(tenant.to_string()),
-            "{name}"
-        );
+        check_tenant_key_round_trips(&key, TenantKeyCase { name, tenant });
     }
 }
 

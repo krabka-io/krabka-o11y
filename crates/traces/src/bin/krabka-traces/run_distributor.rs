@@ -1,13 +1,13 @@
-use krabka_observability::{CriticalTaskError, RoleReadiness, SupervisedTasks};
+use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
-    Arc, CancellationToken, Cli, DistributorState, KafkaSink, ProcessSecurity, Producer,
-    ServiceMetrics, SocketAddr, distributor, limits_from_cli, load_traces_limits_overrides_config,
+    Arc, DistributorRole, DistributorState, KafkaSink, PrimaryListen, Producer, SocketAddr,
+    distributor, limits_from_cli, load_traces_limits_overrides_config,
 };
 
 /// Accepts pushes on every ingest protocol traces speaks, and writes the WAL.
 ///
-/// `serve_primary_listen` is false only under `--target all`, where `--listen`
+/// `primary_listen` is [`PrimaryListen::Skip`] only under `--target all`, where `--listen`
 /// is the query-frontend's Tempo API port and cannot also be the
 /// distributor's. Nothing is lost by dropping it there: the primary listener
 /// serves [`distributor::serve`]'s router, and `--otlp-http-listen` serves the
@@ -20,13 +20,16 @@ use super::{
 /// start when authentication is on, because a datagram cannot carry a
 /// credential.
 pub(crate) async fn run_distributor(
-    cli: Cli,
-    metrics: ServiceMetrics,
-    readiness: RoleReadiness,
-    shutdown: CancellationToken,
-    serve_primary_listen: bool,
-    security: &ProcessSecurity,
+    role: DistributorRole<'_>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let DistributorRole {
+        cli,
+        metrics,
+        readiness,
+        shutdown,
+        primary_listen,
+        security,
+    } = role;
     // Nowhere to put a push until the WAL producer has a broker, and the seven
     // ingest listeners below all bind after it. The admin port is already up,
     // so `/ready` reports the connect.
@@ -99,7 +102,7 @@ pub(crate) async fn run_distributor(
     let (zipkin_bound, zipkin) = distributor::serve(endpoint(zipkin_addr)).await?;
     tasks.adopt("traces distributor Zipkin HTTP", zipkin);
     tracing::info!(%zipkin_bound, "traces distributor Zipkin HTTP listening");
-    if serve_primary_listen {
+    if primary_listen == PrimaryListen::Serve {
         let addr: SocketAddr = cli.listen.parse()?;
         let (bound, primary) = distributor::serve(endpoint(addr)).await?;
         tasks.adopt("traces distributor HTTP", primary);

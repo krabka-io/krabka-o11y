@@ -42,10 +42,8 @@ use krabka_observability::{
 };
 use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
-    Limits, SpanRecord, TracesError,
-    distributor::{
-        self, DistributorState, JaegerGrpcService, OtlpGrpcService, ReceiverEndpoint, WalSink,
-    },
+    Limits, SpanRecord,
+    distributor::{self, DistributorState, JaegerGrpcService, OtlpGrpcService, ReceiverEndpoint},
     frontend::{
         FrontendConfig, HttpQuerier, MembershipView, MockCatalog, MockQuerier, QuerierScheme,
         QueryFrontend, router_with_backend,
@@ -66,7 +64,7 @@ use opentelemetry_proto::tonic::{
         ExportTraceServiceRequest, trace_service_client::TraceServiceClient,
         trace_service_server::TraceService as _,
     },
-    common::v1::{AnyValue, InstrumentationScope, KeyValue as OtlpKeyValue, any_value::Value},
+    common::v1::InstrumentationScope,
     resource::v1::Resource,
     trace::v1::{ResourceSpans, ScopeSpans, Span as OtlpSpan, TracesData},
 };
@@ -85,9 +83,13 @@ use tonic::{
 };
 use tower::ServiceExt as _;
 
+mod ingest_capture;
 mod span_store;
 
-use self::span_store::span_store_from_records;
+use self::{
+    ingest_capture::{CapturingSink, string_kv},
+    span_store::span_store_from_records,
+};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -99,11 +101,6 @@ const COLLIDING_TRACE_ID_HEX: &str = "abababababababababababababababab";
 const TENANT_A_ONLY_KEY: &str = "tenant_only";
 const TENANT_A_ONLY_VALUE: &str = "A";
 
-#[derive(Clone, Default)]
-struct CapturingSink {
-    records: Arc<Mutex<Vec<SpanRecord>>>,
-}
-
 impl CapturingSink {
     /// The tenant of every record appended so far, in order.
     fn tenants(&self) -> Vec<String> {
@@ -113,17 +110,6 @@ impl CapturingSink {
             .iter()
             .map(|record| record.tenant.clone())
             .collect()
-    }
-}
-
-#[async_trait::async_trait]
-impl WalSink for CapturingSink {
-    async fn append(&self, rec: SpanRecord) -> Result<(), TracesError> {
-        self.records
-            .lock()
-            .map_err(|_| TracesError::Wal("capturing sink lock poisoned".into()))?
-            .push(rec);
-        Ok(())
     }
 }
 
@@ -264,16 +250,6 @@ fn trace_with_n_spans(trace_seed: u8, n: usize) -> Vec<u8> {
         }],
     }
     .encode_to_vec()
-}
-
-fn string_kv(key: &str, value: &str) -> OtlpKeyValue {
-    OtlpKeyValue {
-        key: key.into(),
-        value: Some(AnyValue {
-            value: Some(Value::StringValue(value.into())),
-        }),
-        ..OtlpKeyValue::default()
-    }
 }
 
 async fn get_json(

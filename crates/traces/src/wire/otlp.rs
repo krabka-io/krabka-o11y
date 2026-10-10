@@ -48,6 +48,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::span::test_span::{api_server_span, string_attr};
 
     fn kv(key: &str, value: &str) -> OtlpKv {
         OtlpKv {
@@ -97,22 +98,9 @@ mod tests {
         assert2::assert!(
             spans
                 == vec![Span {
-                    trace_id: [1; 16],
-                    span_id: [2; 8],
-                    name: "GET /".into(),
-                    kind: SpanKind::Server,
-                    start_ns: 1_000,
                     duration_ns: 500,
-                    status: StatusCode::Ok,
-                    resource_attrs: vec![KeyValue {
-                        key: "service.name".into(),
-                        value: AttrValue::Str("api".into()),
-                    }],
-                    span_attrs: vec![KeyValue {
-                        key: "http.method".into(),
-                        value: AttrValue::Str("GET".into()),
-                    }],
-                    ..Span::default()
+                    span_attrs: vec![string_attr("http.method", "GET")],
+                    ..api_server_span()
                 }]
         );
     }

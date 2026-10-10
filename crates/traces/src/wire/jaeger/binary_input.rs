@@ -1,7 +1,7 @@
 use super::{
     BT_BINARY, BT_BOOL, BT_BYTE, BT_DOUBLE, BT_I16, BT_I32, BT_I64, BT_LIST, BT_MAP, BT_SET,
-    BT_STOP, BT_STRUCT, CollectionHeader, WireError, check_collection_header, take_bytes,
-    utf8_string,
+    BT_STOP, BT_STRUCT, CollectionHeader, MapHeader, WireError, check_collection_header,
+    check_map_header, take_bytes, utf8_string,
 };
 
 pub(crate) struct BinaryInput<'a> {
@@ -71,9 +71,15 @@ impl<'a> BinaryInput<'a> {
         let value_type = self.read_u8()?;
         let len = usize::try_from(self.read_i32()?)
             .map_err(|_| WireError::Decode("map length out of range".into()))?;
-        self.check_collection_header(key_type, len)?;
-        self.check_collection_header(value_type, len)?;
-        Ok((key_type, value_type, len))
+        check_map_header(
+            MapHeader {
+                key_type,
+                value_type,
+                len,
+            },
+            BT_STOP,
+            self.bytes.len().saturating_sub(self.pos),
+        )
     }
 
     pub(crate) fn read_string(&mut self) -> Result<String, WireError> {

@@ -51,7 +51,7 @@
 //! `tempo_differential.rs` LEG 5.
 
 use std::{
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -64,8 +64,8 @@ use base64::Engine as _;
 use http_body_util::BodyExt as _;
 use krabka_traceql::{EngineOpts, TraceqlEngine};
 use krabka_traces::{
-    SpanRecord, TracesError,
-    distributor::{self, DistributorState, JaegerGrpcService, OtlpGrpcService, WalSink},
+    SpanRecord,
+    distributor::{self, DistributorState, JaegerGrpcService, OtlpGrpcService},
     metricsgen::{
         MetricsGenConfig, MetricsGenService, MockSpanSource, PrometheusRemoteWriteSink,
         SpanKind as MetricsSpanKind, StatusCode as MetricsStatusCode, SystemClock,
@@ -75,7 +75,7 @@ use krabka_traces::{
 };
 use opentelemetry_proto::tonic::{
     collector::trace::v1::{ExportTraceServiceRequest, trace_service_server::TraceService},
-    common::v1::{AnyValue, InstrumentationScope, KeyValue as OtlpKeyValue, any_value::Value},
+    common::v1::InstrumentationScope,
     resource::v1::Resource,
     trace::v1::{ResourceSpans, ScopeSpans, Span as OtlpSpan, Status as OtlpStatus, TracesData},
 };
@@ -91,12 +91,16 @@ use testcontainers::{
 use tonic::Request as GrpcRequest;
 use tower::ServiceExt as _;
 
+mod container_url;
+mod ingest_capture;
 mod metrics_span;
 mod span_store;
 #[path = "../src/wire/jaeger/thrift_fixture.rs"]
 mod thrift_fixture;
 
 use self::{
+    container_url::mapped_base_url,
+    ingest_capture::{CapturingSink, string_kv},
     metrics_span::MetricsSpan,
     span_store::{resource_attr, span_store_from_records},
     thrift_fixture::{CompactStructWriter, encode_binary_sample_batch},
@@ -146,22 +150,6 @@ const PROM_CONFIG: &str = "global:\n  scrape_interval: 15s\nscrape_configs: []\n
 // ---------------------------------------------------------------------------
 // Recording sink (capture WAL appends in-process instead of going to Kafka).
 // ---------------------------------------------------------------------------
-
-#[derive(Clone, Default)]
-struct CapturingSink {
-    records: Arc<Mutex<Vec<SpanRecord>>>,
-}
-
-#[async_trait::async_trait]
-impl WalSink for CapturingSink {
-    async fn append(&self, rec: SpanRecord) -> Result<(), TracesError> {
-        self.records
-            .lock()
-            .map_err(|_| TracesError::Wal("capturing sink lock poisoned".into()))?
-            .push(rec);
-        Ok(())
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Fixture traces.
@@ -344,16 +332,6 @@ fn grpc_otlp_bytes() -> Vec<u8> {
         }],
     }
     .encode_to_vec()
-}
-
-fn string_kv(key: &str, value: &str) -> OtlpKeyValue {
-    OtlpKeyValue {
-        key: key.into(),
-        value: Some(AnyValue {
-            value: Some(Value::StringValue(value.into())),
-        }),
-        ..OtlpKeyValue::default()
-    }
 }
 
 /// Self-contained Jaeger **compact**-thrift batch.
@@ -736,14 +714,6 @@ async fn start_prometheus() -> TestResult<ContainerAsync<GenericImage>> {
             .start(),
     )
     .await??)
-}
-
-async fn mapped_base_url(
-    container: &ContainerAsync<GenericImage>,
-    port: u16,
-) -> TestResult<String> {
-    let mapped = container.get_host_port_ipv4(port).await?;
-    Ok(format!("http://127.0.0.1:{mapped}"))
 }
 
 async fn wait_for_http_ok(client: &reqwest::Client, base: &str, paths: &[&str]) -> TestResult {

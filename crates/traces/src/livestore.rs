@@ -32,46 +32,31 @@ mod tests {
 
     use super::{LiveSource as _, LiveStore};
     use crate::{
-        span::{AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode},
+        span::{
+            AttrValue, EventRecord, KeyValue, LinkRecord, Span,
+            test_span::{api_server_span, string_attr},
+        },
         wal::SpanRecord,
     };
 
     fn span_with_everything() -> Span {
         Span {
-            trace_id: [1; 16],
-            span_id: [2; 8],
             name: "GET /users".into(),
-            kind: SpanKind::Server,
-            start_ns: 1_000,
             duration_ns: 500,
-            status: StatusCode::Ok,
-            resource_attrs: vec![KeyValue {
-                key: "service.name".into(),
-                value: AttrValue::Str("api".into()),
-            }],
-            span_attrs: vec![KeyValue {
-                key: "http.method".into(),
-                value: AttrValue::Str("GET".into()),
-            }],
+            span_attrs: vec![string_attr("http.method", "GET")],
             events: vec![EventRecord {
                 time_unix_nano: 1_100,
                 name: "exception".into(),
-                attrs: vec![KeyValue {
-                    key: "exception.type".into(),
-                    value: AttrValue::Str("timeout".into()),
-                }],
+                attrs: vec![string_attr("exception.type", "timeout")],
             }],
             links: vec![LinkRecord {
                 trace_id: [9; 16],
                 span_id: [8; 8],
-                attrs: vec![KeyValue {
-                    key: "link.kind".into(),
-                    value: AttrValue::Str("retry".into()),
-                }],
+                attrs: vec![string_attr("link.kind", "retry")],
             }],
             instrumentation_scope: "otel-rust".into(),
             instrumentation_version: "1.2.3".into(),
-            ..Span::default()
+            ..api_server_span()
         }
     }
 

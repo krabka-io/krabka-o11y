@@ -69,19 +69,26 @@ fn span_record(tenant: &str, trace: u8, start_ns: i64) -> SpanRecord {
     }
 }
 
-/// Writes one block for `tenant` whose newest span starts at `start_ns`, and
-/// registers it in `index`. Returns its object key.
+/// One test block: the tenant and trace of its one span, and when that span
+/// starts.
 ///
 /// `offset` separates one block's key from the next, as the WAL offsets do in
 /// production.
-async fn write_block(
-    writer: &BlockWriter,
-    index: &mut TraceIndex,
-    tenant: &str,
+struct TestBlock<'a> {
+    tenant: &'a str,
     trace: u8,
     start_ns: i64,
     offset: i64,
-) -> String {
+}
+
+/// Writes `block` and registers it in `index`. Returns its object key.
+async fn write_block(writer: &BlockWriter, index: &mut TraceIndex, block: TestBlock<'_>) -> String {
+    let TestBlock {
+        tenant,
+        trace,
+        start_ns,
+        offset,
+    } = block;
     let metas = build_blocks(
         writer,
         index,
@@ -94,6 +101,49 @@ async fn write_block(
     .expect("the block is written");
     check!(metas.len() == 1, "one flush window is one block");
     metas[0].object_key.clone()
+}
+
+/// Two `tenant-a` blocks in one store: `old`, whose span starts 30 days
+/// before now, and `recent`, one day before.
+struct OldAndRecentBlocks {
+    store: Arc<dyn ObjectStore>,
+    index: TraceIndex,
+    old: String,
+    recent: String,
+}
+
+async fn old_and_recent_blocks() -> OldAndRecentBlocks {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let writer = BlockWriter::new(store.clone());
+    let mut index = TraceIndex::new();
+    let old = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 1,
+            start_ns: NOW_NS - 30 * DAY_NS,
+            offset: 10,
+        },
+    )
+    .await;
+    let recent = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 2,
+            start_ns: NOW_NS - DAY_NS,
+            offset: 20,
+        },
+    )
+    .await;
+    OldAndRecentBlocks {
+        store,
+        index,
+        old,
+        recent,
+    }
 }
 
 /// Every block key the index names, in a stable order.
@@ -159,11 +209,12 @@ fn wide_policy() -> CompactionPolicy {
 /// it is still readable data that a query over the window would need.
 #[tokio::test]
 async fn a_block_past_its_window_is_dropped_and_deleted_and_one_inside_it_survives() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
-    let mut index = TraceIndex::new();
-    let old = write_block(&writer, &mut index, "tenant-a", 1, NOW_NS - 30 * DAY_NS, 10).await;
-    let recent = write_block(&writer, &mut index, "tenant-a", 2, NOW_NS - DAY_NS, 20).await;
+    let OldAndRecentBlocks {
+        store,
+        mut index,
+        old,
+        recent,
+    } = old_and_recent_blocks().await;
 
     let expired = expire_trace_blocks(
         &mut index,
@@ -209,11 +260,12 @@ async fn a_block_past_its_window_is_dropped_and_deleted_and_one_inside_it_surviv
 #[tokio::test]
 async fn an_expired_block_does_not_come_back_through_a_snapshot_merge() {
     const KEY: &str = "index/traces.json";
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let writer = BlockWriter::new(store.clone());
-    let mut index = TraceIndex::new();
-    let old = write_block(&writer, &mut index, "tenant-a", 1, NOW_NS - 30 * DAY_NS, 10).await;
-    let recent = write_block(&writer, &mut index, "tenant-a", 2, NOW_NS - DAY_NS, 20).await;
+    let OldAndRecentBlocks {
+        store,
+        mut index,
+        old,
+        recent,
+    } = old_and_recent_blocks().await;
     index
         .save_latest_snapshot(&store, KEY)
         .await
@@ -255,8 +307,28 @@ async fn compaction_inputs_are_deleted_and_the_merged_output_still_reads() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
-    let first = write_block(&writer, &mut index, "tenant-a", 1, NOW_NS, 10).await;
-    let second = write_block(&writer, &mut index, "tenant-a", 2, NOW_NS, 20).await;
+    let first = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 1,
+            start_ns: NOW_NS,
+            offset: 10,
+        },
+    )
+    .await;
+    let second = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 2,
+            start_ns: NOW_NS,
+            offset: 20,
+        },
+    )
+    .await;
 
     let pass = compact_once(store.clone(), &writer, &mut index, "", wide_policy())
         .await
@@ -298,7 +370,17 @@ async fn the_orphan_sweep_deletes_only_the_blocks_no_index_names() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
-    let live = write_block(&writer, &mut index, "tenant-a", 1, NOW_NS, 10).await;
+    let live = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 1,
+            start_ns: NOW_NS,
+            offset: 10,
+        },
+    )
+    .await;
     index
         .save_latest_snapshot(&store, KEY)
         .await
@@ -351,7 +433,17 @@ async fn the_orphan_sweep_preserves_an_index_inside_the_block_prefix() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
-    write_block(&writer, &mut index, "tenant-a", 1, NOW_NS, 10).await;
+    write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 1,
+            start_ns: NOW_NS,
+            offset: 10,
+        },
+    )
+    .await;
     index
         .save_latest_snapshot(&store, KEY)
         .await
@@ -397,9 +489,39 @@ async fn each_tenant_expires_by_its_own_window_and_a_zero_window_expires_nothing
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
-    let short = write_block(&writer, &mut index, "short", 1, NOW_NS - 30 * DAY_NS, 10).await;
-    let long = write_block(&writer, &mut index, "long", 2, NOW_NS - 30 * DAY_NS, 20).await;
-    let forever = write_block(&writer, &mut index, "forever", 3, NOW_NS - 30 * DAY_NS, 30).await;
+    let short = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "short",
+            trace: 1,
+            start_ns: NOW_NS - 30 * DAY_NS,
+            offset: 10,
+        },
+    )
+    .await;
+    let long = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "long",
+            trace: 2,
+            start_ns: NOW_NS - 30 * DAY_NS,
+            offset: 20,
+        },
+    )
+    .await;
+    let forever = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "forever",
+            trace: 3,
+            start_ns: NOW_NS - 30 * DAY_NS,
+            offset: 30,
+        },
+    )
+    .await;
 
     let expired = expire_trace_blocks(
         &mut index,
@@ -491,9 +613,39 @@ async fn a_block_survives_its_whole_lifecycle_on_the_configured_store() {
     // retention will expire.
     let writer = BlockWriter::new(store.clone());
     let mut index = TraceIndex::new();
-    let first = write_block(&writer, &mut index, "tenant-a", 1, now_ns, 10).await;
-    let second = write_block(&writer, &mut index, "tenant-a", 2, now_ns, 20).await;
-    let old = write_block(&writer, &mut index, "tenant-b", 3, now_ns - 30 * DAY_NS, 30).await;
+    let first = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 1,
+            start_ns: now_ns,
+            offset: 10,
+        },
+    )
+    .await;
+    let second = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-a",
+            trace: 2,
+            start_ns: now_ns,
+            offset: 20,
+        },
+    )
+    .await;
+    let old = write_block(
+        &writer,
+        &mut index,
+        TestBlock {
+            tenant: "tenant-b",
+            trace: 3,
+            start_ns: now_ns - 30 * DAY_NS,
+            offset: 30,
+        },
+    )
+    .await;
     index
         .save_latest_snapshot(&store, KEY)
         .await

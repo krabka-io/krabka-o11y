@@ -1,6 +1,8 @@
+mod api_span;
 #[path = "../../blockstore/tests/support/hooked_store.rs"]
 mod hooked_store;
 mod span_fixture;
+mod tenant_key_check;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -19,7 +21,6 @@ use bytes::Bytes;
 use krabka_blockstore::{
     BlockLevel, BlockWriter, ObjectStoreRetryPolicy, PromotedSpanAttr, SCOL_START_NANO,
     SCOL_TRACE_ID, ShardedTraceBloom, TraceBlockStats, TraceIndex, read_block,
-    unescape_object_path_segment,
 };
 use krabka_client_consumer::ConsumerRecord;
 use krabka_traces::{
@@ -40,6 +41,7 @@ use tokio_util::sync::CancellationToken;
 use self::{
     hooked_store::{HookedStore, StoreHooks},
     span_fixture::FixtureSpan,
+    tenant_key_check::{TenantKeyCase, check_tenant_key_round_trips},
 };
 
 /// The root span of trace `[1; 16]`, at 100ns.
@@ -137,17 +139,7 @@ fn object_key_escapes_the_tenant_into_one_segment_that_reads_back() {
             ),
             "{name}"
         );
-        let path = Path::from(key.as_str());
-        check!(
-            path.as_ref() == key,
-            "{name}: the store keeps the key as written"
-        );
-        let parts: Vec<_> = path.parts().collect();
-        check!(parts.len() == 4, "{name}");
-        check!(
-            unescape_object_path_segment(parts[1].as_ref()) == Some(tenant.to_string()),
-            "{name}"
-        );
+        check_tenant_key_round_trips(&key, TenantKeyCase { name, tenant });
     }
 }
 
@@ -903,22 +895,6 @@ struct ScriptedConsumer {
     events: EventLog,
 }
 
-impl ScriptedConsumer {
-    fn new(
-        batches: Vec<Vec<ConsumerRecord>>,
-        shutdown: CancellationToken,
-        commit_calls: Arc<AtomicUsize>,
-        events: EventLog,
-    ) -> Self {
-        Self {
-            batches: batches.into(),
-            shutdown,
-            commit_calls,
-            events,
-        }
-    }
-}
-
 #[async_trait::async_trait]
 impl WalConsumerPoll for ScriptedConsumer {
     async fn poll(
@@ -995,12 +971,12 @@ async fn run_two_span_poll(poll: TwoSpanPoll<'_>) -> (Result<(), TracesError>, A
         consumer_record(3, 10, &ROOT_SPAN.record("tenant-a")),
         consumer_record(3, 11, &CHILD_SPAN.record("tenant-a")),
     ];
-    let consumer = ScriptedConsumer::new(
-        vec![batch],
-        shutdown.clone(),
-        Arc::clone(&commit_calls),
-        Arc::clone(events),
-    );
+    let consumer = ScriptedConsumer {
+        batches: vec![batch].into(),
+        shutdown: shutdown.clone(),
+        commit_calls: Arc::clone(&commit_calls),
+        events: Arc::clone(events),
+    };
     let result = run(
         consumer,
         writer,
@@ -1079,12 +1055,12 @@ async fn run_does_not_commit_when_the_flush_write_fails() {
     let commit_calls = Arc::new(AtomicUsize::new(0));
 
     let batch = vec![consumer_record(3, 10, &ROOT_SPAN.record("tenant-a"))];
-    let consumer = ScriptedConsumer::new(
-        vec![batch],
-        shutdown.clone(),
-        Arc::clone(&commit_calls),
-        Arc::clone(&events),
-    );
+    let consumer = ScriptedConsumer {
+        batches: vec![batch].into(),
+        shutdown: shutdown.clone(),
+        commit_calls: Arc::clone(&commit_calls),
+        events: Arc::clone(&events),
+    };
 
     let result = run(
         consumer,
@@ -1192,12 +1168,12 @@ async fn run_reports_a_permanent_object_store_failure_without_spending_the_budge
     let shutdown = CancellationToken::new();
     let commit_calls = Arc::new(AtomicUsize::new(0));
 
-    let consumer = ScriptedConsumer::new(
-        vec![vec![consumer_record(3, 10, &ROOT_SPAN.record("tenant-a"))]],
-        shutdown.clone(),
-        Arc::clone(&commit_calls),
-        Arc::clone(&events),
-    );
+    let consumer = ScriptedConsumer {
+        batches: vec![vec![consumer_record(3, 10, &ROOT_SPAN.record("tenant-a"))]].into(),
+        shutdown: shutdown.clone(),
+        commit_calls: Arc::clone(&commit_calls),
+        events: Arc::clone(&events),
+    };
 
     let result = run(
         consumer,
@@ -1226,8 +1202,8 @@ async fn run_drains_remaining_buffer_exactly_once_on_shutdown() {
     // Two below-threshold polls buffer four spans for one trace; the count never
     // trips `flush_max_records`, so nothing flushes inside the loop. Only the
     // shutdown drain should flush — exactly one block and exactly one commit.
-    let consumer = ScriptedConsumer::new(
-        vec![
+    let consumer = ScriptedConsumer {
+        batches: vec![
             vec![
                 consumer_record(
                     3,
@@ -1276,11 +1252,12 @@ async fn run_drains_remaining_buffer_exactly_once_on_shutdown() {
                     .record("tenant-a"),
                 ),
             ],
-        ],
-        shutdown.clone(),
-        Arc::clone(&commit_calls),
-        Arc::clone(&events),
-    );
+        ]
+        .into(),
+        shutdown: shutdown.clone(),
+        commit_calls: Arc::clone(&commit_calls),
+        events: Arc::clone(&events),
+    };
 
     run(
         consumer,

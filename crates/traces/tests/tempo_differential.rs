@@ -21,8 +21,8 @@ use generated_differential::{CompareOp, TypedConstructor, TypedExpr};
 use http_body_util::BodyExt as _;
 use krabka_traceql::{AttrValue as TraceqlAttrValue, EngineOpts, TraceqlEngine};
 use krabka_traces::{
-    AttrValue, SpanRecord, TracesError,
-    distributor::{self, DistributorState, WalSink},
+    AttrValue,
+    distributor::{self, DistributorState},
     metricsgen::{
         EdgeStore, MetricsGenConfig, RecordOutcome, Series, SeriesSample,
         SpanKind as MetricsSpanKind, StatusCode as MetricsStatusCode,
@@ -46,10 +46,14 @@ use testcontainers::{
 };
 use tower::ServiceExt as _;
 
+mod container_url;
+mod ingest_capture;
 mod metrics_span;
 mod span_store;
 
 use self::{
+    container_url::mapped_base_url,
+    ingest_capture::{CapturingSink, string_kv},
     metrics_span::MetricsSpan,
     span_store::{span_store_from_records, traceql_attr},
 };
@@ -106,22 +110,6 @@ type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 /// pull thus holds the test process open until the CI job wall stops it, and
 /// the job log then names no test as the cause.
 const CONTAINER_START_TIMEOUT: Duration = Duration::from_mins(2);
-
-#[derive(Clone, Default)]
-struct CapturingSink {
-    records: Arc<Mutex<Vec<SpanRecord>>>,
-}
-
-#[async_trait::async_trait]
-impl WalSink for CapturingSink {
-    async fn append(&self, rec: SpanRecord) -> Result<(), TracesError> {
-        self.records
-            .lock()
-            .map_err(|_| TracesError::Wal("capturing sink lock poisoned".into()))?
-            .push(rec);
-        Ok(())
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum QueryCaseKind {
@@ -665,12 +653,10 @@ async fn compare_live_instant_bounds(targets: QueryTargets<'_>, anchor: u64) -> 
             "status":if matched {"matched"}else{"mismatch"}}),
         );
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-instant-bounds-conformance.json"),
-            serde_json::to_vec_pretty(&json!({"planned":10,"cases":cases}))?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-instant-bounds-conformance.json",
+        &json!({"planned":10,"cases":cases}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -836,14 +822,10 @@ async fn compare_live_pipeline_hints(targets: QueryTargets<'_>, anchor: u64) -> 
         }
         cases.push(json!({"stableid":format!("tempo-live-pipeline-{id}"),"query":query,"request":{"range":range,"step":"30s"},"expected_outcome":"query-rejection","classification":"paired-expected-error","independent_expected":{"outcome":"query-rejection","http_status":400},"oracle":{"status":responses[0]["http_status"],"error_code":if responses[0]["query_rejection"] == json!(true){"query-rejection"}else{"unclassified-error"}},"candidate":{"status":responses[1]["http_status"],"error_code":if responses[1]["query_rejection"] == json!(true){"query-rejection"}else{"unclassified-error"}},"upstream_normalized":responses[0]["canonical"],"krabka_normalized":responses[1]["canonical"],"responses":responses,"status":if rejected{"matched"}else{"mismatch"}}));
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-pipeline-hint-conformance.json"),
-            serde_json::to_vec_pretty(
-                &json!({"planned":15,"upstream_source":{"repository":"grafana/tempo","version":"3.0.3","revision":"1900ed7bb5cad1a3edc285783d7d4ac4278337dc"},"cases":cases}),
-            )?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-pipeline-hint-conformance.json",
+        &json!({"planned":15,"upstream_source":{"repository":"grafana/tempo","version":"3.0.3","revision":"1900ed7bb5cad1a3edc285783d7d4ac4278337dc"},"cases":cases}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1074,12 +1056,10 @@ async fn compare_live_retrieval_shapes(targets: QueryTargets<'_>) -> TestResult 
         }
         cases.push(json!({"stableid":format!("tempo-live-retrieval-shape-{id}"),"request":{"path":format!("/api/v2/traces/{TRACE_ID_HEX}"),"range":query_range,"formats":["v2-json","v1-protobuf"]},"independent_expected":{"trace_id":TRACE_ID_HEX,"span_id":"0202020202020202","attribute_key":key,"locations":["span","event","link"],"value":expected},"upstream":upstream,"krabka":actual,"v1_protobuf":{"upstream":upstream_v1,"krabka":actual_v1,"upstream_artifact":"tempo-retrieval-upstream.pb","krabka_artifact":"tempo-retrieval-krabka.pb"},"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error:Box<dyn std::error::Error + Send + Sync>|error.to_string())}));
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-retrieval-shape-conformance.json"),
-            serde_json::to_vec_pretty(&json!({"planned":12,"cases":cases}))?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-retrieval-shape-conformance.json",
+        &json!({"planned":12,"cases":cases}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1281,12 +1261,10 @@ async fn compare_live_numeric_metrics(targets: QueryTargets<'_>) -> TestResult {
             "upstream":upstream,"krabka":actual,"status":if result.is_ok() {"matched"} else {"mismatch"},
             "error":result.err().map(|error|error.to_string())}));
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-numeric-metric-conformance.json"),
-            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-numeric-metric-conformance.json",
+        &json!({"cases":cases}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1363,12 +1341,7 @@ async fn compare_checkout_span_searches(
             "error":result.err().map(|error|error.to_string())}),
         );
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join(artifact),
-            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
-        )?;
-    }
+    write_conformance_report(artifact, &json!({"cases":cases}))?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1530,12 +1503,10 @@ async fn compare_live_expression_outputs(targets: QueryTargets<'_>, anchor: u64)
         },
     )
     .await?;
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-expression-output-conformance.json"),
-            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-expression-output-conformance.json",
+        &json!({"cases":cases}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1708,14 +1679,10 @@ async fn record_array_metric_frontend_observation(
         }
         cases.push(json!({"stableid":format!("tempo-array-frontend-{id}"),"query":query,"request":{"range":query_range,"step":"30s"},"independent_expected":expected,"upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-array-metric-frontend-conformance.json"),
-            serde_json::to_vec_pretty(
-                &json!({"planned":6,"cases":cases,"note":"Tempo 3.0.3 StaticFromAnyValue omits ArrayValue in metric frontend decoding. Raw arrays remain present in trace retrieval and span grouping. These public reducer witnesses do not establish distinct array metric labels."}),
-            )?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-array-metric-frontend-conformance.json",
+        &json!({"planned":6,"cases":cases,"note":"Tempo 3.0.3 StaticFromAnyValue omits ArrayValue in metric frontend decoding. Raw arrays remain present in trace retrieval and span grouping. These public reducer witnesses do not establish distinct array metric labels."}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -1916,12 +1883,10 @@ async fn compare_live_exemplar_reservoir(
                 "valid_choices":(0_u8..6).map(|index|json!({"trace_id":format!("{:02x}",0xa1+index/2).repeat(16),"span_id":format!("{:02x}",0xb1+index).repeat(8),"span_start_ms":anchor_secs*1000+5000+u64::from(index),"timestamp_ms":(anchor_secs+15)*1000})).collect::<Vec<_>>()},
             "upstream":upstream,"krabka":actual,"status":if result.is_ok(){"matched"}else{"mismatch"},"error":result.err().map(|error|error.to_string())}));
     }
-    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-        std::fs::write(
-            std::path::PathBuf::from(output).join("tempo-exemplar-reservoir-conformance.json"),
-            serde_json::to_vec_pretty(&json!({"cases":cases}))?,
-        )?;
-    }
+    write_conformance_report(
+        "tempo-exemplar-reservoir-conformance.json",
+        &json!({"cases":cases}),
+    )?;
     if failures.is_empty() {
         Ok(())
     } else {
@@ -2746,14 +2711,6 @@ async fn start_grafana() -> TestResult<testcontainers::ContainerAsync<GenericIma
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     Err(format!("timed out waiting for Grafana datasource plugins at {base}").into())
-}
-
-async fn mapped_base_url(
-    container: &testcontainers::ContainerAsync<GenericImage>,
-    port: u16,
-) -> TestResult<String> {
-    let mapped = container.get_host_port_ipv4(port).await?;
-    Ok(format!("http://127.0.0.1:{mapped}"))
 }
 
 async fn wait_for_http_ok(client: &reqwest::Client, base: &str, paths: &[&str]) -> TestResult {
@@ -3875,14 +3832,16 @@ fn scalar_kv(key: &str, value: Value) -> OtlpKeyValue {
     }
 }
 
-fn string_kv(key: &str, value: &str) -> OtlpKeyValue {
-    OtlpKeyValue {
-        key: key.into(),
-        value: Some(AnyValue {
-            value: Some(Value::StringValue(value.into())),
-        }),
-        ..OtlpKeyValue::default()
+/// Writes `report` as pretty JSON to `file_name` among Bazel's undeclared
+/// test outputs, when the run has that directory.
+fn write_conformance_report(file_name: &str, report: &JsonValue) -> TestResult {
+    if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
+        std::fs::write(
+            std::path::PathBuf::from(output).join(file_name),
+            serde_json::to_vec_pretty(report)?,
+        )?;
     }
+    Ok(())
 }
 
 // The routers read the principal from the request extensions, where the

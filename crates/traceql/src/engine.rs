@@ -429,15 +429,7 @@ mod tests {
                 .search_with_spss("t", &query, 0, 1000, 100, 100)
                 .await
                 .unwrap();
-            let mut ids = response
-                .traces
-                .iter()
-                .flat_map(|trace| trace.span_sets.iter())
-                .flat_map(|set| set.spans.iter())
-                .map(|span| span.span_id)
-                .collect::<Vec<_>>();
-            ids.sort_unstable();
-            assert!(ids == expected, "{query}");
+            assert!(sorted_matched_span_ids(&response) == expected, "{query}");
         }
         for predicate in ["span.numbers + 1 > 0", "span.numbers = span.numbers"] {
             assert!(
@@ -738,15 +730,7 @@ mod tests {
                 .search_with_spss("t", &query, 0, 100, 100, 100)
                 .await
                 .unwrap();
-            let mut ids = response
-                .traces
-                .iter()
-                .flat_map(|trace| trace.span_sets.iter())
-                .flat_map(|set| set.spans.iter())
-                .map(|span| span.span_id)
-                .collect::<Vec<_>>();
-            ids.sort_unstable();
-            assert!(ids == expected, "{query}");
+            assert!(sorted_matched_span_ids(&response) == expected, "{query}");
             let count = f64::from(u32::try_from(expected.len()).unwrap());
             let response = engine
                 .query_range("t", &format!("{query} | count_over_time()"), 0, 100, 100)
@@ -821,20 +805,12 @@ mod tests {
     // `count_over_time() | by(event:name)` over one minute, sorted by labels.
     async fn count_by_event_name(s: InMemorySpanStore) -> Vec<TraceMetricSeries> {
         let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
-        let mut got = e
-            .query_range(
-                "t",
-                "{ event:name != nil } | count_over_time() | by(event:name)",
-                0,
-                60_000,
-                60_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        got.sort_by(|a, b| a.labels.cmp(&b.labels));
-        got
+        sorted_series(
+            &e,
+            "{ event:name != nil } | count_over_time() | by(event:name)",
+            TWO_BUCKETS,
+        )
+        .await
     }
 
     // In the first minute: two `api` spans, one `db`, three `worker`.
@@ -868,6 +844,78 @@ mod tests {
             .series;
         series.sort_by(|a, b| a.labels.cmp(&b.labels));
         series
+    }
+
+    /// A metrics query window that starts at zero, in nanoseconds.
+    #[derive(Clone, Copy)]
+    struct MetricWindow {
+        end_ns: i64,
+        step_ns: i64,
+    }
+
+    /// Two one-minute buckets: `[0, 60s)` and the bucket at `60s`.
+    const TWO_BUCKETS: MetricWindow = MetricWindow {
+        end_ns: 60_000,
+        step_ns: 60_000,
+    };
+
+    // The series of a metrics query over `window`, sorted by labels.
+    async fn sorted_series<S: SpanStore>(
+        e: &TraceqlEngine<S>,
+        query: &str,
+        window: MetricWindow,
+    ) -> Vec<TraceMetricSeries> {
+        let mut series = e
+            .query_range("t", query, 0, window.end_ns, window.step_ns)
+            .await
+            .unwrap()
+            .series;
+        series.sort_by(|a, b| a.labels.cmp(&b.labels));
+        series
+    }
+
+    // The span ids of every matched span in `response`, sorted.
+    fn sorted_matched_span_ids(response: &SearchResponse) -> Vec<[u8; 8]> {
+        let mut ids = response
+            .traces
+            .iter()
+            .flat_map(|trace| trace.span_sets.iter())
+            .flat_map(|set| set.spans.iter())
+            .map(|span| span.span_id)
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids
+    }
+
+    // One trace of `api` spans at 0s and 10s and a `db` span at 20s.
+    fn api_api_db_engine() -> TraceqlEngine<InMemorySpanStore> {
+        let mut s = InMemorySpanStore::new();
+        s.push_trace(
+            "t",
+            "a",
+            "root",
+            vec![
+                sp_at(1, 1, None, "api", 0),
+                sp_at(1, 2, None, "api", 10_000),
+                sp_at(1, 3, None, "db", 20_000),
+            ],
+        );
+        TraceqlEngine::new(Arc::new(s), EngineOpts::default())
+    }
+
+    // One trace of an `api` root span at 0s and its `api` child at 10s.
+    fn api_parent_child_engine() -> TraceqlEngine<InMemorySpanStore> {
+        let mut s = InMemorySpanStore::new();
+        s.push_trace(
+            "t",
+            "a",
+            "root",
+            vec![
+                sp_at(1, 1, None, "api", 0),
+                sp_at(1, 2, Some(1), "api", 10_000),
+            ],
+        );
+        TraceqlEngine::new(Arc::new(s), EngineOpts::default())
     }
 
     // The top two `api_db_worker_engine` services by span count.
@@ -1737,18 +1785,15 @@ mod tests {
     #[tokio::test]
     async fn count_over_time_by_attribute_emits_one_series_per_group() {
         let e = api_db_metric_engine();
-        let mut got = e
-            .query_range(
-                "t",
-                "{ .svc != nil } | count_over_time() | by(span.svc)",
-                0,
-                120_000,
-                60_000,
-            )
-            .await
-            .unwrap()
-            .series;
-        got.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let got = sorted_series(
+            &e,
+            "{ .svc != nil } | count_over_time() | by(span.svc)",
+            MetricWindow {
+                end_ns: 120_000,
+                step_ns: 60_000,
+            },
+        )
+        .await;
         assert!(
             got == vec![
                 TraceMetricSeries {
@@ -1803,19 +1848,12 @@ mod tests {
             vec![sp_at(2, 1, None, "api", 10_000)],
         );
         let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
-        let mut got = e
-            .query_range(
-                "t",
-                "{ .svc = \"api\" } | count_over_time() | by(resource.service.name)",
-                0,
-                60_000,
-                60_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        got.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let got = sorted_series(
+            &e,
+            "{ .svc = \"api\" } | count_over_time() | by(resource.service.name)",
+            TWO_BUCKETS,
+        )
+        .await;
         assert!(
             got == vec![
                 TraceMetricSeries {
@@ -1840,19 +1878,12 @@ mod tests {
             batch: dictionary_metric_batch(),
         };
         let e = TraceqlEngine::new(Arc::new(store), EngineOpts::default());
-        let mut got = e
-            .query_range(
-                "t",
-                "{ span:name != nil } | count_over_time() | by(span.http.method)",
-                0,
-                60_000,
-                60_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        got.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let got = sorted_series(
+            &e,
+            "{ span:name != nil } | count_over_time() | by(span.http.method)",
+            TWO_BUCKETS,
+        )
+        .await;
         assert!(
             got == vec![
                 TraceMetricSeries {
@@ -1952,19 +1983,12 @@ mod tests {
         let mut s = InMemorySpanStore::new();
         s.push_trace("t", "checkout", "root", vec![span]);
         let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
-        let mut got = e
-            .query_range(
-                "t",
-                "{ .svc = \"api\" } | count_over_time() | by(event.cache.key)",
-                0,
-                60_000,
-                60_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        got.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let got = sorted_series(
+            &e,
+            "{ .svc = \"api\" } | count_over_time() | by(event.cache.key)",
+            TWO_BUCKETS,
+        )
+        .await;
         assert!(
             got == vec![TraceMetricSeries {
                 label_types: BTreeMap::default(),
@@ -2029,19 +2053,12 @@ mod tests {
         let mut s = InMemorySpanStore::new();
         s.push_trace("t", "checkout", "root", vec![span]);
         let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
-        let mut got = e
-            .query_range(
-                "t",
-                "{ .svc = \"api\" } | count_over_time() | by(link:spanID)",
-                0,
-                60_000,
-                60_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        got.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let got = sorted_series(
+            &e,
+            "{ .svc = \"api\" } | count_over_time() | by(link:spanID)",
+            TWO_BUCKETS,
+        )
+        .await;
         assert!(
             got == vec![TraceMetricSeries {
                 label_types: BTreeMap::default(),
@@ -2054,31 +2071,13 @@ mod tests {
 
     #[tokio::test]
     async fn inert_stage_before_metric_aggregate_is_ignored() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                sp_at(1, 1, None, "api", 0),
-                sp_at(1, 2, None, "api", 10_000),
-                sp_at(1, 3, None, "db", 20_000),
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
-        let mut got = e
-            .query_range(
-                "t",
-                "{ .svc != nil } | select(span.svc) | count_over_time() | by(span.svc)",
-                0,
-                60_000,
-                60_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        got.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let e = api_api_db_engine();
+        let got = sorted_series(
+            &e,
+            "{ .svc != nil } | select(span.svc) | count_over_time() | by(span.svc)",
+            TWO_BUCKETS,
+        )
+        .await;
         assert!(
             got == vec![
                 TraceMetricSeries {
@@ -2123,19 +2122,12 @@ mod tests {
             ],
         );
         let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
-        let mut got = e
-            .query_range(
-                "t",
-                "{ .svc = \"api\" } | count_over_time() | by(span:kind, span:status)",
-                0,
-                60_000,
-                60_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        got.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let got = sorted_series(
+            &e,
+            "{ .svc = \"api\" } | count_over_time() | by(span:kind, span:status)",
+            TWO_BUCKETS,
+        )
+        .await;
         assert!(
             got == vec![
                 TraceMetricSeries {
@@ -2192,19 +2184,12 @@ mod tests {
             ],
         );
         let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
-        let mut got = e
-            .query_range(
-                "t",
-                "{ .svc = \"api\" } | count_over_time() | by(span:statusMessage)",
-                0,
-                60_000,
-                60_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        got.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let got = sorted_series(
+            &e,
+            "{ .svc = \"api\" } | count_over_time() | by(span:statusMessage)",
+            TWO_BUCKETS,
+        )
+        .await;
         assert!(
             got == vec![
                 TraceMetricSeries {
@@ -2229,19 +2214,12 @@ mod tests {
         s.push_trace("t", "a", "root", vec![sp_at(0x11, 1, None, "api", 0)]);
         s.push_trace("t", "b", "root", vec![sp_at(0x22, 1, None, "api", 10_000)]);
         let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
-        let mut got = e
-            .query_range(
-                "t",
-                "{ .svc = \"api\" } | count_over_time() | by(trace:id)",
-                0,
-                60_000,
-                60_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        got.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let got = sorted_series(
+            &e,
+            "{ .svc = \"api\" } | count_over_time() | by(trace:id)",
+            TWO_BUCKETS,
+        )
+        .await;
         assert!(
             got == vec![
                 TraceMetricSeries {
@@ -2262,30 +2240,13 @@ mod tests {
 
     #[tokio::test]
     async fn count_over_time_by_child_count_intrinsic() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                sp_at(1, 1, None, "api", 0),
-                sp_at(1, 2, Some(1), "api", 10_000),
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
-        let mut got = e
-            .query_range(
-                "t",
-                "{ .svc = \"api\" } | count_over_time() | by(span:childCount)",
-                0,
-                60_000,
-                60_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        got.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let e = api_parent_child_engine();
+        let got = sorted_series(
+            &e,
+            "{ .svc = \"api\" } | count_over_time() | by(span:childCount)",
+            TWO_BUCKETS,
+        )
+        .await;
         assert!(
             got == vec![
                 TraceMetricSeries {
@@ -2339,30 +2300,13 @@ mod tests {
 
     #[tokio::test]
     async fn count_over_time_by_nested_set_parent_intrinsic() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                sp_at(1, 1, None, "api", 0),
-                sp_at(1, 2, Some(1), "api", 10_000),
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
-        let mut got = e
-            .query_range(
-                "t",
-                "{ .svc = \"api\" } | count_over_time() | by(span:nestedSetParent)",
-                0,
-                60_000,
-                60_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        got.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let e = api_parent_child_engine();
+        let got = sorted_series(
+            &e,
+            "{ .svc = \"api\" } | count_over_time() | by(span:nestedSetParent)",
+            TWO_BUCKETS,
+        )
+        .await;
         // Root span groups under nestedSetParent = -1 (Tempo root sentinel);
         // "-1" sorts before "1".
         assert!(
@@ -2758,18 +2702,7 @@ mod tests {
 
     #[tokio::test]
     async fn spanset_grouping_before_metrics_preserves_rows_without_creating_metric_labels() {
-        let mut s = InMemorySpanStore::new();
-        s.push_trace(
-            "t",
-            "a",
-            "root",
-            vec![
-                sp_at(1, 1, None, "api", 0),
-                sp_at(1, 2, None, "api", 10_000),
-                sp_at(1, 3, None, "db", 20_000),
-            ],
-        );
-        let e = TraceqlEngine::new(Arc::new(s), EngineOpts::default());
+        let e = api_api_db_engine();
 
         let series =
             first_minute_series(&e, "{ .svc != nil } | by(span.svc) | count_over_time()").await;

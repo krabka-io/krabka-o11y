@@ -1,6 +1,8 @@
 // A server span of the `api` service, for the block-building suites.
 
-use krabka_traces::{AttrValue, KeyValue, Span, SpanKind, SpanRecord, StatusCode};
+use krabka_traces::{Span, SpanRecord};
+
+use crate::api_span::ApiSpan;
 
 /// A server span of the `api` service in `trace_id`, with id and name taken
 /// from `span_id` and an optional parent of the same trace.
@@ -20,24 +22,14 @@ impl FixtureSpan {
             start_ns,
         } = self;
         Span {
-            trace_id,
-            span_id: [span_id; 8],
             parent_span_id: parent.map(|id| [id; 8]),
-            name: format!("span-{span_id}"),
-            kind: SpanKind::Server,
-            start_ns,
-            duration_ns: 5,
-            status: StatusCode::Ok,
-            resource_attrs: vec![KeyValue {
-                key: "service.name".into(),
-                value: AttrValue::Str("api".into()),
-            }],
-            span_attrs: vec![KeyValue {
-                key: "http.method".into(),
-                value: AttrValue::Str("GET".into()),
-            }],
-            instrumentation_scope: "test".into(),
-            ..Span::default()
+            ..ApiSpan {
+                trace_id,
+                span_id,
+                start_ns,
+                duration_ns: 5,
+            }
+            .build()
         }
     }
 

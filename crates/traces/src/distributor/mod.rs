@@ -746,6 +746,19 @@ overrides:
         assert2::assert!(sink.count() == 0);
     }
 
+    // A 1 ns internal span named `x`, with no attributes.
+    fn internal_x_span() -> Span {
+        Span {
+            trace_id: [1; 16],
+            span_id: [2; 8],
+            name: "x".into(),
+            kind: crate::span::SpanKind::Internal,
+            duration_ns: 1,
+            status: crate::span::StatusCode::Unset,
+            ..Span::default()
+        }
+    }
+
     #[test]
     fn validate_shared_rejects_large_attribute_values() {
         let limits = crate::limits::Limits {
@@ -753,24 +766,11 @@ overrides:
             ..crate::limits::Limits::default()
         };
         let span = Span {
-            trace_id: [1; 16],
-            span_id: [2; 8],
-            parent_span_id: None,
-            name: "x".into(),
-            kind: crate::span::SpanKind::Internal,
-            start_ns: 0,
-            duration_ns: 1,
-            status: crate::span::StatusCode::Unset,
-            status_message: String::new(),
             resource_attrs: vec![KeyValue {
                 key: "k".into(),
                 value: AttrValue::Str("api".into()),
             }],
-            span_attrs: Vec::new(),
-            events: Vec::new(),
-            links: Vec::new(),
-            instrumentation_scope: String::new(),
-            instrumentation_version: String::new(),
+            ..internal_x_span()
         };
         assert2::assert!(validate_shared(&[span], &limits).is_err());
     }
@@ -782,24 +782,11 @@ overrides:
             ..crate::limits::Limits::default()
         };
         let span = Span {
-            trace_id: [1; 16],
-            span_id: [2; 8],
-            parent_span_id: None,
-            name: "x".into(),
-            kind: crate::span::SpanKind::Internal,
-            start_ns: 0,
-            duration_ns: 1,
-            status: crate::span::StatusCode::Unset,
-            status_message: String::new(),
-            resource_attrs: Vec::new(),
             span_attrs: vec![KeyValue {
                 key: "too-large".into(),
                 value: AttrValue::Bool(true),
             }],
-            events: Vec::new(),
-            links: Vec::new(),
-            instrumentation_scope: String::new(),
-            instrumentation_version: String::new(),
+            ..internal_x_span()
         };
 
         assert2::assert!(validate_shared(&[span], &limits).is_err());
@@ -892,6 +879,7 @@ mod request_principal;
 mod require_content_type;
 mod router;
 mod serve;
+mod serve_grpc_receiver;
 mod serve_jaeger_compact_udp;
 mod serve_jaeger_grpc;
 mod serve_otlp_grpc;
@@ -927,6 +915,7 @@ use request_principal::request_principal;
 use require_content_type::require_content_type;
 pub use router::router;
 pub use serve::serve;
+use serve_grpc_receiver::{GrpcReceiver, serve_grpc_receiver};
 pub use serve_jaeger_compact_udp::serve_jaeger_compact_udp;
 pub use serve_jaeger_grpc::serve_jaeger_grpc;
 pub use serve_otlp_grpc::serve_otlp_grpc;

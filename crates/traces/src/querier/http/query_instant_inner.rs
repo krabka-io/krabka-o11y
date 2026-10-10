@@ -1,24 +1,14 @@
 use super::{
-    IntoResponse, Json, QuerierRequest, Response, SpanStore, StatusCode, TenantRequest,
-    instant_metric_bounds, metrics_request, scan_options_param, trace_metrics_instant_json,
+    IntoResponse, Json, QuerierRequest, Response, SpanStore, StatusCode, instant_metric_bounds,
+    scan_options_param, trace_metrics_instant_json,
 };
 
 pub(crate) async fn query_instant_inner<S>(request: &QuerierRequest<S>) -> Response
 where
     S: SpanStore + 'static,
 {
-    let QuerierRequest {
-        state,
-        principal,
-        headers,
-        uri,
-    } = request;
-    let (tenant, query) = match metrics_request(TenantRequest {
-        headers,
-        principal,
-        policy: &state.cfg.tenant_policy,
-        uri,
-    }) {
+    let QuerierRequest { state, uri, .. } = request;
+    let (tenant, query) = match request.metrics_request() {
         Ok(request) => request,
         Err(rejection) => return *rejection,
     };

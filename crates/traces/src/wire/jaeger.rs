@@ -514,7 +514,8 @@ mod tests {
     use super::{
         test_support::{encode_sample_batch, write_process, write_span_list},
         thrift_fixture::{
-            CompactStructWriter, encode_binary_sample_batch, write_varint, zigzag_i32,
+            CompactStructWriter, binary_bytes, binary_field, binary_i32_field, binary_i64_field,
+            binary_string_field, encode_binary_sample_batch, write_varint, zigzag_i32,
         },
         *,
     };
@@ -693,94 +694,72 @@ mod tests {
     fn a_binary_thrift_span_reads_the_fields_the_sample_batch_leaves_empty() {
         const T_STOP: u8 = 0;
         const T_DOUBLE: u8 = 4;
-        const T_I32: u8 = 8;
-        const T_I64: u8 = 10;
         const T_BINARY: u8 = 11;
         const T_STRUCT: u8 = 12;
         const T_LIST: u8 = 15;
 
-        fn field(out: &mut Vec<u8>, type_: u8, id: i16) {
-            out.push(type_);
-            out.extend_from_slice(&id.to_be_bytes());
-        }
-        fn bytes(out: &mut Vec<u8>, value: &[u8]) {
-            out.extend_from_slice(&i32::try_from(value.len()).unwrap().to_be_bytes());
-            out.extend_from_slice(value);
-        }
-        fn string_field(out: &mut Vec<u8>, id: i16, value: &str) {
-            field(out, T_BINARY, id);
-            bytes(out, value.as_bytes());
-        }
-        fn i32_field(out: &mut Vec<u8>, id: i16, value: i32) {
-            field(out, T_I32, id);
-            out.extend_from_slice(&value.to_be_bytes());
-        }
-        fn i64_field(out: &mut Vec<u8>, id: i16, value: i64) {
-            field(out, T_I64, id);
-            out.extend_from_slice(&value.to_be_bytes());
-        }
         fn list_header(out: &mut Vec<u8>, id: i16, count: i32) {
-            field(out, T_LIST, id);
+            binary_field(out, T_LIST, id);
             out.push(T_STRUCT);
             out.extend_from_slice(&count.to_be_bytes());
         }
         // The value's wire type is named by field 2 and carried by the field
         // id that follows, and the reader takes the variant from the id.
         fn kv_string(out: &mut Vec<u8>, key: &str, value: &str) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 0);
-            string_field(out, 3, value);
+            binary_string_field(out, 1, key);
+            binary_i32_field(out, 2, 0);
+            binary_string_field(out, 3, value);
             out.push(T_STOP);
         }
         fn kv_double(out: &mut Vec<u8>, key: &str, value: f64) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 1);
-            field(out, T_DOUBLE, 4);
+            binary_string_field(out, 1, key);
+            binary_i32_field(out, 2, 1);
+            binary_field(out, T_DOUBLE, 4);
             out.extend_from_slice(&value.to_be_bytes());
             out.push(T_STOP);
         }
         fn kv_int(out: &mut Vec<u8>, key: &str, value: i64) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 3);
-            i64_field(out, 6, value);
+            binary_string_field(out, 1, key);
+            binary_i32_field(out, 2, 3);
+            binary_i64_field(out, 6, value);
             out.push(T_STOP);
         }
         fn kv_bytes(out: &mut Vec<u8>, key: &str, value: &[u8]) {
-            string_field(out, 1, key);
-            i32_field(out, 2, 4);
-            field(out, T_BINARY, 7);
-            bytes(out, value);
+            binary_string_field(out, 1, key);
+            binary_i32_field(out, 2, 4);
+            binary_field(out, T_BINARY, 7);
+            binary_bytes(out, value);
             out.push(T_STOP);
         }
 
         let mut out = Vec::new();
-        field(&mut out, T_STRUCT, 1);
-        string_field(&mut out, 1, "checkout");
+        binary_field(&mut out, T_STRUCT, 1);
+        binary_string_field(&mut out, 1, "checkout");
         out.push(T_STOP);
 
         list_header(&mut out, 2, 1);
-        i64_field(&mut out, 1, 2);
-        i64_field(&mut out, 2, 1);
-        i64_field(&mut out, 3, 3);
+        binary_i64_field(&mut out, 1, 2);
+        binary_i64_field(&mut out, 2, 1);
+        binary_i64_field(&mut out, 3, 3);
         // Non-zero, and no child_of reference to override it.
-        i64_field(&mut out, 4, 9);
-        string_field(&mut out, 5, "GET /full");
+        binary_i64_field(&mut out, 4, 9);
+        binary_string_field(&mut out, 5, "GET /full");
         // A follows_from reference becomes a link; a child_of one would
         // instead have become the parent.
         list_header(&mut out, 6, 1);
-        i32_field(&mut out, 1, 1);
-        i64_field(&mut out, 2, 5);
-        i64_field(&mut out, 3, 4);
-        i64_field(&mut out, 4, 6);
+        binary_i32_field(&mut out, 1, 1);
+        binary_i64_field(&mut out, 2, 5);
+        binary_i64_field(&mut out, 3, 4);
+        binary_i64_field(&mut out, 4, 6);
         out.push(T_STOP);
-        i64_field(&mut out, 8, 1_000);
-        i64_field(&mut out, 9, 25);
+        binary_i64_field(&mut out, 8, 1_000);
+        binary_i64_field(&mut out, 9, 25);
         list_header(&mut out, 10, 3);
         kv_double(&mut out, "latency.ms", 1.5);
         kv_int(&mut out, "retry.count", 7);
         kv_bytes(&mut out, "payload", &[1, 2, 3]);
         list_header(&mut out, 11, 1);
-        i64_field(&mut out, 1, 1_005);
+        binary_i64_field(&mut out, 1, 1_005);
         list_header(&mut out, 2, 2);
         kv_string(&mut out, "event", "cache.miss");
         kv_int(&mut out, "retries", 2);
@@ -981,7 +960,9 @@ use bt_map::BT_MAP;
 use bt_set::BT_SET;
 use bt_stop::BT_STOP;
 use bt_struct::BT_STRUCT;
-use check_collection_header::{CollectionHeader, check_collection_header};
+use check_collection_header::{
+    CollectionHeader, MapHeader, check_collection_header, check_map_header,
+};
 use compact_input::CompactInput;
 pub use decode_jaeger_binary_thrift::decode_jaeger_binary_thrift;
 pub use decode_jaeger_thrift::decode_jaeger_thrift;

@@ -1,3 +1,5 @@
+mod api_span;
+
 use arrow::array::{Array, Int64Array, StringArray};
 use assert2::check;
 use datafusion::catalog::TableProvider;
@@ -6,30 +8,20 @@ use krabka_blockstore::{
 };
 use krabka_traceql::{AttrValue as TraceqlAttrValue, ScopedTag, TagScope, TypedValue};
 use krabka_traces::{
-    AttrValue, EventRecord, KeyValue, LinkRecord, LiveStore, Span, SpanKind, SpanRecord,
-    StatusCode, livestore::ingest_wal_payloads, querier::live::LiveSource,
+    AttrValue, EventRecord, KeyValue, LinkRecord, LiveStore, Span, SpanRecord,
+    livestore::ingest_wal_payloads, querier::live::LiveSource,
 };
 
+use self::api_span::ApiSpan;
+
 fn span(trace_id: [u8; 16], span_id: u8, start_ns: i64) -> Span {
-    Span {
+    ApiSpan {
         trace_id,
-        span_id: [span_id; 8],
-        name: format!("span-{span_id}"),
-        kind: SpanKind::Server,
+        span_id,
         start_ns,
         duration_ns: 10,
-        status: StatusCode::Ok,
-        resource_attrs: vec![KeyValue {
-            key: "service.name".into(),
-            value: AttrValue::Str("api".into()),
-        }],
-        span_attrs: vec![KeyValue {
-            key: "http.method".into(),
-            value: AttrValue::Str("GET".into()),
-        }],
-        instrumentation_scope: "test".into(),
-        ..Span::default()
     }
+    .build()
 }
 
 fn record(tenant: &str, span: Span) -> SpanRecord {

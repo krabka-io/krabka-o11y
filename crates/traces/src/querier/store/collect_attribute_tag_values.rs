@@ -1,6 +1,6 @@
 use super::{
-    BTreeSet, INSTRUMENTATION_ATTR_PREFIX, RESOURCE_ATTR_PREFIX, RecordBatch, TraceqlError,
-    attr_values_with_resource, event_values, link_values, typed_value_parts,
+    BTreeSet, INSTRUMENTATION_ATTR_PREFIX, RESOURCE_ATTR_PREFIX, RecordBatch, ResourceAttrs,
+    TraceqlError, attr_values_with_resource, event_values, link_values, typed_value_parts,
 };
 
 /// The tag a tag-values request names, and the key the trace index holds it
@@ -18,7 +18,7 @@ pub(crate) fn collect_attribute_tag_values(
 ) -> Result<(), TraceqlError> {
     let RequestedTag { tag, index_tag } = requested;
     for row in 0..batch.num_rows() {
-        for (key, value) in attr_values_with_resource(batch, row, true)? {
+        for (key, value) in attr_values_with_resource(batch, row, ResourceAttrs::Include)? {
             let matches = if let Some(key) = key.strip_prefix(RESOURCE_ATTR_PREFIX) {
                 [tag, index_tag].contains(&key)
             } else if let Some(key) = key.strip_prefix(INSTRUMENTATION_ATTR_PREFIX) {

@@ -35,7 +35,7 @@ use crate::{
 mod tests {
 
     use super::*;
-    use crate::span::{EventRecord, KeyValue, LinkRecord, SpanKind, StatusCode};
+    use crate::span::{EventRecord, KeyValue, LinkRecord, test_span::api_server_span};
 
     /// `set_remote_parent_from_records` must re-parent the span into the trace
     /// carried on the FIRST record whose header key equals `TRACEPARENT_HEADER`.
@@ -109,17 +109,6 @@ mod tests {
 
     fn span() -> Span {
         Span {
-            trace_id: [1; 16],
-            span_id: [2; 8],
-            name: "GET /".into(),
-            kind: SpanKind::Server,
-            start_ns: 1_000,
-            duration_ns: 100,
-            status: StatusCode::Ok,
-            resource_attrs: vec![KeyValue {
-                key: "service.name".into(),
-                value: AttrValue::Str("api".into()),
-            }],
             events: vec![EventRecord {
                 time_unix_nano: 1_050,
                 name: "exception".into(),
@@ -130,7 +119,7 @@ mod tests {
                 span_id: [8; 8],
                 attrs: Vec::new(),
             }],
-            ..Span::default()
+            ..api_server_span()
         }
     }
 

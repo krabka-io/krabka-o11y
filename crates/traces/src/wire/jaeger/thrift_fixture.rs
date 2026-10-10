@@ -111,74 +111,87 @@ pub fn zigzag_i64(value: i64) -> u64 {
     ((value << 1) ^ (value >> 63)).cast_unsigned()
 }
 
+/// Writes a binary-protocol field header: the type id, then the big-endian
+/// field id.
+pub fn binary_field(out: &mut Vec<u8>, type_id: u8, field_id: i16) {
+    out.push(type_id);
+    out.extend_from_slice(&field_id.to_be_bytes());
+}
+
+/// Writes a binary-protocol byte string: its big-endian `i32` length, then
+/// the bytes.
+pub fn binary_bytes(out: &mut Vec<u8>, value: &[u8]) {
+    out.extend_from_slice(&i32::try_from(value.len()).unwrap().to_be_bytes());
+    out.extend_from_slice(value);
+}
+
+/// Writes a binary-protocol string field.
+pub fn binary_string_field(out: &mut Vec<u8>, field_id: i16, text: &str) {
+    binary_field(out, BINARY_T_STRING, field_id);
+    binary_bytes(out, text.as_bytes());
+}
+
+/// Writes a binary-protocol `i32` field.
+pub fn binary_i32_field(out: &mut Vec<u8>, field_id: i16, number: i32) {
+    binary_field(out, BINARY_T_I32, field_id);
+    out.extend_from_slice(&number.to_be_bytes());
+}
+
+/// Writes a binary-protocol `i64` field.
+pub fn binary_i64_field(out: &mut Vec<u8>, field_id: i16, number: i64) {
+    binary_field(out, BINARY_T_I64, field_id);
+    out.extend_from_slice(&number.to_be_bytes());
+}
+
+const BINARY_T_I32: u8 = 8;
+const BINARY_T_I64: u8 = 10;
+const BINARY_T_STRING: u8 = 11;
+
 // A Jaeger binary-thrift batch holding one span, `GET /binary`, whose
 // embedded process names the service `checkout`.
 pub fn encode_binary_sample_batch() -> Vec<u8> {
     const T_STOP: u8 = 0;
     const T_BOOL: u8 = 2;
-    const T_I32: u8 = 8;
-    const T_I64: u8 = 10;
-    const T_BINARY: u8 = 11;
     const T_STRUCT: u8 = 12;
     const T_LIST: u8 = 15;
 
-    fn field(out: &mut Vec<u8>, type_: u8, id: i16) {
-        out.push(type_);
-        out.extend_from_slice(&id.to_be_bytes());
-    }
-    fn string(out: &mut Vec<u8>, value: &str) {
-        out.extend_from_slice(&i32::try_from(value.len()).unwrap().to_be_bytes());
-        out.extend_from_slice(value.as_bytes());
-    }
-    fn string_field(out: &mut Vec<u8>, id: i16, value: &str) {
-        field(out, T_BINARY, id);
-        string(out, value);
-    }
-    fn i32_field(out: &mut Vec<u8>, id: i16, value: i32) {
-        field(out, T_I32, id);
-        out.extend_from_slice(&value.to_be_bytes());
-    }
-    fn i64_field(out: &mut Vec<u8>, id: i16, value: i64) {
-        field(out, T_I64, id);
-        out.extend_from_slice(&value.to_be_bytes());
-    }
     fn true_field(out: &mut Vec<u8>, id: i16) {
-        field(out, T_BOOL, id);
+        binary_field(out, T_BOOL, id);
         out.push(1);
     }
     fn key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-        string_field(out, 1, key);
-        i32_field(out, 2, 0);
-        string_field(out, 3, value);
+        binary_string_field(out, 1, key);
+        binary_i32_field(out, 2, 0);
+        binary_string_field(out, 3, value);
         out.push(T_STOP);
     }
     fn key_value_true(out: &mut Vec<u8>, key: &str) {
-        string_field(out, 1, key);
-        i32_field(out, 2, 3);
+        binary_string_field(out, 1, key);
+        binary_i32_field(out, 2, 3);
         true_field(out, 5);
         out.push(T_STOP);
     }
 
     let mut out = Vec::new();
-    field(&mut out, T_STRUCT, 1);
-    string_field(&mut out, 1, "checkout");
-    field(&mut out, T_LIST, 2);
+    binary_field(&mut out, T_STRUCT, 1);
+    binary_string_field(&mut out, 1, "checkout");
+    binary_field(&mut out, T_LIST, 2);
     out.push(T_STRUCT);
     out.extend_from_slice(&1_i32.to_be_bytes());
     key_value_string(&mut out, "process.tag", "present");
     out.push(T_STOP);
 
-    field(&mut out, T_LIST, 2);
+    binary_field(&mut out, T_LIST, 2);
     out.push(T_STRUCT);
     out.extend_from_slice(&1_i32.to_be_bytes());
-    i64_field(&mut out, 1, 2);
-    i64_field(&mut out, 2, 1);
-    i64_field(&mut out, 3, 3);
-    i64_field(&mut out, 4, 0);
-    string_field(&mut out, 5, "GET /binary");
-    i64_field(&mut out, 8, 1_000);
-    i64_field(&mut out, 9, 25);
-    field(&mut out, T_LIST, 10);
+    binary_i64_field(&mut out, 1, 2);
+    binary_i64_field(&mut out, 2, 1);
+    binary_i64_field(&mut out, 3, 3);
+    binary_i64_field(&mut out, 4, 0);
+    binary_string_field(&mut out, 5, "GET /binary");
+    binary_i64_field(&mut out, 8, 1_000);
+    binary_i64_field(&mut out, 9, 25);
+    binary_field(&mut out, T_LIST, 10);
     out.push(T_STRUCT);
     out.extend_from_slice(&3_i32.to_be_bytes());
     key_value_string(&mut out, "span.kind", "server");

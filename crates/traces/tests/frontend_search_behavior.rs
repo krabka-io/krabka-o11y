@@ -1083,13 +1083,18 @@ async fn sharded_metrics_response(State(()): State<()>, uri: Uri) -> axum::Json<
     }))
 }
 
+/// Remembers the query string of one request in `seen`.
+fn record_query(seen: &Mutex<Vec<String>>, uri: &Uri) {
+    seen.lock()
+        .unwrap()
+        .push(uri.query().unwrap_or_default().to_string());
+}
+
 async fn record_metrics(
     State(seen): State<Arc<Mutex<Vec<String>>>>,
     uri: Uri,
 ) -> axum::Json<Value> {
-    seen.lock()
-        .unwrap()
-        .push(uri.query().unwrap_or_default().to_string());
+    record_query(&seen, &uri);
     axum::Json(json!({
         "series": [{
             "labels": [{"key": "svc", "value": {"stringValue": "api"}}],
@@ -1107,9 +1112,7 @@ async fn record_instant_metrics(
     State(seen): State<Arc<Mutex<Vec<String>>>>,
     uri: Uri,
 ) -> axum::Json<Value> {
-    seen.lock()
-        .unwrap()
-        .push(uri.query().unwrap_or_default().to_string());
+    record_query(&seen, &uri);
     axum::Json(json!({"series": [{
         "labels": [{"key": "svc", "value": {"stringValue": "api"}}], "value": 2.0
     }], "metrics": {"completedJobs":1,"totalJobs":1}}))

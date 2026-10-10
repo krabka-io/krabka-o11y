@@ -19,7 +19,7 @@ use arrow::{
 };
 use datafusion::{catalog::MemTable, prelude::SessionContext};
 use krabka_blockstore::{
-    BlockIndex, BlockStore, SCOL_EVENTS, SCOL_LINKS, TraceIndex, span_block_schema,
+    BlockIndex, BlockStore, SCOL_EVENTS, SCOL_LINKS, TimeRange, TraceIndex, span_block_schema,
     span_block_schema_with_promoted_attrs,
 };
 use krabka_traceql::{
@@ -744,6 +744,50 @@ mod tests {
         wal::SpanRecord,
     };
 
+    /// One metrics series as its labels and its points.
+    type LabeledPoints = (Vec<(String, String)>, Vec<(i64, f64)>);
+
+    // The labels and points of each series `query` yields for `tenant` over
+    // `[0, 10_000]` ns in one step, sorted by labels.
+    async fn labeled_points(
+        engine: &TraceqlEngine<KrabkaSpanStore>,
+        query: &str,
+    ) -> Vec<LabeledPoints> {
+        let mut series = engine
+            .query_range("tenant", query, 0, 10_000, 10_000)
+            .await
+            .unwrap()
+            .series;
+        series.sort_by(|a, b| a.labels.cmp(&b.labels));
+        series
+            .into_iter()
+            .map(|series| (series.labels, series.points))
+            .collect()
+    }
+
+    // A block store over an empty in-memory object store.
+    fn memory_blocks() -> Arc<BlockStore> {
+        Arc::new(BlockStore::new(
+            Arc::new(InMemory::new()),
+            Url::parse("memory:///").unwrap(),
+        ))
+    }
+
+    // The index stats of an ingested block over `[0, 10]` whose object was
+    // never written, with no tags.
+    fn no_object_block_stats() -> TraceBlockStats {
+        TraceBlockStats {
+            object_key: "blocks/none.parquet".into(),
+            min_ts: 0,
+            max_ts: 10,
+            bloom: ShardedTraceBloom::new(1, 8, 0.01),
+            tag_names: BTreeSet::new(),
+            tag_values: BTreeMap::new(),
+            row_count: 0,
+            level: BlockLevel::INGESTED,
+        }
+    }
+
     fn shared(index: TraceIndex) -> SharedTraceIndex {
         Arc::new(ArcSwap::from_pointee(index))
     }
@@ -895,10 +939,7 @@ mod tests {
 
     #[test]
     fn span_store_constructor_preserves_scan_concat_default() {
-        let blocks = Arc::new(BlockStore::new(
-            Arc::new(InMemory::new()),
-            Url::parse("memory:///").unwrap(),
-        ));
+        let blocks = memory_blocks();
         let store = KrabkaSpanStore::new(blocks, shared(TraceIndex::new()), None);
 
         assert2::assert!(store.scan_concat_max == DEFAULT_SCAN_CONCAT_MAX);
@@ -1179,7 +1220,8 @@ mod tests {
     fn promoted_attributes_take_the_value_type_their_column_declares() {
         let batch = typed_attr_batch();
         let row = |index| {
-            super::attr_values_with_resource(&batch, index, false).expect("the row is readable")
+            super::attr_values_with_resource(&batch, index, super::ResourceAttrs::Exclude)
+                .expect("the row is readable")
         };
         let str_value = |value: &str| AttrValue::Str(value.to_string());
 
@@ -1620,10 +1662,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_store_scans_as_empty_span_table() {
-        let blocks = Arc::new(BlockStore::new(
-            Arc::new(InMemory::new()),
-            Url::parse("memory:///").unwrap(),
-        ));
+        let blocks = memory_blocks();
         let store = KrabkaSpanStore::new(blocks, shared(TraceIndex::new()), None);
         let scan = store.scan("tenant", &[], 0, 10).await.unwrap();
         let rows: usize = scan
@@ -1913,24 +1952,9 @@ mod tests {
 
     #[tokio::test]
     async fn cold_tag_discovery_exposes_static_traceql_scopes() {
-        let blocks = Arc::new(BlockStore::new(
-            Arc::new(InMemory::new()),
-            Url::parse("memory:///").unwrap(),
-        ));
+        let blocks = memory_blocks();
         let mut index = TraceIndex::new();
-        index.add_trace_block(
-            "tenant",
-            TraceBlockStats {
-                object_key: "blocks/none.parquet".into(),
-                min_ts: 0,
-                max_ts: 10,
-                bloom: ShardedTraceBloom::new(1, 8, 0.01),
-                tag_names: BTreeSet::new(),
-                tag_values: BTreeMap::new(),
-                row_count: 0,
-                level: BlockLevel::INGESTED,
-            },
-        );
+        index.add_trace_block("tenant", no_object_block_stats());
 
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
 
@@ -2313,10 +2337,7 @@ mod tests {
 
     #[tokio::test]
     async fn live_nested_intrinsic_values_are_returned_by_store() {
-        let blocks = Arc::new(BlockStore::new(
-            Arc::new(InMemory::new()),
-            Url::parse("memory:///").unwrap(),
-        ));
+        let blocks = memory_blocks();
         let live = LiveTier::new(Arc::new(FakeLiveSource {
             values: vec![TypedValue {
                 type_: "string".into(),
@@ -2343,25 +2364,17 @@ mod tests {
 
     #[tokio::test]
     async fn cold_nested_intrinsic_values_are_returned_from_trace_index() {
-        let blocks = Arc::new(BlockStore::new(
-            Arc::new(InMemory::new()),
-            Url::parse("memory:///").unwrap(),
-        ));
+        let blocks = memory_blocks();
         let mut index = TraceIndex::new();
         index.add_trace_block(
             "tenant",
             TraceBlockStats {
-                object_key: "blocks/none.parquet".into(),
-                min_ts: 0,
-                max_ts: 10,
-                bloom: ShardedTraceBloom::new(1, 8, 0.01),
                 tag_names: BTreeSet::from(["event:name".to_string()]),
                 tag_values: BTreeMap::from([(
                     "event:name".to_string(),
                     BTreeSet::from(["exception".to_string()]),
                 )]),
-                row_count: 0,
-                level: BlockLevel::INGESTED,
+                ..no_object_block_stats()
             },
         );
         let store = KrabkaSpanStore::new(blocks, shared(index), None);
@@ -3342,26 +3355,15 @@ mod tests {
                 .any(|trace| trace.trace_id == no_event_id)
         );
 
-        let mut series = engine
-            .query_range(
-                "tenant",
-                "{ event:name != nil } | count_over_time() | by(event:name)",
-                0,
-                10_000,
-                10_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        series.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let series = labeled_points(
+            &engine,
+            "{ event:name != nil } | count_over_time() | by(event:name)",
+        )
+        .await;
         // Grouping reads the first fetched event value, so split_events is in
         // exception, and its later cache.hit event cannot create a second row.
         assert2::assert!(
             series
-                .iter()
-                .map(|series| (series.labels.clone(), series.points.clone()))
-                .collect::<Vec<_>>()
                 == vec![
                     (
                         vec![("event:name".into(), "cache.hit".into())],
@@ -3374,24 +3376,13 @@ mod tests {
                 ]
         );
 
-        let mut series = engine
-            .query_range(
-                "tenant",
-                "{ span:name = \"GET /users\" } | count_over_time() | by(event.exception.type)",
-                0,
-                10_000,
-                10_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        series.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let series = labeled_points(
+            &engine,
+            "{ span:name = \"GET /users\" } | count_over_time() | by(event.exception.type)",
+        )
+        .await;
         assert2::assert!(
             series
-                .iter()
-                .map(|series| (series.labels.clone(), series.points.clone()))
-                .collect::<Vec<_>>()
                 == vec![
                     (
                         vec![("event.exception.type".into(), "nil".into())],
@@ -3408,24 +3399,13 @@ mod tests {
                 ]
         );
 
-        let mut series = engine
-            .query_range(
-                "tenant",
-                "{ span:name = \"GET /users\" } | count_over_time() | by(link:spanID)",
-                0,
-                10_000,
-                10_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        series.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let series = labeled_points(
+            &engine,
+            "{ span:name = \"GET /users\" } | count_over_time() | by(link:spanID)",
+        )
+        .await;
         assert2::assert!(
             series
-                .iter()
-                .map(|series| (series.labels.clone(), series.points.clone()))
-                .collect::<Vec<_>>()
                 == vec![(
                     vec![("link:spanID".into(), "0808080808080808".into())],
                     vec![(0, 4.0), (10_000, 0.0)]
@@ -3607,24 +3587,13 @@ mod tests {
         let store = Arc::new(KrabkaSpanStore::new(blocks, shared(index), None));
         let engine = TraceqlEngine::new(store, EngineOpts::default());
 
-        let mut series = engine
-            .query_range(
-                "tenant",
-                "{ resource.service.name != nil } | count_over_time() by(resource.service.name)",
-                0,
-                10_000,
-                10_000,
-            )
-            .await
-            .unwrap()
-            .series;
-
-        series.sort_by(|a, b| a.labels.cmp(&b.labels));
+        let series = labeled_points(
+            &engine,
+            "{ resource.service.name != nil } | count_over_time() by(resource.service.name)",
+        )
+        .await;
         check!(
             series
-                .iter()
-                .map(|series| (series.labels.clone(), series.points.clone()))
-                .collect::<Vec<_>>()
                 == ["billing", "checkout"]
                     .into_iter()
                     .map(|service| {
@@ -3919,10 +3888,7 @@ mod tests {
 
     #[tokio::test]
     async fn can_back_traceql_engine() {
-        let blocks = Arc::new(BlockStore::new(
-            Arc::new(InMemory::new()),
-            Url::parse("memory:///").unwrap(),
-        ));
+        let blocks = memory_blocks();
         let store = Arc::new(KrabkaSpanStore::new(
             blocks,
             shared(TraceIndex::new()),
@@ -3944,10 +3910,7 @@ mod tests {
     /// `Arc<ArcSwap<TraceIndex>>`.
     #[tokio::test]
     async fn span_store_observes_swapped_index() {
-        let blocks = Arc::new(BlockStore::new(
-            Arc::new(InMemory::new()),
-            Url::parse("memory:///").unwrap(),
-        ));
+        let blocks = memory_blocks();
         let handle: SharedTraceIndex = shared(TraceIndex::new());
         // Build the store — it holds the same Arc so it observes every swap.
         let _store = KrabkaSpanStore::new(Arc::clone(&blocks), Arc::clone(&handle), None);
@@ -3996,6 +3959,7 @@ mod align_scan_batches_to_schema;
 mod append_nested_attr;
 mod append_nested_event;
 mod append_nested_link;
+mod attr_match;
 mod attr_values;
 mod attr_values_with_resource;
 mod batch_attr_matches;
@@ -4050,11 +4014,13 @@ mod nested_link_matchers_match;
 mod nested_string_attrs;
 mod nullable_fixed_value;
 mod optional_list_column;
+mod projected_attr_column;
 mod recompute_batch_nested_sets;
 mod recompute_scan_nested_sets;
 mod recompute_trace_nested_sets;
 mod replace_scan_int32_columns;
 mod resource_attr_values;
+mod resource_attrs;
 mod resource_matches;
 mod root_service_matches;
 mod row_matcher_matches;
@@ -4081,6 +4047,7 @@ use align_scan_batches_to_schema::align_scan_batches_to_schema;
 use append_nested_attr::append_nested_attr;
 use append_nested_event::append_nested_event;
 use append_nested_link::append_nested_link;
+use attr_match::AttrMatch;
 use attr_values::attr_values;
 use attr_values_with_resource::attr_values_with_resource;
 use batch_attr_matches::batch_attr_matches;
@@ -4135,11 +4102,13 @@ use nested_link_matchers_match::nested_link_matchers_match;
 use nested_string_attrs::nested_string_attrs;
 use nullable_fixed_value::nullable_fixed_value;
 use optional_list_column::optional_list_column;
+use projected_attr_column::ProjectedAttrColumn;
 use recompute_batch_nested_sets::recompute_batch_nested_sets;
 use recompute_scan_nested_sets::recompute_scan_nested_sets;
 use recompute_trace_nested_sets::recompute_trace_nested_sets;
 use replace_scan_int32_columns::replace_scan_int32_columns;
 use resource_attr_values::resource_attr_values;
+use resource_attrs::ResourceAttrs;
 use resource_matches::resource_matches;
 use root_service_matches::root_service_matches;
 use row_matcher_matches::row_matcher_matches;

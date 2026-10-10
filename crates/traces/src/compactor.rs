@@ -55,7 +55,9 @@ mod tests {
 
     use super::*;
     use crate::span::{
-        AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode, batch::span_batch,
+        AttrValue, EventRecord, KeyValue, LinkRecord, Span, SpanKind, StatusCode,
+        batch::span_batch,
+        test_span::{api_server_span, string_attr},
     };
 
     /// `recompute_nested_sets` renumbers a trace's spans as a nested set.
@@ -282,40 +284,20 @@ mod tests {
 
     fn span() -> Span {
         Span {
-            trace_id: [1; 16],
-            span_id: [2; 8],
-            name: "GET /".into(),
-            kind: SpanKind::Server,
-            start_ns: 1_000,
-            duration_ns: 100,
-            status: StatusCode::Ok,
-            resource_attrs: vec![KeyValue {
-                key: "service.name".into(),
-                value: AttrValue::Str("api".into()),
-            }],
-            span_attrs: vec![KeyValue {
-                key: "env".into(),
-                value: AttrValue::Str("prod".into()),
-            }],
+            span_attrs: vec![string_attr("env", "prod")],
             events: vec![EventRecord {
                 time_unix_nano: 1_050,
                 name: "exception".into(),
-                attrs: vec![KeyValue {
-                    key: "cache.key".into(),
-                    value: AttrValue::Str("users".into()),
-                }],
+                attrs: vec![string_attr("cache.key", "users")],
             }],
             links: vec![LinkRecord {
                 trace_id: [9; 16],
                 span_id: [8; 8],
-                attrs: vec![KeyValue {
-                    key: "link.kind".into(),
-                    value: AttrValue::Str("retry".into()),
-                }],
+                attrs: vec![string_attr("link.kind", "retry")],
             }],
             instrumentation_scope: "otel-rust".into(),
             instrumentation_version: "1.2.3".into(),
-            ..Span::default()
+            ..api_server_span()
         }
     }
 

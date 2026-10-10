@@ -32,3 +32,33 @@ pub(crate) fn check_collection_header(
     }
     Ok(())
 }
+
+/// A map header as read from the wire.
+#[derive(Clone, Copy)]
+pub(crate) struct MapHeader {
+    pub(crate) key_type: u8,
+    pub(crate) value_type: u8,
+    pub(crate) len: usize,
+}
+
+/// Refuse a map whose keys or values fail [`check_collection_header`], and
+/// return the key type, value type, and length of one that passes.
+pub(crate) fn check_map_header(
+    header: MapHeader,
+    stop: u8,
+    remaining_bytes: usize,
+) -> Result<(u8, u8, usize), WireError> {
+    let MapHeader {
+        key_type,
+        value_type,
+        len,
+    } = header;
+    for element_type in [key_type, value_type] {
+        check_collection_header(
+            CollectionHeader { element_type, len },
+            stop,
+            remaining_bytes,
+        )?;
+    }
+    Ok((key_type, value_type, len))
+}
