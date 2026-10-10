@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "date": "2026-10-10",
+  "execution": "Current VM only; no GCP VM launches",
+  "scope": "Explicit workspace-overlay filesystem repeat of the million-row broad frontend case; not a cold-storage or native upstream qualification",
+  "evidence_directory": "qualification/evidence/disk-frontend-scope-2026-10-10",
+  "filesystem": {
+    "environment": {
+      "TMPDIR": "/workspace/scratch/disk-frontend-fixtures"
+    },
+    "filesystem": "Filesystem     Type    1K-blocks     Used Available Use% Mounted on\noverlay        overlay  32978704 30879448    405152  99% /\nnone           tmpfs     9220068     6204   9213864   1% /tmp\n",
+    "mounts": "TARGET SOURCE  FSTYPE  OPTIONS\n/      overlay overlay rw,relatime,lowerdir=/run/kata-containers/erofs-multi-layer/bce6f61f7cac46bc8e25e686e3cc102a/lower-0,upperdir=/run/kata-containers/erofs-multi-layer/bce6f61f7cac46bc8e25e686e3cc102a/upper/upper,workdir=/run/kata-containers/erofs-multi-layer/bce6f61f7cac46bc8e25e686e3cc102a/upper/work,index=off,metacopy=off\n",
+    "source_commits": {
+      "baseline": "a5e64c438bd43f090ea58c9374a6b0fe7ce639d2",
+      "response": "0860ae1177464dbc3142eac2d31dc8f7cb5c1d83",
+      "limit": "fa178d77c0765c5870e4380cad6deae7f94fba19"
+    },
+    "orders": [
+      [
+        "baseline",
+        "response",
+        "limit"
+      ],
+      [
+        "response",
+        "limit",
+        "baseline"
+      ],
+      [
+        "limit",
+        "baseline",
+        "response"
+      ]
+    ]
+  },
+  "fixture": {
+    "streams": 100000,
+    "rows": 1000000,
+    "case": "all",
+    "source": "tenant manifest, one-hour index cache, disabled result cache",
+    "TMPDIR": "/workspace/scratch/disk-frontend-fixtures",
+    "verification": "Independent complete envelope, labels and every row before timing each process",
+    "timing_scope": "Production HTTP preparation, planning, warmed real Parquet reads, serialization and full body consumption; construction and verification excluded"
+  },
+  "measurement_plan": {
+    "triples": 3,
+    "observations": 9,
+    "order": "Each retained executable occupies each order position once",
+    "affinity": [
+      4
+    ],
+    "timed_queries_per_process": 1,
+    "verified": 9,
+    "censored": 0
+  },
+  "binaries": {
+    "baseline": {
+      "path": "qualification/evidence/single-shard-index-reuse-2026-10-10/binaries/candidate/log-query-frontend",
+      "sha256": "7c4d73fdee08583a0c3d64bd946a6a2005647dbb7725ce7b50439fab4c5e6e31",
+      "bytes": 226848560,
+      "source_commit": "a5e64c438bd43f090ea58c9374a6b0fe7ce639d2"
+    },
+    "response": {
+      "path": "qualification/evidence/response-json-moves-2026-10-10/binaries/candidate/log-query-frontend",
+      "sha256": "30917f40d8f78654e1ad345e9f13cf1401db6b2892920e0abf1c3df485b04f79",
+      "bytes": 226833144,
+      "source_commit": "0860ae1177464dbc3142eac2d31dc8f7cb5c1d83"
+    },
+    "limit": {
+      "path": "qualification/evidence/inclusive-log-limit-2026-10-10/binaries/candidate/log-query-frontend",
+      "sha256": "466212d9caed83a2ebb5b8cf7f6702a23c5d5d2bb0a561e96f47eafd4d6b20a9",
+      "bytes": 226876936,
+      "source_commit": "fa178d77c0765c5870e4380cad6deae7f94fba19"
+    }
+  },
+  "timings": {
+    "baseline": {
+      "median": 13.574359254,
+      "min": 13.435031322,
+      "max": 13.590435442
+    },
+    "response": {
+      "median": 11.163972611,
+      "min": 10.92831637,
+      "max": 11.630196938
+    },
+    "limit": {
+      "median": 10.800641741,
+      "min": 10.087078226,
+      "max": 10.845346483
+    }
+  },
+  "paired_ratios": {
+    "response_baseline": {
+      "pairs": [
+        0.8656620635454294,
+        0.8224309083104807,
+        0.8041181915501423
+      ],
+      "median": 0.8224309083104807
+    },
+    "limit_response": {
+      "pairs": [
+        0.928672300097555,
+        0.9035384246698237,
+        0.9924078070042184
+      ],
+      "median": 0.928672300097555
+    },
+    "limit_baseline": {
+      "pairs": [
+        0.8039163796599297,
+        0.743097927294624,
+        0.7980131710484748
+      ],
+      "median": 0.7980131710484748
+    }
+  },
+  "preceding_scope_correction": {
+    "timing_runners": "Prior frontend timing scripts inherit TMPDIR; this VM currently resolves its default /tmp to tmpfs. Ambient TMPDIR was not captured per process. Treat prior timings as warmed tmpfs, not disk-backed.",
+    "profiling_runners": "CPU/allocation scripts explicitly place fixtures under /workspace/scratch on the root overlay filesystem",
+    "preservation": "Raw files and hashes remain unchanged, including incorrect earlier source-state annotations about timed fixtures being on disk. Tracked records now qualify the distinction."
+  },
+  "limitations": [
+    "Three synthetic warmed observations per retained version; no cold storage, network or concurrent ingest",
+    "Small controls and sharded requests are not repeated on disk in this round",
+    "No fresh native Mimir/Loki/Tempo/Pyroscope comparison; overall parity remains unqualified"
+  ],
+  "raw_manifest": {
+    "path": "qualification/evidence/disk-frontend-scope-2026-10-10/raw-manifest.json",
+    "sha256": "701aedee61332a316e747421f2ad109c9c000c35dd407f9607c4763e536d2409",
+    "files": 9,
+    "bytes": 166754,
+    "scope": "Every file in this evidence directory except manifest; retained executable/build evidence remains in preceding separately frozen directories"
+  }
+}

@@ -17,11 +17,7 @@ pub(crate) fn a_rule_matches_only_when_every_active_filter_accepts_it() {
     let source: serde_yaml::Value =
         serde_yaml::from_str("labels:\n  severity: page\n  team: infra\n")
             .expect("the source rule parses");
-    let matcher = |name: &str, value: &str| LabelMatcher {
-        name: name.to_string(),
-        op: MatchOp::Equal,
-        value: value.to_string(),
-    };
+    let matcher = |name: &str, value: &str| LabelMatcher::new(name, MatchOp::Equal, value).unwrap();
     let selector = |matchers: Vec<LabelMatcher>| StreamQuery {
         matchers,
         pipeline: Vec::new(),

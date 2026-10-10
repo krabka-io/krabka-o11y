@@ -59,8 +59,8 @@ impl Tree {
         let mut current = self.root;
         self.nodes[current].total += value;
         for frame in frames.iter().rev() {
-            let name = frame.function.clone();
-            let child = if let Some(child) = self.nodes[current].child_by_name.get(&name) {
+            let name = &frame.function;
+            let child = if let Some(child) = self.nodes[current].child_by_name.get(name) {
                 *child
             } else {
                 let idx = self.nodes.len();
@@ -71,9 +71,9 @@ impl Tree {
                     children: Vec::new(),
                     child_by_name: HashMap::new(),
                 });
-                let pos = sorted_child_position(&self.nodes[current].children, &self.nodes, &name);
+                let pos = sorted_child_position(&self.nodes[current].children, &self.nodes, name);
                 self.nodes[current].children.insert(pos, idx);
-                self.nodes[current].child_by_name.insert(name, idx);
+                self.nodes[current].child_by_name.insert(name.clone(), idx);
                 idx
             };
             current = child;

@@ -1,0 +1,414 @@
+{
+  "schema_version": 1,
+  "status": "rejected_production_source_restored",
+  "date": "2026-10-10",
+  "execution": "Current VM only; no GCP VM launches",
+  "performance_qualified": false,
+  "scope": "Isolated cold-label resolver prototype; complete production PromQL caller and native Mimir were not built or measured",
+  "baseline_commit": "83fb36ff95e25eb342721b7d170bae774ff5d228",
+  "retention_decision": "Reject the borrowed iterator prototype. Million-series broad resolution improves in all three pairs, but 100,000-series broad resolution is slower in all three. The candidate has 4.5% higher median paired latency there with narrowly overlapping ranges. Lower whole-process allocation traffic does not qualify a reliable latency improvement. Restore all three prototype source files byte for byte.",
+  "evidence_directory": "qualification/evidence/borrowed-metric-labels-2026-10-10",
+  "hypothesis": {
+    "diagnostic": "Previous native concurrent metrics profile identifies intermediate Index::series BTreeMap cloning in matching_series_by_fp",
+    "profile": "qualification/evidence/profile-query-2026-10-09/local-native-metrics-cpu-profile-pinned-runtime-6/metrics-all.perf.data",
+    "change": "Borrow Labels from Index until conversion into final MetricLabels, avoiding intermediate owned labels/map; preserve canonical hashing, stored-ID ordering, metadata fallback and duplicate-key insertion order",
+    "scope": "A separately named blockstore crate and an unchanged cached metrics library supply both paths in one executable; the driver explicitly mirrors the existing owned and borrowed MetricLabels conversions. It does not execute MetricBlockStore or the query engine."
+  },
+  "upstream_comparison": {
+    "source": "https://github.com/grafana/mimir/blob/e49585d43c6e852225e114bd1ddd98da58a4c060/vendor/github.com/prometheus/prometheus/model/labels/labels_stringlabels.go#L28-L95",
+    "approach": "Pinned Mimir uses packed sorted label strings and returns slices; this prototype still clones each label string into a BTreeMap, so it does not implement packed labels or qualify parity. Canonical Krabka FNV bytes remain unchanged."
+  },
+  "fixture": {
+    "sizes": [
+      1000,
+      20000,
+      100000,
+      1000000
+    ],
+    "labels_per_series": 8,
+    "cases": [
+      "all",
+      "rare",
+      "none"
+    ],
+    "rare_fraction": "One in 64 series",
+    "input_bytes": "Includes Unicode, NUL and long delimiter-containing values",
+    "stored_ids": "Row ordinals deliberately differ from canonical fingerprints",
+    "filesystem": "Index and result maps in memory; no Parquet, WAL or storage latency",
+    "verification": "Independent full canonical-fingerprint-to-labels map from original fixture pairs checked before timing every process; expected map dropped before timing",
+    "timing_scope": "Matcher resolution, canonical hashing, MetricLabels conversion, complete result BTreeMap construction and destruction; setup and verification excluded"
+  },
+  "measurement_plan": {
+    "observations": 72,
+    "pairs": 3,
+    "order": "Alternating baseline/candidate within each pair",
+    "affinity": [
+      4
+    ],
+    "timed_queries": "50 for sizes <=20,000; 10 at 100,000; 1 at 1,000,000",
+    "verified": 72,
+    "censored": 0
+  },
+  "binary": {
+    "path": "qualification/evidence/borrowed-metric-labels-2026-10-10/binaries/candidate/metric-label-prototype",
+    "sha256": "024724172ca894a3d21e8caefe9e46753c14b7ba6df3121ab06012cc745c6e85",
+    "bytes": 18175944,
+    "compiler_flags": "opt-level=3, line-tables-only, frame pointers, 16 codegen units, no LTO; same executable for both paths"
+  },
+  "timings": [
+    {
+      "series": 1000,
+      "case": "all",
+      "seconds": {
+        "baseline": {
+          "median": 0.0016902857399999998,
+          "min": 0.0016030676199999998,
+          "max": 0.0017611273399999999
+        },
+        "candidate": {
+          "median": 0.00137935286,
+          "min": 0.0012860692600000002,
+          "max": 0.00142143464
+        }
+      },
+      "paired_ratios": [
+        0.8071163326554228,
+        0.8160471495192287,
+        0.8022551537782295
+      ],
+      "median_paired_ratio": 0.8071163326554228,
+      "candidate_slower_pairs": 0
+    },
+    {
+      "series": 1000,
+      "case": "rare",
+      "seconds": {
+        "baseline": {
+          "median": 1.85131e-05,
+          "min": 1.5498e-05,
+          "max": 2.946268e-05
+        },
+        "candidate": {
+          "median": 1.508618e-05,
+          "min": 1.486804e-05,
+          "max": 1.5211160000000002e-05
+        }
+      },
+      "paired_ratios": [
+        0.8216430527572368,
+        0.5046397680048115,
+        0.9734275390372952
+      ],
+      "median_paired_ratio": 0.8216430527572368,
+      "candidate_slower_pairs": 0
+    },
+    {
+      "series": 1000,
+      "case": "none",
+      "seconds": {
+        "baseline": {
+          "median": 6.088e-08,
+          "min": 5.6679999999999995e-08,
+          "max": 6.27e-08
+        },
+        "candidate": {
+          "median": 6.35e-08,
+          "min": 6.17e-08,
+          "max": 6.55e-08
+        }
+      },
+      "paired_ratios": [
+        1.075886990801577,
+        0.9840510366826157,
+        1.1203246294989415
+      ],
+      "median_paired_ratio": 1.075886990801577,
+      "candidate_slower_pairs": 2
+    },
+    {
+      "series": 20000,
+      "case": "all",
+      "seconds": {
+        "baseline": {
+          "median": 0.08477872850000001,
+          "min": 0.08163343764,
+          "max": 0.09067038397999999
+        },
+        "candidate": {
+          "median": 0.07901145388,
+          "min": 0.0781180032,
+          "max": 0.0811835199
+        }
+      },
+      "paired_ratios": [
+        0.8953697595226618,
+        0.9319726218823863,
+        0.9569363419986927
+      ],
+      "median_paired_ratio": 0.9319726218823863,
+      "candidate_slower_pairs": 0
+    },
+    {
+      "series": 20000,
+      "case": "rare",
+      "seconds": {
+        "baseline": {
+          "median": 0.00045836786,
+          "min": 0.00045786873999999997,
+          "max": 0.00046084420000000004
+        },
+        "candidate": {
+          "median": 0.00038791824,
+          "min": 0.00038451357999999997,
+          "max": 0.00039534038
+        }
+      },
+      "paired_ratios": [
+        0.8634360581156949,
+        0.8343678405847355,
+        0.8463033162927263
+      ],
+      "median_paired_ratio": 0.8463033162927263,
+      "candidate_slower_pairs": 0
+    },
+    {
+      "series": 20000,
+      "case": "none",
+      "seconds": {
+        "baseline": {
+          "median": 5.77e-08,
+          "min": 5.648e-08,
+          "max": 5.91e-08
+        },
+        "candidate": {
+          "median": 6.19e-08,
+          "min": 5.99e-08,
+          "max": 6.19e-08
+        }
+      },
+      "paired_ratios": [
+        1.072790294627383,
+        1.0959631728045327,
+        1.0135363790186125
+      ],
+      "median_paired_ratio": 1.072790294627383,
+      "candidate_slower_pairs": 3
+    },
+    {
+      "series": 100000,
+      "case": "all",
+      "seconds": {
+        "baseline": {
+          "median": 0.5344350323,
+          "min": 0.4992489142,
+          "max": 0.5412434638
+        },
+        "candidate": {
+          "median": 0.5658286038,
+          "min": 0.5394659719,
+          "max": 0.5662496244999999
+        }
+      },
+      "paired_ratios": [
+        1.0454234399938818,
+        1.0094135662820396,
+        1.1342030165601107
+      ],
+      "median_paired_ratio": 1.0454234399938818,
+      "candidate_slower_pairs": 3
+    },
+    {
+      "series": 100000,
+      "case": "rare",
+      "seconds": {
+        "baseline": {
+          "median": 0.0035429166,
+          "min": 0.0033713347999999995,
+          "max": 0.0039525255
+        },
+        "candidate": {
+          "median": 0.0033113460999999998,
+          "min": 0.0031460968,
+          "max": 0.0034726805
+        }
+      },
+      "paired_ratios": [
+        0.9346384557852702,
+        0.8785978736886074,
+        0.933190260427413
+      ],
+      "median_paired_ratio": 0.933190260427413,
+      "candidate_slower_pairs": 0
+    },
+    {
+      "series": 100000,
+      "case": "none",
+      "seconds": {
+        "baseline": {
+          "median": 7.41e-08,
+          "min": 7.01e-08,
+          "max": 7.51e-08
+        },
+        "candidate": {
+          "median": 7.81e-08,
+          "min": 7.71e-08,
+          "max": 7.91e-08
+        }
+      },
+      "paired_ratios": [
+        1.1283880171184022,
+        1.0266311584553927,
+        1.0539811066126856
+      ],
+      "median_paired_ratio": 1.0539811066126856,
+      "candidate_slower_pairs": 3
+    },
+    {
+      "series": 1000000,
+      "case": "all",
+      "seconds": {
+        "baseline": {
+          "median": 6.261203887,
+          "min": 5.983161985,
+          "max": 6.334120643
+        },
+        "candidate": {
+          "median": 4.442321923,
+          "min": 4.411497061,
+          "max": 4.47555732
+        }
+      },
+      "paired_ratios": [
+        0.7045764904988152,
+        0.7480254305700533,
+        0.7013320669711783
+      ],
+      "median_paired_ratio": 0.7045764904988152,
+      "candidate_slower_pairs": 0
+    },
+    {
+      "series": 1000000,
+      "case": "rare",
+      "seconds": {
+        "baseline": {
+          "median": 0.116347512,
+          "min": 0.10496609,
+          "max": 0.12700493
+        },
+        "candidate": {
+          "median": 0.109241965,
+          "min": 0.109008022,
+          "max": 0.129751273
+        }
+      },
+      "paired_ratios": [
+        0.8582975637244948,
+        0.9389282428316988,
+        1.236125619235698
+      ],
+      "median_paired_ratio": 0.9389282428316988,
+      "candidate_slower_pairs": 1
+    },
+    {
+      "series": 1000000,
+      "case": "none",
+      "seconds": {
+        "baseline": {
+          "median": 1.61e-07,
+          "min": 1.6e-07,
+          "max": 1.81e-07
+        },
+        "candidate": {
+          "median": 1.7e-07,
+          "min": 1.6e-07,
+          "max": 1.7e-07
+        }
+      },
+      "paired_ratios": [
+        1.0559006211180124,
+        0.8839779005524863,
+        1.0625
+      ],
+      "median_paired_ratio": 1.0559006211180124,
+      "candidate_slower_pairs": 2
+    }
+  ],
+  "profiles": {
+    "baseline": {
+      "cpu": {
+        "series": 20000,
+        "timed_queries": 50,
+        "verification_queries": 1,
+        "includes_fixture": true,
+        "frequency_hz": 199,
+        "samples": 883,
+        "lost_samples": 0,
+        "canonical_fingerprint_self_percent": 23.56
+      },
+      "heap": {
+        "series": 5000,
+        "timed_queries": 20,
+        "verification_queries": 1,
+        "includes_fixture": true,
+        "allocation_calls": 2476820,
+        "temporary_allocations": 154969,
+        "peak_heap_mb": 16.41,
+        "instrumented_peak_rss_mb": 30.86
+      }
+    },
+    "candidate": {
+      "cpu": {
+        "series": 20000,
+        "timed_queries": 50,
+        "verification_queries": 1,
+        "includes_fixture": true,
+        "frequency_hz": 199,
+        "samples": 907,
+        "lost_samples": 0,
+        "canonical_fingerprint_self_percent": 24.04
+      },
+      "heap": {
+        "series": 5000,
+        "timed_queries": 20,
+        "verification_queries": 1,
+        "includes_fixture": true,
+        "allocation_calls": 2371568,
+        "temporary_allocations": 154969,
+        "peak_heap_mb": 16.22,
+        "instrumented_peak_rss_mb": 28.27
+      }
+    }
+  },
+  "validation": {
+    "blockstore_prototype_unit_tests": 339,
+    "result": "Passed, zero failures or ignored cases",
+    "regression_scope": "Stored-ID order distinct from canonical fingerprints, pointer identity, selective matches, Unicode, tenant isolation and reached/skipped invalid regex validation",
+    "strict_lint": "Production and full unit source: all,pedantic with warnings denied; passed",
+    "managed_format": "Passed on prototype",
+    "promql_production_caller": "Not compiled or tested; prototype rejected before this qualification stage",
+    "restoration": "Three source files restored after exact prototype snapshot and baseline git-byte verification",
+    "restoration_proof": "qualification/evidence/borrowed-metric-labels-2026-10-10/restoration-proof.json"
+  },
+  "limitations": [
+    "Three pairs per synthetic case; no cold storage, HTTP, concurrency, service-level latency or native upstream comparison",
+    "Empty results are tens of nanoseconds and timer noise; retain raw ratios without attributing a meaningful slowdown",
+    "One selective million-series pair regresses by 23.6%; every observation is retained",
+    "CPU and heap captures cover complete process setup, independent expected labels, one verification and timed resolution. They are not query-only costs.",
+    "CPU profiling uses baseline then candidate once without explicit affinity, unlike CPU-4 timing pairs",
+    "No general memory or latency advantage is qualified"
+  ],
+  "resource_handling": {
+    "build": "157 verified temporary RAM dependencies removed before timing; compiler outputs copied to disk and hash-verified",
+    "unit_binary": "Successful 745,923,320-byte test ELF hashed then removed, with commands/logs retained",
+    "demo": "Stopped during measurements and profiles, restored healthy afterward",
+    "storage": "No WAL movement or disk-guard change"
+  },
+  "profile_interpretation": "Intermediate tree cloning is no longer visible above the 0.5% threshold in the candidate; fingerprint hashing remains about 24% self. Conversion/bulk result construction takes more relative attribution. Overlapping callers and whole-process samples do not isolate the cause of the 100,000-series slowdown. Allocation calls fall by 105,252 (4.25%), but the latency regression persists.",
+  "raw_manifest": {
+    "path": "qualification/evidence/borrowed-metric-labels-2026-10-10/raw-manifest.json",
+    "sha256": "9a04e5978c3117a42b8cac7eb571f0e40e55677d5f0e7c118c4309dcff52575a",
+    "files": 77,
+    "bytes": 93903188,
+    "scope": "Every file in this evidence directory except this manifest; prior diagnostic profile stays in its frozen earlier directory"
+  }
+}

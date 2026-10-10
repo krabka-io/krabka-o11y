@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "date": "2026-10-10",
+  "execution": "Current VM only; no GCP VM launches",
+  "scope": "Whole-process attribution and allocations for broad manifest-cache controls; does not isolate the cause of the prior latency regression",
+  "evidence_directory": "qualification/evidence/manifest-control-profile-2026-10-10",
+  "binaries": {
+    "baseline": {
+      "path": "qualification/evidence/single-shard-index-reuse-2026-10-10/binaries/baseline/log-query-frontend",
+      "sha256": "71838f284ee951797ee84a7dba9f1594f454fa3f778f21ce4b4c1cdc96b2c9e9",
+      "bytes": 226753520
+    },
+    "candidate": {
+      "path": "qualification/evidence/single-shard-index-reuse-2026-10-10/binaries/candidate/log-query-frontend",
+      "sha256": "7c4d73fdee08583a0c3d64bd946a6a2005647dbb7725ce7b50439fab4c5e6e31",
+      "bytes": 226848560
+    }
+  },
+  "cpu": {
+    "streams": 100000,
+    "rows": 1000000,
+    "verification_queries": 1,
+    "timed_queries": 3,
+    "case": "all",
+    "fixture": "manifest cache, one-hour TTL; result cache disabled",
+    "frequency_hz": 199,
+    "scope": "Fixture construction, verification and timed requests",
+    "captures": {
+      "baseline": {
+        "samples_display": "12K of event 'cpu-clock:u'",
+        "approximate_event_nanoseconds": 60582907000,
+        "lost_samples": 0
+      },
+      "candidate": {
+        "samples_display": "12K of event 'cpu-clock:u'",
+        "approximate_event_nanoseconds": 61080394375,
+        "lost_samples": 0
+      }
+    }
+  },
+  "heap": {
+    "streams": 5000,
+    "verification_queries": 1,
+    "timed_queries": 3,
+    "case": "all",
+    "scope": "Whole process including construction and verification",
+    "captures": [
+      {
+        "variant": "baseline",
+        "allocation_calls": 10392862,
+        "peak_heap": "80.42M",
+        "peak_rss_including_profiler": "221.79M"
+      },
+      {
+        "variant": "candidate",
+        "allocation_calls": 10392872,
+        "peak_heap": "80.42M",
+        "peak_rss_including_profiler": "218.98M"
+      }
+    ]
+  },
+  "findings": [
+    "Broad-control allocation totals differ by only ten calls; this does not explain the repeated slowdown",
+    "Response construction and serde_json Value serialization are prominent in both profiles; json! serializes already-built response trees repeatedly",
+    "Cumulative caller percentages overlap and depend on available callchains; do not interpret differing attribution percentages as query-only CPU ratios"
+  ],
+  "next_hypothesis": "Move owned response JSON values into their envelopes instead of serializing and allocating copies of completed trees",
+  "raw_manifest": {
+    "path": "qualification/evidence/manifest-control-profile-2026-10-10/raw-manifest.json",
+    "sha256": "4ed1c2f58c9ff653963f123410c0e3207ad646ab6c9baadc528a52d1240367d3",
+    "files": 20,
+    "bytes": 213969159
+  }
+}

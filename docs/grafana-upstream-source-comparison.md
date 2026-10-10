@@ -161,18 +161,34 @@ comparison; only a paired measurement can establish a gain. See the
 
 Mimir first intersects restrictive postings, then subtracts negative postings.
 It handles missing labels and empty-matching regexes explicitly. Some regexes
-have direct postings fast paths. Krabka's
+have direct postings fast paths. Its posting union streams sorted inputs
+through a [loser tree](https://github.com/grafana/mimir/blob/e49585d43c6e852225e114bd1ddd98da58a4c060/vendor/github.com/prometheus/prometheus/tsdb/index/postings.go#L678-L747).
+Krabka's sequential fallback in
 [`Index::resolve`](../crates/blockstore/src/index/index_type.rs) intersects
-matcher results in input order. Its
+owned matcher results in input order. Its
 [`resolve_one`](../crates/blockstore/src/index/tenant_index.rs) can build a
 nearly tenant-wide set for a negative matcher before intersection.
 See Mimir's [postings algorithm](https://github.com/grafana/mimir/blob/e49585d43c6e852225e114bd1ddd98da58a4c060/vendor/github.com/prometheus/prometheus/tsdb/querier.go#L295-L440).
 
-A small candidate can start with a restrictive positive posting and test
-remaining matchers against that candidate set. It must preserve anchored
-regex semantics, absent-label behavior, shard matcher validation and errors.
-Measure multi-matcher and high-cardinality workloads; do not assume a gain
-for `up` alone.
+Krabka now starts multi-matcher selectors from the smallest non-empty-value
+equality posting. It tests other matchers within that set. Broad regex
+selectors keep the distinct-value posting scan. If the exact posting covers
+the whole tenant, a single broad regex supplies the result without cloning
+that exact posting. Regex unions use one bulk tree construction. They still
+materialize an owned set; Mimir's union remains an iterator. Invalid matchers
+use the original sequential path, so an empty intersection skips the same
+later errors. The logs label index also intersects exact postings from the
+smallest posting. Its tenant/name/value dictionaries permit borrowed key
+lookups, as Loki's nested label dictionaries do. Label names no longer require scanning
+every value posting. Pure equalities and absent negative postings return the
+already resolved set directly. Other predicates retain their label checks.
+It preserves its separate predicate semantics.
+
+The new `index_matchers` and `log_index_matchers` benchmarks cover 1,000 to
+one million series. CPU and allocation profiles select this change. See the
+[large matcher investigation](grafana-performance-profiling.md#large-selective-matcher-workloads).
+These index measurements do not establish a service-level gain over an
+upstream system. Single-matcher and broad selectors remain separate controls.
 
 Mimir's default query engine processes each series through reusable iterators.
 It obtains result slices from bounded pools with explicit memory accounting.
@@ -193,6 +209,13 @@ histograms. This is a missing specialized technique, but the float-only
 comparison does not exercise it. See the
 [plan pass](https://github.com/grafana/mimir/blob/e49585d43c6e852225e114bd1ddd98da58a4c060/pkg/streamingpromql/optimize/plan/skip_histogram_decoding.go#L30-L75)
 and [`collect_histogram_rows`](../crates/promql/src/engine/row_cache/collect_histogram_rows.rs).
+
+The local 100,000-series application CPU capture adds a concrete target for
+that label representation work. With no lost samples, metric-label fingerprinting
+accounts for 12.11% of self CPU and blockstore-label fingerprinting for 5.32%.
+Label-map and head-summary clones remain visible. The capture includes both
+writes and queries, so these percentages do not isolate query CPU or establish
+an improvement from changing representation.
 
 ## Loki
 
@@ -252,6 +275,69 @@ queries. `distinct` and tail retain those labels. Those measured changes
 address an observed allocation source; do not discard their ownership guards.
 See the [Loki experiment record](grafana-performance-profiling.md).
 
+The local 20,000-stream cold-query capture points to planning before further
+iterator work: `ScalarValue::eq` consumes 80.65% of sampled self CPU, and
+`FilterExec::statistics_helper` another 6.30%. At the pinned DataFusion revision
+`532cd0376448c94b6a87d03fe2072d5094764704`, `restricted_column` deduplicates
+literal `IN` values with `Vec::contains`, before checking whether the column
+holds each value once. That performs quadratic comparisons for a large list,
+even when the uniqueness condition cannot hold. Krabka now keeps log fingerprint
+lists exact through 4,096 values, then uses their first/last range and retains
+the exact Rust membership check. It rejects unrelated fingerprint runs before
+allocating structured metadata. The metric scan already bounds large lists.
+The million-row log fixture includes broad, quarter-selected and roughly
+one-sixty-fourth-selected queries. The initially tried 1,024 cutoff regressed
+the last case by decoding more Parquet rows; the larger cutoff keeps that
+1,563-value selection exact. The DataFusion dependency and SQL `LIMIT` contract
+remain unchanged.
+
+The earlier local 20,000-stream Loki write failures are explained by its WAL
+disk throttle, rather than a completed performance comparison. The saved log
+reports 90.05% disk usage against the default 90% threshold. Both shutdown and
+that throttle return `ErrReadOnly` with the text "Ingester is shutting down".
+See [the WAL threshold](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/ingester/wal.go#L55)
+and [the push checks](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/ingester/ingester.go#L1002-L1012).
+The repeat reserves disk space before deployment and preserves that default.
+
+Loki also constructs reusable regex filters before it evaluates log rows.
+[`NewFilter` and `parseRegexpFilter`](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/logql/log/filter.go#L608-L681)
+simplify suitable expressions into literal filters; the remaining expressions
+are compiled by `newRegexpFilter`. Krabka's selector and line-filter constructors
+previously validated a regex and discarded it, then compiled it again for each
+row. They now retain that compiled regex. A source-value check preserves edits
+to their public pattern fields, and equality compares the source fields rather
+than compiled state. This change reuses compilation; it does not add Loki's
+literal simplifications. Extracted-field comparisons, label-selection patterns
+and dynamic template regexes still have separate evaluation paths.
+
+Loki also reuses loaded index objects. Its
+[`TSDBIndex`](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/storage/stores/shipper/indexshipper/tsdb/single_file_index.go#L119-L147)
+holds an index reader, and
+[`indexSet.ForEach`](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/storage/stores/shipper/indexshipper/downloads/index_set.go#L180-L197)
+passes existing cached index objects to callbacks while holding a read lock.
+Krabka's request preparation previously copied complete label and block
+indexes on cache hits and state clones. It now shares immutable `Arc`
+snapshots. Replacing or evicting a cache entry leaves an active request's
+snapshot valid; tenant keys, TTLs and compaction-frontier generation handling
+are preserved. Bounded shard preparation still rebuilds a label index and
+remains a separate cost to investigate.
+
+Loki's
+[`ForSeries` loop](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/storage/stores/shipper/indexshipper/tsdb/single_file_index.go#L159-L200)
+reuses a label variable and pooled chunk metadata while iterating postings;
+callbacks must not retain those reused arguments. Krabka's bounded shard
+preparation previously collected an owned copy of every tenant series before
+filtering its fingerprint range. The new path selects fingerprints first,
+then borrows canonical labels and copies only included series into the bounded
+index. It still constructs a tenant-wide fingerprint set and rebuilds the
+bounded index. The first measured candidate reduces allocation calls but has
+a broad unsharded control regression; its separate investigation record
+preserves that result before refinement. The retained implementation isolates
+bounded work in a non-inlined helper. Its final measurement matches the
+baseline Rust metadata tags after earlier direct builds exposed a code-layout
+confound; the [profiling record](grafana-performance-profiling.md#bounded-shard-label-selection)
+retains every control and does not attribute those differences to one cause.
+
 ## Tempo
 
 Tempo checks Parquet dictionaries, column chunks and page bounds before it
@@ -294,16 +380,26 @@ Krabka already interns symbols and groups ordinary tree queries by partition
 and stack ID before resolution. See
 [`apply_record`](../crates/profiles/src/hot_store/apply_record.rs) and
 [`merge_scan_to_tree`](../crates/pprof/src/engine/merge_scan_to_tree.rs).
-Its trace-selector branch retains individual samples. The
-[tree merger](../crates/pprof/src/engine/merge_sql_to_tree.rs) resolves frames
-for each resulting row, and [symbol resolution](../crates/pprof/src/symbol_db/symbol_db_type.rs)
-constructs owned function and filename strings. A bounded, query-local cache
-can avoid repeated resolution or call-site tests when IDs repeat.
+Its trace-selector branch retains individual samples. Previously the
+[tree merger](../crates/pprof/src/engine/merge_sql_to_tree.rs) resolved frames
+for every resulting row, and [symbol resolution](../crates/pprof/src/symbol_db/symbol_db_type.rs)
+constructed owned function and filename strings each time.
 
-Key such a cache by both partition and stack ID, and bind it to the captured
-symbol resolver. Preserve trace/span selection, prefix frames, inline frames,
-empty stacks, negative values and exact tree output. Ordinary grouped queries
-may already resolve each ID once, so measure the repeated-ID trace path first.
+The merger now reuses symbol resolution and call-site matching for adjacent
+equal `(partition, stack ID)` keys within each Arrow batch. The query SQL
+orders those keys, so repeated samples share frames without a persistent
+cache or another hash lookup. Individual values still enter the tree in their
+original order, including negative and zero values. Call-site matching happens
+before prefix frames are appended. Tree insertion also borrows function names
+for existing children and clones them only for new nodes.
+
+This follows Pyroscope's reuse by stack ID, while retaining Krabka's existing
+sample arithmetic. The state belongs to one batch and its captured symbol
+resolver. The complete-query `profile_query` benchmark covers four symbol
+partitions with overlapping IDs, repeated stacks, trace selection and call-site
+filtering, alongside ordinary grouped-query controls. Regression coverage
+includes inline frames, empty stacks, signed values, batch boundaries and
+prefix filtering.
 The upstream dense accumulator alone does not justify replacing DataFusion:
 the earlier direct-table experiment was rejected. The benchmark's small stack
 set also does not justify an adaptive dense-set abstraction.
@@ -381,3 +477,42 @@ object-store heap capture. The
 preserves the raw profile hashes. MinIO is outside the application budget.
 These profiles neither establish
 application RSS savings nor qualify an application performance advantage.
+
+## Single tenant-shard request preparation
+
+At the pinned Loki source commit
+`7a40404f32b3e6464c9cfc6cc7dd75a40f3931da`,
+[`IndexSlice.For`](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/storage/stores/shipper/indexshipper/tsdb/multi_file_index.go#L39)
+directly invokes the callback when there is one index. `MultiIndex` visits
+overlapping index readers and accumulates query results, rather than
+constructing a complete label/postings index on each request. Krabka's
+new single-shard path reuses the already tenant-filtered immutable snapshot;
+its multiple-shard path still materializes merged indexes. The source file
+and its hash are retained with the local experiment evidence.
+
+## Stream response encoding
+
+At the same pinned Loki commit,
+[`encodeStreams` and `encodeStream`](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/util/marshal/query.go#L375)
+write arrays, timestamps and escaped log lines directly to a `jsoniter.Stream`.
+Categorized metadata is written into that stream too. Krabka's response
+profile instead exposes repeated serialization of already-built JSON trees.
+Its folded entry strings and completed stream results now move into their
+containers, avoiding those copies. Krabka still uses an intermediate
+`serde_json::Value` tree for frontend merging; direct HTTP encoding remains
+a separate opportunity. The pinned source and checksum are retained with
+the [response experiment](../qualification/response-json-moves-2026-10-10.json).
+
+Loki's pinned [`ReadBatch`](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/iter/entry_iterator.go#L681)
+consumes entries from its ordered iterator until the requested output count
+is reached. Krabka still materializes stream results. Its frontend now avoids
+building a global timestamp order and selection set when every returned entry
+already fits the requested limit. Truncating requests now use partial tuple
+selection and a strict cutoff, preserving timestamp ties and original
+per-stream order while removing full sorting and membership-set construction.
+The [partial-selection experiment](../qualification/partial-log-limit-2026-10-10.json)
+verifies and profiles this helper through one million rows; it does not time
+HTTP or upstream services. These changes preserve Krabka's established tie
+handling; they do not implement Loki's incremental iterator consumption. The
+source checksum and measured scope are retained in the
+[limit experiment](../qualification/inclusive-log-limit-2026-10-10.json).

@@ -67,7 +67,8 @@ impl Index {
     }
 
     /// # Errors
-    /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
+    /// Returns an error for empty selectors, selectors without a non-empty matcher,
+    /// or invalid regex or query shard matchers reached during resolution.
     pub fn resolve(
         &self,
         tenant: &str,
@@ -101,6 +102,12 @@ impl Index {
         let Some(tenant_index) = self.tenants.get(tenant) else {
             return Ok(BTreeSet::new());
         };
+
+        if matchers.len() > 1
+            && let Some(resolved) = tenant_index.resolve_selective(matchers)
+        {
+            return Ok(resolved);
+        }
 
         let mut resolved = tenant_index.resolve_one(&matchers[0])?;
         for matcher in &matchers[1..] {

@@ -6,7 +6,7 @@ Part of [krabka-o11y](https://github.com/krabka-io/krabka-o11y), the Krabka obse
 
 ## Overview
 
-This directory measures five operations: block write, block read, index pruning, PromQL range evaluation, TraceQL span filtering, and pprof tree merge. Each one is a path that every query or every ingest goes through, so a change in its cost is a change in the cost of the whole system.
+This directory measures block write, block read, index pruning, PromQL range evaluation, TraceQL span filtering, pprof tree merge and complete profile and log queries. Each one is a path that every query or every ingest goes through, so a change in its cost is a change in the cost of the whole system.
 
 The benchmarks exist because nothing else here measures speed. The differential suites and the golden corpora check that an answer is correct. They say nothing about what the answer costs, and they run at a volume too small to show any cost that matters: a few hundred series and a few thousand samples. Krabka is a columnar block store over object storage. That design gives its benefit at high cardinality and high volume, and its failure modes — an index that stops pruning, a compaction that reads more than it writes, a query that holds a whole result in memory — do not appear below that scale.
 
@@ -47,6 +47,80 @@ tools/bench.sh --quick index_prune # one benchmark
 `--quick` is the mode for a local run. A full run is minutes of wall clock per target.
 
 The results go to `benches/target/criterion`. Criterion writes an HTML report at `benches/target/criterion/report/index.html`, which the `bench` job uploads as an artifact.
+
+`tools/bench.sh --quick profile_query` exercises complete profile queries at
+1,000, 10,000, 100,000 and 1,000,000 samples. The fixture repeats 256 stack IDs
+across four symbol partitions, with 16 frames per stack and 16 trace IDs.
+The grouped query is a control for SQL aggregation; the trace cases select
+all traces, one trace, or all traces with a `main` call-site filter. Each case
+checks its complete flamegraph against an independently accumulated fixture
+ledger before measurement. Fixture construction stays outside query timing,
+and queries bypass the frontend result cache.
+
+For CPU or allocation captures, build `profile_query_profile` from this
+workspace and run it with a sample count, iteration count and case name:
+
+```bash
+cargo build --manifest-path benches/Cargo.toml --release --example profile_query_profile
+benches/target/release/examples/profile_query_profile 1000000 3 trace_all
+```
+
+The driver checks the full result once, then consumes each timed result.
+Whole-process captures also include fixture creation and the verification
+query; attribution to symbol resolution and query tree insertion separates
+those costs from fixture generation.
+
+`tools/bench.sh --quick log_stream_query` measures complete Parquet-backed log
+responses at 1,000, 5,000, 20,000 and 100,000 streams, with ten rows per stream.
+Each stream carries a deterministic 64-byte structured metadata value. Cases
+select all streams with a regex or a nonempty-value matcher, all streams with
+a literal line filter, positive and negative regex line filters, one quarter
+of streams, that quarter with line and time
+filters, roughly one sixty-fourth of streams, or one stream. Every complete
+JSON response is checked against an
+independent input ledger before measurement. Fixture creation and planning
+the stream selection remain outside timing; Parquet SQL planning, scanning,
+pipeline evaluation and response construction are timed.
+
+For CPU or allocation captures:
+
+```bash
+cargo build --manifest-path benches/Cargo.toml --release --example log_stream_query_profile
+benches/target/release/examples/log_stream_query_profile 20000 1 all_exact
+```
+
+This driver verifies one complete response before its timed queries. Whole
+process captures include fixture creation and that verification query.
+
+`tools/bench.sh --quick log_query_frontend` adds production Loki HTTP handlers
+to the same four stream counts. Requests use real Parquet and tenant manifests
+on a private local filesystem, a one-hour index cache, and a disabled result
+cache. Cases cover all streams, all streams with a small shard-byte budget,
+one quarter of streams, roughly one sixty-fourth, one stream, an empty result,
+and label values. Fixture limits allow the complete broad response.
+
+The `shards_all`, `shards_rare`, `shards_single`, and `shards_none` cases
+retain one persisted tenant shard for an hour, with request-index and result
+caches disabled. They expose index preparation for moving query windows
+without including shard download in the timer. The profiling example accepts
+a final `shards` argument to select this fixture. These 16 new IDs remain
+`unseeded`; the historical numeric budgets are unchanged.
+
+Each case checks the API envelope and every label and row against the input
+ledger before timing. Execution statistics are excluded from equality because
+request timings and cache counters vary. Handler preparation, selection,
+planning, Parquet reads, shard execution, serialization and body consumption
+are timed. Fixture construction and verification are excluded. These are
+in-process HTTP requests with warmed index snapshots and filesystem pages;
+they do not measure socket traffic or remote object storage.
+
+```bash
+cargo build --manifest-path benches/Cargo.toml --release --example log_query_frontend_profile
+benches/target/release/examples/log_query_frontend_profile 100000 1 single
+```
+
+This driver also verifies once before its timed requests. CPU and allocation
+captures include fixture creation and that verification request.
 
 ## Where they run
 

@@ -1,0 +1,1067 @@
+{
+  "schema_version": 1,
+  "status": "complete_retained",
+  "date": "2026-10-10",
+  "execution": "Current VM only; no GCP VM launches",
+  "scope": "Exact production global log-limit helper extracted into a matched executable; complete response construction, HTTP, Parquet reads and native upstream services are not timed",
+  "evidence_directory": "qualification/evidence/partial-log-limit-2026-10-10",
+  "baseline_commit": "10b95af96f3cfc21830b7e635a986933dcee83c9",
+  "retention_decision": "Retain partial selection and cutoff membership after complete payload verification and repeated large truncated controls. Preserve all small/all/zero controls and regressions; do not qualify a general HTTP or native service gain.",
+  "algorithm": {
+    "baseline": "Sort all (timestamp, stream position, entry position) tuples, build a selected-position BTreeSet, retain by membership",
+    "candidate": "Select the first excluded tuple with select_nth_unstable_by, retain tuples strictly below that cutoff; unique stream/entry positions preserve every tie and original per-stream order. Clear immediately for a zero limit. Existing inclusive-limit pass remains.",
+    "tradeoff": "Timestamp parsing occurs twice when truncating. One O(n) tuple vector remains; sorted membership set and full ordering are removed.",
+    "correctness": "The inclusive count guard proves limit < tuple count before selection. Tuple ordering preserves forward/backward timestamps followed by stream and entry positions; no timestamp negation or overflow.",
+    "production_paths": [
+      "crates/observability/src/query_frontend.rs",
+      "crates/observability/src/query_frontend/tests.rs"
+    ]
+  },
+  "profile_selection": {
+    "records": [
+      "qualification/inclusive-log-limit-2026-10-10.json",
+      "qualification/response-json-moves-2026-10-10.json"
+    ],
+    "hypothesis": "Previous broad profiles identify global stream selection. The earlier inclusive fast path skips it only when all entries fit; truncation still sorts and constructs a membership set."
+  },
+  "upstream_comparison": {
+    "source": "https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/iter/entry_iterator.go#L681",
+    "approach": "Pinned Loki ReadBatch consumes an ordered iterator until its count is reached. Krabka still materializes complete results and a tuple vector; this change only reduces its post-materialization selection work. It does not implement Loki streaming or qualify parity."
+  },
+  "fixture": {
+    "rows": [
+      1000,
+      20000,
+      100000,
+      1000000
+    ],
+    "rows_per_stream": 10,
+    "cases": {
+      "small": "Limit 100",
+      "half": "Limit half of rows",
+      "all": "Limit total rows",
+      "zero": "Limit zero"
+    },
+    "directions": [
+      "forward",
+      "backward"
+    ],
+    "timestamps": "Every stream shares ten timestamps, creating cross-stream ties; input row order follows direction",
+    "verification": "Independent sorted fixture ledger computes a complete expected response before timing each process, including all stream labels, retained entries, order and warnings. It uses original fixture timestamps and does not call production parsing or comparison.",
+    "timing_scope": "Only the mutating global-limit helper, including dropping excluded rows. Response cloning precedes each timer, final response disposal follows it. Setup and verification excluded.",
+    "filesystem": "Synthetic serde_json Value tree in memory; no storage, HTTP, WAL or acknowledgement latency"
+  },
+  "measurement_plan": {
+    "pairs": 3,
+    "observations": 192,
+    "order": "Alternating baseline/candidate within pairs",
+    "affinity": [
+      4
+    ],
+    "timed_iterations": "50 at <=20,000 rows; 10 at 100,000; 1 at one million",
+    "verified": 192,
+    "censored": 0
+  },
+  "binary": {
+    "path": "qualification/evidence/partial-log-limit-2026-10-10/binaries/partial-log-limit",
+    "sha256": "1628b17daade9846c7c8e4ca4dd8fd676c9693212808bb92d9e534ab166fa163",
+    "bytes": 674552,
+    "flags": "opt-level=3, line-tables-only, frame pointers, 16 codegen units, no LTO; both algorithms in one executable"
+  },
+  "timings": [
+    {
+      "rows": 1000,
+      "case": "small",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 8.694581999999999e-05,
+          "min": 8.288556e-05,
+          "max": 9.330486e-05
+        },
+        "candidate": {
+          "median": 4.735758000000001e-05,
+          "min": 4.722305999999996e-05,
+          "max": 8.30611e-05
+        }
+      },
+      "paired_ratios": [
+        0.8902119353697117,
+        0.5697380822425517,
+        0.5446792036695958
+      ],
+      "median_paired_ratio": 0.5697380822425517,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 1000,
+      "case": "small",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 8.797824000000001e-05,
+          "min": 8.362312e-05,
+          "max": 8.873428000000001e-05
+        },
+        "candidate": {
+          "median": 5.092794e-05,
+          "min": 4.662101999999999e-05,
+          "max": 5.3038559999999995e-05
+        }
+      },
+      "paired_ratios": [
+        0.5788697296058661,
+        0.5575135201843698,
+        0.59772345028325
+      ],
+      "median_paired_ratio": 0.5788697296058661,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000,
+      "case": "half",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 7.447017999999998e-05,
+          "min": 6.915847999999998e-05,
+          "max": 7.649636e-05
+        },
+        "candidate": {
+          "median": 3.8378039999999993e-05,
+          "min": 3.7632720000000004e-05,
+          "max": 4.158996000000001e-05
+        }
+      },
+      "paired_ratios": [
+        0.5584780377864001,
+        0.5549289111038878,
+        0.49195438841795874
+      ],
+      "median_paired_ratio": 0.5549289111038878,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000,
+      "case": "half",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 7.87857e-05,
+          "min": 7.193857999999999e-05,
+          "max": 8.792877999999999e-05
+        },
+        "candidate": {
+          "median": 3.8244840000000006e-05,
+          "min": 3.744769999999999e-05,
+          "max": 3.908621999999999e-05
+        }
+      },
+      "paired_ratios": [
+        0.5316318448320778,
+        0.42588672332312577,
+        0.4961080500649229
+      ],
+      "median_paired_ratio": 0.4961080500649229,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000,
+      "case": "all",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 4.61768e-06,
+          "min": 4.580220000000001e-06,
+          "max": 5.6634600000000015e-06
+        },
+        "candidate": {
+          "median": 4.7259800000000004e-06,
+          "min": 4.493040000000001e-06,
+          "max": 5.16478e-06
+        }
+      },
+      "paired_ratios": [
+        0.9809659798000969,
+        1.0234533358742919,
+        0.9119478198839577
+      ],
+      "median_paired_ratio": 0.9809659798000969,
+      "candidate_slower_pairs": 1,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 1000,
+      "case": "all",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 4.722420000000001e-06,
+          "min": 4.6082800000000016e-06,
+          "max": 4.9809e-06
+        },
+        "candidate": {
+          "median": 4.544459999999998e-06,
+          "min": 4.520559999999999e-06,
+          "max": 8.95958e-06
+        }
+      },
+      "paired_ratios": [
+        1.798787367744785,
+        0.9572549667331576,
+        0.9861510151292884
+      ],
+      "median_paired_ratio": 0.9861510151292884,
+      "candidate_slower_pairs": 1,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 1000,
+      "case": "zero",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 7.343006e-05,
+          "min": 7.124557999999999e-05,
+          "max": 7.459741999999999e-05
+        },
+        "candidate": {
+          "median": 3.940094e-05,
+          "min": 3.585602e-05,
+          "max": 4.025612e-05
+        }
+      },
+      "paired_ratios": [
+        0.565033227324418,
+        0.528181001434098,
+        0.4883016573866343
+      ],
+      "median_paired_ratio": 0.528181001434098,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000,
+      "case": "zero",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 7.096429999999999e-05,
+          "min": 6.816458e-05,
+          "max": 8.539441999999999e-05
+        },
+        "candidate": {
+          "median": 3.6469380000000006e-05,
+          "min": 3.605308e-05,
+          "max": 3.729904e-05
+        }
+      },
+      "paired_ratios": [
+        0.5471909311258134,
+        0.4270698249370393,
+        0.5080453129249497
+      ],
+      "median_paired_ratio": 0.5080453129249497,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 20000,
+      "case": "small",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 0.002965152120000001,
+          "min": 0.0026046418600000005,
+          "max": 0.00462017314
+        },
+        "candidate": {
+          "median": 0.00166463874,
+          "min": 0.0013864210799999998,
+          "max": 0.0017143370400000003
+        }
+      },
+      "paired_ratios": [
+        0.5614007891102732,
+        0.37105471765934733,
+        0.5322885657685005
+      ],
+      "median_paired_ratio": 0.5322885657685005,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 20000,
+      "case": "small",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 0.0026149253399999992,
+          "min": 0.0025321467999999993,
+          "max": 0.00297085906
+        },
+        "candidate": {
+          "median": 0.0016631624999999999,
+          "min": 0.0014139864600000002,
+          "max": 0.0017526595800000009
+        }
+      },
+      "paired_ratios": [
+        0.5407368380161862,
+        0.5598254465831173,
+        0.6921634954181967
+      ],
+      "median_paired_ratio": 0.5598254465831173,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 20000,
+      "case": "half",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 0.00254106814,
+          "min": 0.0025017554600000004,
+          "max": 0.0025728819199999997
+        },
+        "candidate": {
+          "median": 0.0010919697199999999,
+          "min": 0.0010676514599999999,
+          "max": 0.0011577239400000002
+        }
+      },
+      "paired_ratios": [
+        0.42972862585259125,
+        0.4627646300809912,
+        0.41496325645601334
+      ],
+      "median_paired_ratio": 0.42972862585259125,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 20000,
+      "case": "half",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 0.0025283830000000004,
+          "min": 0.0025174684000000003,
+          "max": 0.0027380905000000005
+        },
+        "candidate": {
+          "median": 0.0009742904800000002,
+          "min": 0.0009499878800000002,
+          "max": 0.0010947117
+        }
+      },
+      "paired_ratios": [
+        0.37572942074044957,
+        0.3558284432161757,
+        0.4348462526878192
+      ],
+      "median_paired_ratio": 0.37572942074044957,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 20000,
+      "case": "all",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 9.018318000000001e-05,
+          "min": 9.014895999999999e-05,
+          "max": 9.846872000000003e-05
+        },
+        "candidate": {
+          "median": 9.148584000000001e-05,
+          "min": 8.667381999999999e-05,
+          "max": 9.310565999999998e-05
+        }
+      },
+      "paired_ratios": [
+        0.9455353943871714,
+        1.014444600423272,
+        0.9614511359864828
+      ],
+      "median_paired_ratio": 0.9614511359864828,
+      "candidate_slower_pairs": 1,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 20000,
+      "case": "all",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 8.782156000000001e-05,
+          "min": 8.675575999999999e-05,
+          "max": 8.785779999999998e-05
+        },
+        "candidate": {
+          "median": 8.786662000000002e-05,
+          "min": 8.634942e-05,
+          "max": 0.00010048642
+        }
+      },
+      "paired_ratios": [
+        0.9828315755687033,
+        1.1442112847915704,
+        1.0128044524075408
+      ],
+      "median_paired_ratio": 1.0128044524075408,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 20000,
+      "case": "zero",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 0.0017990238400000002,
+          "min": 0.0017536749,
+          "max": 0.0018262472400000002
+        },
+        "candidate": {
+          "median": 0.0008347476199999996,
+          "min": 0.0008062318400000005,
+          "max": 0.0008589312399999998
+        }
+      },
+      "paired_ratios": [
+        0.47744294483612826,
+        0.44146916274052816,
+        0.4759990691547217
+      ],
+      "median_paired_ratio": 0.4759990691547217,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 20000,
+      "case": "zero",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 0.0019489948199999992,
+          "min": 0.0017756757800000003,
+          "max": 0.00199178008
+        },
+        "candidate": {
+          "median": 0.0008291055999999998,
+          "min": 0.00078765834,
+          "max": 0.0008562564800000003
+        }
+      },
+      "paired_ratios": [
+        0.4254016437047278,
+        0.42989509163079903,
+        0.4435822963131253
+      ],
+      "median_paired_ratio": 0.42989509163079903,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 100000,
+      "case": "small",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 0.0315578307,
+          "min": 0.0312664233,
+          "max": 0.033000856200000005
+        },
+        "candidate": {
+          "median": 0.018045724300000003,
+          "min": 0.0174019879,
+          "max": 0.018499121200000003
+        }
+      },
+      "paired_ratios": [
+        0.5468259426553909,
+        0.5514316895045641,
+        0.5916609335996549
+      ],
+      "median_paired_ratio": 0.5514316895045641,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 100000,
+      "case": "small",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 0.03202419459999999,
+          "min": 0.031947652300000004,
+          "max": 0.0326581228
+        },
+        "candidate": {
+          "median": 0.017607347500000002,
+          "min": 0.017431586,
+          "max": 0.021079643900000004
+        }
+      },
+      "paired_ratios": [
+        0.539141444467837,
+        0.6582411880547343,
+        0.5456296392708643
+      ],
+      "median_paired_ratio": 0.5456296392708643,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 100000,
+      "case": "half",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 0.0253309171,
+          "min": 0.024029516600000002,
+          "max": 0.027048143199999996
+        },
+        "candidate": {
+          "median": 0.013317970799999999,
+          "min": 0.0130155364,
+          "max": 0.0133778365
+        }
+      },
+      "paired_ratios": [
+        0.5257595193819492,
+        0.5416478665242895,
+        0.49459352536997814
+      ],
+      "median_paired_ratio": 0.5257595193819492,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 100000,
+      "case": "half",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 0.024988889300000004,
+          "min": 0.024159486100000002,
+          "max": 0.0253110917
+        },
+        "candidate": {
+          "median": 0.013343469800000002,
+          "min": 0.013229937099999997,
+          "max": 0.0134268329
+        }
+      },
+      "paired_ratios": [
+        0.5294327787509945,
+        0.5523076833989445,
+        0.5304722948793236
+      ],
+      "median_paired_ratio": 0.5304722948793236,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 100000,
+      "case": "all",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 0.0015670019,
+          "min": 0.0014797793,
+          "max": 0.0016528602000000004
+        },
+        "candidate": {
+          "median": 0.0014411502,
+          "min": 0.0012937631,
+          "max": 0.0015432961
+        }
+      },
+      "paired_ratios": [
+        0.9738953639911033,
+        0.7827420008056335,
+        0.9848718753946629
+      ],
+      "median_paired_ratio": 0.9738953639911033,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 100000,
+      "case": "all",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 0.0014275564,
+          "min": 0.0014000038,
+          "max": 0.0015175138999999997
+        },
+        "candidate": {
+          "median": 0.0013726079,
+          "min": 0.0012541526000000003,
+          "max": 0.0013993872
+        }
+      },
+      "paired_ratios": [
+        0.9802675396923022,
+        0.826452133321481,
+        0.9804315531143558
+      ],
+      "median_paired_ratio": 0.9802675396923022,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 100000,
+      "case": "zero",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 0.021177391500000003,
+          "min": 0.0205984942,
+          "max": 0.0220126837
+        },
+        "candidate": {
+          "median": 0.007595773900000001,
+          "min": 0.0075249623,
+          "max": 0.0076154368
+        }
+      },
+      "paired_ratios": [
+        0.3418466554352934,
+        0.3697084226671287,
+        0.35867372523192953
+      ],
+      "median_paired_ratio": 0.35867372523192953,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 100000,
+      "case": "zero",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 0.0203289033,
+          "min": 0.0201085811,
+          "max": 0.022610544500000003
+        },
+        "candidate": {
+          "median": 0.0075276462,
+          "min": 0.007525527999999999,
+          "max": 0.007576347200000002
+        }
+      },
+      "paired_ratios": [
+        0.3350802631046767,
+        0.37434994356712714,
+        0.370188587595869
+      ],
+      "median_paired_ratio": 0.370188587595869,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000000,
+      "case": "small",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 0.398702239,
+          "min": 0.385758339,
+          "max": 0.40354883
+        },
+        "candidate": {
+          "median": 0.186933714,
+          "min": 0.182401015,
+          "max": 0.195973875
+        }
+      },
+      "paired_ratios": [
+        0.4915294067360379,
+        0.4845876163936925,
+        0.45199242679008633
+      ],
+      "median_paired_ratio": 0.4845876163936925,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000000,
+      "case": "small",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 0.413521657,
+          "min": 0.39409214,
+          "max": 0.456945472
+        },
+        "candidate": {
+          "median": 0.18564189,
+          "min": 0.185530002,
+          "max": 0.224762553
+        }
+      },
+      "paired_ratios": [
+        0.49188046883633413,
+        0.4710621480550209,
+        0.44865848948752884
+      ],
+      "median_paired_ratio": 0.4710621480550209,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000000,
+      "case": "half",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 0.28850223,
+          "min": 0.288020823,
+          "max": 0.337967379
+        },
+        "candidate": {
+          "median": 0.141764405,
+          "min": 0.137379067,
+          "max": 0.145238774
+        }
+      },
+      "paired_ratios": [
+        0.5042648392126843,
+        0.47618026037441713,
+        0.4194617995957533
+      ],
+      "median_paired_ratio": 0.47618026037441713,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000000,
+      "case": "half",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 0.28735577,
+          "min": 0.276379151,
+          "max": 0.295366166
+        },
+        "candidate": {
+          "median": 0.136458595,
+          "min": 0.132543045,
+          "max": 0.137993805
+        }
+      },
+      "paired_ratios": [
+        0.4937369353160796,
+        0.4487414614712506,
+        0.48021936361326584
+      ],
+      "median_paired_ratio": 0.48021936361326584,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000000,
+      "case": "all",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 0.023561845,
+          "min": 0.022623914,
+          "max": 0.027230951
+        },
+        "candidate": {
+          "median": 0.022730674,
+          "min": 0.022301631,
+          "max": 0.022996062
+        }
+      },
+      "paired_ratios": [
+        1.0047189005403752,
+        0.8444825155023048,
+        0.9465146299027092
+      ],
+      "median_paired_ratio": 0.9465146299027092,
+      "candidate_slower_pairs": 1,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 1000000,
+      "case": "all",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 0.024013792,
+          "min": 0.022648831,
+          "max": 0.024574491
+        },
+        "candidate": {
+          "median": 0.022504776,
+          "min": 0.022385686,
+          "max": 0.026681941
+        }
+      },
+      "paired_ratios": [
+        0.9936396275816619,
+        1.085757625661504,
+        0.9322012117036742
+      ],
+      "median_paired_ratio": 0.9936396275816619,
+      "candidate_slower_pairs": 1,
+      "ranges_overlap": true
+    },
+    {
+      "rows": 1000000,
+      "case": "zero",
+      "direction": "forward",
+      "seconds": {
+        "baseline": {
+          "median": 0.234344309,
+          "min": 0.230016664,
+          "max": 0.255806912
+        },
+        "candidate": {
+          "median": 0.07813524,
+          "min": 0.075200099,
+          "max": 0.082786993
+        }
+      },
+      "paired_ratios": [
+        0.3269332651481286,
+        0.3532707636608321,
+        0.3054461640192115
+      ],
+      "median_paired_ratio": 0.3269332651481286,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    },
+    {
+      "rows": 1000000,
+      "case": "zero",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 0.233747276,
+          "min": 0.224431717,
+          "max": 0.235955181
+        },
+        "candidate": {
+          "median": 0.078193031,
+          "min": 0.077164819,
+          "max": 0.081470609
+        }
+      },
+      "paired_ratios": [
+        0.3438231459950021,
+        0.34854142642500785,
+        0.33138933702837403
+      ],
+      "median_paired_ratio": 0.3438231459950021,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": false
+    }
+  ],
+  "regressions": [
+    {
+      "rows": 20000,
+      "case": "all",
+      "direction": "backward",
+      "seconds": {
+        "baseline": {
+          "median": 8.782156000000001e-05,
+          "min": 8.675575999999999e-05,
+          "max": 8.785779999999998e-05
+        },
+        "candidate": {
+          "median": 8.786662000000002e-05,
+          "min": 8.634942e-05,
+          "max": 0.00010048642
+        }
+      },
+      "paired_ratios": [
+        0.9828315755687033,
+        1.1442112847915704,
+        1.0128044524075408
+      ],
+      "median_paired_ratio": 1.0128044524075408,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    }
+  ],
+  "profiles": {
+    "small": {
+      "baseline": {
+        "cpu": {
+          "rows": 100000,
+          "timed_iterations": 20,
+          "verification_queries": 1,
+          "includes_fixture_and_clones": true,
+          "frequency_hz": 199,
+          "affinity": [
+            4
+          ],
+          "samples": 234,
+          "lost_samples": 0
+        },
+        "heap": {
+          "rows": 20000,
+          "timed_iterations": 10,
+          "verification_queries": 1,
+          "includes_fixture_and_clones": true,
+          "affinity": [
+            4
+          ],
+          "allocation_calls": 1244570,
+          "temporary_allocations": 44137,
+          "peak_heap_mb": 19.41,
+          "instrumented_peak_rss_mb": 29.38
+        }
+      },
+      "candidate": {
+        "cpu": {
+          "rows": 100000,
+          "timed_iterations": 20,
+          "verification_queries": 1,
+          "includes_fixture_and_clones": true,
+          "frequency_hz": 199,
+          "affinity": [
+            4
+          ],
+          "samples": 205,
+          "lost_samples": 0
+        },
+        "heap": {
+          "rows": 20000,
+          "timed_iterations": 10,
+          "verification_queries": 1,
+          "includes_fixture_and_clones": true,
+          "affinity": [
+            4
+          ],
+          "allocation_calls": 1244449,
+          "temporary_allocations": 44137,
+          "peak_heap_mb": 18.93,
+          "instrumented_peak_rss_mb": 28.91
+        }
+      }
+    },
+    "half": {
+      "baseline": {
+        "cpu": {
+          "rows": 100000,
+          "timed_iterations": 20,
+          "verification_queries": 1,
+          "includes_fixture_and_clones": true,
+          "frequency_hz": 199,
+          "affinity": [
+            4
+          ],
+          "samples": 273,
+          "lost_samples": 0
+        },
+        "heap": {
+          "rows": 20000,
+          "timed_iterations": 10,
+          "verification_queries": 1,
+          "includes_fixture_and_clones": true,
+          "affinity": [
+            4
+          ],
+          "allocation_calls": 1254492,
+          "temporary_allocations": 44148,
+          "peak_heap_mb": 23.76,
+          "instrumented_peak_rss_mb": 34.74
+        }
+      },
+      "candidate": {
+        "cpu": {
+          "rows": 100000,
+          "timed_iterations": 20,
+          "verification_queries": 1,
+          "includes_fixture_and_clones": true,
+          "frequency_hz": 199,
+          "affinity": [
+            4
+          ],
+          "samples": 251,
+          "lost_samples": 0
+        },
+        "heap": {
+          "rows": 20000,
+          "timed_iterations": 10,
+          "verification_queries": 1,
+          "includes_fixture_and_clones": true,
+          "affinity": [
+            4
+          ],
+          "allocation_calls": 1244449,
+          "temporary_allocations": 44137,
+          "peak_heap_mb": 23.28,
+          "instrumented_peak_rss_mb": 34.11
+        }
+      }
+    }
+  },
+  "validation": {
+    "tests": {
+      "observability_unit": 429,
+      "querier": 70,
+      "querier_object_store": 22,
+      "query_range": 56,
+      "per_tenant_limits": 10
+    },
+    "strict_clippy": "Production and full unit source: all,pedantic with warnings denied; passed",
+    "driver_check": "Rustc metadata check with warnings denied; passed",
+    "managed_format": "Passed; pre-format tested source and final formatted source snapshots both preserved",
+    "historical_numeric_budgets": "85 unchanged; no new Criterion IDs or inventory changes"
+  },
+  "resource_handling": {
+    "build": "104 verified RAM dependencies restored for production build/tests, then removed before primary timing. Compiler outputs used owned RAM directory.",
+    "artifacts": "Original production library gzip archive verified byte for byte and copied to disk. Unused stripped library hashed and removed after tests; test executables hashed and removed after success. No build output or dependency remains in RAM during timing.",
+    "demo": "Paused during measurements and profiles and restored healthy afterward",
+    "storage": "No WAL movement, no disk-guard changes, no upstream GCP VM launches"
+  },
+  "limitations": [
+    "Synthetic helper timings do not qualify end-to-end service latency, concurrent writes, cold storage or native upstream parity",
+    "All-result controls retain small timing regressions where observed; every raw observation remains in the record",
+    "CPU/heap capture one process per variant/case, baseline then candidate; setup, response clones, independent verification and final disposal are included. They are not query-only or helper-only CPU/memory costs",
+    "The initial pilot keeps a BTreeSet after partitioning and uses a different timestamp layout with the demo running. It is diagnostic and not pooled with final measurements",
+    "Direct production builds reuse the preserved Cargo dependency graph; normal Cargo/Bazel PR CI remains additional validation",
+    "Sparse CPU captures guide attribution; they do not qualify normalized CPU savings or general memory improvements."
+  ],
+  "source_hashes": {
+    "baseline": {
+      "crates/observability/src/query_frontend.rs": "af6e5c43d7402faef76fda25087c1d85eae64f8a9172487660655e50464daa7f",
+      "crates/observability/src/query_frontend/tests.rs": "2acfb2d0518699e358710c0fcae15fe0bc6915d027a5d8903e25180ad3ddfbcb"
+    },
+    "candidate-unformatted": {
+      "crates/observability/src/query_frontend.rs": "324c79ae567055d8756651732f3c38a1427960837c941d7457b502cb14e4740f",
+      "crates/observability/src/query_frontend/tests.rs": "a6957254ffcd38943198e2efa24aad4dfffe5e0a2779011b7932b07b7ef7496b"
+    },
+    "candidate": {
+      "crates/observability/src/query_frontend.rs": "324c79ae567055d8756651732f3c38a1427960837c941d7457b502cb14e4740f",
+      "crates/observability/src/query_frontend/tests.rs": "a2e7e00e45c8d4f3d92646c173bc7759b1941ce983eaa084de07b070b294985d"
+    }
+  },
+  "raw_manifest": {
+    "path": "qualification/evidence/partial-log-limit-2026-10-10/raw-manifest.json",
+    "sha256": "3ad88fefe56152eab63bfa5d0a03e2e2c322d0caa0e50b6390418f11480c59b0",
+    "files": 110,
+    "bytes": 135320400,
+    "scope": "Every file in this evidence directory except this manifest"
+  },
+  "profile_interpretation": {
+    "cpu": "Four captures have zero lost samples, with 205-273 samples each. Baseline stable-quicksort self attribution is 6.41% for limit 100 and 2.93% for half; candidate partition attribution is 1.46% and 1.59%. Timestamp parsing rises from 7.69% to 14.63% self for limit 100 and from 5.86% to 9.56% for half. These are sparse whole-process relative attributions including clones and setup; they establish neither a normalized helper CPU ratio nor a general service CPU gain.",
+    "heap": "Calls are nearly unchanged for limit 100 (1,244,570/1,244,449), and fall from 1,254,492 to 1,244,449 for half. Peak heap falls 0.48 MB in both cases. Verification and JSON construction/cloning dominate whole-process captures; no general memory advantage is qualified.",
+    "launcher_recovery": "The first allocation launch used a container-only busybox path on the host and failed before any trace. Failed logs/commands remain preserved. Four successful host heap captures inherit affinity 4; completed CPU captures are not rerun."
+  }
+}

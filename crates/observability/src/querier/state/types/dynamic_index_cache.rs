@@ -88,7 +88,10 @@ impl DynamicIndexCache {
             .clear();
     }
 
-    pub(crate) fn get(&self, key: &DynamicIndexCacheKey) -> Option<(LabelIndex, BlockIndex)> {
+    pub(crate) fn get(
+        &self,
+        key: &DynamicIndexCacheKey,
+    ) -> Option<(Arc<LabelIndex>, Arc<BlockIndex>)> {
         let mut entries = self
             .entries
             .lock()
@@ -101,14 +104,17 @@ impl DynamicIndexCache {
             entries.remove(key);
             return None;
         }
-        Some((entry.label_index.clone(), entry.block_index.clone()))
+        Some((
+            Arc::clone(&entry.label_index),
+            Arc::clone(&entry.block_index),
+        ))
     }
 
     pub(crate) fn insert(
         &self,
         key: DynamicIndexCacheKey,
-        label_index: LabelIndex,
-        block_index: BlockIndex,
+        label_index: impl Into<Arc<LabelIndex>>,
+        block_index: impl Into<Arc<BlockIndex>>,
     ) {
         let mut entries = self
             .entries
@@ -121,8 +127,8 @@ impl DynamicIndexCache {
             key,
             CachedDynamicIndex {
                 loaded_at: Instant::now(),
-                label_index,
-                block_index,
+                label_index: label_index.into(),
+                block_index: block_index.into(),
             },
         );
     }
@@ -174,7 +180,7 @@ impl DynamicIndexCache {
     pub(crate) fn get_shard_index(
         &self,
         key: &DynamicShardIndexCacheKey,
-    ) -> Option<(LabelIndex, BlockIndex)> {
+    ) -> Option<(Arc<LabelIndex>, Arc<BlockIndex>)> {
         let mut entries = self
             .shard_indexes
             .lock()
@@ -186,14 +192,17 @@ impl DynamicIndexCache {
             entries.remove(key);
             return None;
         }
-        Some((entry.label_index.clone(), entry.block_index.clone()))
+        Some((
+            Arc::clone(&entry.label_index),
+            Arc::clone(&entry.block_index),
+        ))
     }
 
     pub(crate) fn insert_shard_index(
         &self,
         key: DynamicShardIndexCacheKey,
-        label_index: LabelIndex,
-        block_index: BlockIndex,
+        label_index: impl Into<Arc<LabelIndex>>,
+        block_index: impl Into<Arc<BlockIndex>>,
     ) {
         let mut entries = self
             .shard_indexes
@@ -206,8 +215,8 @@ impl DynamicIndexCache {
             key,
             CachedDynamicIndex {
                 loaded_at: Instant::now(),
-                label_index,
-                block_index,
+                label_index: label_index.into(),
+                block_index: block_index.into(),
             },
         );
     }
@@ -233,6 +242,44 @@ mod tests {
     use krabka_units::prelude::TimeExt as _;
 
     use super::*;
+
+    #[test]
+    fn captured_indexes_survive_cache_replacement_and_clear() {
+        use krabka_blockstore::{BlockDescriptor, BlockKey, labels};
+
+        let cache = DynamicIndexCache::default();
+        let key = DynamicIndexCacheKey::TenantManifest {
+            tenant: "tenant".to_string(),
+        };
+        let mut first_labels = LabelIndex::default();
+        let api = first_labels.insert_series("tenant", labels([("app", "api")]));
+        let mut first_blocks = BlockIndex::default();
+        first_blocks.insert(BlockDescriptor::new(
+            BlockKey::new("tenant", 0, 1, 2, TimeRange::new(10, 20).unwrap()),
+            [api].into(),
+        ));
+        cache.insert(key.clone(), first_labels.clone(), first_blocks.clone());
+        let captured = cache.get(&key).unwrap();
+
+        let mut second_labels = LabelIndex::default();
+        let worker = second_labels.insert_series("tenant", labels([("app", "worker")]));
+        let mut second_blocks = BlockIndex::default();
+        second_blocks.insert(BlockDescriptor::new(
+            BlockKey::new("tenant", 0, 3, 4, TimeRange::new(30, 40).unwrap()),
+            [worker].into(),
+        ));
+        cache.insert(key.clone(), second_labels.clone(), second_blocks.clone());
+        let replacement = cache.get(&key).unwrap();
+        cache.clear();
+
+        assert2::assert!(cache.get(&key).is_none());
+        assert2::assert!(
+            (captured.0.as_ref(), captured.1.as_ref()) == (&first_labels, &first_blocks)
+        );
+        assert2::assert!(
+            (replacement.0.as_ref(), replacement.1.as_ref()) == (&second_labels, &second_blocks)
+        );
+    }
 
     #[test]
     fn admission_reclaims_unrequested_expired_keys_and_keeps_live_snapshots() {

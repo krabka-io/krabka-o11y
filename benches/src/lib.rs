@@ -21,7 +21,10 @@
 
 pub mod blocks;
 pub mod index;
+pub mod log_frontend;
+pub mod log_queries;
 pub mod metrics;
+pub mod profile_samples;
 pub mod profiles;
 pub mod spans;
 

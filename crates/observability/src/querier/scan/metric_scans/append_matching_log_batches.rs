@@ -10,7 +10,7 @@ pub(crate) fn append_matching_log_batches(
     batches: &[RecordBatch],
     delete_filters: &[ActiveLogDeleteFilter],
 ) -> Result<(), QueryError> {
-    for_each_query_row(batches, |row| {
+    for_each_query_row(batches, &plan.fingerprints, |row| {
         append_matching_log_row(streams, plan, label_index, row, delete_filters)
     })
 }

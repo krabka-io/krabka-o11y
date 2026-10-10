@@ -1,10 +1,13 @@
+use std::borrow::Cow;
+
 use super::{Labels, MatchOp, ParseError, Regex, anchored_regex_pattern};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct LabelMatcher {
     pub name: String,
     pub op: MatchOp,
     pub value: String,
+    compiled_regex: Option<(String, Regex)>,
 }
 
 impl LabelMatcher {
@@ -15,10 +18,11 @@ impl LabelMatcher {
         op: MatchOp,
         value: impl Into<String>,
     ) -> Result<Self, ParseError> {
-        let matcher = Self {
+        let mut matcher = Self {
             name: name.into(),
             op,
             value: value.into(),
+            compiled_regex: None,
         };
         matcher.validate()?;
         Ok(matcher)
@@ -43,20 +47,38 @@ impl LabelMatcher {
         }
     }
 
-    pub(crate) fn validate(&self) -> Result<(), ParseError> {
+    pub(crate) fn validate(&mut self) -> Result<(), ParseError> {
         if matches!(self.op, MatchOp::RegexEqual | MatchOp::RegexNotEqual) {
-            Regex::new(&anchored_regex_pattern(&self.value)).map_err(|source| {
+            let regex = Regex::new(&anchored_regex_pattern(&self.value)).map_err(|source| {
                 ParseError::InvalidRegex {
                     pattern: self.value.clone(),
                     source,
                 }
             })?;
+            self.compiled_regex = Some((self.value.clone(), regex));
         }
         Ok(())
     }
 
-    pub(crate) fn regex(&self) -> Regex {
-        Regex::new(&anchored_regex_pattern(&self.value))
-            .expect("regex matcher validated at construction")
+    pub(crate) fn regex(&self) -> Cow<'_, Regex> {
+        if let Some((pattern, regex)) = &self.compiled_regex
+            && pattern == &self.value
+        {
+            return Cow::Borrowed(regex);
+        }
+        // The source fields are public. A caller can change the pattern or
+        // operation after construction; never use a stale compiled pattern.
+        Cow::Owned(
+            Regex::new(&anchored_regex_pattern(&self.value))
+                .expect("regex matcher validated at construction"),
+        )
     }
 }
+
+impl PartialEq for LabelMatcher {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.op == other.op && self.value == other.value
+    }
+}
+
+impl Eq for LabelMatcher {}

@@ -57,6 +57,7 @@ pedantic = { level = "warn", priority = -1 }
 # not lend its table to another workspace.
 [dependencies]
 arrow = { version = "60", default-features = false, features = ["ipc"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 # The log scan benchmark drives a `SessionContext`, which is DataFusion's own
 # type rather than anything //crates/blockstore re-exports. Pinned to the same
 # git revision //Cargo.toml pins, for the same reason every other version here
@@ -67,14 +68,19 @@ krabka-blockstore = { path = "../crates/blockstore" }
 # `WalRecord` is `krabka-metrics`' type, not one //crates/promql re-exports,
 # and the WAL-head benchmark applies records rather than pushing samples.
 krabka-metrics = { path = "../crates/metrics" }
+krabka-logql = { path = "../crates/logql" }
+krabka-observability = { path = "../crates/observability" }
 krabka-pprof = { path = "../crates/pprof" }
 krabka-promql = { path = "../crates/promql" }
 krabka-traceql = { path = "../crates/traceql" }
 krabka-units = { version = "0.6.0" }
 object_store = { version = "0.14", features = ["aws", "azure", "gcp"] }
+serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }
 
 [dev-dependencies]
+assert2 = "0.4"
 # `async_tokio` so a bench body can be an `async` block driven by a runtime
 # Criterion enters once per iteration rather than by a hand-rolled `block_on`
 # inside `iter()`, which would time runtime construction as part of the
@@ -110,6 +116,14 @@ name = "index_prune"
 harness = false
 
 [[bench]]
+name = "index_matchers"
+harness = false
+
+[[bench]]
+name = "log_index_matchers"
+harness = false
+
+[[bench]]
 name = "promql_range"
 harness = false
 
@@ -123,6 +137,18 @@ harness = false
 
 [[bench]]
 name = "pprof_merge"
+harness = false
+
+[[bench]]
+name = "profile_query"
+harness = false
+
+[[bench]]
+name = "log_stream_query"
+harness = false
+
+[[bench]]
+name = "log_query_frontend"
 harness = false
 
 [patch.crates-io]

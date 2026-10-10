@@ -36,7 +36,7 @@ on:
         type: number
         default: 256
       max_cardinality:
-        description: Highest cardinality ramp level (up to 20000)
+        description: Highest cardinality ramp level (up to 1000000)
         type: number
         default: 20000
       signal:
@@ -101,7 +101,7 @@ jobs:
             [[ "${PROFILING}" == none ]]
             [[ "${PHASES}" == steady || "${PHASES}" == high_cardinality ]]
             if [[ "${PHASES}" == high_cardinality ]]; then
-              [[ "${MAX_CARDINALITY}" == 1000 || "${MAX_CARDINALITY}" == 5000 || "${MAX_CARDINALITY}" == 20000 ]]
+              [[ "${MAX_CARDINALITY}" == 1000 || "${MAX_CARDINALITY}" == 5000 || "${MAX_CARDINALITY}" == 20000 || "${MAX_CARDINALITY}" == 100000 || "${MAX_CARDINALITY}" == 500000 || "${MAX_CARDINALITY}" == 1000000 ]]
             fi
             [[ "${DEPLOYMENT_TARGET}" != both && "${PROFILES_TARGET}" != both ]]
           fi

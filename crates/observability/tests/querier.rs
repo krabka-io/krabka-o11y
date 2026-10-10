@@ -394,6 +394,101 @@ async fn executes_stream_query_over_planned_cold_blocks_as_loki_json() {
 }
 
 #[tokio::test]
+async fn large_sparse_stream_selection_keeps_only_matching_fingerprints_and_rows() {
+    let store: Arc<dyn ObjectStore> = Arc::new(object_store::memory::InMemory::new());
+    let prefix = ObjectPath::from("large-selection");
+    let mut label_index = LabelIndex::default();
+    let mut rows = Vec::new();
+    let mut expected_streams = BTreeMap::new();
+    let mut decoys = Vec::new();
+    for stream in 0..6_500 {
+        let selected = stream % 5 != 0;
+        let source_labels = labels([
+            ("app", if selected { "api" } else { "worker" }),
+            ("series", &format!("{stream:04}")),
+        ]);
+        let fingerprint = label_index.insert_series("tenant-a", source_labels.clone());
+        let metadata = labels([("payload", &format!("metadata-{stream}"))]);
+        for (timestamp, line) in [
+            (9, "accepted before"),
+            (10, "accepted first"),
+            (11, "rejected"),
+            (20, "accepted last"),
+            (21, "accepted after"),
+        ] {
+            rows.push(LogRow::new(fingerprint, timestamp, line, metadata.clone()));
+        }
+        if selected {
+            let mut output_labels = source_labels;
+            output_labels.extend(metadata);
+            expected_streams.insert(
+                output_labels,
+                json!([["10", "accepted first"], ["20", "accepted last"]]),
+            );
+        } else {
+            decoys.push(fingerprint);
+        }
+    }
+    let block = write_log_block_to_object_store(
+        store.as_ref(),
+        &prefix,
+        &BlockKey::new("tenant-a", 0, 0, 21, TimeRange::new(9, 21).unwrap()),
+        rows,
+    )
+    .await
+    .unwrap();
+    let mut block_index = BlockIndex::default();
+    block_index.insert(block);
+    let plan = plan_stream_query(
+        "tenant-a",
+        TimeRange::new(10, 20).unwrap(),
+        parse_query(r#"{app="api"} |= "accepted""#).unwrap(),
+        &label_index,
+        &block_index,
+    )
+    .unwrap();
+    assert!(plan.fingerprints.len() == 5_200);
+    let first = *plan.fingerprints.first().unwrap();
+    let last = *plan.fingerprints.last().unwrap();
+    assert!(
+        decoys
+            .iter()
+            .any(|fingerprint| *fingerprint > first && *fingerprint < last)
+    );
+    let expected_metrics = expected_streams
+        .keys()
+        .map(|metric| json!({"metric": metric, "values": [[0.000_000_02, "1"]]}))
+        .collect::<Vec<_>>();
+    let expected = expected_streams
+        .into_iter()
+        .map(|(stream, values)| json!({"stream": stream, "values": values}))
+        .collect::<Vec<_>>();
+    let actual =
+        execute_stream_query_from_object_store(Arc::clone(&store), &prefix, &plan, &label_index)
+            .await
+            .unwrap();
+    assert!(
+        actual
+            == json!({
+                "status": "success",
+                "data": {"resultType": "streams", "result": expected}
+            })
+    );
+    let query = parse_metric_query(r#"count_over_time({app="api"} |= "accepted" [10ns])"#).unwrap();
+    let metric_response =
+        execute_metric_query_from_object_store(store, &prefix, &plan, &query, &label_index)
+            .await
+            .unwrap();
+    assert!(
+        metric_response
+            == json!({
+                "status": "success",
+                "data": {"resultType": "matrix", "result": expected_metrics}
+            })
+    );
+}
+
+#[tokio::test]
 async fn literal_line_filter_pushdown_treats_like_wildcards_as_plain_text() {
     let fixture = api(
         BlockSpan {

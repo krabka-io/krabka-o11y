@@ -8,8 +8,10 @@ use super::{
 #[derive(Clone)]
 pub struct QuerierState {
     pub(crate) root: PathBuf,
-    pub(crate) label_index: LabelIndex,
-    pub(crate) block_index: BlockIndex,
+    // Immutable snapshots remain valid when their cache entries are replaced
+    // or evicted, and request/shard clones share them without copying indexes.
+    pub(crate) label_index: Arc<LabelIndex>,
+    pub(crate) block_index: Arc<BlockIndex>,
     pub(crate) cold_store: Option<ColdObjectStoreState>,
     pub(crate) dynamic_index: Option<DynamicIndexSource>,
     pub(crate) dynamic_index_cache: DynamicIndexCache,
