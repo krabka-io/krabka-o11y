@@ -99,10 +99,7 @@ mod thrift_fixture;
 use self::{
     metrics_span::MetricsSpan,
     span_store::{resource_attr, span_store_from_records},
-    thrift_fixture::{
-        encode_binary_sample_batch, write_field_header, write_i64_field, write_key_value_bool,
-        write_key_value_string, write_list_header, write_string_field,
-    },
+    thrift_fixture::{CompactStructWriter, encode_binary_sample_batch},
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -371,32 +368,29 @@ fn string_kv(key: &str, value: &str) -> OtlpKeyValue {
 /// `error` tag set so the decoded status is ERROR.
 fn jaeger_compact_batch() -> Vec<u8> {
     let mut out = Vec::new();
+    let mut batch = CompactStructWriter::new(&mut out);
     // Batch.process (struct, field 1).
-    write_field_header(&mut out, 12, 1, &mut 0);
-    {
-        let mut last = 0;
-        write_string_field(&mut out, 1, "compact-svc", &mut last); // Process.service_name
-        out.push(0);
-    }
+    batch.field_header(12, 1);
+    let mut process = batch.nested_struct();
+    process.string_field(1, "compact-svc"); // Process.service_name
+    process.stop();
     // Batch.spans (list<struct>, field 2).
-    write_field_header(&mut out, 9, 2, &mut 1);
-    write_list_header(&mut out, 12, 1);
-    {
-        let mut last = 0;
-        write_i64_field(&mut out, 1, 4, &mut last); // trace_id_low
-        write_i64_field(&mut out, 2, 3, &mut last); // trace_id_high
-        write_i64_field(&mut out, 3, 9, &mut last); // span_id
-        write_i64_field(&mut out, 4, 0, &mut last); // parent_span_id
-        write_string_field(&mut out, 5, "compact thrift op", &mut last); // operation_name
-        write_i64_field(&mut out, 8, 1_000, &mut last); // start_time (micros)
-        write_i64_field(&mut out, 9, 25, &mut last); // duration (micros)
-        write_field_header(&mut out, 9, 10, &mut last); // tags (list<struct>)
-        write_list_header(&mut out, 12, 2);
-        write_key_value_string(&mut out, "span.kind", "server");
-        write_key_value_bool(&mut out, "error", true);
-        out.push(0); // end span struct
-    }
-    out.push(0); // end batch struct
+    batch.field_header(9, 2);
+    batch.list_header(12, 1);
+    let mut span = batch.nested_struct();
+    span.i64_field(1, 4); // trace_id_low
+    span.i64_field(2, 3); // trace_id_high
+    span.i64_field(3, 9); // span_id
+    span.i64_field(4, 0); // parent_span_id
+    span.string_field(5, "compact thrift op"); // operation_name
+    span.i64_field(8, 1_000); // start_time (micros)
+    span.i64_field(9, 25); // duration (micros)
+    span.field_header(9, 10); // tags (list<struct>)
+    span.list_header(12, 2);
+    span.string_tag("span.kind", "server");
+    span.bool_tag("error", true);
+    span.stop(); // end span struct
+    batch.stop(); // end batch struct
     out
 }
 

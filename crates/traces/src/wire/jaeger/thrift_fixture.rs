@@ -3,59 +3,93 @@
 // The library's unit tests and the `grafana_e2e` suite share this file, the
 // suite through `#[path]`, so it reaches nothing outside itself.
 
-pub fn write_key_value_string(out: &mut Vec<u8>, key: &str, value: &str) {
-    let mut last = 0;
-    write_string_field(out, 1, key, &mut last);
-    write_i32_field(out, 2, 0, &mut last);
-    write_string_field(out, 3, value, &mut last);
-    out.push(0);
+/// Writes one compact-protocol struct into a borrowed buffer.
+///
+/// Compact field headers encode the field id as a delta from the previous
+/// field in the same struct, so the writer remembers that id. A nested struct
+/// starts its own writer through [`CompactStructWriter::nested_struct`].
+pub struct CompactStructWriter<'out> {
+    out: &'out mut Vec<u8>,
+    last_field_id: i16,
 }
 
-pub fn write_key_value_bool(out: &mut Vec<u8>, key: &str, value: bool) {
-    let mut last = 0;
-    write_string_field(out, 1, key, &mut last);
-    write_i32_field(out, 2, 3, &mut last);
-    write_bool_field(out, 5, value, &mut last);
-    out.push(0);
-}
-
-pub fn write_i32_field(out: &mut Vec<u8>, id: i16, value: i32, last: &mut i16) {
-    write_field_header(out, 5, id, last);
-    write_varint(out, zigzag_i32(value));
-}
-
-pub fn write_i64_field(out: &mut Vec<u8>, id: i16, value: i64, last: &mut i16) {
-    write_field_header(out, 6, id, last);
-    write_varint(out, zigzag_i64(value));
-}
-
-pub fn write_string_field(out: &mut Vec<u8>, id: i16, value: &str, last: &mut i16) {
-    write_field_header(out, 8, id, last);
-    write_varint(out, u64::try_from(value.len()).unwrap());
-    out.extend_from_slice(value.as_bytes());
-}
-
-pub fn write_bool_field(out: &mut Vec<u8>, id: i16, value: bool, last: &mut i16) {
-    write_field_header(out, if value { 1 } else { 2 }, id, last);
-}
-
-pub fn write_field_header(out: &mut Vec<u8>, type_id: u8, id: i16, last: &mut i16) {
-    let delta = id - *last;
-    if (1..=15).contains(&delta) {
-        out.push((u8::try_from(delta).unwrap() << 4) | type_id);
-    } else {
-        out.push(type_id);
-        write_varint(out, zigzag_i32(i32::from(id)));
+impl<'out> CompactStructWriter<'out> {
+    pub fn new(out: &'out mut Vec<u8>) -> Self {
+        Self {
+            out,
+            last_field_id: 0,
+        }
     }
-    *last = id;
-}
 
-pub fn write_list_header(out: &mut Vec<u8>, element_type: u8, size: usize) {
-    if size < 15 {
-        out.push((u8::try_from(size).unwrap() << 4) | element_type);
-    } else {
-        out.push(0xF0 | element_type);
-        write_varint(out, u64::try_from(size).unwrap());
+    /// Starts a struct written into the same buffer, such as a list element
+    /// or the payload of a struct field.
+    pub fn nested_struct(&mut self) -> CompactStructWriter<'_> {
+        CompactStructWriter::new(self.out)
+    }
+
+    pub fn i32_field(&mut self, field_id: i16, number: i32) {
+        self.field_header(5, field_id);
+        write_varint(self.out, zigzag_i32(number));
+    }
+
+    pub fn i64_field(&mut self, field_id: i16, number: i64) {
+        self.field_header(6, field_id);
+        write_varint(self.out, zigzag_i64(number));
+    }
+
+    pub fn string_field(&mut self, field_id: i16, text: &str) {
+        self.field_header(8, field_id);
+        write_varint(self.out, u64::try_from(text.len()).unwrap());
+        self.out.extend_from_slice(text.as_bytes());
+    }
+
+    /// The compact protocol carries a boolean in the field's type nibble.
+    pub fn bool_field(&mut self, field_id: i16, flag: bool) {
+        self.field_header(if flag { 1 } else { 2 }, field_id);
+    }
+
+    pub fn field_header(&mut self, type_id: u8, field_id: i16) {
+        let delta = field_id - self.last_field_id;
+        if (1..=15).contains(&delta) {
+            self.out.push((u8::try_from(delta).unwrap() << 4) | type_id);
+        } else {
+            self.out.push(type_id);
+            write_varint(self.out, zigzag_i32(i32::from(field_id)));
+        }
+        self.last_field_id = field_id;
+    }
+
+    pub fn list_header(&mut self, element_type: u8, size: usize) {
+        if size < 15 {
+            self.out
+                .push((u8::try_from(size).unwrap() << 4) | element_type);
+        } else {
+            self.out.push(0xF0 | element_type);
+            write_varint(self.out, u64::try_from(size).unwrap());
+        }
+    }
+
+    /// Writes a Jaeger `Tag` struct with a string value as a list element.
+    pub fn string_tag(&mut self, key: &str, text: &str) {
+        let mut tag = self.nested_struct();
+        tag.string_field(1, key);
+        tag.i32_field(2, 0);
+        tag.string_field(3, text);
+        tag.stop();
+    }
+
+    /// Writes a Jaeger `Tag` struct with a boolean value as a list element.
+    pub fn bool_tag(&mut self, key: &str, flag: bool) {
+        let mut tag = self.nested_struct();
+        tag.string_field(1, key);
+        tag.i32_field(2, 3);
+        tag.bool_field(5, flag);
+        tag.stop();
+    }
+
+    /// Ends the struct with the stop byte.
+    pub fn stop(self) {
+        self.out.push(0);
     }
 }
 

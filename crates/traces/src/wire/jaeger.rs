@@ -13,80 +13,96 @@ pub(crate) mod thrift_fixture;
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use super::thrift_fixture::{
-        write_field_header, write_i32_field, write_i64_field, write_key_value_bool,
-        write_key_value_string, write_list_header, write_string_field,
-    };
+    use super::thrift_fixture::CompactStructWriter;
     use crate::ids::{TraceIdHigh, TraceIdLow};
 
     pub fn encode_sample_batch() -> Vec<u8> {
         let mut out = Vec::new();
-        write_process(&mut out, 1, "checkout");
-        write_span_list(&mut out, 2);
-        out.push(0);
+        let mut batch = CompactStructWriter::new(&mut out);
+        write_process(&mut batch, 1, "checkout");
+        write_span_list(&mut batch, 2);
+        batch.stop();
         out
     }
 
-    pub fn write_process(out: &mut Vec<u8>, field_id: i16, service: &str) {
-        write_field_header(out, 12, field_id, &mut 0);
-        let mut last = 0;
-        write_string_field(out, 1, service, &mut last);
-        write_field_header(out, 9, 2, &mut last);
-        write_list_header(out, 12, 1);
-        write_key_value_string(out, "process.tag", "present");
-        out.push(0);
+    pub fn write_process(batch: &mut CompactStructWriter<'_>, field_id: i16, service: &str) {
+        batch.field_header(12, field_id);
+        let mut process = batch.nested_struct();
+        process.string_field(1, service);
+        process.field_header(9, 2);
+        process.list_header(12, 1);
+        process.string_tag("process.tag", "present");
+        process.stop();
     }
 
-    pub fn write_span_list(out: &mut Vec<u8>, field_id: i16) {
-        write_field_header(out, 9, field_id, &mut 1);
-        write_list_header(out, 12, 1);
-        let mut last = 0;
-        write_i64_field(out, 1, 2, &mut last);
-        write_i64_field(out, 2, 1, &mut last);
-        write_i64_field(out, 3, 3, &mut last);
-        write_i64_field(out, 4, 0, &mut last);
-        write_string_field(out, 5, "GET /", &mut last);
-        write_field_header(out, 9, 6, &mut last);
-        write_list_header(out, 12, 2);
-        write_span_ref(out, 0, TraceIdLow(2), TraceIdHigh(1), 4);
-        write_span_ref(out, 1, TraceIdLow(5), TraceIdHigh(6), 7);
-        write_i32_field(out, 7, 0, &mut last);
-        write_i64_field(out, 8, 1_000, &mut last);
-        write_i64_field(out, 9, 25, &mut last);
-        write_field_header(out, 9, 10, &mut last);
-        write_list_header(out, 12, 3);
-        write_key_value_string(out, "span.kind", "server");
-        write_key_value_string(out, "http.method", "GET");
-        write_key_value_bool(out, "error", true);
-        write_field_header(out, 9, 11, &mut last);
-        write_list_header(out, 12, 1);
-        write_log(out);
-        out.push(0);
+    pub fn write_span_list(batch: &mut CompactStructWriter<'_>, field_id: i16) {
+        batch.field_header(9, field_id);
+        batch.list_header(12, 1);
+        let mut span = batch.nested_struct();
+        span.i64_field(1, 2);
+        span.i64_field(2, 1);
+        span.i64_field(3, 3);
+        span.i64_field(4, 0);
+        span.string_field(5, "GET /");
+        span.field_header(9, 6);
+        span.list_header(12, 2);
+        write_span_ref(
+            &mut span,
+            &SpanRefFixture {
+                ref_type: 0,
+                trace_id_low: TraceIdLow(2),
+                trace_id_high: TraceIdHigh(1),
+                span_id: 4,
+            },
+        );
+        write_span_ref(
+            &mut span,
+            &SpanRefFixture {
+                ref_type: 1,
+                trace_id_low: TraceIdLow(5),
+                trace_id_high: TraceIdHigh(6),
+                span_id: 7,
+            },
+        );
+        span.i32_field(7, 0);
+        span.i64_field(8, 1_000);
+        span.i64_field(9, 25);
+        span.field_header(9, 10);
+        span.list_header(12, 3);
+        span.string_tag("span.kind", "server");
+        span.string_tag("http.method", "GET");
+        span.bool_tag("error", true);
+        span.field_header(9, 11);
+        span.list_header(12, 1);
+        write_log(&mut span);
+        span.stop();
     }
 
-    fn write_span_ref(
-        out: &mut Vec<u8>,
+    /// One Jaeger `SpanRef` list element.
+    struct SpanRefFixture {
         ref_type: i32,
-        low: TraceIdLow,
-        high: TraceIdHigh,
+        trace_id_low: TraceIdLow,
+        trace_id_high: TraceIdHigh,
         span_id: i64,
-    ) {
-        let mut last = 0;
-        write_i32_field(out, 1, ref_type, &mut last);
-        write_i64_field(out, 2, low.0, &mut last);
-        write_i64_field(out, 3, high.0, &mut last);
-        write_i64_field(out, 4, span_id, &mut last);
-        out.push(0);
     }
 
-    fn write_log(out: &mut Vec<u8>) {
-        let mut last = 0;
-        write_i64_field(out, 1, 1_005, &mut last);
-        write_field_header(out, 9, 2, &mut last);
-        write_list_header(out, 12, 2);
-        write_key_value_string(out, "event", "cache.miss");
-        write_key_value_string(out, "cache.key", "users");
-        out.push(0);
+    fn write_span_ref(span: &mut CompactStructWriter<'_>, span_ref: &SpanRefFixture) {
+        let mut reference = span.nested_struct();
+        reference.i32_field(1, span_ref.ref_type);
+        reference.i64_field(2, span_ref.trace_id_low.0);
+        reference.i64_field(3, span_ref.trace_id_high.0);
+        reference.i64_field(4, span_ref.span_id);
+        reference.stop();
+    }
+
+    fn write_log(span: &mut CompactStructWriter<'_>) {
+        let mut log = span.nested_struct();
+        log.i64_field(1, 1_005);
+        log.field_header(9, 2);
+        log.list_header(12, 2);
+        log.string_tag("event", "cache.miss");
+        log.string_tag("cache.key", "users");
+        log.stop();
     }
 }
 
@@ -289,10 +305,10 @@ mod tests {
         // Key in field 1, then one value field, then the stop byte.
         let string_tag = {
             let mut out = Vec::new();
-            let mut last = 0;
-            write_string_field(&mut out, 1, "http.method", &mut last);
-            write_string_field(&mut out, 3, "GET", &mut last);
-            out.push(0);
+            let mut tag_struct = CompactStructWriter::new(&mut out);
+            tag_struct.string_field(1, "http.method");
+            tag_struct.string_field(3, "GET");
+            tag_struct.stop();
             out
         };
         let mut input = super::CompactInput {
@@ -305,10 +321,10 @@ mod tests {
 
         let int_tag = {
             let mut out = Vec::new();
-            let mut last = 0;
-            write_string_field(&mut out, 1, "http.status", &mut last);
-            write_i64_field(&mut out, 6, 503, &mut last);
-            out.push(0);
+            let mut tag_struct = CompactStructWriter::new(&mut out);
+            tag_struct.string_field(1, "http.status");
+            tag_struct.i64_field(6, 503);
+            tag_struct.stop();
             out
         };
         let mut input = super::CompactInput {
@@ -326,10 +342,10 @@ mod tests {
         // than in a payload, so each needs its own field header.
         for (type_id, expected) in [(1_u8, true), (2_u8, false)] {
             let mut out = Vec::new();
-            let mut last = 0;
-            write_string_field(&mut out, 1, "retryable", &mut last);
-            write_field_header(&mut out, type_id, 5, &mut last);
-            out.push(0);
+            let mut tag_struct = CompactStructWriter::new(&mut out);
+            tag_struct.string_field(1, "retryable");
+            tag_struct.field_header(type_id, 5);
+            tag_struct.stop();
             let mut input = super::CompactInput {
                 bytes: &out,
                 pos: 0,
@@ -346,9 +362,9 @@ mod tests {
         // consuming the ones after it.
         let bare = {
             let mut out = Vec::new();
-            let mut last = 0;
-            write_string_field(&mut out, 1, "lonely", &mut last);
-            out.push(0);
+            let mut tag_struct = CompactStructWriter::new(&mut out);
+            tag_struct.string_field(1, "lonely");
+            tag_struct.stop();
             out
         };
         let mut input = super::CompactInput {
@@ -364,11 +380,11 @@ mod tests {
 
         let with_unknown = {
             let mut out = Vec::new();
-            let mut last = 0;
-            write_string_field(&mut out, 1, "kept", &mut last);
-            write_i64_field(&mut out, 9, 77, &mut last);
-            write_i64_field(&mut out, 6, 42, &mut last);
-            out.push(0);
+            let mut tag_struct = CompactStructWriter::new(&mut out);
+            tag_struct.string_field(1, "kept");
+            tag_struct.i64_field(9, 77);
+            tag_struct.i64_field(6, 42);
+            tag_struct.stop();
             out
         };
         let mut input = super::CompactInput {
@@ -498,8 +514,7 @@ mod tests {
     use super::{
         test_support::{encode_sample_batch, write_process, write_span_list},
         thrift_fixture::{
-            encode_binary_sample_batch, write_field_header, write_i64_field, write_string_field,
-            write_varint, zigzag_i32,
+            CompactStructWriter, encode_binary_sample_batch, write_varint, zigzag_i32,
         },
         *,
     };
@@ -854,11 +869,18 @@ mod tests {
 
     fn encode_sample_batch_with_unknown_map() -> Vec<u8> {
         let mut out = Vec::new();
-        write_process(&mut out, 1, "checkout");
-        write_span_list(&mut out, 2);
-        let mut last = 2;
-        write_field_header(&mut out, 11, 3, &mut last);
-        write_map_header(&mut out, 8, 5, 1);
+        let mut batch = CompactStructWriter::new(&mut out);
+        write_process(&mut batch, 1, "checkout");
+        write_span_list(&mut batch, 2);
+        batch.field_header(11, 3);
+        write_map_header(
+            &mut out,
+            &MapHeader {
+                key_type: 8,
+                value_type: 5,
+                size: 1,
+            },
+        );
         write_varint(&mut out, 7);
         out.extend_from_slice(b"ignored");
         write_varint(&mut out, zigzag_i32(42));
@@ -866,7 +888,19 @@ mod tests {
         out
     }
 
-    fn write_map_header(out: &mut Vec<u8>, key_type: u8, value_type: u8, size: usize) {
+    /// A compact-protocol map header: element types and entry count.
+    struct MapHeader {
+        key_type: u8,
+        value_type: u8,
+        size: usize,
+    }
+
+    fn write_map_header(out: &mut Vec<u8>, header: &MapHeader) {
+        let &MapHeader {
+            key_type,
+            value_type,
+            size,
+        } = header;
         if size == 0 {
             out.push(0);
         } else {
