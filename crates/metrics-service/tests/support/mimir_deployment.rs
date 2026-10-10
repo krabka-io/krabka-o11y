@@ -935,20 +935,12 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
             Some((START_MS, START_MS + 2000)),
             Some((START_MS + 1000, START_MS + 1000)),
         ] {
-            let query = pb::v1::Query {
-                start_timestamp_ms: START_MS,
-                end_timestamp_ms: START_MS + 2000,
-                matchers: vec![pb::v1::LabelMatcher {
-                    r#type: pb::v1::label_matcher::Type::Re as i32,
-                    name: "__name__".into(),
-                    value: "read_.*".into(),
-                }],
-                hints: hint_range.map(|(start_ms, end_ms)| pb::v1::ReadHints {
+            let query =
+                read_metrics_query(hint_range.map(|(start_ms, end_ms)| pb::v1::ReadHints {
                     start_ms,
                     end_ms,
                     ..Default::default()
-                }),
-            };
+                }));
             let request = pb::v1::ReadRequest {
                 queries: vec![query.clone()],
                 accepted_response_types: vec![pb::v1::ResponseType::Samples as i32],
@@ -992,20 +984,11 @@ async fn remote_read_preserves_samples_histograms_hints_and_streamed_frames() ->
         }
         for narrowed in [false, true] {
             let request = pb::v1::ReadRequest {
-                queries: vec![pb::v1::Query {
-                    start_timestamp_ms: START_MS,
-                    end_timestamp_ms: START_MS + 2000,
-                    matchers: vec![pb::v1::LabelMatcher {
-                        r#type: pb::v1::label_matcher::Type::Re as i32,
-                        name: "__name__".into(),
-                        value: "read_.*".into(),
-                    }],
-                    hints: narrowed.then_some(pb::v1::ReadHints {
-                        start_ms: START_MS + 1000,
-                        end_ms: START_MS + 1000,
-                        ..Default::default()
-                    }),
-                }],
+                queries: vec![read_metrics_query(narrowed.then_some(pb::v1::ReadHints {
+                    start_ms: START_MS + 1000,
+                    end_ms: START_MS + 1000,
+                    ..Default::default()
+                }))],
                 accepted_response_types: vec![
                     pb::v1::ResponseType::StreamedXorChunks as i32,
                     pb::v1::ResponseType::Samples as i32,
@@ -1309,4 +1292,18 @@ async fn check_otlp(deployment: &Deployment, base: &str, probes: &[(&str, Value)
         assert!(data(&deployment.infrastructure.client, &url, "tenant-b").await? == json!({}));
     }
     Ok(())
+}
+
+/// A remote-read query for every `read_.*` series over the two seeded samples.
+fn read_metrics_query(hints: Option<pb::v1::ReadHints>) -> pb::v1::Query {
+    pb::v1::Query {
+        start_timestamp_ms: START_MS,
+        end_timestamp_ms: START_MS + 2000,
+        matchers: vec![pb::v1::LabelMatcher {
+            r#type: pb::v1::label_matcher::Type::Re as i32,
+            name: "__name__".into(),
+            value: "read_.*".into(),
+        }],
+        hints,
+    }
 }

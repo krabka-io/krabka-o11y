@@ -1176,6 +1176,18 @@ mod tests {
         wire::{DecodedMetadata, DecodedSample, DecodedSeries},
     };
 
+    /// An exemplar of 0.9 carrying `filtered_attribute`, with fixed span and
+    /// trace ids.
+    fn traced_exemplar(filtered_attribute: KeyValue, time_unix_nano: u64) -> Exemplar {
+        Exemplar {
+            filtered_attributes: vec![filtered_attribute],
+            time_unix_nano,
+            value: Some(otlp_exemplar::Value::AsDouble(0.9)),
+            span_id: vec![0xab, 0xcd],
+            trace_id: vec![0x01, 0x23, 0x45, 0x67],
+        }
+    }
+
     fn kv(key: &str, value: &str) -> KeyValue {
         KeyValue {
             key: key.to_string(),
@@ -1193,6 +1205,16 @@ mod tests {
             value: Some(number_data_point::Value::AsDouble(value)),
             ..Default::default()
         }
+    }
+
+    /// Decodes `payloads` in order through one shared delta accumulator.
+    fn decode_with_one_accumulator<const N: usize>(
+        payloads: [&MetricsData; N],
+    ) -> [Vec<DecodedSeries>; N] {
+        let mut accumulator = DeltaAccumulator::default();
+        payloads.map(|payload| {
+            decode_otlp_stateful(payload, TranslationStrategy::default(), &mut accumulator).unwrap()
+        })
     }
 
     fn metrics_data(metric: Metric) -> MetricsData {
@@ -1339,13 +1361,7 @@ mod tests {
                 data_points: vec![NumberDataPoint {
                     time_unix_nano: 2_000_000,
                     value: Some(number_data_point::Value::AsDouble(0.42)),
-                    exemplars: vec![Exemplar {
-                        filtered_attributes: vec![kv("user.id", "alice")],
-                        time_unix_nano: 1_500_000,
-                        value: Some(otlp_exemplar::Value::AsDouble(0.9)),
-                        span_id: vec![0xab, 0xcd],
-                        trace_id: vec![0x01, 0x23, 0x45, 0x67],
-                    }],
+                    exemplars: vec![traced_exemplar(kv("user.id", "alice"), 1_500_000)],
                     ..Default::default()
                 }],
             })),
@@ -1372,13 +1388,7 @@ mod tests {
                     data_points: vec![NumberDataPoint {
                         time_unix_nano: 3_000_000,
                         value: Some(number_data_point::Value::AsDouble(7.0)),
-                        exemplars: vec![Exemplar {
-                            filtered_attributes: vec![kv("user.id", "alice")],
-                            time_unix_nano: 2_500_000,
-                            value: Some(otlp_exemplar::Value::AsDouble(0.9)),
-                            span_id: vec![0xab, 0xcd],
-                            trace_id: vec![0x01, 0x23, 0x45, 0x67],
-                        }],
+                        exemplars: vec![traced_exemplar(kv("user.id", "alice"), 2_500_000)],
                         ..Default::default()
                     }],
                     aggregation_temporality: AggregationTemporality::Cumulative as i32,
@@ -1616,13 +1626,8 @@ mod tests {
             })),
             ..Default::default()
         });
-        let mut accumulator = DeltaAccumulator::default();
 
-        let first_series =
-            decode_otlp_stateful(&first, TranslationStrategy::default(), &mut accumulator).unwrap();
-        let second_series =
-            decode_otlp_stateful(&second, TranslationStrategy::default(), &mut accumulator)
-                .unwrap();
+        let [first_series, second_series] = decode_with_one_accumulator([&first, &second]);
 
         assert!(first_series[0].samples == vec![(2, 7.0)]);
         assert!(second_series[0].samples == vec![(3, 12.0)]);
@@ -1705,13 +1710,7 @@ mod tests {
                     sum: Some(1.7),
                     bucket_counts: vec![1, 1, 1],
                     explicit_bounds: vec![0.5, 1.0],
-                    exemplars: vec![Exemplar {
-                        filtered_attributes: vec![kv("http.route", "/v1")],
-                        time_unix_nano: 1_500_000,
-                        value: Some(otlp_exemplar::Value::AsDouble(0.9)),
-                        span_id: vec![0xab, 0xcd],
-                        trace_id: vec![0x01, 0x23, 0x45, 0x67],
-                    }],
+                    exemplars: vec![traced_exemplar(kv("http.route", "/v1"), 1_500_000)],
                     ..Default::default()
                 }],
                 aggregation_temporality: AggregationTemporality::Cumulative as i32,
@@ -1779,13 +1778,8 @@ mod tests {
             })),
             ..Default::default()
         });
-        let mut accumulator = DeltaAccumulator::default();
 
-        let first_series =
-            decode_otlp_stateful(&first, TranslationStrategy::default(), &mut accumulator).unwrap();
-        let second_series =
-            decode_otlp_stateful(&second, TranslationStrategy::default(), &mut accumulator)
-                .unwrap();
+        let [first_series, second_series] = decode_with_one_accumulator([&first, &second]);
 
         let cases = [
             (
@@ -2144,11 +2138,8 @@ mod tests {
                 scale: 1,
                 positive: Some(positive_buckets(0, vec![2])),
                 exemplars: vec![Exemplar {
-                    filtered_attributes: vec![kv("span.kind", "server")],
-                    time_unix_nano: 2_500_000,
                     value: Some(otlp_exemplar::Value::AsDouble(2.5)),
-                    span_id: vec![0xab, 0xcd],
-                    trace_id: vec![0x01, 0x23, 0x45, 0x67],
+                    ..traced_exemplar(kv("span.kind", "server"), 2_500_000)
                 }],
                 ..Default::default()
             },
@@ -2252,13 +2243,8 @@ mod tests {
             },
             AggregationTemporality::Delta,
         );
-        let mut accumulator = DeltaAccumulator::default();
 
-        let first_series =
-            decode_otlp_stateful(&first, TranslationStrategy::default(), &mut accumulator).unwrap();
-        let second_series =
-            decode_otlp_stateful(&second, TranslationStrategy::default(), &mut accumulator)
-                .unwrap();
+        let [first_series, second_series] = decode_with_one_accumulator([&first, &second]);
 
         let first_hist = &first_series[0].histograms[0].1;
         check!((first_hist.count - 4.0).abs() < f64::EPSILON);
@@ -2300,12 +2286,8 @@ mod tests {
             },
             AggregationTemporality::Delta,
         );
-        let mut accumulator = DeltaAccumulator::default();
 
-        decode_otlp_stateful(&first, TranslationStrategy::default(), &mut accumulator).unwrap();
-        let second_series =
-            decode_otlp_stateful(&second, TranslationStrategy::default(), &mut accumulator)
-                .unwrap();
+        let [_, second_series] = decode_with_one_accumulator([&first, &second]);
 
         let second_hist = &second_series[0].histograms[0].1;
         check!((second_hist.count - 5.0).abs() < f64::EPSILON);
@@ -2417,6 +2399,7 @@ mod exponential_histogram_series;
 mod exponential_histogram_to_native;
 mod gauge_series;
 mod histogram_family;
+mod histogram_scope;
 mod histogram_series;
 mod insert_attributes;
 mod instrumentation_scope_attributes;
@@ -2483,6 +2466,7 @@ use exponential_histogram_series::exponential_histogram_series;
 pub use exponential_histogram_to_native::exponential_histogram_to_native;
 use gauge_series::gauge_series;
 use histogram_family::HistogramFamily;
+use histogram_scope::HistogramScope;
 use histogram_series::histogram_series;
 use insert_attributes::insert_attributes;
 use instrumentation_scope_attributes::instrumentation_scope_attributes;

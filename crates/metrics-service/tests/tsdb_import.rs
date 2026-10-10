@@ -87,6 +87,27 @@ struct Krabka {
     _shutdown: oneshot::Sender<()>,
 }
 
+/// Two Krabkas holding the fixture block: one with the default unbounded
+/// lookback, which does not reach the fixture's samples, and one whose
+/// lookback does.
+struct LookbackPair {
+    recent: Krabka,
+    reaching: Krabka,
+}
+
+impl LookbackPair {
+    async fn with_fixture_uploaded() -> TestResult<Self> {
+        let recent = Krabka::start().await?;
+        recent.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
+        let reaching =
+            Krabka::start_with_lookback(Arc::new(InMemory::new()), FIXTURE_LOOKBACK).await?;
+        reaching
+            .upload(FIXTURE_ULID, &UploadBlock::fixture())
+            .await?;
+        Ok(Self { recent, reaching })
+    }
+}
+
 impl Krabka {
     async fn start() -> TestResult<Self> {
         Self::start_with(Arc::new(InMemory::new())).await
@@ -1322,12 +1343,7 @@ async fn cardinality_routes_count_the_imported_block_inside_the_lookback() -> Te
             ]}),
         ),
     ];
-    let recent = Krabka::start().await?;
-    recent.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
-    let reaching = Krabka::start_with_lookback(Arc::new(InMemory::new()), FIXTURE_LOOKBACK).await?;
-    reaching
-        .upload(FIXTURE_ULID, &UploadBlock::fixture())
-        .await?;
+    let LookbackPair { recent, reaching } = LookbackPair::with_fixture_uploaded().await?;
 
     for (path, params, expected) in cases {
         let outside = recent
@@ -1409,12 +1425,7 @@ async fn tsdb_status_counts_the_imported_block_inside_the_lookback() -> TestResu
             stat("instance=zürich", 1),
         ],
     });
-    let recent = Krabka::start().await?;
-    recent.upload(FIXTURE_ULID, &UploadBlock::fixture()).await?;
-    let reaching = Krabka::start_with_lookback(Arc::new(InMemory::new()), FIXTURE_LOOKBACK).await?;
-    reaching
-        .upload(FIXTURE_ULID, &UploadBlock::fixture())
-        .await?;
+    let LookbackPair { recent, reaching } = LookbackPair::with_fixture_uploaded().await?;
 
     check!(tsdb_status_lists(&recent).await? == empty);
     check!(tsdb_status_lists(&reaching).await? == counted);

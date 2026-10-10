@@ -1608,6 +1608,34 @@ overrides:
         }
     }
 
+    /// Tenant `tenant-a` electing replica `r1` of cluster `c1` at 42s.
+    fn tenant_a_r1_election() -> HaElectionRecord {
+        HaElectionRecord {
+            tenant: "tenant-a".to_string(),
+            cluster: "c1".to_string(),
+            replica: "r1".to_string(),
+            lease_timestamp_ms: 42_000,
+        }
+    }
+
+    /// A consumer whose one batch is [`tenant_a_r1_election`] delivered on
+    /// `topic` at partition 1, offset 7.
+    fn tenant_a_r1_election_consumer(topic: &str) -> RecordingHaElectionConsumer {
+        RecordingHaElectionConsumer {
+            batches: vec![vec![
+                DeliveredRecord {
+                    topic,
+                    partition: 1,
+                    offset: 7,
+                    payload: Some(tenant_a_r1_election().encode().unwrap()),
+                    ..DeliveredRecord::default()
+                }
+                .build(),
+            ]],
+            commit_calls: 0,
+        }
+    }
+
     struct RecordingHaElectionConsumer {
         batches: Vec<Vec<ConsumerRecord>>,
         commit_calls: usize,
@@ -1888,102 +1916,96 @@ overrides:
         .encode_to_vec()
     }
 
-    fn otlp_gauge_body() -> Vec<u8> {
+    /// One OTLP export request carrying `metric` under `resource`.
+    fn encode_otlp_metric(resource: Option<Resource>, metric: Metric) -> Vec<u8> {
         MetricsData {
             resource_metrics: vec![ResourceMetrics {
-                resource: None,
+                resource,
                 scope_metrics: vec![ScopeMetrics {
-                    metrics: vec![Metric {
-                        name: "system.cpu.utilization".into(),
-                        description: "CPU utilization ratio.".into(),
-                        unit: "1".into(),
-                        data: Some(metric::Data::Gauge(Gauge {
-                            data_points: vec![NumberDataPoint {
-                                attributes: vec![KeyValue {
-                                    key: "host.name".into(),
-                                    value: Some(AnyValue {
-                                        value: Some(any_value::Value::StringValue("api-1".into())),
-                                    }),
-                                    key_strindex: 0,
-                                }],
-                                time_unix_nano: 1_000_000,
-                                value: Some(number_data_point::Value::AsDouble(0.5)),
-                                ..Default::default()
-                            }],
-                        })),
-                        ..Default::default()
-                    }],
+                    metrics: vec![metric],
                     ..Default::default()
                 }],
                 schema_url: String::new(),
             }],
         }
         .encode_to_vec()
+    }
+
+    fn otlp_gauge_body() -> Vec<u8> {
+        encode_otlp_metric(
+            None,
+            Metric {
+                name: "system.cpu.utilization".into(),
+                description: "CPU utilization ratio.".into(),
+                unit: "1".into(),
+                data: Some(metric::Data::Gauge(Gauge {
+                    data_points: vec![NumberDataPoint {
+                        attributes: vec![KeyValue {
+                            key: "host.name".into(),
+                            value: Some(AnyValue {
+                                value: Some(any_value::Value::StringValue("api-1".into())),
+                            }),
+                            key_strindex: 0,
+                        }],
+                        time_unix_nano: 1_000_000,
+                        value: Some(number_data_point::Value::AsDouble(0.5)),
+                        ..Default::default()
+                    }],
+                })),
+                ..Default::default()
+            },
+        )
     }
 
     fn otlp_mixed_gauge_body() -> Vec<u8> {
-        MetricsData {
-            resource_metrics: vec![ResourceMetrics {
-                resource: None,
-                scope_metrics: vec![ScopeMetrics {
-                    metrics: vec![Metric {
-                        name: "mixed.gauge".into(),
-                        data: Some(metric::Data::Gauge(Gauge {
-                            data_points: vec![
-                                NumberDataPoint {
-                                    time_unix_nano: 1_000_000,
-                                    value: Some(number_data_point::Value::AsDouble(2.0)),
-                                    ..Default::default()
-                                },
-                                NumberDataPoint {
-                                    time_unix_nano: 2_000_000,
-                                    value: None,
-                                    ..Default::default()
-                                },
-                            ],
-                        })),
-                        ..Default::default()
-                    }],
-                    ..Default::default()
-                }],
-                schema_url: String::new(),
-            }],
-        }
-        .encode_to_vec()
+        encode_otlp_metric(
+            None,
+            Metric {
+                name: "mixed.gauge".into(),
+                data: Some(metric::Data::Gauge(Gauge {
+                    data_points: vec![
+                        NumberDataPoint {
+                            time_unix_nano: 1_000_000,
+                            value: Some(number_data_point::Value::AsDouble(2.0)),
+                            ..Default::default()
+                        },
+                        NumberDataPoint {
+                            time_unix_nano: 2_000_000,
+                            value: None,
+                            ..Default::default()
+                        },
+                    ],
+                })),
+                ..Default::default()
+            },
+        )
     }
 
     fn otlp_resource_body() -> Vec<u8> {
-        MetricsData {
-            resource_metrics: vec![ResourceMetrics {
-                resource: Some(Resource {
-                    attributes: vec![KeyValue {
-                        key: "service.name".into(),
-                        value: Some(AnyValue {
-                            value: Some(any_value::Value::StringValue("checkout".into())),
-                        }),
-                        key_strindex: 0,
-                    }],
-                    dropped_attributes_count: 0,
-                    entity_refs: Vec::new(),
-                }),
-                scope_metrics: vec![ScopeMetrics {
-                    metrics: vec![Metric {
-                        name: "system.cpu.utilization".into(),
-                        data: Some(metric::Data::Gauge(Gauge {
-                            data_points: vec![NumberDataPoint {
-                                time_unix_nano: 1_000_000,
-                                value: Some(number_data_point::Value::AsDouble(0.5)),
-                                ..Default::default()
-                            }],
-                        })),
+        encode_otlp_metric(
+            Some(Resource {
+                attributes: vec![KeyValue {
+                    key: "service.name".into(),
+                    value: Some(AnyValue {
+                        value: Some(any_value::Value::StringValue("checkout".into())),
+                    }),
+                    key_strindex: 0,
+                }],
+                dropped_attributes_count: 0,
+                entity_refs: Vec::new(),
+            }),
+            Metric {
+                name: "system.cpu.utilization".into(),
+                data: Some(metric::Data::Gauge(Gauge {
+                    data_points: vec![NumberDataPoint {
+                        time_unix_nano: 1_000_000,
+                        value: Some(number_data_point::Value::AsDouble(0.5)),
                         ..Default::default()
                     }],
-                    ..Default::default()
-                }],
-                schema_url: String::new(),
-            }],
-        }
-        .encode_to_vec()
+                })),
+                ..Default::default()
+            },
+        )
     }
 
     fn label(name: &str, value: &str) -> crate::wire::pb::v1::Label {
@@ -2077,19 +2099,10 @@ overrides:
     async fn push_keys_wal_append_by_tenant_and_series_fingerprint() {
         let (state, sink) = test_state();
         let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![
-                        label("__name__", "up"),
-                        label("job", "api"),
-                    ])))
-                    .unwrap(),
-            )
+            .oneshot(tenant_a_push_request(v1_body(vec![
+                label("__name__", "up"),
+                label("job", "api"),
+            ])))
             .await
             .unwrap();
 
@@ -2289,18 +2302,9 @@ overrides:
     async fn oversized_exemplar_labels_are_rejected() {
         let (state, sink) = test_state();
         let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body_with_exemplar_label_value(
-                        &"x".repeat(129),
-                    )))
-                    .unwrap(),
-            )
+            .oneshot(tenant_a_push_request(v1_body_with_exemplar_label_value(
+                &"x".repeat(129),
+            )))
             .await
             .unwrap();
 
@@ -2538,16 +2542,10 @@ defaults:
         // single locked critical section, so exactly one is admitted and the
         // other is rejected rather than both passing the pre-insert count.
         let request = |name: &str| {
-            app.clone().oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", name)])))
-                    .unwrap(),
-            )
+            app.clone()
+                .oneshot(tenant_a_push_request(v1_body(vec![label(
+                    "__name__", name,
+                )])))
         };
         let (first, second) = tokio::join!(request("series_a"), request("series_b"));
         let statuses = [first.unwrap().status(), second.unwrap().status()];
@@ -3302,20 +3300,11 @@ overrides:
         let (state, sink) = test_state();
         state.tracker().set_elected("tenant-a", "c1", "r1");
         let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "snappy")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![
-                        label("__name__", "up"),
-                        label("cluster", "c1"),
-                        label("__replica__", "r2"),
-                    ])))
-                    .unwrap(),
-            )
+            .oneshot(tenant_a_push_request(v1_body(vec![
+                label("__name__", "up"),
+                label("cluster", "c1"),
+                label("__replica__", "r2"),
+            ])))
             .await
             .unwrap();
 
@@ -3416,12 +3405,7 @@ overrides:
 
     #[test]
     fn ha_election_records_round_trip_with_compacted_key() {
-        let record = HaElectionRecord {
-            tenant: "tenant-a".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 42_000,
-        };
+        let record = tenant_a_r1_election();
 
         let encoded = record.encode().unwrap();
 
@@ -3432,12 +3416,7 @@ overrides:
     #[test]
     fn replay_ha_election_records_applies_tracker_and_reports_commit_offsets() {
         let tracker = HaTracker::default();
-        let record = HaElectionRecord {
-            tenant: "tenant-a".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 42_000,
-        };
+        let record = tenant_a_r1_election();
         let records = vec![
             HaElectionConsumerRecord {
                 topic: "ignored".to_string(),
@@ -3497,25 +3476,7 @@ overrides:
         // Polled but not replayed: a record from another topic is seen and
         // applied to nothing. Committing here would advance this group's
         // offsets on the strength of someone else's records.
-        let record = HaElectionRecord {
-            tenant: "tenant-a".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 42_000,
-        };
-        let mut consumer = RecordingHaElectionConsumer {
-            batches: vec![vec![
-                DeliveredRecord {
-                    topic: "some-other-topic",
-                    partition: 1,
-                    offset: 7,
-                    payload: Some(record.encode().unwrap()),
-                    ..DeliveredRecord::default()
-                }
-                .build(),
-            ]],
-            commit_calls: 0,
-        };
+        let mut consumer = tenant_a_r1_election_consumer("some-other-topic");
         let result =
             poll_ha_election_consumer_once(&mut consumer, &tracker, HA_TRACKER_TOPIC, millis(1))
                 .await
@@ -3652,25 +3613,7 @@ overrides:
     #[tokio::test]
     async fn poll_ha_election_consumer_once_replays_records_and_commits_on_progress() {
         let tracker = HaTracker::default();
-        let record = HaElectionRecord {
-            tenant: "tenant-a".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 42_000,
-        };
-        let mut consumer = RecordingHaElectionConsumer {
-            batches: vec![vec![
-                DeliveredRecord {
-                    topic: HA_TRACKER_TOPIC,
-                    partition: 1,
-                    offset: 7,
-                    payload: Some(record.encode().unwrap()),
-                    ..DeliveredRecord::default()
-                }
-                .build(),
-            ]],
-            commit_calls: 0,
-        };
+        let mut consumer = tenant_a_r1_election_consumer(HA_TRACKER_TOPIC);
 
         let result =
             poll_ha_election_consumer_once(&mut consumer, &tracker, HA_TRACKER_TOPIC, millis(1))
@@ -3695,12 +3638,7 @@ overrides:
     #[tokio::test]
     async fn future_ha_format_is_rejected_before_state_or_offset_changes() {
         let tracker = HaTracker::default();
-        let record = HaElectionRecord {
-            tenant: "tenant-a".to_string(),
-            cluster: "c1".to_string(),
-            replica: "r1".to_string(),
-            lease_timestamp_ms: 42_000,
-        };
+        let record = tenant_a_r1_election();
         let mut future = DeliveredRecord {
             topic: HA_TRACKER_TOPIC,
             partition: 1,
@@ -3798,7 +3736,8 @@ overrides:
         }
     }
 
-    fn partial_push_request(body: Vec<u8>) -> Request<Body> {
+    /// A snappy protobuf remote-write v1 push of `body` as tenant `tenant-a`.
+    fn tenant_a_push_request(body: Vec<u8>) -> Request<Body> {
         Request::builder()
             .method("POST")
             .uri("/api/v1/push")
@@ -3820,7 +3759,7 @@ overrides:
         let state = Arc::new(DistributorState::new(sink));
 
         let response = router(state)
-            .oneshot(partial_push_request(v1_body_with_samples(10)))
+            .oneshot(tenant_a_push_request(v1_body_with_samples(10)))
             .await
             .unwrap();
 
@@ -3845,7 +3784,7 @@ overrides:
         let state = Arc::new(DistributorState::new(sink));
 
         let response = router(state)
-            .oneshot(partial_push_request(v1_body_with_samples(10)))
+            .oneshot(tenant_a_push_request(v1_body_with_samples(10)))
             .await
             .unwrap();
 
@@ -3874,7 +3813,7 @@ overrides:
             let state = Arc::new(DistributorState::new(sink).with_metrics(metrics.clone()));
 
             let response = router(state)
-                .oneshot(partial_push_request(v1_body_with_samples(10)))
+                .oneshot(tenant_a_push_request(v1_body_with_samples(10)))
                 .await
                 .unwrap();
 

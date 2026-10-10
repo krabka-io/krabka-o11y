@@ -1,6 +1,6 @@
 use super::{
     AlertmanagerHttpSink, AlertmanagerSink, RulerWalError,
-    alertmanager_http_sink::AlertTemplateDefaults,
+    alertmanager_http_sink::{AlertTemplateDefaults, impl_alertmanager_sink},
 };
 
 type AlertBatch = (Option<String>, Vec<krabka_promql::AlertmanagerAlert>);
@@ -75,20 +75,10 @@ impl QueuedAlertmanagerSink {
         }
         Ok(())
     }
-}
 
-#[async_trait::async_trait]
-impl AlertmanagerSink for QueuedAlertmanagerSink {
-    fn template_external_labels(&self) -> krabka_blockstore::Labels {
-        self.alert_templates.external_labels()
-    }
-
-    fn template_external_url(&self, alert_name: &str) -> String {
-        self.alert_templates.external_url(alert_name)
-    }
-
-    async fn dispatch_alerts(
+    async fn dispatch_batch(
         &self,
+        tenant: Option<&str>,
         alerts: Vec<krabka_promql::AlertmanagerAlert>,
     ) -> Result<(), RulerWalError> {
         if alerts.is_empty() {
@@ -98,25 +88,10 @@ impl AlertmanagerSink for QueuedAlertmanagerSink {
             RulerWalError::Append("alertmanager delivery queue stopped".to_string())
         })?;
         sender
-            .send((None, alerts))
-            .await
-            .map_err(|_| RulerWalError::Append("alertmanager delivery queue stopped".to_string()))
-    }
-
-    async fn dispatch_alerts_for_tenant(
-        &self,
-        tenant: &krabka_blockstore::TenantId,
-        alerts: Vec<krabka_promql::AlertmanagerAlert>,
-    ) -> Result<(), RulerWalError> {
-        if alerts.is_empty() {
-            return Ok(());
-        }
-        let sender = self.sender.lock().await.clone().ok_or_else(|| {
-            RulerWalError::Append("alertmanager delivery queue stopped".to_string())
-        })?;
-        sender
-            .send((Some(tenant.as_str().to_owned()), alerts))
+            .send((tenant.map(str::to_owned), alerts))
             .await
             .map_err(|_| RulerWalError::Append("alertmanager delivery queue stopped".to_string()))
     }
 }
+
+impl_alertmanager_sink!(QueuedAlertmanagerSink);

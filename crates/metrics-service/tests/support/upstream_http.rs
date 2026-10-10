@@ -88,6 +88,33 @@ pub async fn wait_for_http_ok(client: &reqwest::Client, url: &str, within: Durat
     Err(format!("{url} did not become ready").into())
 }
 
+/// Polls an instant-query response from `fetch_response` until its result is
+/// non-empty, for at most `within`.
+///
+/// Returns `false` when the deadline passes first, so the caller can name the
+/// query and server in its own error.
+pub async fn wait_for_non_empty_result<F, Fut>(
+    within: Duration,
+    mut fetch_response: F,
+) -> TestResult<bool>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = TestResult<serde_json::Value>>,
+{
+    let deadline = std::time::Instant::now() + within;
+    while std::time::Instant::now() < deadline {
+        let response = fetch_response().await?;
+        if response["data"]["result"]
+            .as_array()
+            .is_some_and(|series| !series.is_empty())
+        {
+            return Ok(true);
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    Ok(false)
+}
+
 /// An in-process Krabka serving remote-write and the query API over one WAL
 /// head.
 pub struct KrabkaServer {

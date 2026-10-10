@@ -10,9 +10,9 @@ use assert2::assert;
 use krabka_blockstore::{BlockStore, MatchOp, TenantId};
 use krabka_metrics::{LimitError, ObjectStoreCompactionIndexSink};
 use krabka_promql::{
-    EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine, PromqlError,
-    PromqlLabels as Labels, PromqlMatcher as LabelMatcher, QueryResult, WalHead,
-    testkit::count_two_sum_three_histogram,
+    EngineOpts, InMemoryMetricStore, MergedMetricStore, MetricBlockStore, MetricStore,
+    PromqlEngine, PromqlError, PromqlLabels as Labels, PromqlMatcher as LabelMatcher, QueryResult,
+    WalHead, testkit::count_two_sum_three_histogram,
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
@@ -27,6 +27,20 @@ struct Fixture {
     list_calls: Arc<AtomicUsize>,
     objects: Arc<dyn ObjectStore>,
     parquet_keys: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+}
+
+impl Fixture {
+    /// The generic merged store over `5_000..=end_ms`, a control that always
+    /// takes the full scan.
+    async fn control_engine(
+        &self,
+        end_ms: i64,
+    ) -> PromqlEngine<MergedMetricStore<MetricBlockStore, WalHead>> {
+        PromqlEngine::new(
+            Arc::new(self.store.current_store(5_000, end_ms).await.unwrap()),
+            EngineOpts::default(),
+        )
+    }
 }
 
 fn labels() -> Labels {
@@ -265,10 +279,7 @@ async fn dominated_cold_blocks_are_not_read_and_limits_still_count_the_full_wind
     assert!(fixture.reads.load(Ordering::SeqCst) == 0);
 
     // The generic merged store is a control that always takes the full scan.
-    let control = PromqlEngine::new(
-        Arc::new(fixture.store.current_store(5_000, 12_000).await.unwrap()),
-        EngineOpts::default(),
-    );
+    let control = fixture.control_engine(12_000).await;
     for query in [
         "up",
         "sum(up)",
@@ -344,10 +355,7 @@ async fn cold_newer_or_missing_series_are_read_and_stale_hot_markers_stay_select
                 .is_some()
         );
         let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
-        let control = PromqlEngine::new(
-            Arc::new(fixture.store.current_store(5_000, 14_000).await.unwrap()),
-            EngineOpts::default(),
-        );
+        let control = fixture.control_engine(14_000).await;
         for query in [
             "up",
             "sum(up)",
@@ -466,10 +474,7 @@ async fn latest_aggregate_preserves_compensated_sums_across_series() {
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
     assert_sum_up_is_one_at_14s(&engine, &tenant).await;
     assert!(fixture.reads.load(Ordering::SeqCst) == 0);
-    let control = PromqlEngine::new(
-        Arc::new(fixture.store.current_store(5_000, 14_000).await.unwrap()),
-        EngineOpts::default(),
-    );
+    let control = fixture.control_engine(14_000).await;
     for query in ["sum(up)", "avg(up)", "sum by (job) (up)", "topk(1, up)"] {
         assert!(
             engine.query_instant(&tenant, query, 14_000).await.unwrap()
@@ -496,10 +501,7 @@ async fn newer_cold_block_does_not_force_reads_of_dominated_history() {
             .collect::<Vec<_>>()
             == vec!["metrics/tenant-a/float/9.parquet".to_string()]
     );
-    let control = PromqlEngine::new(
-        Arc::new(fixture.store.current_store(5_000, 14_000).await.unwrap()),
-        EngineOpts::default(),
-    );
+    let control = fixture.control_engine(14_000).await;
     assert_sum_up_is_one_at_14s(&control, &tenant).await;
     assert!(fixture.parquet_keys.lock().unwrap().len() == 10);
     // A retirement race must retain the ordinary path's warning and hot value.
@@ -572,10 +574,7 @@ async fn conflicting_cold_ties_keep_the_full_scan() {
     );
     let tenant = TenantId::new("tenant-a").unwrap();
     let engine = PromqlEngine::new(Arc::clone(&fixture.store), EngineOpts::default());
-    let control = PromqlEngine::new(
-        Arc::new(fixture.store.current_store(5_000, 14_000).await.unwrap()),
-        EngineOpts::default(),
-    );
+    let control = fixture.control_engine(14_000).await;
     assert!(
         engine
             .query_instant(&tenant, "sum(up)", 14_000)

@@ -53,22 +53,18 @@ mod tests {
     use assert2::assert;
     use prost::Message;
 
-    use super::pb;
+    use super::{
+        pb,
+        test_support::{up_v1_series, up_v2_request},
+    };
 
     #[test]
     fn v1_write_request_round_trips_via_prost() {
         let req = pb::v1::WriteRequest {
-            timeseries: vec![pb::v1::TimeSeries {
-                labels: vec![pb::v1::Label {
-                    name: "__name__".into(),
-                    value: "up".into(),
-                }],
-                samples: vec![pb::v1::Sample {
-                    value: 1.0,
-                    timestamp: 42,
-                }],
-                ..Default::default()
-            }],
+            timeseries: vec![up_v1_series(pb::v1::Sample {
+                value: 1.0,
+                timestamp: 42,
+            })],
             ..Default::default()
         };
 
@@ -81,18 +77,11 @@ mod tests {
 
     #[test]
     fn v2_request_has_symbols_and_label_refs() {
-        let req = pb::v2::Request {
-            symbols: vec![String::new(), "__name__".into(), "up".into()],
-            timeseries: vec![pb::v2::TimeSeries {
-                labels_refs: vec![1, 2],
-                samples: vec![pb::v2::Sample {
-                    value: 3.0,
-                    timestamp: 7,
-                    start_timestamp: 0,
-                }],
-                ..Default::default()
-            }],
-        };
+        let req = up_v2_request(pb::v2::Sample {
+            value: 3.0,
+            timestamp: 7,
+            start_timestamp: 0,
+        });
 
         let bytes = req.encode_to_vec();
         let back = pb::v2::Request::decode(bytes.as_slice()).unwrap();

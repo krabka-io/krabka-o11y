@@ -50,7 +50,8 @@ use self::{
     pinned_grafana_image::pinned_grafana_image,
     seed_remote_write::remote_write_body,
     upstream_http::{
-        KrabkaServer, RemoteWrite, TestResult, mapped_base_url, post_remote_write, wait_for_http_ok,
+        KrabkaServer, RemoteWrite, TestResult, mapped_base_url, post_remote_write,
+        wait_for_http_ok, wait_for_non_empty_result,
     },
 };
 
@@ -1407,13 +1408,13 @@ async fn wait_for_query_ready(
     tenant: &str,
     query: &str,
 ) -> TestResult {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-    while std::time::Instant::now() < deadline {
-        let url = format!(
-            "{base}/api/v1/query?query={}&time=45.000",
-            url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>()
-        );
-        let json: Value = client
+    let url = format!(
+        "{base}/api/v1/query?query={}&time=45.000",
+        url::form_urlencoded::byte_serialize(query.as_bytes()).collect::<String>()
+    );
+    let url = &url;
+    let ready = wait_for_non_empty_result(std::time::Duration::from_secs(15), || async move {
+        let response: Value = client
             .get(url)
             .header("X-Scope-OrgID", tenant)
             .send()
@@ -1421,13 +1422,11 @@ async fn wait_for_query_ready(
             .error_for_status()?
             .json()
             .await?;
-        if json["data"]["result"]
-            .as_array()
-            .is_some_and(|result| !result.is_empty())
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        Ok(response)
+    })
+    .await?;
+    if ready {
+        return Ok(());
     }
     Err(format!("query `{query}` did not become non-empty on {base}").into())
 }

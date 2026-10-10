@@ -1275,6 +1275,27 @@ overrides:
         }
     }
 
+    /// The kind and row count of the one manifest a tenant-a write of offsets
+    /// 42 through 99 records.
+    struct ExpectedManifest {
+        kind: super::MetricBlockKind,
+        row_count: usize,
+    }
+
+    fn check_tenant_a_manifest(
+        sink: &RecordingIndexSink,
+        written: &super::CompactionIndexManifest,
+        expected: &ExpectedManifest,
+    ) {
+        let manifests = sink.manifests.lock().expect("manifest lock");
+        check!(manifests.as_slice() == std::slice::from_ref(written));
+        check!(manifests[0].tenant == "tenant-a");
+        check!(manifests[0].kind == expected.kind);
+        check!(manifests[0].first_offset == 42);
+        check!(manifests[0].last_offset == 99);
+        check!(manifests[0].row_count == expected.row_count);
+    }
+
     #[tokio::test]
     async fn write_compacted_tenant_blocks_writes_block_before_index_manifest() {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
@@ -1315,13 +1336,14 @@ overrides:
                 == vec![(7, 100, 1.0, Some(50)), (7, 200, 2.0, None)]
         );
 
-        let manifests = sink.manifests.lock().expect("manifest lock");
-        check!(manifests.as_slice() == [writes[0].manifest.clone()]);
-        check!(manifests[0].tenant == "tenant-a");
-        check!(manifests[0].kind == super::MetricBlockKind::Float);
-        check!(manifests[0].first_offset == 42);
-        check!(manifests[0].last_offset == 99);
-        check!(manifests[0].row_count == 2);
+        check_tenant_a_manifest(
+            &sink,
+            &writes[0].manifest,
+            &ExpectedManifest {
+                kind: super::MetricBlockKind::Float,
+                row_count: 2,
+            },
+        );
     }
 
     #[tokio::test]
@@ -1353,13 +1375,14 @@ overrides:
         assert!(persisted.len() == 1);
         assert!(persisted[0].num_rows() == 1);
 
-        let manifests = sink.manifests.lock().expect("manifest lock");
-        check!(manifests.as_slice() == [writes[0].manifest.clone()]);
-        check!(manifests[0].tenant == "tenant-a");
-        check!(manifests[0].kind == super::MetricBlockKind::Metadata);
-        check!(manifests[0].first_offset == 42);
-        check!(manifests[0].last_offset == 99);
-        check!(manifests[0].row_count == 1);
+        check_tenant_a_manifest(
+            &sink,
+            &writes[0].manifest,
+            &ExpectedManifest {
+                kind: super::MetricBlockKind::Metadata,
+                row_count: 1,
+            },
+        );
     }
 
     #[derive(Default)]
@@ -1383,8 +1406,7 @@ overrides:
 
     #[tokio::test]
     async fn process_compaction_partition_window_commits_after_blocks_and_indexes() {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let committer = RecordingOffsetCommitter::default();
         let first = float_record("tenant-a", "up", "api", 100);
@@ -1484,8 +1506,7 @@ overrides:
         // never written — silent data loss. The fix writes all partitions first
         // and commits once, so a mid-batch failure must leave NOTHING committed
         // and the next poll re-reads from the last committed offset (at-least-once).
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         // Float-only records => exactly one block (one index manifest) per
         // partition, so `ok_before_failure = 1` lets partition 0 through and fails
         // partition 1.
@@ -1503,8 +1524,7 @@ overrides:
 
     #[tokio::test]
     async fn process_compaction_record_batch_groups_partitions_and_uses_distinct_block_keys() {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let committer = RecordingOffsetCommitter::default();
         let records = two_partition_float_records();
@@ -1592,6 +1612,11 @@ overrides:
         ));
     }
 
+    fn in_memory_block_writer() -> krabka_blockstore::BlockWriter {
+        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        krabka_blockstore::BlockWriter::new(object_store)
+    }
+
     #[derive(Default)]
     struct RecordingCommitSync {
         calls: Mutex<Vec<(String, Vec<super::CompactionPartitionOffset>)>>,
@@ -1656,8 +1681,7 @@ overrides:
 
     #[tokio::test]
     async fn poll_compactor_once_converts_processes_and_commits_records() {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
         let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
@@ -1747,8 +1771,7 @@ overrides:
     async fn run_compactor_loop_accumulates_across_polls_and_flushes_once_on_stop() {
         // Two below-threshold polls must accumulate into ONE block (not one per
         // poll) and commit offsets only at the single shutdown flush.
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
         let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
@@ -1813,8 +1836,7 @@ overrides:
     #[tokio::test]
     async fn run_compactor_loop_flushes_when_row_threshold_reached() {
         // Crossing flush_max_rows must flush mid-loop without waiting for stop.
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
         let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
@@ -1854,6 +1876,16 @@ overrides:
 
         // One block flushed by the row threshold on the first poll; the empty
         // second poll triggers stop with an already-empty buffer (no extra write).
+        check_one_flush_committed_through_offset_12(&result, &commit);
+        check!(sink.manifests.lock().expect("manifest lock").len() == 1);
+    }
+
+    /// Checks that a loop wrote one block and committed partition 0 through
+    /// offset 11 (next offset 12) in a single commit call.
+    fn check_one_flush_committed_through_offset_12(
+        result: &super::CompactionLoopResult,
+        commit: &RecordingCommitSync,
+    ) {
         check!(result.writes == 1);
         check!(
             result.committed_offsets
@@ -1863,7 +1895,6 @@ overrides:
                 }]
         );
         check!(commit.calls.lock().expect("commit calls lock").len() == 1);
-        check!(sink.manifests.lock().expect("manifest lock").len() == 1);
     }
 
     struct FixedClock {
@@ -1892,8 +1923,7 @@ overrides:
     #[tokio::test]
     async fn run_compactor_loop_age_flush_uses_injected_clock() {
         // With a finite age, the buffer flushes only after the clock advances past it.
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let commit = RecordingCommitSync::default();
         let committer = super::CompactionConsumerCommitter::new(&commit, crate::WAL_TOPIC);
@@ -1940,15 +1970,7 @@ overrides:
         .expect("run compactor loop with clock");
 
         // Both records land in one age-triggered block; commit through offset 11 -> 12.
-        check!(result.writes == 1);
-        check!(
-            result.committed_offsets
-                == vec![super::CompactionPartitionOffset {
-                    partition: super::PartitionIndex(0),
-                    offset: super::Offset(12),
-                }]
-        );
-        check!(commit.calls.lock().expect("commit calls lock").len() == 1);
+        check_one_flush_committed_through_offset_12(&result, &commit);
         let manifests = sink.manifests.lock().expect("manifest lock");
         assert!(manifests.len() == 1);
         check!(manifests[0].first_offset == 10);
@@ -1957,8 +1979,7 @@ overrides:
 
     #[tokio::test]
     async fn run_compactor_consumer_loop_uses_one_consumer_for_poll_and_commit() {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let mut consumer = poll_and_commit(vec![
             vec![wal_consumer_record(WalPosition {
@@ -2066,8 +2087,7 @@ overrides:
     #[tokio::test]
     async fn run_compactor_consumer_loop_accumulates_multiple_polls_into_one_block() {
         // Two below-threshold polls accumulate into ONE block and commit once.
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let block_writer = krabka_blockstore::BlockWriter::new(object_store);
+        let block_writer = in_memory_block_writer();
         let sink = RecordingIndexSink::default();
         let mut consumer = poll_and_commit(vec![
             vec![wal_consumer_record(WalPosition {

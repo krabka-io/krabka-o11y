@@ -17,20 +17,12 @@ mod tests {
     use prost::Message;
 
     use super::*;
-    use crate::wire::test_support::{check_up_sample_with_trace_exemplar, snappy};
+    use crate::wire::test_support::{check_up_sample_with_trace_exemplar, snappy, up_v1_series};
 
     #[test]
     fn decodes_v1_samples_and_exemplars() {
         let req = pb::v1::WriteRequest {
             timeseries: vec![pb::v1::TimeSeries {
-                labels: vec![pb::v1::Label {
-                    name: "__name__".into(),
-                    value: "up".into(),
-                }],
-                samples: vec![pb::v1::Sample {
-                    value: 1.0,
-                    timestamp: 1000,
-                }],
                 exemplars: vec![pb::v1::Exemplar {
                     labels: vec![pb::v1::Label {
                         name: "trace_id".into(),
@@ -39,7 +31,10 @@ mod tests {
                     value: 2.0,
                     timestamp: 1100,
                 }],
-                histograms: Vec::new(),
+                ..up_v1_series(pb::v1::Sample {
+                    value: 1.0,
+                    timestamp: 1000,
+                })
             }],
             metadata: Vec::new(),
         };

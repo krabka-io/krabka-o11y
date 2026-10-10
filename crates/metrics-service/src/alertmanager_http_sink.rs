@@ -174,32 +174,53 @@ impl AlertmanagerHttpSink {
     }
 }
 
-#[async_trait::async_trait]
-impl AlertmanagerSink for AlertmanagerHttpSink {
-    fn template_external_labels(&self) -> krabka_blockstore::Labels {
-        self.alert_templates.external_labels()
-    }
-
-    fn template_external_url(&self, alert_name: &str) -> String {
-        self.alert_templates.external_url(alert_name)
-    }
-
-    async fn dispatch_alerts(
+impl AlertmanagerHttpSink {
+    async fn dispatch_batch(
         &self,
+        tenant: Option<&str>,
         alerts: Vec<krabka_promql::AlertmanagerAlert>,
     ) -> Result<(), RulerWalError> {
-        self.deliver(None, alerts)
-            .await
-            .map_err(|error| RulerWalError::Append(error.to_string()))
-    }
-
-    async fn dispatch_alerts_for_tenant(
-        &self,
-        tenant: &krabka_blockstore::TenantId,
-        alerts: Vec<krabka_promql::AlertmanagerAlert>,
-    ) -> Result<(), RulerWalError> {
-        self.deliver(Some(tenant.as_str()), alerts)
+        self.deliver(tenant, alerts)
             .await
             .map_err(|error| RulerWalError::Append(error.to_string()))
     }
 }
+
+/// Implements [`AlertmanagerSink`] for a sink type that has an
+/// `alert_templates: AlertTemplateDefaults` field and an inherent
+/// `async fn dispatch_batch(&self, Option<&str>, Vec<AlertmanagerAlert>)`.
+///
+/// A blanket impl over a local helper trait is not possible because
+/// `AlertmanagerSink` is foreign to this crate.
+macro_rules! impl_alertmanager_sink {
+    ($sink:ty) => {
+        #[async_trait::async_trait]
+        impl AlertmanagerSink for $sink {
+            fn template_external_labels(&self) -> krabka_blockstore::Labels {
+                self.alert_templates.external_labels()
+            }
+
+            fn template_external_url(&self, alert_name: &str) -> String {
+                self.alert_templates.external_url(alert_name)
+            }
+
+            async fn dispatch_alerts(
+                &self,
+                alerts: Vec<krabka_promql::AlertmanagerAlert>,
+            ) -> Result<(), RulerWalError> {
+                self.dispatch_batch(None, alerts).await
+            }
+
+            async fn dispatch_alerts_for_tenant(
+                &self,
+                tenant: &krabka_blockstore::TenantId,
+                alerts: Vec<krabka_promql::AlertmanagerAlert>,
+            ) -> Result<(), RulerWalError> {
+                self.dispatch_batch(Some(tenant.as_str()), alerts).await
+            }
+        }
+    };
+}
+pub(crate) use impl_alertmanager_sink;
+
+impl_alertmanager_sink!(AlertmanagerHttpSink);

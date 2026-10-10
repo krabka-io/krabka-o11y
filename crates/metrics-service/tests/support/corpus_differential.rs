@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::{
     promql_corpus::{self, CorpusCase, PromqlCorpus, QueryKind},
-    upstream_http::{RemoteWrite, TestResult, post_remote_write},
+    upstream_http::{RemoteWrite, TestResult, post_remote_write, wait_for_non_empty_result},
 };
 
 /// Samples per `remote_write` request.
@@ -164,16 +164,12 @@ impl PromApi<'_> {
         query: &str,
         at_ms: i64,
     ) -> TestResult {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while std::time::Instant::now() < deadline {
-            let json = self.query_instant(client, query, at_ms).await?;
-            if json["data"]["result"]
-                .as_array()
-                .is_some_and(|result| !result.is_empty())
-            {
-                return Ok(());
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        if wait_for_non_empty_result(std::time::Duration::from_secs(30), || {
+            self.query_instant(client, query, at_ms)
+        })
+        .await?
+        {
+            return Ok(());
         }
         Err(format!("query `{query}` did not become non-empty on {}", self.base).into())
     }

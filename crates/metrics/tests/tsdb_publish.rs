@@ -39,6 +39,59 @@ const RECORD_PREFIX: &str = "mimir-block-uploads";
 const FIXTURE_SHA256: &str = "62593eb43039a3ec287a9d7c86438e77741886b170bf178933676504148f1236";
 
 /// The fixture decoded with or without its tombstones, and its content hash.
+/// The fixture import into a fresh store, stopped by a crash at one write
+/// and left as that crash left it.
+struct InterruptedImport {
+    store: Arc<dyn ObjectStore>,
+    block: DecodedTsdbBlock,
+    sha256: String,
+    /// The record the import would have published.
+    record: TsdbImportRecord,
+}
+
+impl InterruptedImport {
+    async fn stop_at(crash_point: CrashPoint) -> Self {
+        let (block, sha256) = fixture_block(true);
+        let record = expected_record(FIXTURE_ULID, &sha256, &block);
+        let crashing = Arc::new(CrashingStore::default());
+        let store: Arc<dyn ObjectStore> = crashing.clone();
+        crashing.crash_at(Some(crash_point));
+        publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
+            .await
+            .expect_err("the process stops at the crash point");
+        crashing.crash_at(None);
+        Self {
+            store,
+            block,
+            sha256,
+            record,
+        }
+    }
+}
+
+/// A store that holds the tombstoned fixture block, published under
+/// [`FIXTURE_ULID`].
+struct PublishedFixture {
+    store: Arc<dyn ObjectStore>,
+    block: DecodedTsdbBlock,
+    sha256: String,
+}
+
+impl PublishedFixture {
+    async fn publish() -> Self {
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let (block, sha256) = fixture_block(true);
+        publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
+            .await
+            .expect("the first import publishes");
+        Self {
+            store,
+            block,
+            sha256,
+        }
+    }
+}
+
 fn fixture_block(with_tombstones: bool) -> (DecodedTsdbBlock, String) {
     let files = fixture_files();
     let segments = [files.chunks.as_slice()];
@@ -257,11 +310,11 @@ async fn an_import_publishes_blocks_that_read_back_as_the_decoded_rows() {
 
 #[tokio::test]
 async fn a_repeated_import_reports_the_existing_content_and_writes_nothing() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let (block, sha256) = fixture_block(true);
-    publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
-        .await
-        .expect("the first import publishes");
+    let PublishedFixture {
+        store,
+        block,
+        sha256,
+    } = PublishedFixture::publish().await;
     let before = all_keys(store.as_ref()).await;
 
     let outcomes = [
@@ -292,11 +345,11 @@ async fn a_repeated_import_reports_the_existing_content_and_writes_nothing() {
 
 #[tokio::test]
 async fn other_content_under_an_imported_ulid_conflicts_and_writes_nothing() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let (block, sha256) = fixture_block(true);
-    publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
-        .await
-        .expect("the first import publishes");
+    let PublishedFixture {
+        store,
+        block: _,
+        sha256,
+    } = PublishedFixture::publish().await;
     let before = all_keys(store.as_ref()).await;
     let (other_block, other_sha256) = fixture_block(false);
 
@@ -506,12 +559,12 @@ async fn an_import_that_stopped_between_its_manifests_is_finished_by_the_next_im
 
 #[tokio::test]
 async fn a_published_import_is_not_restored_after_compaction_removed_its_manifests() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let (block, sha256) = fixture_block(true);
+    let PublishedFixture {
+        store,
+        block,
+        sha256,
+    } = PublishedFixture::publish().await;
     let record = expected_record(FIXTURE_ULID, &sha256, &block);
-    publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
-        .await
-        .expect("the first import publishes");
     // Compaction merges the imported blocks into other blocks and deletes
     // them with their manifests.
     for object in &record.objects {
@@ -696,18 +749,16 @@ async fn an_import_that_stops_at_any_write_is_live_whole_or_not_at_all() {
 
 #[tokio::test]
 async fn retention_and_the_orphan_sweep_keep_an_unpublished_import() {
-    let (block, sha256) = fixture_block(true);
-    let record = expected_record(FIXTURE_ULID, &sha256, &block);
-    let crashing = Arc::new(CrashingStore::default());
-    let store: Arc<dyn ObjectStore> = crashing.clone();
-    crashing.crash_at(Some(CrashPoint {
+    let InterruptedImport {
+        store,
+        block,
+        sha256: _,
+        record,
+    } = InterruptedImport::stop_at(CrashPoint {
         key_part: "/_published".to_owned(),
         occurrence: 1,
-    }));
-    publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
-        .await
-        .expect_err("the process stops before the marker");
-    crashing.crash_at(None);
+    })
+    .await;
     let before = keys_under(store.as_ref(), MANIFEST_PREFIX).await;
 
     // A one-second window expires every live block of the fixture.
@@ -732,18 +783,16 @@ async fn retention_and_the_orphan_sweep_keep_an_unpublished_import() {
 
 #[tokio::test]
 async fn an_import_that_stopped_after_its_marker_is_not_published_again() {
-    let (block, sha256) = fixture_block(true);
-    let record = expected_record(FIXTURE_ULID, &sha256, &block);
-    let crashing = Arc::new(CrashingStore::default());
-    let store: Arc<dyn ObjectStore> = crashing.clone();
-    crashing.crash_at(Some(CrashPoint {
+    let InterruptedImport {
+        store,
+        block,
+        sha256,
+        record,
+    } = InterruptedImport::stop_at(CrashPoint {
         key_part: "/by-sha256/".to_owned(),
         occurrence: 2,
-    }));
-    publish_tsdb_import(&store, target(FIXTURE_ULID, &sha256), &block)
-        .await
-        .expect_err("the process stops before the record is published");
-    crashing.crash_at(None);
+    })
+    .await;
     // Compaction merges the live blocks into other blocks and deletes them
     // with their manifests.
     for object in &record.objects {

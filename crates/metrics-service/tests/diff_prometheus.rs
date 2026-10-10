@@ -176,14 +176,10 @@ async fn krabka_remote_write_endpoint_feeds_query_store() -> TestResult {
 async fn prometheus_compliance_corpus_matches_krabka() -> TestResult {
     let corpus = promql_corpus::promql_corpus();
     let client = reqwest::Client::new();
-    let prometheus = start_prometheus().await?;
-    let prometheus_base = mapped_base_url(&prometheus, PROMETHEUS_PORT).await?;
-    wait_for_http_ok(
-        &client,
-        &format!("{prometheus_base}/-/ready"),
-        Duration::from_secs(15),
-    )
-    .await?;
+    let ReadyPrometheus {
+        container: _prometheus,
+        base_url: prometheus_base,
+    } = start_ready_prometheus(&client).await?;
 
     let krabka = start_krabka_query_server().await?;
     prometheus_diff(&krabka.base_url, &prometheus_base)
@@ -226,14 +222,10 @@ async fn upstream_promql_http_compliance_matches_krabka() -> TestResult {
     std::fs::metadata(&executable)?;
     std::fs::read(&queries)?;
     let client = reqwest::Client::new();
-    let prometheus = start_prometheus().await?;
-    let prometheus_base = mapped_base_url(&prometheus, PROMETHEUS_PORT).await?;
-    wait_for_http_ok(
-        &client,
-        &format!("{prometheus_base}/-/ready"),
-        Duration::from_secs(15),
-    )
-    .await?;
+    let ReadyPrometheus {
+        container: _prometheus,
+        base_url: prometheus_base,
+    } = start_ready_prometheus(&client).await?;
     let krabka = start_krabka_query_server().await?;
     for batch in compliance_fixture::batches() {
         post_remote_write(
@@ -451,6 +443,28 @@ fn write_compliance_report(
         }))?,
     )?;
     Ok(counts)
+}
+
+/// A started Prometheus container that answers `/-/ready`.
+struct ReadyPrometheus {
+    /// Held so the container lives as long as the test that uses it.
+    container: testcontainers::ContainerAsync<GenericImage>,
+    base_url: String,
+}
+
+async fn start_ready_prometheus(client: &reqwest::Client) -> TestResult<ReadyPrometheus> {
+    let container = start_prometheus().await?;
+    let base_url = mapped_base_url(&container, PROMETHEUS_PORT).await?;
+    wait_for_http_ok(
+        client,
+        &format!("{base_url}/-/ready"),
+        Duration::from_secs(15),
+    )
+    .await?;
+    Ok(ReadyPrometheus {
+        container,
+        base_url,
+    })
 }
 
 async fn start_prometheus() -> TestResult<testcontainers::ContainerAsync<GenericImage>> {

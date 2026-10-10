@@ -2,10 +2,34 @@
 
 use assert2::check;
 
-use super::{DecodedSample, DecodedSeries};
+use super::{DecodedSample, DecodedSeries, pb};
 
 pub fn snappy(body: &[u8]) -> Vec<u8> {
     snap::raw::Encoder::new().compress_vec(body).unwrap()
+}
+
+/// A v1 series named `up` that holds only `sample`.
+pub fn up_v1_series(sample: pb::v1::Sample) -> pb::v1::TimeSeries {
+    pb::v1::TimeSeries {
+        labels: vec![pb::v1::Label {
+            name: "__name__".into(),
+            value: "up".into(),
+        }],
+        samples: vec![sample],
+        ..Default::default()
+    }
+}
+
+/// A v2 request whose one series is named `up` and holds only `sample`.
+pub fn up_v2_request(sample: pb::v2::Sample) -> pb::v2::Request {
+    pb::v2::Request {
+        symbols: vec![String::new(), "__name__".into(), "up".into()],
+        timeseries: vec![pb::v2::TimeSeries {
+            labels_refs: vec![1, 2],
+            samples: vec![sample],
+            ..Default::default()
+        }],
+    }
 }
 
 // Checks the one series both decoders' basic case writes: `up` at 1000 with

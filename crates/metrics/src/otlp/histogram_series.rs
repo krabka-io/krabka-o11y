@@ -1,41 +1,33 @@
 use super::{
-    AggregationTemporality, DecodedSeries, DeltaAccumulator, Histogram, HistogramFamily, KeyValue,
-    Metric, OtlpError, PointFamily, TranslationStrategy, accumulate_delta_float_series,
-    classic_histogram_series,
+    DecodedSeries, DeltaAccumulator, Histogram, HistogramFamily, HistogramScope, OtlpError,
+    PointFamily, accumulate_delta_float_series, classic_histogram_series,
 };
 
 pub(crate) fn histogram_series(
-    metric: &Metric,
+    scope: &HistogramScope<'_>,
     histogram: &Histogram,
-    resource_attributes: &[KeyValue],
-    strategy: TranslationStrategy,
     mut accumulator: Option<&mut DeltaAccumulator>,
 ) -> Result<Vec<DecodedSeries>, OtlpError> {
-    let HistogramFamily { name, metadata } = HistogramFamily::of(metric, strategy);
+    let HistogramFamily { name, metadata } = HistogramFamily::of(scope.metric, scope.strategy);
     let mut out = Vec::new();
     for point in &histogram.data_points {
         let mut point_series = classic_histogram_series(
             point,
             &PointFamily {
                 name: &name,
-                resource_attributes,
+                resource_attributes: scope.resource_attributes,
                 metadata: Some(&metadata),
-                strategy,
+                strategy: scope.strategy,
             },
         )?;
-        if histogram.aggregation_temporality == AggregationTemporality::Delta as i32 {
-            let Some(accumulator) = accumulator.as_deref_mut() else {
-                return Err(OtlpError::DeltaUnsupported(metric.name.clone()));
-            };
+        if let Some(accumulator) =
+            scope.point_accumulator(histogram.aggregation_temporality, &mut accumulator)?
+        {
             accumulate_delta_float_series(
                 &mut point_series,
                 point.start_time_unix_nano,
                 accumulator,
             );
-        } else if histogram.aggregation_temporality != AggregationTemporality::Cumulative as i32
-            && histogram.aggregation_temporality != AggregationTemporality::Unspecified as i32
-        {
-            return Err(OtlpError::DeltaUnsupported(metric.name.clone()));
         }
         out.extend(point_series);
     }
