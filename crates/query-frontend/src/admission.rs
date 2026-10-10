@@ -363,6 +363,7 @@ mod tests {
     use std::time::Duration;
 
     use assert2::assert;
+    use tokio::task::JoinHandle;
 
     use super::*;
 
@@ -381,14 +382,30 @@ mod tests {
         }
     }
 
+    fn spawn_acquire(
+        controller: &Arc<AdmissionController>,
+    ) -> JoinHandle<Result<AdmissionPermit, AdmissionError>> {
+        let controller = Arc::clone(controller);
+        tokio::spawn(async move { controller.acquire("a".into(), 1, 10).await })
+    }
+
+    async fn controller_with_queued_waiter(
+        limits: AdmissionLimits,
+    ) -> (
+        Arc<AdmissionController>,
+        AdmissionPermit,
+        JoinHandle<Result<AdmissionPermit, AdmissionError>>,
+    ) {
+        let controller = AdmissionController::new(limits);
+        let active = controller.acquire("a".into(), 1, 10).await.unwrap();
+        let waiting = spawn_acquire(&controller);
+        tokio::task::yield_now().await;
+        (controller, active, waiting)
+    }
+
     #[tokio::test]
     async fn queue_is_bounded_and_releases_capacity() {
-        let controller = AdmissionController::new(limits());
-        let active = controller.acquire("a".into(), 1, 10).await.unwrap();
-        let waiting_controller = Arc::clone(&controller);
-        let waiting =
-            tokio::spawn(async move { waiting_controller.acquire("a".into(), 1, 10).await });
-        tokio::task::yield_now().await;
+        let (controller, active, waiting) = controller_with_queued_waiter(limits()).await;
 
         assert!(matches!(
             controller.acquire("a".into(), 1, 10).await,
@@ -410,12 +427,7 @@ mod tests {
     async fn a_busy_tenant_does_not_block_another_tenant() {
         let mut fair_limits = limits();
         fair_limits.max_queued_requests = 2;
-        let controller = AdmissionController::new(fair_limits);
-        let active = controller.acquire("a".into(), 1, 10).await.unwrap();
-        let waiting_controller = Arc::clone(&controller);
-        let waiting =
-            tokio::spawn(async move { waiting_controller.acquire("a".into(), 1, 10).await });
-        tokio::task::yield_now().await;
+        let (controller, active, waiting) = controller_with_queued_waiter(fair_limits).await;
 
         let tenant_b = tokio::time::timeout(
             Duration::from_secs(1),
@@ -433,12 +445,7 @@ mod tests {
     async fn one_tenant_cannot_fill_the_global_queue() {
         let mut fair_limits = limits();
         fair_limits.max_queued_requests = 2;
-        let controller = AdmissionController::new(fair_limits);
-        let active = controller.acquire("a".into(), 1, 10).await.unwrap();
-        let waiting_controller = Arc::clone(&controller);
-        let waiting =
-            tokio::spawn(async move { waiting_controller.acquire("a".into(), 1, 10).await });
-        tokio::task::yield_now().await;
+        let (controller, active, waiting) = controller_with_queued_waiter(fair_limits).await;
 
         assert!(matches!(
             controller.acquire("a".into(), 1, 10).await,
@@ -452,18 +459,11 @@ mod tests {
 
     #[tokio::test]
     async fn canceling_a_waiter_removes_it_from_the_queue() {
-        let controller = AdmissionController::new(limits());
-        let active = controller.acquire("a".into(), 1, 10).await.unwrap();
-        let canceled_controller = Arc::clone(&controller);
-        let canceled =
-            tokio::spawn(async move { canceled_controller.acquire("a".into(), 1, 10).await });
-        tokio::task::yield_now().await;
+        let (controller, active, canceled) = controller_with_queued_waiter(limits()).await;
         canceled.abort();
         assert!(matches!(canceled.await, Err(error) if error.is_cancelled()));
 
-        let replacement_controller = Arc::clone(&controller);
-        let replacement =
-            tokio::spawn(async move { replacement_controller.acquire("a".into(), 1, 10).await });
+        let replacement = spawn_acquire(&controller);
         tokio::task::yield_now().await;
         drop(active);
         assert!(replacement.await.unwrap().is_ok());

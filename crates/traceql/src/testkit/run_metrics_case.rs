@@ -117,6 +117,8 @@ fn normalize_metrics(value: &mut Value) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use assert2::assert;
 
     use super::*;
@@ -139,11 +141,11 @@ mod tests {
         engine.opts.max_exemplars = 1;
         // The fixture has one svc=x span: trace 2, span 1, start 1001ns.
         let expected = vec![TraceMetricSeries {
-            label_types: Default::default(),
+            label_types: BTreeMap::default(),
             labels: vec![("span.svc".into(), "x".into())],
             points: vec![(0, 1.0), (10_000, 0.0)],
             exemplars: vec![TraceMetricExemplar {
-                label_types: Default::default(),
+                label_types: BTreeMap::default(),
                 labels: vec![
                     (
                         "trace:id".into(),
@@ -201,11 +203,11 @@ mod tests {
     #[test]
     fn nonfinite_values_use_explicit_tokens_and_reject_null_or_finite_values() {
         let series = [TraceMetricSeries {
-            label_types: Default::default(),
+            label_types: BTreeMap::default(),
             labels: Vec::new(),
             points: vec![(0, f64::NAN), (1, f64::INFINITY), (2, f64::NEG_INFINITY)],
             exemplars: vec![TraceMetricExemplar {
-                label_types: Default::default(),
+                label_types: BTreeMap::default(),
                 labels: Vec::new(),
                 value: f64::NAN,
                 timestamp_ns: 0,

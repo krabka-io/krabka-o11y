@@ -541,13 +541,13 @@ mod run_corpus_file;
 mod run_metrics_case;
 mod run_search_case;
 mod run_trace_by_id_case;
-mod span;
+pub(crate) mod span;
 mod span_ids;
 mod trace_ids;
 
 use case::Case;
 pub use case_result::CaseResult;
-use engine::engine;
+pub use engine::engine;
 use file_name::file_name;
 use parse_cases::parse_cases;
 use parse_field::parse_field;

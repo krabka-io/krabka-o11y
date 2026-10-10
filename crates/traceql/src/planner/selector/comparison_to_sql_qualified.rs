@@ -1,7 +1,4 @@
-use super::{
-    ComparisonOp, Field, Result, TraceqlError, Value, anchored, comparison_value_sql,
-    qualified_field_ident, string_lit,
-};
+use super::{ComparisonOp, Field, Result, Value, column_comparison_sql, qualified_field_ident};
 
 pub(crate) fn comparison_to_sql_qualified(
     field: &Field,
@@ -11,25 +8,5 @@ pub(crate) fn comparison_to_sql_qualified(
     parent_alias: &str,
 ) -> Result<String> {
     let col = qualified_field_ident(field, span_alias, parent_alias);
-    Ok(match (op, value) {
-        (ComparisonOp::Eq, Value::Nil) => format!("{col} IS NULL"),
-        (ComparisonOp::Neq, Value::Nil) => format!("{col} IS NOT NULL"),
-        (ComparisonOp::Re, Value::Str(pattern)) => {
-            format!("regexp_like({col}, {})", string_lit(&anchored(pattern)))
-        }
-        (ComparisonOp::Nre, Value::Str(pattern)) => {
-            format!("NOT regexp_like({col}, {})", string_lit(&anchored(pattern)))
-        }
-        (ComparisonOp::Eq, v) => format!("{col} = {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Neq, v) => format!("{col} != {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Lt, v) => format!("{col} < {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Lte, v) => format!("{col} <= {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Gt, v) => format!("{col} > {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Gte, v) => format!("{col} >= {}", comparison_value_sql(field, v)?),
-        (ComparisonOp::Re | ComparisonOp::Nre, _) => {
-            return Err(TraceqlError::Plan(
-                "regex comparison requires string value".into(),
-            ));
-        }
-    })
+    column_comparison_sql(&col, field, op, value)
 }

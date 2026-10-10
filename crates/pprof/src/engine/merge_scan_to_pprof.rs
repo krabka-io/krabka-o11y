@@ -1,8 +1,7 @@
 use super::{
-    Arc, Array, AsArray, BTreeMap, BinaryArray, Frame, Int64Type, PCOL_SPAN_ID, PCOL_STACKTRACE_ID,
-    PCOL_STACKTRACE_PARTITION, PCOL_TRACE_ID, PCOL_VALUE, PprofProfile, ProfileError, ProfileType,
-    ResolvedLocation, SampleSelector, UInt64Type, resolved_to_pprof_with_max_nodes,
-    stack_matches_call_sites,
+    Arc, Array, AsArray, BTreeMap, BinaryArray, Frame, Int64Type, PprofProfile, ProfileError,
+    ProfileType, ResolvedLocation, SampleSelector, UInt64Type, resolved_to_pprof_with_max_nodes,
+    sample_selector_sql, stack_matches_call_sites,
 };
 
 pub(crate) async fn merge_scan_to_pprof(
@@ -12,28 +11,7 @@ pub(crate) async fn merge_scan_to_pprof(
     sample_selector: SampleSelector<'_>,
     call_sites: &[String],
 ) -> Result<PprofProfile, ProfileError> {
-    let span_where = match sample_selector {
-        SampleSelector::Span(ids) => format!(
-            " WHERE {PCOL_SPAN_ID} IN ({})",
-            ids.iter().map(u64::to_string).collect::<Vec<_>>().join(",")
-        ),
-        SampleSelector::None | SampleSelector::Trace(_) => String::new(),
-    };
-    let sql = if matches!(sample_selector, SampleSelector::Trace(_)) {
-        format!(
-            "SELECT {PCOL_STACKTRACE_PARTITION}, {PCOL_STACKTRACE_ID}, {PCOL_VALUE}, {PCOL_TRACE_ID} \
-             FROM {} ORDER BY {PCOL_STACKTRACE_PARTITION}, {PCOL_STACKTRACE_ID}",
-            scan.samples_table
-        )
-    } else {
-        format!(
-            "SELECT {PCOL_STACKTRACE_PARTITION}, {PCOL_STACKTRACE_ID}, SUM({PCOL_VALUE}) AS v \
-             FROM {}{span_where} \
-             GROUP BY {PCOL_STACKTRACE_PARTITION}, {PCOL_STACKTRACE_ID} \
-             ORDER BY {PCOL_STACKTRACE_PARTITION}, {PCOL_STACKTRACE_ID}",
-            scan.samples_table
-        )
-    };
+    let sql = sample_selector_sql(scan, sample_selector);
     let batches = scan
         .ctx
         .sql(&sql)

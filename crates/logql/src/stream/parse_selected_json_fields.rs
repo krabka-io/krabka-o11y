@@ -26,7 +26,7 @@ pub(crate) fn parse_selected_json_fields(
     // duplicate object keys, or the text following a complete root value.
     let mut parser = serde_json::Deserializer::from_str(line);
     if let Ok(value) = <&RawValue>::deserialize(&mut parser) {
-        let mut selected = config
+        let selected = config
             .extractions()
             .iter()
             .enumerate()
@@ -40,16 +40,8 @@ pub(crate) fn parse_selected_json_fields(
                     )
                 })
             })
-            .collect::<Vec<_>>();
-        selected.sort_by_key(|(position, index, _)| (*position, *index));
-        for (_, index, value) in selected {
-            fields.insert(config.extractions()[index].destination().into(), value);
-        }
-        for extraction in config.extractions() {
-            if !has_existing(extraction.destination()) {
-                insert_raw_parsed_field(fields, extraction.destination(), String::new());
-            }
-        }
+            .collect();
+        insert_selected_fields(fields, config, selected, &has_existing);
         return;
     }
 
@@ -79,12 +71,23 @@ pub(crate) fn parse_selected_json_fields(
         insert_raw_parsed_field(fields, "__error__", "JSONParserErr".into());
         insert_raw_parsed_field(fields, "__error_details__", details);
     }
-    let mut selected = selection
+    let selected = selection
         .values
         .into_iter()
         .enumerate()
         .filter_map(|(index, value)| value.map(|(position, value)| (position, index, value)))
-        .collect::<Vec<_>>();
+        .collect();
+    insert_selected_fields(fields, config, selected, &has_existing);
+}
+
+/// Inserts the selected values in document order, then fills every requested
+/// destination that is still absent with an empty value.
+fn insert_selected_fields<P: Ord + Copy>(
+    fields: &mut Labels,
+    config: &JsonParserConfig,
+    mut selected: Vec<(P, usize, String)>,
+    has_existing: &impl Fn(&str) -> bool,
+) {
     selected.sort_by_key(|(position, index, _)| (*position, *index));
     for (_, index, value) in selected {
         fields.insert(config.extractions()[index].destination().into(), value);

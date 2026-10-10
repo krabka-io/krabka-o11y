@@ -936,6 +936,7 @@ mod tests {
 
 mod anchored;
 mod collect_table;
+mod column_comparison_sql;
 mod comparison_to_sql;
 mod comparison_to_sql_qualified;
 mod comparison_value_sql;
@@ -973,6 +974,7 @@ mod value_sql;
 
 use anchored::anchored;
 use collect_table::collect_table;
+use column_comparison_sql::column_comparison_sql;
 pub(crate) use comparison_to_sql::comparison_to_sql;
 use comparison_to_sql_qualified::comparison_to_sql_qualified;
 use comparison_value_sql::comparison_value_sql;

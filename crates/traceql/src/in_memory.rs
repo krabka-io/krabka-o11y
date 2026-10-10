@@ -1934,7 +1934,6 @@ mod attr_data_type;
 mod attr_matches;
 mod attr_values_match;
 mod bool_matches;
-mod bytes_to_hex;
 mod child_count_for;
 mod collect_event_values;
 mod collect_link_values;
@@ -1983,7 +1982,6 @@ use attr_data_type::attr_data_type;
 use attr_matches::attr_matches;
 use attr_values_match::attr_values_match;
 use bool_matches::bool_matches;
-use bytes_to_hex::bytes_to_hex;
 use child_count_for::child_count_for;
 use collect_event_values::collect_event_values;
 use collect_link_values::collect_link_values;
@@ -2026,5 +2024,7 @@ use status_enum_value::status_enum_value;
 use stored_trace::StoredTrace;
 use string_matches::string_matches;
 use typed_value_parts::typed_value_parts;
+
+use crate::engine::bytes_to_hex::bytes_to_hex;
 
 mod raw_attribute_columns;

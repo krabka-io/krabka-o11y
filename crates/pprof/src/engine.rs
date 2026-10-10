@@ -387,8 +387,12 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn span_profile_filters_by_span_id() {
+    // Two samples of the same series: stack `a` (6 of 10) at 0 ms under span
+    // 111, and stack `b` (4 of 10) at the given timestamp and span.
+    fn span_profile_engine(
+        second_timestamp_ms: i64,
+        second_span_id: u64,
+    ) -> FlameEngine<InMemoryProfileStore> {
         let mut store = InMemoryProfileStore::new();
         let (stack_a, stack_b) = {
             let db = store.symbols_mut();
@@ -409,10 +413,15 @@ mod tests {
             vec![("svc".to_string(), "x".to_string())],
             (0, stack_b),
             (4, 10),
-            0,
-            222,
+            second_timestamp_ms,
+            second_span_id,
         );
-        let engine = FlameEngine::new(Arc::new(store), EngineOpts::default());
+        FlameEngine::new(Arc::new(store), EngineOpts::default())
+    }
+
+    #[tokio::test]
+    async fn span_profile_filters_by_span_id() {
+        let engine = span_profile_engine(0, 222);
 
         let fg = engine
             .select_merge_span_profile(("tenant-a", PT, "{}"), &[111], (0, 60_000), 0)
@@ -430,30 +439,7 @@ mod tests {
 
     #[tokio::test]
     async fn sharded_span_profile_matches_whole_range() {
-        let mut store = InMemoryProfileStore::new();
-        let (stack_a, stack_b) = {
-            let db = store.symbols_mut();
-            let a = intern_location(db, "a");
-            let b = intern_location(db, "b");
-            (db.intern_stacktrace(0, &[a]), db.intern_stacktrace(0, &[b]))
-        };
-        store.push_sample_with_total_and_span(
-            ("tenant-a", PT),
-            vec![("svc".to_string(), "x".to_string())],
-            (0, stack_a),
-            (6, 10),
-            0,
-            111,
-        );
-        store.push_sample_with_total_and_span(
-            ("tenant-a", PT),
-            vec![("svc".to_string(), "x".to_string())],
-            (0, stack_b),
-            (4, 10),
-            30_000,
-            111,
-        );
-        let engine = FlameEngine::new(Arc::new(store), EngineOpts::default());
+        let engine = span_profile_engine(30_000, 111);
         let whole = engine
             .select_merge_span_profile(("tenant-a", PT, "{}"), &[111], (0, 60_000), 0)
             .await
@@ -1035,6 +1021,20 @@ mod tests {
         FlameEngine::new(Arc::new(store), EngineOpts::default())
     }
 
+    // `series_fixture` summed by `service` at a 15s step.
+    fn series_fixture_by_service() -> Vec<Series> {
+        vec![
+            Series {
+                labels: vec![("service".to_string(), "api".to_string())],
+                points: vec![(0, 100.0), (30_000, 50.0)],
+            },
+            Series {
+                labels: vec![("service".to_string(), "web".to_string())],
+                points: vec![(0, 7.0)],
+            },
+        ]
+    }
+
     #[tokio::test]
     async fn select_series_sum_buckets_by_step_and_counts_total_once_per_profile() {
         let mut got = series_fixture()
@@ -1049,18 +1049,7 @@ mod tests {
             .unwrap();
         got.sort_by(|left, right| left.labels.cmp(&right.labels));
 
-        assert!(
-            got == vec![
-                Series {
-                    labels: vec![("service".to_string(), "api".to_string())],
-                    points: vec![(0, 100.0), (30_000, 50.0)],
-                },
-                Series {
-                    labels: vec![("service".to_string(), "web".to_string())],
-                    points: vec![(0, 7.0)],
-                },
-            ]
-        );
+        assert!(got == series_fixture_by_service());
     }
 
     #[tokio::test]
@@ -1143,18 +1132,7 @@ mod tests {
             .unwrap();
         got.sort_by(|left, right| left.labels.cmp(&right.labels));
 
-        assert!(
-            got == vec![
-                Series {
-                    labels: vec![("service".to_string(), "api".to_string())],
-                    points: vec![(0, 100.0), (30_000, 50.0)],
-                },
-                Series {
-                    labels: vec![("service".to_string(), "web".to_string())],
-                    points: vec![(0, 7.0)],
-                },
-            ]
-        );
+        assert!(got == series_fixture_by_service());
     }
 
     fn fractional_series_fixture() -> FlameEngine<InMemoryProfileStore> {
@@ -1324,6 +1302,7 @@ mod heatmap_points_from_totals;
 mod merge_scan_to_pprof;
 mod merge_scan_to_tree;
 mod merge_sql_to_tree;
+mod sample_selector_sql;
 mod series_buckets_from_stacktrace_selector;
 mod series_buckets_from_totals;
 mod stack_matches_call_sites;
@@ -1337,6 +1316,7 @@ use heatmap_points_from_totals::heatmap_points_from_totals;
 use merge_scan_to_pprof::merge_scan_to_pprof;
 use merge_scan_to_tree::merge_scan_to_tree;
 use merge_sql_to_tree::merge_sql_to_tree;
+use sample_selector_sql::sample_selector_sql;
 use series_buckets_from_stacktrace_selector::series_buckets_from_stacktrace_selector;
 use series_buckets_from_totals::series_buckets_from_totals;
 pub use stack_matches_call_sites::stack_matches_call_sites;

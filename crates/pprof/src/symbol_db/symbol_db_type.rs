@@ -259,46 +259,24 @@ impl SymbolDb {
     /// # Panics
     /// Panics if decoded profile indexes reference a missing string, mapping, function, or location that validation promised was present.
     pub fn resolve(&self, partition: u64, stacktrace_id: u32) -> Vec<Frame> {
-        if stacktrace_id == EMPTY_STACKTRACE_ID {
-            return Vec::new();
-        }
-        let Some(part) = self.partitions.get(&partition) else {
-            return Vec::new();
-        };
         let mut frames = Vec::new();
-        let mut current = i32::try_from(stacktrace_id).unwrap_or(-1);
-        for _ in 0..part.nodes.len() {
-            if current < 0 {
-                break;
+        for location in self.stack_locations(partition, stacktrace_id) {
+            for line in &location.lines {
+                let function = self
+                    .functions
+                    .get(usize::try_from(line.function_id).expect("u32 fits usize"));
+                frames.push(Frame {
+                    function: function
+                        .map_or(Cow::Borrowed(""), |func| {
+                            drop_go_type_parameters(self.string(func.name))
+                        })
+                        .into_owned(),
+                    file: function
+                        .map_or("", |func| self.string(func.filename))
+                        .to_string(),
+                    line: line.line,
+                });
             }
-            let Some(node) = part
-                .nodes
-                .get(usize::try_from(current).expect("non-negative"))
-            else {
-                break;
-            };
-            if let Some(location) = self
-                .locations
-                .get(usize::try_from(node.location_ref).expect("non-negative"))
-            {
-                for line in &location.lines {
-                    let function = self
-                        .functions
-                        .get(usize::try_from(line.function_id).expect("u32 fits usize"));
-                    frames.push(Frame {
-                        function: function
-                            .map_or(Cow::Borrowed(""), |func| {
-                                drop_go_type_parameters(self.string(func.name))
-                            })
-                            .into_owned(),
-                        file: function
-                            .map_or("", |func| self.string(func.filename))
-                            .to_string(),
-                        line: line.line,
-                    });
-                }
-            }
-            current = node.parent;
         }
         frames
     }
@@ -415,30 +393,11 @@ impl SymbolDb {
     /// # Panics
     /// Panics if decoded profile indexes reference a missing string, mapping, function, or location that validation promised was present.
     pub fn raw_locations(&self, partition: u64, stacktrace_id: u32) -> Vec<RawLocation> {
-        if stacktrace_id == EMPTY_STACKTRACE_ID {
-            return Vec::new();
-        }
-        let Some(part) = self.partitions.get(&partition) else {
-            return Vec::new();
-        };
         let mut locations = Vec::new();
-        let mut current = i32::try_from(stacktrace_id).unwrap_or(-1);
-        for _ in 0..part.nodes.len() {
-            if current < 0 {
-                break;
-            }
-            let Some(node) = part
-                .nodes
-                .get(usize::try_from(current).expect("non-negative"))
-            else {
-                break;
-            };
-            if let Some(location) = self
-                .locations
-                .get(usize::try_from(node.location_ref).expect("non-negative"))
-                && let Some(mapping) = self
-                    .mappings
-                    .get(usize::try_from(location.mapping_id).expect("u32 fits usize"))
+        for location in self.stack_locations(partition, stacktrace_id) {
+            if let Some(mapping) = self
+                .mappings
+                .get(usize::try_from(location.mapping_id).expect("u32 fits usize"))
             {
                 locations.push(RawLocation {
                     address: location.address,
@@ -447,9 +406,39 @@ impl SymbolDb {
                     build_id: self.string(mapping.build_id).to_string(),
                 });
             }
-            current = node.parent;
         }
         locations
+    }
+
+    /// The stored locations of a stack, leaf first. The walk visits at most
+    /// one node per partition node, stops at the root or at a dangling node
+    /// index, and skips a node whose location is missing.
+    fn stack_locations(
+        &self,
+        partition: u64,
+        stacktrace_id: u32,
+    ) -> impl Iterator<Item = &LocationRec> {
+        let nodes = if stacktrace_id == EMPTY_STACKTRACE_ID {
+            &[][..]
+        } else {
+            self.partitions
+                .get(&partition)
+                .map_or(&[][..], |part| part.nodes.as_slice())
+        };
+        let mut current = i32::try_from(stacktrace_id).unwrap_or(-1);
+        std::iter::from_fn(move || {
+            if current < 0 {
+                return None;
+            }
+            let node = nodes.get(usize::try_from(current).expect("non-negative"))?;
+            current = node.parent;
+            Some(node)
+        })
+        .take(nodes.len())
+        .filter_map(|node| {
+            self.locations
+                .get(usize::try_from(node.location_ref).expect("non-negative"))
+        })
     }
 
     /// Resolve every location that does not already carry function metadata.

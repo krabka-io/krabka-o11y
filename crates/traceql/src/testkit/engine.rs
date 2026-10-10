@@ -1,6 +1,9 @@
 use super::{Arc, AttrValue, EngineOpts, InMemorySpanStore, TraceqlEngine, span};
 
-pub(crate) fn engine() -> TraceqlEngine<InMemorySpanStore> {
+/// An engine over the fixture traces the golden corpus and the golden query
+/// suite assert against: tenant `t`, three traces of one to four spans.
+#[must_use]
+pub fn engine() -> TraceqlEngine<InMemorySpanStore> {
     let mut store = InMemorySpanStore::new();
     store.push_trace(
         "t",

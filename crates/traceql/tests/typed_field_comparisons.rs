@@ -64,8 +64,8 @@ impl Operator {
 
     fn model(self, lhs: &Sample, rhs: &Sample) -> bool {
         let ordering = match (lhs, rhs) {
-            (Sample::Integer(lhs), Sample::Integer(rhs)) => Some(lhs.cmp(rhs)),
-            (Sample::Float(lhs), Sample::Float(rhs)) => Some(lhs.cmp(rhs)),
+            (Sample::Integer(lhs), Sample::Integer(rhs))
+            | (Sample::Float(lhs), Sample::Float(rhs)) => Some(lhs.cmp(rhs)),
             (Sample::Integer(lhs), Sample::Float(rhs)) => {
                 (f64::from(*lhs) * 2.0).partial_cmp(&f64::from(*rhs))
             }

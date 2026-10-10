@@ -24,7 +24,7 @@ mod tests {
     use arrow::{array::Array, record_batch::RecordBatch};
     use assert2::{assert, check};
     use datafusion::arrow::array::AsArray;
-    use krabka_units::{Time, convert::TimeExt as _, nanos};
+    use krabka_units::nanos;
 
     use super::*;
     use crate::{
@@ -45,24 +45,79 @@ mod tests {
     ) -> InputSpan {
         InputSpan {
             trace_id,
-            span_id: [id; 8],
-            parent_span_id: parent.map(|p| [p; 8]),
-            name: name.into(),
-            kind: 0,
             start_unix_nano: i64::from(id),
-            duration: Time::from_nanos(duration_nanos),
-            status_code: 0,
-            status_message: String::new(),
-            instrumentation_name: String::new(),
-            instrumentation_version: String::new(),
-            attrs: attrs.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
-            events: Vec::new(),
-            links: Vec::new(),
+            ..crate::testkit::span::span(0, id, parent, name, duration_nanos, attrs)
         }
     }
 
     fn span(id: u8, name: &str, duration_nanos: i64, attrs: Vec<(&str, AttrValue)>) -> InputSpan {
         span_with_parent(id, None, [1; 16], name, duration_nanos, attrs)
+    }
+
+    const CACHE_SPAN_NAMES: [&str; 3] = ["cache-a", "cache-b", "cache-c"];
+
+    fn svc_span(id: u8, name: &str, duration_nanos: i64, svc: &str) -> InputSpan {
+        span(
+            id,
+            name,
+            duration_nanos,
+            vec![("svc", AttrValue::Str(svc.into()))],
+        )
+    }
+
+    fn store_with_traces(traces: Vec<Vec<InputSpan>>) -> InMemorySpanStore {
+        let mut store = InMemorySpanStore::new();
+        for spans in traces {
+            store.push_trace("t", "svc", "root", spans);
+        }
+        store
+    }
+
+    // Two `api` spans and one `db` span in one trace.
+    fn api_db_store() -> InMemorySpanStore {
+        store_with_traces(vec![vec![
+            svc_span(1, "api-a", 20, "api"),
+            svc_span(2, "api-b", 40, "api"),
+            svc_span(3, "db-a", 200, "db"),
+        ]])
+    }
+
+    // `api_db_store` plus three 10ns `cache` spans in the same trace.
+    fn api_db_cache_store() -> InMemorySpanStore {
+        store_with_traces(vec![vec![
+            svc_span(1, "api-a", 20, "api"),
+            svc_span(2, "api-b", 40, "api"),
+            svc_span(3, "db-a", 200, "db"),
+            svc_span(4, "cache-a", 10, "cache"),
+            svc_span(5, "cache-b", 10, "cache"),
+            svc_span(6, "cache-c", 10, "cache"),
+        ]])
+    }
+
+    // A fast `api` trace (20ns, 40ns) and a slow one (200ns, 400ns).
+    fn fast_slow_store() -> InMemorySpanStore {
+        let api_span = |id, trace: u8, name, duration_nanos| {
+            span_with_parent(
+                id,
+                None,
+                [trace; 16],
+                name,
+                duration_nanos,
+                vec![("svc", AttrValue::Str("api".into()))],
+            )
+        };
+        store_with_traces(vec![
+            vec![api_span(1, 1, "fast-a", 20), api_span(2, 1, "fast-b", 40)],
+            vec![api_span(3, 2, "slow-a", 200), api_span(4, 2, "slow-b", 400)],
+        ])
+    }
+
+    // Two attribute-less spans in one trace and one in another.
+    fn ungrouped_two_trace_store() -> InMemorySpanStore {
+        store_with_traces(vec![
+            vec![span(1, "api-a", 20, vec![]), span(2, "api-b", 40, vec![])],
+            vec![span_with_parent(3, None, [2; 16], "db-a", 200, vec![])],
+        ])
     }
 
     async fn execute(planned: PlannedSpanset) -> Result<Vec<RecordBatch>> {
@@ -780,17 +835,7 @@ mod tests {
 
     #[tokio::test]
     async fn preserving_stage_before_count_filter_is_ignored_for_search() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-            ],
-        );
+        let store = api_db_store();
 
         let out = planned(
             "{ .svc = \"api\" } | select(span:duration, span.svc) | count() > 1",
@@ -803,53 +848,7 @@ mod tests {
 
     #[tokio::test]
     async fn avg_filter_keeps_spans_from_passing_traces() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span_with_parent(
-                    1,
-                    None,
-                    [1; 16],
-                    "fast-a",
-                    20,
-                    vec![("svc", AttrValue::Str("api".into()))],
-                ),
-                span_with_parent(
-                    2,
-                    None,
-                    [1; 16],
-                    "fast-b",
-                    40,
-                    vec![("svc", AttrValue::Str("api".into()))],
-                ),
-            ],
-        );
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span_with_parent(
-                    3,
-                    None,
-                    [2; 16],
-                    "slow-a",
-                    200,
-                    vec![("svc", AttrValue::Str("api".into()))],
-                ),
-                span_with_parent(
-                    4,
-                    None,
-                    [2; 16],
-                    "slow-b",
-                    400,
-                    vec![("svc", AttrValue::Str("api".into()))],
-                ),
-            ],
-        );
+        let store = fast_slow_store();
 
         let out = planned("{ .svc = \"api\" } | avg(span:duration) > 100", &store)
             .await
@@ -859,53 +858,7 @@ mod tests {
 
     #[tokio::test]
     async fn avg_filter_then_by_preserves_spans_from_passing_traces() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span_with_parent(
-                    1,
-                    None,
-                    [1; 16],
-                    "fast-a",
-                    20,
-                    vec![("svc", AttrValue::Str("api".into()))],
-                ),
-                span_with_parent(
-                    2,
-                    None,
-                    [1; 16],
-                    "fast-b",
-                    40,
-                    vec![("svc", AttrValue::Str("api".into()))],
-                ),
-            ],
-        );
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span_with_parent(
-                    3,
-                    None,
-                    [2; 16],
-                    "slow-a",
-                    200,
-                    vec![("svc", AttrValue::Str("api".into()))],
-                ),
-                span_with_parent(
-                    4,
-                    None,
-                    [2; 16],
-                    "slow-b",
-                    400,
-                    vec![("svc", AttrValue::Str("api".into()))],
-                ),
-            ],
-        );
+        let store = fast_slow_store();
 
         let out = planned(
             "{ .svc = \"api\" } | avg(span:duration) > 100 | by(span.svc)",
@@ -918,17 +871,7 @@ mod tests {
 
     #[tokio::test]
     async fn avg_without_filter_preserves_matched_spans() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-            ],
-        );
+        let store = api_db_store();
 
         let out = planned("{ .svc = \"api\" } | avg(span:duration)", &store)
             .await
@@ -960,17 +903,7 @@ mod tests {
 
     #[tokio::test]
     async fn select_coalesce_preserves_matched_spans_for_search() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-            ],
-        );
+        let store = api_db_store();
 
         let out = planned(
             "{ .svc = \"api\" } | select(span:duration, span.svc) | coalesce()",
@@ -983,17 +916,7 @@ mod tests {
 
     #[tokio::test]
     async fn by_coalesce_preserves_matched_spans_for_search() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-            ],
-        );
+        let store = api_db_store();
 
         let out = planned("{ .svc != nil } | by(span.svc) | coalesce()", &store)
             .await
@@ -1003,17 +926,7 @@ mod tests {
 
     #[tokio::test]
     async fn by_without_aggregate_preserves_matched_spans_for_search() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-            ],
-        );
+        let store = api_db_store();
 
         let out = planned("{ .svc != nil } | by(span.svc)", &store)
             .await
@@ -1047,17 +960,7 @@ mod tests {
 
     #[tokio::test]
     async fn avg_by_coalesce_preserves_matched_spans_for_search() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-            ],
-        );
+        let store = api_db_store();
 
         let out = planned(
             "{ .svc != nil } | avg(span:duration) | by(span.svc) | coalesce()",
@@ -1070,47 +973,12 @@ mod tests {
 
     #[tokio::test]
     async fn count_by_topk_and_bottomk_keep_spans_from_ranked_groups() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-                span(
-                    4,
-                    "cache-a",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-                span(
-                    5,
-                    "cache-b",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-                span(
-                    6,
-                    "cache-c",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-            ],
-        );
+        let store = api_db_cache_store();
 
         let top = planned("{ .svc != nil } | count() | by(span.svc) | topk(1)", &store)
             .await
             .unwrap();
-        assert!(
-            names(&top)
-                == vec![
-                    "cache-a".to_string(),
-                    "cache-b".to_string(),
-                    "cache-c".to_string()
-                ]
-        );
+        assert!(names(&top) == CACHE_SPAN_NAMES);
 
         let bottom = planned(
             "{ .svc != nil } | count() | by(span.svc) | bottomk(1)",
@@ -1123,35 +991,7 @@ mod tests {
 
     #[tokio::test]
     async fn count_by_topk_filter_keeps_spans_from_ranked_passing_groups() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-                span(
-                    4,
-                    "cache-a",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-                span(
-                    5,
-                    "cache-b",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-                span(
-                    6,
-                    "cache-c",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-            ],
-        );
+        let store = api_db_cache_store();
 
         let out = planned(
             "{ .svc != nil } | count() | by(span.svc) | topk(2) > 2",
@@ -1159,47 +999,12 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(
-            names(&out)
-                == vec![
-                    "cache-a".to_string(),
-                    "cache-b".to_string(),
-                    "cache-c".to_string()
-                ]
-        );
+        assert!(names(&out) == CACHE_SPAN_NAMES);
     }
 
     #[tokio::test]
     async fn count_by_filter_topk_ranks_spans_from_passing_groups() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-                span(
-                    4,
-                    "cache-a",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-                span(
-                    5,
-                    "cache-b",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-                span(
-                    6,
-                    "cache-c",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-            ],
-        );
+        let store = api_db_cache_store();
 
         let out = planned(
             "{ .svc != nil } | count() by(span.svc) > 1 | topk(1)",
@@ -1207,47 +1012,12 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(
-            names(&out)
-                == vec![
-                    "cache-a".to_string(),
-                    "cache-b".to_string(),
-                    "cache-c".to_string()
-                ]
-        );
+        assert!(names(&out) == CACHE_SPAN_NAMES);
     }
 
     #[tokio::test]
     async fn count_filter_topk_by_ranks_passing_groups() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-                span(
-                    4,
-                    "cache-a",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-                span(
-                    5,
-                    "cache-b",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-                span(
-                    6,
-                    "cache-c",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-            ],
-        );
+        let store = api_db_cache_store();
 
         let out = planned(
             "{ .svc != nil } | count() > 1 | topk(1) | by(span.svc)",
@@ -1255,47 +1025,12 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(
-            names(&out)
-                == vec![
-                    "cache-a".to_string(),
-                    "cache-b".to_string(),
-                    "cache-c".to_string()
-                ]
-        );
+        assert!(names(&out) == CACHE_SPAN_NAMES);
     }
 
     #[tokio::test]
     async fn count_topk_filter_by_keeps_spans_from_ranked_passing_groups() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-                span(
-                    4,
-                    "cache-a",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-                span(
-                    5,
-                    "cache-b",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-                span(
-                    6,
-                    "cache-c",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-            ],
-        );
+        let store = api_db_cache_store();
 
         let out = planned(
             "{ .svc != nil } | count() | topk(2) > 2 | by(span.svc)",
@@ -1303,74 +1038,22 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(
-            names(&out)
-                == vec![
-                    "cache-a".to_string(),
-                    "cache-b".to_string(),
-                    "cache-c".to_string()
-                ]
-        );
+        assert!(names(&out) == CACHE_SPAN_NAMES);
     }
 
     #[tokio::test]
     async fn count_topk_by_keeps_spans_from_ranked_groups() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-                span(
-                    4,
-                    "cache-a",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-                span(
-                    5,
-                    "cache-b",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-                span(
-                    6,
-                    "cache-c",
-                    10,
-                    vec![("svc", AttrValue::Str("cache".into()))],
-                ),
-            ],
-        );
+        let store = api_db_cache_store();
 
         let top = planned("{ .svc != nil } | count() | topk(1) | by(span.svc)", &store)
             .await
             .unwrap();
-        assert!(
-            names(&top)
-                == vec![
-                    "cache-a".to_string(),
-                    "cache-b".to_string(),
-                    "cache-c".to_string()
-                ]
-        );
+        assert!(names(&top) == CACHE_SPAN_NAMES);
     }
 
     #[tokio::test]
     async fn count_topk_without_by_preserves_all_matched_spans() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![
-                span(1, "api-a", 20, vec![("svc", AttrValue::Str("api".into()))]),
-                span(2, "api-b", 40, vec![("svc", AttrValue::Str("api".into()))]),
-                span(3, "db-a", 200, vec![("svc", AttrValue::Str("db".into()))]),
-            ],
-        );
+        let store = api_db_store();
 
         let top = planned("{ .svc != nil } | count() | topk(1)", &store)
             .await
@@ -1387,19 +1070,7 @@ mod tests {
 
     #[tokio::test]
     async fn count_topk_filter_gates_ungrouped_ranked_spans() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![span(1, "api-a", 20, vec![]), span(2, "api-b", 40, vec![])],
-        );
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![span_with_parent(3, None, [2; 16], "db-a", 200, vec![])],
-        );
+        let store = ungrouped_two_trace_store();
 
         let out = planned("{ span:name != nil } | count() | topk(1) > 1", &store)
             .await
@@ -1409,19 +1080,7 @@ mod tests {
 
     #[tokio::test]
     async fn count_filter_topk_gates_ungrouped_ranked_spans() {
-        let mut store = InMemorySpanStore::new();
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![span(1, "api-a", 20, vec![]), span(2, "api-b", 40, vec![])],
-        );
-        store.push_trace(
-            "t",
-            "svc",
-            "root",
-            vec![span_with_parent(3, None, [2; 16], "db-a", 200, vec![])],
-        );
+        let store = ungrouped_two_trace_store();
 
         let out = planned("{ span:name != nil } | count() > 1 | topk(1)", &store)
             .await
@@ -1447,7 +1106,7 @@ mod grouped_rank_sql;
 mod is_inert_pipeline_stage;
 mod is_search_preserving_aggregate;
 mod is_search_preserving_pipeline_stage;
-mod nested_projection_matcher;
+pub(crate) mod nested_projection_matcher;
 mod pipeline_nested_projection_matchers;
 mod pipeline_to_sql;
 mod plan_query;
