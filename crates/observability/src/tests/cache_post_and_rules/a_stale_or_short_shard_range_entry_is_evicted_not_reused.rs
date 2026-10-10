@@ -157,7 +157,8 @@ async fn tenant_shard_range_cache_keeps_later_earlier_and_long_shards() {
                 .map(|block| (block.key.object_key(), block.clone()))
                 .collect::<BTreeMap<_, _>>();
             check!(
-                request.label_index == expected_labels && actual_blocks == expected_blocks,
+                request.label_index.as_ref() == &expected_labels
+                    && actual_blocks == expected_blocks,
                 "{case}: query [{start_ns}, {end_ns}]"
             );
             let (direct_labels, direct_blocks) = read_tenant_log_index_shards_from_object_store(

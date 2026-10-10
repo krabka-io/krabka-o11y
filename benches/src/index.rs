@@ -3,7 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use krabka_blockstore::{
-    BlockLevel, BlockMeta, Index, Labels, ShardedTraceBloom, TraceBlockStats, TraceIndex,
+    BlockLevel, BlockMeta, Index, LabelIndex, Labels, ShardedTraceBloom, TraceBlockStats,
+    TraceIndex,
 };
 
 use crate::Seeded;
@@ -80,6 +81,17 @@ pub fn populated_index(series: usize, blocks: usize) -> Index {
             fingerprints: fingerprints.clone(),
             level: BlockLevel::INGESTED,
         });
+    }
+    index
+}
+
+/// A logs label index with the same series as the metrics fixture.
+#[must_use]
+pub fn populated_log_label_index(series: usize) -> LabelIndex {
+    let mut index = LabelIndex::default();
+    for which in 0..series {
+        let labels = series_labels(which).into_iter().collect::<BTreeMap<_, _>>();
+        index.insert_series(TENANT, labels);
     }
     index
 }

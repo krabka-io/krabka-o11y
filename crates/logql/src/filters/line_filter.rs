@@ -1,6 +1,8 @@
+use std::borrow::Cow;
+
 use super::{IpMatcher, LineFilterOp, ParseError, Regex, line_matches_pattern};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 /// A substring, regular-expression, pattern, or IP filter over one log line.
 pub struct LineFilter {
     /// The operation applied to the line.
@@ -8,6 +10,7 @@ pub struct LineFilter {
     /// The original filter pattern.
     pub pattern: String,
     pub(crate) ip_matcher: Option<IpMatcher>,
+    compiled_regex: Option<(String, Regex)>,
 }
 
 impl LineFilter {
@@ -16,10 +19,11 @@ impl LineFilter {
     /// # Errors
     /// Returns an error when a regular expression is invalid.
     pub fn new(op: LineFilterOp, pattern: impl Into<String>) -> Result<Self, ParseError> {
-        let filter = Self {
+        let mut filter = Self {
             op,
             pattern: pattern.into(),
             ip_matcher: None,
+            compiled_regex: None,
         };
         filter.validate()?;
         Ok(filter)
@@ -31,10 +35,11 @@ impl LineFilter {
     /// Returns an error when the operation or IP pattern is invalid.
     pub fn ip(op: LineFilterOp, pattern: impl Into<String>) -> Result<Self, ParseError> {
         let pattern = pattern.into();
-        let filter = Self {
+        let mut filter = Self {
             op,
             ip_matcher: Some(IpMatcher::parse(&pattern)?),
             pattern,
+            compiled_regex: None,
         };
         filter.validate()?;
         Ok(filter)
@@ -66,7 +71,7 @@ impl LineFilter {
         }
     }
 
-    pub(crate) fn validate(&self) -> Result<(), ParseError> {
+    pub(crate) fn validate(&mut self) -> Result<(), ParseError> {
         if self.ip_matcher.is_some()
             && !matches!(self.op, LineFilterOp::Contains | LineFilterOp::NotContains)
         {
@@ -76,15 +81,31 @@ impl LineFilter {
             });
         }
         if matches!(self.op, LineFilterOp::Regex | LineFilterOp::NotRegex) {
-            Regex::new(&self.pattern).map_err(|source| ParseError::InvalidRegex {
+            let regex = Regex::new(&self.pattern).map_err(|source| ParseError::InvalidRegex {
                 pattern: self.pattern.clone(),
                 source,
             })?;
+            self.compiled_regex = Some((self.pattern.clone(), regex));
         }
         Ok(())
     }
 
-    pub(crate) fn regex(&self) -> Regex {
-        Regex::new(&self.pattern).expect("line regex filter validated at construction")
+    pub(crate) fn regex(&self) -> Cow<'_, Regex> {
+        if let Some((pattern, regex)) = &self.compiled_regex
+            && pattern == &self.pattern
+        {
+            return Cow::Borrowed(regex);
+        }
+        // Public source fields can change after construction. Preserve their
+        // current meaning instead of matching with a stale compiled pattern.
+        Cow::Owned(Regex::new(&self.pattern).expect("line regex filter validated at construction"))
     }
 }
+
+impl PartialEq for LineFilter {
+    fn eq(&self, other: &Self) -> bool {
+        self.op == other.op && self.pattern == other.pattern && self.ip_matcher == other.ip_matcher
+    }
+}
+
+impl Eq for LineFilter {}

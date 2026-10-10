@@ -113,6 +113,125 @@ fn matrix_merge_groups_labels_orders_samples_and_deduplicates_boundaries() {
     );
 }
 
+#[test]
+fn truncated_global_limits_keep_original_order_with_scrambled_ties() {
+    for direction in [LokiDirection::Forward, LokiDirection::Backward] {
+        let mut ledger = Vec::new();
+        let mut streams = Vec::new();
+        for stream in 0..3 {
+            let mut values = Vec::new();
+            for entry in 0..100 {
+                let id = ((stream * 100 + entry) * 11) % 300;
+                let timestamp = i64::try_from(id / 3).unwrap() - 50;
+                let timestamp_value = if id % 17 == 0 {
+                    json!("invalid")
+                } else if id % 19 == 0 {
+                    json!(timestamp)
+                } else {
+                    json!(timestamp.to_string())
+                };
+                let effective_timestamp = if id % 17 == 0 || id % 19 == 0 {
+                    0
+                } else {
+                    timestamp
+                };
+                ledger.push((effective_timestamp, stream, entry));
+                values.push(json!([timestamp_value, format!("row-{id}")]));
+            }
+            streams.push(json!({"stream":{"app":stream.to_string()},"values":values}));
+        }
+        let original = json!({
+            "status":"success", "warnings":["preserved"],
+            "data":{"resultType":"streams","result":streams}
+        });
+        ledger.sort_by_key(|&(timestamp, stream, entry)| {
+            (
+                match direction {
+                    LokiDirection::Forward => timestamp,
+                    LokiDirection::Backward => -timestamp,
+                },
+                stream,
+                entry,
+            )
+        });
+        for limit in [0, 1, 2, 99, 100, 150, 299, 300, usize::MAX] {
+            let mut keep = [[false; 100]; 3];
+            for &(_, stream, entry) in ledger.iter().take(limit) {
+                keep[stream][entry] = true;
+            }
+            let expected = original["data"]["result"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .filter_map(|(stream_index, stream)| {
+                    let values = stream["values"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .enumerate()
+                        .filter(|(entry, _)| keep[stream_index][*entry])
+                        .map(|(_, value)| value.clone())
+                        .collect::<Vec<_>>();
+                    (!values.is_empty()).then(|| json!({"stream":stream["stream"],"values":values}))
+                })
+                .collect::<Vec<_>>();
+            let mut response = original.clone();
+            apply_global_stream_limit(&mut response, direction, Some(limit));
+            assert!(response["data"]["result"] == json!(expected));
+            assert!(response["warnings"] == original["warnings"]);
+        }
+    }
+}
+
+#[test]
+fn global_limits_preserve_ties_and_clean_empty_streams_at_the_boundary() {
+    for direction in [LokiDirection::Forward, LokiDirection::Backward] {
+        for limit in [0, 1, 2, 3, 4, 5, usize::MAX] {
+            let mut response = json!({
+                "status":"success", "data":{"resultType":"streams", "result":[
+                    {"stream":{"app":"a"},"values":[["10","a10"],["20","a20"]]},
+                    {"stream":{"app":"b"},"values":[["20","b20"],["30","b30"]]},
+                    {"stream":{"app":"empty"},"values":[]},
+                    {"stream":{"app":"missing"}}
+                ]}
+            });
+            let expected = match (direction, limit) {
+                (_, 0) => json!([]),
+                (LokiDirection::Forward, 1) => json!([
+                    {"stream":{"app":"a"},"values":[["10","a10"]]}
+                ]),
+                (LokiDirection::Forward, 2) => json!([
+                    {"stream":{"app":"a"},"values":[["10","a10"],["20","a20"]]}
+                ]),
+                (LokiDirection::Forward, 3) => json!([
+                    {"stream":{"app":"a"},"values":[["10","a10"],["20","a20"]]},
+                    {"stream":{"app":"b"},"values":[["20","b20"]]}
+                ]),
+                (LokiDirection::Backward, 1) => json!([
+                    {"stream":{"app":"b"},"values":[["30","b30"]]}
+                ]),
+                (LokiDirection::Backward, 2) => json!([
+                    {"stream":{"app":"a"},"values":[["20","a20"]]},
+                    {"stream":{"app":"b"},"values":[["30","b30"]]}
+                ]),
+                (LokiDirection::Backward, 3) => json!([
+                    {"stream":{"app":"a"},"values":[["20","a20"]]},
+                    {"stream":{"app":"b"},"values":[["20","b20"],["30","b30"]]}
+                ]),
+                _ => json!([
+                    {"stream":{"app":"a"},"values":[["10","a10"],["20","a20"]]},
+                    {"stream":{"app":"b"},"values":[["20","b20"],["30","b30"]]}
+                ]),
+            };
+
+            apply_global_stream_limit(&mut response, direction, Some(limit));
+
+            assert!(response["data"]["result"] == expected);
+        }
+    }
+}
+
 fn query_params(direction: &str) -> QueryParams {
     QueryParams {
         query: "{app=\"api\"}".to_string(),

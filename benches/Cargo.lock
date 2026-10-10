@@ -3590,16 +3590,22 @@ name = "krabka-o11y-benches"
 version = "0.0.0"
 dependencies = [
  "arrow",
+ "assert2",
+ "axum",
  "criterion",
  "datafusion",
  "krabka-blockstore",
+ "krabka-logql",
  "krabka-metrics",
+ "krabka-observability",
  "krabka-pprof",
  "krabka-promql",
  "krabka-traceql",
  "krabka-units",
  "object_store",
+ "serde_json",
  "tokio",
+ "tower",
 ]
 
 [[package]]

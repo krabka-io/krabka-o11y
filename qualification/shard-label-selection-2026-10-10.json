@@ -1,0 +1,403 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "date": "2026-10-10",
+  "source_commit": "1a1a9b6cd3bcf3269952aafbc8629477c84a8ee7",
+  "execution": "Current VM only; no GCP VM launches",
+  "baseline": "Preceding immutable-query-index snapshot candidate",
+  "baseline_binary": {
+    "path": "qualification/evidence/query-state-sharing-2026-10-10/binaries/candidate/log-query-frontend",
+    "sha256": "9ce9fd612e73bc4c43a080ad06bcf2c2e80bb834d23ca4fce35e8931ea2096dc"
+  },
+  "fixture": {
+    "streams": [
+      1000,
+      5000,
+      20000,
+      100000
+    ],
+    "rows_per_stream": 10,
+    "seed": "0x10C5_B10C",
+    "metadata_bytes": 64,
+    "storage": "Local filesystem with real Parquet and tenant manifests",
+    "result_cache_ttl_seconds": 0,
+    "index_cache_ttl_seconds": 3600,
+    "cases": [
+      "all",
+      "all_sharded",
+      "sparse",
+      "rare",
+      "single",
+      "none",
+      "label_values"
+    ],
+    "verification": "API envelope and complete labels/rows compared with independent input ledger; execution statistics omitted because timing/cache counters vary",
+    "timing_scope": "In-process HTTP handler preparation, warmed index-cache lookup, planning, Parquet reads, shard execution, serialization and body consumption; fixture construction and verification excluded; filesystem pages warmed by verification"
+  },
+  "host": {
+    "hostname": "bce6f61f7cac",
+    "cpu_quota": 4,
+    "affinity_available": "0-4",
+    "model": "AMD EPYC 9V74",
+    "memory_gib": 17,
+    "filesystem_bytes": 33770192896
+  },
+  "evidence_directory": "qualification/evidence/shard-label-selection-2026-10-10",
+  "baseline_source_sha256": "8b66ea308b482608cc0b5267463a2185fe9a3b0ec6a2b25d27acf5840c3c711a",
+  "implementation": "Select tenant fingerprints, restrict to inclusive shard bounds, then borrow canonical source labels and clone only included series into the existing bounded index. The tenant-wide fingerprint set and bounded index rebuild remain.",
+  "sources_sha256": {
+    "crates/observability/src/query_frontend.rs": "6f8f1776c1e93ce9b33287be74a63d357933550bb7eabe362db36418d60ede4f"
+  },
+  "fixture_source_sha256": {
+    "benches/benches/log_query_frontend.rs": "604af4c3c84fd256b2be8b423d2b412d5acf61f55ee1027b8890d3cf97db0201",
+    "benches/examples/log_query_frontend_profile.rs": "29689d23168768440cde7535e9e0bfebcf1a930e080002a0318e54002ed8bf0c",
+    "benches/src/lib.rs": "0cba0f191457f42e2e6f9d30c67c6dfd7e07c7e319b9f95c700298951ea334e9",
+    "benches/src/log_frontend.rs": "39814b39b61f18d713cac2cae456366ce74418c1f4807d6d475aa0893cf6c3bb",
+    "benches/src/log_queries.rs": "0be3658c3f7bf070ec27ce67c8d29804e81a4588f617b2f98272713293a53733"
+  },
+  "candidate_binary": {
+    "path": "qualification/evidence/shard-label-selection-2026-10-10/binaries/candidate/log-query-frontend",
+    "sha256": "01fae5ad735b43a45b16c341285f1cf685374bd8afd0381e009ea9922ecc3d94",
+    "bytes": 226451952
+  },
+  "measurement_plan": {
+    "paired_runs": 3,
+    "alternating_order": true,
+    "affinity": [
+      4
+    ],
+    "expected_measurements": 48,
+    "cases": [
+      "all",
+      "all_sharded"
+    ],
+    "streams": [
+      1000,
+      5000,
+      20000,
+      100000
+    ],
+    "timeout_seconds": 360
+  },
+  "validation": {
+    "passed_tests": 148,
+    "suites": {
+      "querier": 70,
+      "querier_object_store": 22,
+      "query_range": 56
+    },
+    "clippy": "all,pedantic with -D warnings: production and full unit source",
+    "fixture": "Same verified frontend fixture as preceding round; complete payload equality excludes variable execution statistics",
+    "numeric_benchmark_budgets_changed": false,
+    "tool_checks": [
+      "bazel run //tools/format",
+      "git diff --check"
+    ]
+  },
+  "build": {
+    "rustc": "1.98.1",
+    "opt_level": 3,
+    "debuginfo": "line-tables-only",
+    "force_frame_pointers": true,
+    "codegen_units": 16,
+    "lto": false,
+    "baseline": "Unmodified preceding immutable-index candidate ELF; fixture source hashes are unchanged.",
+    "candidate": "Fresh observability library, fixture and driver using the same exact cached dependency graph and compiler flags.",
+    "validation_scope": "Recorded direct compiler and Clippy commands; normal Cargo and Bazel CI remains separate.",
+    "archive": "Original candidate library gzip archive verified against original SHA before debug/bitcode stripping, with metadata and allocated code/data identity proof.",
+    "cache_recovery": "104 dependencies restored from verified original archives and stripped to previously verified debug-only hashes when necessary; SHA verification before use and unlink. Initial raw archive restoration failed a stripped-hash assertion and the first build preflight missed a dependency; final restoration/build passed.",
+    "disk_recovery": "Removed an unopened abandoned linker temporary file and regenerable standalone Cargo metadata caches. No measured executable, library archive or frozen evidence was removed.",
+    "metadata_tags": {
+      "baseline_observability_and_fixture": "query_state_candidate",
+      "candidate_observability_and_fixture": "shard_label_candidate"
+    },
+    "comparability": "Optimization, code-generation-unit, debug and frame-pointer flags match. Crate metadata tags differ, which can change code layout and confound controls; the next experiment preserves baseline tags."
+  },
+  "native_comparison": {
+    "performed_this_round": false,
+    "performance_parity_established": false,
+    "scope": "Focused source-driver experiment on bounded shard preparation; no deployment performance claim."
+  },
+  "next_investigations": [
+    "Replace tenant-wide fingerprint-set construction with a borrowed index range after profiling and compatibility validation.",
+    "Avoid repeated bounded-index rebuilding where request lifetime and admission memory allow sharing.",
+    "Attribute native ingest wait and complete larger native comparisons on this VM."
+  ],
+  "upstream": {
+    "commit": "7a40404f32b3e6464c9cfc6cc7dd75a40f3931da",
+    "source_url": "https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/storage/stores/shipper/indexshipper/tsdb/single_file_index.go#L159-L200",
+    "source_sha256": "80b309ca93b7a3b81079e7562c99fbea6a9719bce830b9902fc135a8fd4b3279",
+    "finding": "Loki iterates postings while reusing the labels variable and pooled chunk metadata. The callback must not retain its reused arguments. Krabka previously copied all tenant labels into an owned vector per bounded shard before filtering; the candidate copies only included labels into the existing bounded index. A tenant-wide fingerprint set and bounded-index rebuild remain."
+  },
+  "timings": {
+    "measurements": 48,
+    "verified": 48,
+    "censored": 0,
+    "cases": [
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.06416305533333333,
+          "min": 0.05624756166666667,
+          "max": 0.066999065
+        },
+        "candidate_seconds": {
+          "median": 0.057145194333333336,
+          "min": 0.056878401333333335,
+          "max": 0.05728599066666667
+        },
+        "paired_candidate_baseline_ratios": [
+          0.8550267181589276,
+          0.8906245819569919,
+          1.0112154135748166
+        ],
+        "median_paired_ratio": 0.8906245819569919
+      },
+      {
+        "streams": 1000,
+        "rows": 10000,
+        "case": "all_sharded",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.06183507566666666,
+          "min": 0.05939344966666666,
+          "max": 0.062052256
+        },
+        "candidate_seconds": {
+          "median": 0.061576886,
+          "min": 0.05739525066666667,
+          "max": 0.06588650033333333
+        },
+        "paired_candidate_baseline_ratios": [
+          1.0617905710524582,
+          0.9958245435315954,
+          0.9663565761676672
+        ],
+        "median_paired_ratio": 0.9958245435315954
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.44882719433333335,
+          "min": 0.40190590666666665,
+          "max": 0.4737733876666667
+        },
+        "candidate_seconds": {
+          "median": 0.43777550200000004,
+          "min": 0.4052171246666667,
+          "max": 0.440957216
+        },
+        "paired_candidate_baseline_ratios": [
+          0.930734455499313,
+          0.9753765091044696,
+          1.0082387890923592
+        ],
+        "median_paired_ratio": 0.9753765091044696
+      },
+      {
+        "streams": 5000,
+        "rows": 50000,
+        "case": "all_sharded",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 0.47354466666666667,
+          "min": 0.4209692253333333,
+          "max": 0.4840449613333333
+        },
+        "candidate_seconds": {
+          "median": 0.431468319,
+          "min": 0.375783468,
+          "max": 0.5078308743333334
+        },
+        "paired_candidate_baseline_ratios": [
+          1.0491398834820638,
+          1.024940287875802,
+          0.7935544299235412
+        ],
+        "median_paired_ratio": 1.024940287875802
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 2.343088253,
+          "min": 2.138266405,
+          "max": 2.377735629
+        },
+        "candidate_seconds": {
+          "median": 2.357026163,
+          "min": 2.331925468,
+          "max": 2.573997649
+        },
+        "paired_candidate_baseline_ratios": [
+          1.0825415650109687,
+          1.0059485211375008,
+          1.0905682577938647
+        ],
+        "median_paired_ratio": 1.0825415650109687
+      },
+      {
+        "streams": 20000,
+        "rows": 200000,
+        "case": "all_sharded",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 2.416671361,
+          "min": 2.412972656,
+          "max": 2.883388586
+        },
+        "candidate_seconds": {
+          "median": 2.296568273,
+          "min": 2.292053622,
+          "max": 2.645460372
+        },
+        "paired_candidate_baseline_ratios": [
+          0.91748312552972,
+          0.9503022670197481,
+          0.9498879385560679
+        ],
+        "median_paired_ratio": 0.9498879385560679
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 13.835383758999999,
+          "min": 13.466123308,
+          "max": 15.395152099
+        },
+        "candidate_seconds": {
+          "median": 13.899420238,
+          "min": 13.661469648,
+          "max": 13.946310675
+        },
+        "paired_candidate_baseline_ratios": [
+          0.9028439698821061,
+          0.9874297587960387,
+          1.0356589165283172
+        ],
+        "median_paired_ratio": 0.9874297587960387
+      },
+      {
+        "streams": 100000,
+        "rows": 1000000,
+        "case": "all_sharded",
+        "pairs": 3,
+        "baseline_seconds": {
+          "median": 17.36447404,
+          "min": 17.236119333,
+          "max": 18.490038979
+        },
+        "candidate_seconds": {
+          "median": 16.288724918,
+          "min": 16.28732017,
+          "max": 16.399110664
+        },
+        "paired_candidate_baseline_ratios": [
+          0.8808699748279747,
+          0.9450343550832736,
+          0.9444058383930181
+        ],
+        "median_paired_ratio": 0.9444058383930181
+      }
+    ],
+    "verification": "One independently verified complete API payload before each process timed queries; execution statistics excluded.",
+    "query_seconds": "Total timed handler/body time divided by the number of timed requests; fixture setup and verification excluded."
+  },
+  "cpu": {
+    "scope": "Whole process: fixture construction, one verification request and three timed sharded broad requests at 20000 streams.",
+    "frequency_hz": 199,
+    "event": "cpu-clock:u",
+    "stack_bytes": 8192,
+    "mmap_pages": 512,
+    "report_threshold_percent": 0.5,
+    "captures": {
+      "baseline": {
+        "report": "baseline-20000-sharded-perf-flat-resolved.txt",
+        "lost_samples": 0,
+        "approximate_event_nanoseconds": 11804018625,
+        "state_for_bounds_cumulative_percent": 8.81,
+        "tenant_series_cumulative_percent": 5.15
+      },
+      "candidate": {
+        "report": "candidate-20000-sharded-perf-flat-resolved.txt",
+        "lost_samples": 0,
+        "approximate_event_nanoseconds": 10336682125,
+        "state_for_bounds_cumulative_percent": 3.11
+      }
+    },
+    "limitation": "Captures include fixture construction and verification. Cumulative caller percentages can overlap and do not establish query-only CPU ratios."
+  },
+  "heap": {
+    "scope": "Whole process including fixture construction and one verification request; timed request counts vary by case as recorded.",
+    "captures": [
+      {
+        "case": "all_sharded",
+        "variant": "baseline",
+        "report": "baseline-5000-sharded-heap.txt",
+        "streams": 5000,
+        "timed_queries": 3,
+        "verification_queries": 1,
+        "allocation_calls": 13438770,
+        "temporary_allocations": 1168310,
+        "peak_heap": "80.43M",
+        "peak_rss_including_profiler": "245.31M"
+      },
+      {
+        "case": "all_sharded",
+        "variant": "candidate",
+        "report": "candidate-5000-sharded-heap.txt",
+        "streams": 5000,
+        "timed_queries": 3,
+        "verification_queries": 1,
+        "allocation_calls": 12337038,
+        "temporary_allocations": 1168054,
+        "peak_heap": "80.43M",
+        "peak_rss_including_profiler": "226.76M"
+      }
+    ],
+    "limitation": "Counts are not per-query allocations; RSS includes heaptrack overhead."
+  },
+  "decision": "Initial candidate needs refinement: large sharded gain and fewer allocations, but 20000-stream broad unsharded paired control regresses 8.3%. Preserve all ranges and remeasure after isolating bounded preparation; no causal attribution to inlining is established.",
+  "reproduction_scripts_sha256": {
+    "analyze-shard-label-profiles.py": "73f60d32d38c0398aab220287b16d77e41ca7798a77cad083a0157ac7a5ea4b1",
+    "archive-shard-label-artifact.py": "c772c7135f4ef1b40609d51bf0bea4b2a21b88120ef9d5982ece92b7733444e2",
+    "build-shard-label.py": "80ad53404c21496a388682e17531c6f3e0fd592e7d7836aeab52bae2f7224138",
+    "clippy-shard-label.py": "45641d481fd6f6ff08dc2b1d8445d9bc25d740bd84783d0102d6a476e4b3e9ea",
+    "compact-own-cargo-debug-cache-round2.py": "0e1c38e658fe450c72ce206287984e7a5027942627ade1ad1dc208cb2d897fdf",
+    "finalize-shard-label-record.py": "5353890b8d761997af7901791c3004464b758001f753b57f4d8b485526561a20",
+    "profile-shard-label-after-pairs.py": "11a876347d643bcea7874a4f575d257d61c5f364094225e9b713eceb605fdaab",
+    "restore-shard-label-cache.py": "8b4e8d1879d0f27ecc89cf837f28a732bbca06989b4dd5c2abee646408a7e7b7",
+    "run-shard-label-pairs.py": "3286ae018f9eb775d9fa4425edf88728c9d6c2cacecdac66ba66cc8e098ee20c",
+    "summarize-shard-label.py": "b63a23862927d16a2102f2ac6ffa5f3099e80a9052a5535b72383d9c3378feda",
+    "test-shard-label.py": "0b015ef7ada2f64e8addc9629991a7a6b365c2659edb2e7cc79d37d7822f6098"
+  },
+  "scope": "Completed bounded shard label-copy experiment; overall upstream performance parity remains unqualified.",
+  "raw_manifest": {
+    "path": "qualification/evidence/shard-label-selection-2026-10-10/raw-manifest.json",
+    "sha256": "3748c72bc00df201547e6ca3a7c78061e359247a84e4f8dab8525564f83585c7",
+    "files": 81,
+    "bytes": 757921001,
+    "scope": "All files in this evidence directory except the manifest itself. Baseline executable and its earlier build proofs remain in the separately frozen index-sharing evidence."
+  },
+  "superseded_by": "qualification/shard-label-selection-matched-2026-10-10.json",
+  "filesystem_scope": {
+    "correction_date": "2026-10-10",
+    "timing_fixture": "Default std::env::temp_dir; runners do not set TMPDIR. Current VM environment resolves /tmp on tmpfs, so earlier timings are treated as warmed tmpfs Parquet, not disk-backed storage. Ambient TMPDIR was not captured per process.",
+    "profile_fixture": "CPU/allocation runners explicitly use workspace TMPDIR on the root overlay filesystem",
+    "unchanged": "Both timing variants share the same runner environment; no fixture or WAL relocation occurred during these experiments",
+    "limitation": "Timing and profiling fixture filesystems differ; do not use these timings to qualify disk latency or native upstream parity",
+    "disk_repeat": "qualification/disk-frontend-scope-2026-10-10.json",
+    "raw_preservation": "Frozen raw records and hashes are unchanged, including earlier source-state annotations that incorrectly describe timed fixtures as on disk"
+  }
+}

@@ -1552,6 +1552,7 @@ mod plan_tenant_index_shards;
 mod push_ivarint;
 mod push_uvarint;
 mod read_index_shard;
+mod resolve_selective;
 mod save_index_shards;
 mod shard_bound_key;
 mod tenant_index;

@@ -43,14 +43,27 @@ pub(crate) fn append_matching_log_batches(
             },
         )?;
 
+        let mut previous_fingerprint = None;
+        let mut fingerprint_matches = false;
         for row in 0..batch.num_rows() {
+            let fingerprint = fingerprints.value(row);
+            if previous_fingerprint != Some(fingerprint) {
+                fingerprint_matches = plan.fingerprints.contains(&fingerprint);
+                previous_fingerprint = Some(fingerprint);
+            }
+            // A large SQL selection is a coarse range. Reject its extra rows
+            // before allocating their structured metadata. Ordered rows share
+            // this lookup; a nonadjacent fingerprint is checked again.
+            if !fingerprint_matches {
+                continue;
+            }
             let structured_metadata = structured_metadata_value(metadata, row)?;
             append_matching_log_row(
                 streams,
                 plan,
                 label_index,
                 QueryRow {
-                    fingerprint: fingerprints.value(row),
+                    fingerprint,
                     timestamp_ns: timestamps.value(row),
                     line: lines.value(row),
                     structured_metadata: &structured_metadata,

@@ -1,0 +1,603 @@
+{
+  "schema_version": 1,
+  "status": "complete_mixed_http_results",
+  "date": "2026-10-10",
+  "execution": "Current VM only; no GCP VM launches",
+  "scope": "Complete production HTTP frontend requests using warmed workspace Parquet fixtures; finite limit 100 plus full-result control. This qualifies the retained partial-selection change, with no new production change.",
+  "evidence_directory": "qualification/evidence/limited-log-frontend-2026-10-10",
+  "baseline_commit": "875977173d9f044fe33b133ca0e40adde9a16fc7",
+  "production_baseline_commit": "fa178d77c0765c5870e4380cad6deae7f94fba19",
+  "production_candidate_commit": "a70013fbfccf4f95362c5eb158ad80db9ad3100c",
+  "source_paths": [
+    "benches/src/log_frontend.rs",
+    "benches/benches/log_query_frontend.rs",
+    "benches/examples/log_query_frontend_profile.rs"
+  ],
+  "decision": "Keep the previously retained component optimization with its helper-only claim. Complete finite-limit HTTP results are mixed; no consistent general request gain or upstream parity is qualified.",
+  "fixture": {
+    "streams": [
+      1000,
+      5000,
+      20000,
+      100000
+    ],
+    "rows_per_stream": 10,
+    "input_rows": [
+      10000,
+      50000,
+      200000,
+      1000000
+    ],
+    "cases": [
+      "all_limited",
+      "all_sharded_limited",
+      "all"
+    ],
+    "limit": "100 for the two limited cases, total generated rows for all",
+    "verification": "An independent generated-input ledger walks timestamp points then label-sorted streams and checks complete response labels, rows, order and warnings. Variable stats are omitted from equality only; full response including stats is consumed during timing.",
+    "timing": "Preparation, planning, warmed real Parquet reads, serialization and full HTTP body consumption. Construction and independent verification precede timing; result cache disabled and index TTL one hour.",
+    "filesystem": {
+      "TMPDIR": "/workspace/scratch/limited-log-frontend-fixtures",
+      "filesystem": "Filesystem     Type    1K-blocks     Used Available Use% Mounted on\noverlay        overlay  32978704 31102908    181692 100% /\nshm            tmpfs     9220068   443108   8776960   5% /dev/shm\n",
+      "mounts": "TARGET SOURCE  FSTYPE  OPTIONS\n/      overlay overlay rw,relatime,lowerdir=/run/kata-containers/erofs-multi-layer/bce6f61f7cac46bc8e25e686e3cc102a/lower-0,upperdir=/run/kata-containers/erofs-multi-layer/bce6f61f7cac46bc8e25e686e3cc102a/upper/upper,workdir=/run/kata-containers/erofs-multi-layer/bce6f61f7cac46bc8e25e686e3cc102a/upper/work,index=off,metacopy=off\n",
+      "executable_storage": "Both matched executables reside in an owned RAM directory; fixture files are on explicit workspace overlay"
+    },
+    "affinity": [
+      4
+    ]
+  },
+  "build": {
+    "production_library_provenance": [
+      {
+        "variant": "baseline",
+        "archive": "qualification/evidence/inclusive-log-limit-2026-10-10/binaries/candidate/libkrabka_observability.rlib.gz",
+        "archive_sha256": "a35f2ef22bb560d11749a5db00889424fa50d52e84aeb02aeaa87e316d6c6956",
+        "path": "/dev/shm/krabka-limited-frontend-build/baseline/libkrabka_observability.rlib",
+        "bytes": 486514298,
+        "sha256": "0854b5132af3baffa8ae67a625e2dfe347de46d846521bd20a629444b0b9c5c5"
+      },
+      {
+        "variant": "candidate",
+        "archive": "qualification/evidence/partial-log-limit-2026-10-10/binaries/production/libkrabka_observability.rlib.gz",
+        "archive_sha256": "afd12cd31efd3560d162142e2dcaf5b9acece389f258ff8728f429d36664b378",
+        "path": "/dev/shm/krabka-limited-frontend-build/candidate/libkrabka_observability.rlib",
+        "bytes": 485891634,
+        "sha256": "3d84f2aed6010daf9e4f3e0a9d679aff127c74c8cbaa3c1daa3a23b6e69e9cc8"
+      }
+    ],
+    "measured_executables": [
+      {
+        "path": "/dev/shm/krabka-limited-frontend-build/baseline/log-query-frontend",
+        "bytes": 226877664,
+        "sha256": "17c381cdfd8b5f3a9366182b61bacca0d666200b4062bbdfd4215081dcc5b9d2",
+        "action": "Hash verified and removed after all measurements and symbolized reports; raw ELF is not archived"
+      },
+      {
+        "path": "/dev/shm/krabka-limited-frontend-build/candidate/log-query-frontend",
+        "bytes": 226858112,
+        "sha256": "1450f7a3d176aace83a72c7ff10e7093c4702aadb28f5da8d0c534f72b24a4c2",
+        "action": "Hash verified and removed after all measurements and symbolized reports; raw ELF is not archived"
+      }
+    ],
+    "flags": "rustc 1.98.1; opt-level=3, line-tables-only, frame pointers, 16 codegen units, no LTO; debug sections stripped identically",
+    "source_snapshots": {
+      "baseline": "Previous benchmark source for review",
+      "candidate": "Shared pre-style-fix fixture measured in both executables",
+      "final": "Named-format correction; checked separately, no timings pooled"
+    },
+    "validation_sequencing_correction": {
+      "initial_validation": "Fixture Clippy failed only uninlined_format_args; launcher shell proceeded into timings after the earlier command chain failed",
+      "measurement_validity": "Every measured process performs independent complete response verification before timing. Both measured executables use the same captured pre-style-fix fixture source.",
+      "correction": "Use a named format argument, preserving generated URI and expected payload. Check final fixture and boundary oracles after measurements; do not pool rebuilt validation executable timings."
+    },
+    "reproduction_limit": "Exact measured ELF files were hashed and removed after reports; they are not archived. Original production-library gzip archives, cached dependency graph, fixture snapshots and exact build commands are retained. Rebuild before re-symbolizing raw perf data."
+  },
+  "measurement_plan": {
+    "primary_observations": 72,
+    "control_observations": 12,
+    "pairs_per_case": 3,
+    "order": "Alternating baseline/candidate",
+    "primary_iterations": "10 at 1000/5000 streams, 3 at 20000, 1 at 100000",
+    "control_iterations": "100 at 1000 streams, 20 at 20000 streams",
+    "verified": 84,
+    "censored": 0
+  },
+  "timings": [
+    {
+      "streams": 1000,
+      "input_rows": 10000,
+      "case": "all",
+      "seconds": {
+        "baseline": {
+          "median": 0.049393940600000005,
+          "min": 0.0470533432,
+          "max": 0.0498334504
+        },
+        "candidate": {
+          "median": 0.054064090200000005,
+          "min": 0.046542279,
+          "max": 0.0546297122
+        }
+      },
+      "paired_ratios": [
+        0.9891386208663702,
+        1.0962458300900633,
+        1.0945490386729744
+      ],
+      "median_paired_ratio": 1.0945490386729744,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 1000,
+      "input_rows": 10000,
+      "case": "all_limited",
+      "seconds": {
+        "baseline": {
+          "median": 0.039894026900000004,
+          "min": 0.0367137865,
+          "max": 0.043375719
+        },
+        "candidate": {
+          "median": 0.044250685,
+          "min": 0.0367859725,
+          "max": 0.0504174472
+        }
+      },
+      "paired_ratios": [
+        1.0019661823767483,
+        1.1092057743611736,
+        1.1623426276807076
+      ],
+      "median_paired_ratio": 1.1092057743611736,
+      "candidate_slower_pairs": 3,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 1000,
+      "input_rows": 10000,
+      "case": "all_sharded_limited",
+      "seconds": {
+        "baseline": {
+          "median": 0.045017013099999996,
+          "min": 0.0410002737,
+          "max": 0.047161365999999996
+        },
+        "candidate": {
+          "median": 0.047339988,
+          "min": 0.0441170786,
+          "max": 0.0482843865
+        }
+      },
+      "paired_ratios": [
+        1.1776601018153692,
+        0.9354495499557838,
+        1.0516021552749355
+      ],
+      "median_paired_ratio": 1.0516021552749355,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 5000,
+      "input_rows": 50000,
+      "case": "all",
+      "seconds": {
+        "baseline": {
+          "median": 0.3401041093,
+          "min": 0.3216479071,
+          "max": 0.3463155883
+        },
+        "candidate": {
+          "median": 0.3151426053,
+          "min": 0.3149576791,
+          "max": 0.36085534150000004
+        }
+      },
+      "paired_ratios": [
+        0.9792001506855132,
+        1.0610143530541576,
+        0.9099867749152659
+      ],
+      "median_paired_ratio": 0.9792001506855132,
+      "candidate_slower_pairs": 1,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 5000,
+      "input_rows": 50000,
+      "case": "all_limited",
+      "seconds": {
+        "baseline": {
+          "median": 0.1602963928,
+          "min": 0.1515595845,
+          "max": 0.1861356558
+        },
+        "candidate": {
+          "median": 0.1607794077,
+          "min": 0.15692560179999998,
+          "max": 0.1733170999
+        }
+      },
+      "paired_ratios": [
+        1.0030132611942344,
+        0.9311332595310307,
+        1.0354053312939768
+      ],
+      "median_paired_ratio": 1.0030132611942344,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 5000,
+      "input_rows": 50000,
+      "case": "all_sharded_limited",
+      "seconds": {
+        "baseline": {
+          "median": 0.23808677879999998,
+          "min": 0.2307050311,
+          "max": 0.27265284749999996
+        },
+        "candidate": {
+          "median": 0.2477459347,
+          "min": 0.2322550176,
+          "max": 0.2550452961
+        }
+      },
+      "paired_ratios": [
+        1.0405698961894647,
+        0.9354213551721664,
+        1.0067184772374043
+      ],
+      "median_paired_ratio": 1.0067184772374043,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 20000,
+      "input_rows": 200000,
+      "case": "all",
+      "seconds": {
+        "baseline": {
+          "median": 1.6919119786666668,
+          "min": 1.660030968,
+          "max": 1.711686687
+        },
+        "candidate": {
+          "median": 1.7169773013333334,
+          "min": 1.6224883606666667,
+          "max": 1.7453099840000001
+        }
+      },
+      "paired_ratios": [
+        1.014814791184598,
+        1.0513719428395627,
+        0.9478886369738218
+      ],
+      "median_paired_ratio": 1.014814791184598,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 20000,
+      "input_rows": 200000,
+      "case": "all_limited",
+      "seconds": {
+        "baseline": {
+          "median": 0.8246343863333333,
+          "min": 0.8228752186666667,
+          "max": 0.9658356123333333
+        },
+        "candidate": {
+          "median": 0.8744482383333333,
+          "min": 0.8727572616666667,
+          "max": 0.9955315316666667
+        }
+      },
+      "paired_ratios": [
+        1.0626741679622242,
+        1.0307463495382947,
+        1.0583566197709844
+      ],
+      "median_paired_ratio": 1.0583566197709844,
+      "candidate_slower_pairs": 3,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 20000,
+      "input_rows": 200000,
+      "case": "all_sharded_limited",
+      "seconds": {
+        "baseline": {
+          "median": 1.0842470686666668,
+          "min": 0.9561429313333333,
+          "max": 1.1105485516666667
+        },
+        "candidate": {
+          "median": 0.9768506760000001,
+          "min": 0.927224342,
+          "max": 1.0687554693333332
+        }
+      },
+      "paired_ratios": [
+        0.9009484131705005,
+        0.962367172267604,
+        0.9697549514976735
+      ],
+      "median_paired_ratio": 0.962367172267604,
+      "candidate_slower_pairs": 0,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 100000,
+      "input_rows": 1000000,
+      "case": "all",
+      "seconds": {
+        "baseline": {
+          "median": 10.81426953,
+          "min": 9.806257425,
+          "max": 11.32575049
+        },
+        "candidate": {
+          "median": 10.664310346,
+          "min": 10.060202268,
+          "max": 11.361751902
+        }
+      },
+      "paired_ratios": [
+        1.0031787219780082,
+        1.0875005502927637,
+        0.930271086742555
+      ],
+      "median_paired_ratio": 1.0031787219780082,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 100000,
+      "input_rows": 1000000,
+      "case": "all_limited",
+      "seconds": {
+        "baseline": {
+          "median": 5.132531623,
+          "min": 5.092820161,
+          "max": 5.331497948
+        },
+        "candidate": {
+          "median": 5.157667226,
+          "min": 5.097905203,
+          "max": 5.262027465
+        }
+      },
+      "paired_ratios": [
+        1.025230403144464,
+        0.9673955192901821,
+        1.00099847272027
+      ],
+      "median_paired_ratio": 1.00099847272027,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 100000,
+      "input_rows": 1000000,
+      "case": "all_sharded_limited",
+      "seconds": {
+        "baseline": {
+          "median": 7.020797882,
+          "min": 6.730291182,
+          "max": 7.174503
+        },
+        "candidate": {
+          "median": 6.37909979,
+          "min": 6.299125499,
+          "max": 7.070918904
+        }
+      },
+      "paired_ratios": [
+        1.0506111418939794,
+        0.8972093492606827,
+        0.8891347303081482
+      ],
+      "median_paired_ratio": 0.8972093492606827,
+      "candidate_slower_pairs": 1,
+      "ranges_overlap": true
+    }
+  ],
+  "longer_controls": [
+    {
+      "streams": 1000,
+      "input_rows": 10000,
+      "case": "all_limited",
+      "seconds": {
+        "baseline": {
+          "median": 0.03910980572,
+          "min": 0.03736557962,
+          "max": 0.04105481532
+        },
+        "candidate": {
+          "median": 0.03854352501,
+          "min": 0.03755217959,
+          "max": 0.04043977432
+        }
+      },
+      "paired_ratios": [
+        0.9388307975465033,
+        1.0340060139782254,
+        1.0049939000518038
+      ],
+      "median_paired_ratio": 1.0049939000518038,
+      "candidate_slower_pairs": 2,
+      "ranges_overlap": true
+    },
+    {
+      "streams": 20000,
+      "input_rows": 200000,
+      "case": "all_limited",
+      "seconds": {
+        "baseline": {
+          "median": 0.8504045227500001,
+          "min": 0.81214877085,
+          "max": 0.9129074427000001
+        },
+        "candidate": {
+          "median": 0.8849669629499999,
+          "min": 0.8322887552499999,
+          "max": 0.91171003785
+        }
+      },
+      "paired_ratios": [
+        1.0896611491805717,
+        0.9986883611700452,
+        0.9786974704209965
+      ],
+      "median_paired_ratio": 0.9986883611700452,
+      "candidate_slower_pairs": 1,
+      "ranges_overlap": true
+    }
+  ],
+  "cpu_profiles": [
+    {
+      "variant": "baseline",
+      "case": "all_limited",
+      "streams": 20000,
+      "input_rows": 200000,
+      "timed_iterations": 3,
+      "verification_queries": 1,
+      "sample_records": 865,
+      "lost_samples": 0,
+      "data": "baseline-20000-all_limited.perf.data",
+      "flat_report": "baseline-20000-all_limited-perf-flat.txt.gz",
+      "cumulative_report": "baseline-20000-all_limited-perf-cum.txt.gz",
+      "global_limit_helper_above_0_5_percent": false
+    },
+    {
+      "variant": "candidate",
+      "case": "all_limited",
+      "streams": 20000,
+      "input_rows": 200000,
+      "timed_iterations": 3,
+      "verification_queries": 1,
+      "sample_records": 878,
+      "lost_samples": 0,
+      "data": "candidate-20000-all_limited.perf.data",
+      "flat_report": "candidate-20000-all_limited-perf-flat.txt.gz",
+      "cumulative_report": "candidate-20000-all_limited-perf-cum.txt.gz",
+      "global_limit_helper_above_0_5_percent": false
+    },
+    {
+      "variant": "baseline",
+      "case": "all_sharded_limited",
+      "streams": 20000,
+      "input_rows": 200000,
+      "timed_iterations": 3,
+      "verification_queries": 1,
+      "sample_records": 959,
+      "lost_samples": 0,
+      "data": "baseline-20000-all_sharded_limited.perf.data",
+      "flat_report": "baseline-20000-all_sharded_limited-perf-flat.txt.gz",
+      "cumulative_report": "baseline-20000-all_sharded_limited-perf-cum.txt.gz",
+      "global_limit_helper_above_0_5_percent": false
+    },
+    {
+      "variant": "candidate",
+      "case": "all_sharded_limited",
+      "streams": 20000,
+      "input_rows": 200000,
+      "timed_iterations": 3,
+      "verification_queries": 1,
+      "sample_records": 997,
+      "lost_samples": 0,
+      "data": "candidate-20000-all_sharded_limited.perf.data",
+      "flat_report": "candidate-20000-all_sharded_limited-perf-flat.txt.gz",
+      "cumulative_report": "candidate-20000-all_sharded_limited-perf-cum.txt.gz",
+      "global_limit_helper_above_0_5_percent": false
+    }
+  ],
+  "heap_profiles": [
+    {
+      "variant": "baseline",
+      "streams": 5000,
+      "input_rows": 50000,
+      "case": "all_limited",
+      "timed_iterations": 1,
+      "verification_queries": 1,
+      "allocation_calls": 3949866,
+      "temporary_allocations": 239030,
+      "peak_heap_reported": "66.08M",
+      "peak_rss_instrumented_reported": "185.89M",
+      "trace": "baseline-5000-all_limited.heaptrack.zst",
+      "report": "baseline-5000-all_limited-heap.txt.gz"
+    },
+    {
+      "variant": "candidate",
+      "streams": 5000,
+      "input_rows": 50000,
+      "case": "all_limited",
+      "timed_iterations": 1,
+      "verification_queries": 1,
+      "allocation_calls": 3949879,
+      "temporary_allocations": 239030,
+      "peak_heap_reported": "66.08M",
+      "peak_rss_instrumented_reported": "186.61M",
+      "trace": "candidate-5000-all_limited.heaptrack.zst",
+      "report": "candidate-5000-all_limited-heap.txt.gz"
+    }
+  ],
+  "profile_scope": "Whole process includes fixture construction, independent ledger generation/verification, timed HTTP requests and disposal. Relative symbol attribution does not establish query-only CPU or memory ratios.",
+  "profile_interpretation": "Four captures have zero lost samples. The global JSON limit helper is absent above the 0.5% report threshold, which does not mean zero cost. Production already trims typed entries before encoding using an ordered per-stream heap. Parsed timestamps appear under that trim and record sorting, while label comparisons and hashing have multiple callers including the independent oracle. Peak heap is unchanged at 66.08 MB; calls differ by 13 and instrumented RSS rises 0.72 MB. No memory advantage is qualified.",
+  "next_investigation": {
+    "paths": [
+      "crates/observability/src/querier/scan/stream_scans/stream_scan_options.rs",
+      "crates/observability/src/querier/aggregate/record_matching/sort_loki_stream_values.rs",
+      "crates/observability/src/http/response/loki_responses/loki_stream_entry.rs"
+    ],
+    "hypothesis": "Avoid repeatedly parsing the timestamp string during sorting and pre-encoding trimming while preserving malformed-entry fallback and forward/backward ties; measure actual callers before changing representation."
+  },
+  "upstream_comparison": {
+    "source": "https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/iter/entry_iterator.go#L681",
+    "approach": "Loki ReadBatch consumes an ordered entry iterator until the limit. Krabka pre-encoding trim already uses a heap of per-stream heads, then still materializes and sorts records. A faster post-JSON helper therefore need not improve these finite-limit HTTP cases. No fresh native upstream run is part of this qualification."
+  },
+  "validation": {
+    "strict_fixture_and_driver_clippy": "Passed with all and pedantic warnings denied after the named-format correction",
+    "criterion_frontend_ids": 52,
+    "new_unseeded_ids": [
+      "log_query_frontend/all_limited/1000",
+      "log_query_frontend/all_sharded_limited/1000",
+      "log_query_frontend/all_limited/5000",
+      "log_query_frontend/all_sharded_limited/5000",
+      "log_query_frontend/all_limited/20000",
+      "log_query_frontend/all_sharded_limited/20000",
+      "log_query_frontend/all_limited/100000",
+      "log_query_frontend/all_sharded_limited/100000"
+    ],
+    "boundary_payload_checks": 20,
+    "boundary_stream_counts": [
+      1,
+      9,
+      10,
+      99,
+      100
+    ],
+    "boundary_variants": [
+      "measured baseline",
+      "corrected candidate validation build"
+    ],
+    "production_tests": "587 previously passing tests for unchanged a70013fb production source; not rerun for a fixture-only change",
+    "managed_format": "Passed",
+    "historic_numeric_budgets_unchanged": 85
+  },
+  "raw_manifest": {
+    "path": "qualification/evidence/limited-log-frontend-2026-10-10/raw-manifest.json",
+    "sha256": "f3673b348aab1513bd3bd521911ab59e7564c2b36c65424c2c9a3f1ef5e38836",
+    "files": 102,
+    "bytes": 35452511,
+    "scope": "Every file in evidence directory except this manifest"
+  },
+  "unchanged_production_sources": {
+    "crates/observability/src/query_frontend.rs": "324c79ae567055d8756651732f3c38a1427960837c941d7457b502cb14e4740f",
+    "crates/observability/src/query_frontend/tests.rs": "a2e7e00e45c8d4f3d92646c173bc7759b1941ce983eaa084de07b070b294985d",
+    "crates/observability/src/querier/scan/stream_scans/stream_scan_options.rs": "b978abb7e3330ff619cfcdab9f6299d1718f6bcee960e1e0ab77849fc78bc2ac",
+    "crates/observability/src/http/response/loki_responses/loki_stream_entry.rs": "784b79c66c466ace76ceb0e6b70baf7953c6bcdac6fa6df63a95318f8b9ae0e6"
+  }
+}

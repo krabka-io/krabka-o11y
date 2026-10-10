@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "date": "2026-10-10",
+  "execution": "Current VM only; no GCP VM launches",
+  "scope": "Repeat largest manifest-cached controls after the initial single-shard experiment showed regressions",
+  "parent_record": "qualification/single-shard-index-reuse-2026-10-10.json",
+  "evidence_directory": "qualification/evidence/single-shard-index-control-repeat-2026-10-10",
+  "measurement_plan": {
+    "streams": 100000,
+    "rows": 1000000,
+    "cases": [
+      "all",
+      "none"
+    ],
+    "pairs": 3,
+    "alternating_order": true,
+    "affinity": [
+      4
+    ],
+    "iterations_per_process": 1,
+    "verification_queries_per_process": 1,
+    "scope": "Warmed production HTTP handlers over real local Parquet and tenant manifest with one-hour index cache and result cache disabled; excludes fixture creation and complete-payload verification"
+  },
+  "measurements": 12,
+  "verified": 12,
+  "censored": 0,
+  "cases": [
+    {
+      "case": "all",
+      "baseline_seconds": {
+        "median": 13.5706789,
+        "min": 13.457859764,
+        "max": 13.957609933
+      },
+      "candidate_seconds": {
+        "median": 14.692773911,
+        "min": 13.633221401,
+        "max": 16.170238236
+      },
+      "paired_candidate_baseline_ratios": [
+        1.1585248702049395,
+        1.0826852524673618,
+        1.0130304253481
+      ],
+      "median_paired_ratio": 1.0826852524673618
+    },
+    {
+      "case": "none",
+      "baseline_seconds": {
+        "median": 0.000180971,
+        "min": 0.000151166,
+        "max": 0.000209994
+      },
+      "candidate_seconds": {
+        "median": 0.000198988,
+        "min": 0.000181281,
+        "max": 0.000426228
+      },
+      "paired_candidate_baseline_ratios": [
+        2.3552281857314155,
+        1.199218078139264,
+        0.9475889787327257
+      ],
+      "median_paired_ratio": 1.199218078139264
+    }
+  ],
+  "binaries": {
+    "baseline": {
+      "path": "qualification/evidence/single-shard-index-reuse-2026-10-10/binaries/baseline/log-query-frontend",
+      "sha256": "71838f284ee951797ee84a7dba9f1594f454fa3f778f21ce4b4c1cdc96b2c9e9",
+      "bytes": 226753520
+    },
+    "candidate": {
+      "path": "qualification/evidence/single-shard-index-reuse-2026-10-10/binaries/candidate/log-query-frontend",
+      "sha256": "7c4d73fdee08583a0c3d64bd946a6a2005647dbb7725ce7b50439fab4c5e6e31",
+      "bytes": 226848560
+    }
+  },
+  "interpretation": "Repeat confirms slower manifest controls. Retain the single-shard optimization for its much larger selective/empty request gains while reporting this tradeoff. Broad-response performance needs further profiling; no universal performance advantage is claimed.",
+  "raw_manifest": {
+    "path": "qualification/evidence/single-shard-index-control-repeat-2026-10-10/raw-manifest.json",
+    "sha256": "77c753e127143e05c492d4ae6377623202104ab6a183cdf68d3f7a0d234e912a",
+    "files": 6,
+    "bytes": 156874
+  },
+  "filesystem_scope": {
+    "correction_date": "2026-10-10",
+    "timing_fixture": "Default std::env::temp_dir; runners do not set TMPDIR. Current VM environment resolves /tmp on tmpfs, so earlier timings are treated as warmed tmpfs Parquet, not disk-backed storage. Ambient TMPDIR was not captured per process.",
+    "profile_fixture": "CPU/allocation runners explicitly use workspace TMPDIR on the root overlay filesystem",
+    "unchanged": "Both timing variants share the same runner environment; no fixture or WAL relocation occurred during these experiments",
+    "limitation": "Timing and profiling fixture filesystems differ; do not use these timings to qualify disk latency or native upstream parity",
+    "disk_repeat": "qualification/disk-frontend-scope-2026-10-10.json",
+    "raw_preservation": "Frozen raw records and hashes are unchanged, including earlier source-state annotations that incorrectly describe timed fixtures as on disk"
+  }
+}

@@ -12,10 +12,19 @@ pub(crate) fn loki_stream_results(
         LokiStreamEncoding::Folded => streams
             .into_iter()
             .map(|(stream, values)| {
-                json!({
-                    "stream": stream,
-                    "values": values,
-                })
+                let mut result = json!({"stream": stream});
+                result["values"] = Value::Array(
+                    values
+                        .into_iter()
+                        .map(|entry| {
+                            Value::Array(vec![
+                                Value::String(entry.timestamp_ns),
+                                Value::String(entry.line),
+                            ])
+                        })
+                        .collect(),
+                );
+                result
             })
             .collect(),
         LokiStreamEncoding::CategorizeLabels => categorized_loki_stream_results(streams),

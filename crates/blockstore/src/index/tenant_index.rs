@@ -136,23 +136,26 @@ impl TenantIndex {
             BlockStoreError::InvalidBlock(format!("invalid label matcher regex: {error}"))
         })?;
 
-        let mut matched_fps = BTreeSet::new();
-        if regex.is_match("") {
-            let present = self.present_fingerprints(&label_matcher.name);
-            matched_fps.extend(
-                self.series
-                    .keys()
-                    .copied()
-                    .filter(|fp| !present.contains(fp)),
-            );
-        }
-        if let Some(values) = self.postings.get(&label_matcher.name) {
-            for (value, fps) in values {
-                if regex.is_match(value) {
-                    matched_fps.extend(fps.iter().copied());
-                }
-            }
-        }
+        let present = regex
+            .is_match("")
+            .then(|| self.present_fingerprints(&label_matcher.name));
+        let absent = present.iter().flat_map(|present| {
+            self.series
+                .keys()
+                .copied()
+                .filter(move |fp| !present.contains(fp))
+        });
+        // Collect once so the tree is bulk-built, rather than inserting each
+        // fingerprint while merging the matching value postings.
+        let matched_fps: BTreeSet<_> = self
+            .postings
+            .get(&label_matcher.name)
+            .into_iter()
+            .flat_map(|values| values.iter())
+            .filter(|(value, _)| regex.is_match(value))
+            .flat_map(|(_, fps)| fps.iter().copied())
+            .chain(absent)
+            .collect();
 
         if label_matcher.op == MatchOp::Re {
             Ok(matched_fps)

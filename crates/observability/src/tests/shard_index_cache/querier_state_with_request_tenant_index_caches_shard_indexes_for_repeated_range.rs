@@ -45,8 +45,24 @@ pub(crate) async fn querier_state_with_request_tenant_index_caches_shard_indexes
         .await
         .unwrap();
 
-    assert!(first.label_index == labels_index && first.block_index == block_index);
-    assert!(second.label_index == labels_index && second.block_index == block_index);
+    assert!(
+        first.label_index.as_ref() == &labels_index && first.block_index.as_ref() == &block_index
+    );
+    assert!(
+        second.label_index.as_ref() == &labels_index && second.block_index.as_ref() == &block_index
+    );
+
+    // A moving window misses the merged-request cache but still uses the same
+    // tenant-filtered shard. It must retain the complete immutable snapshot.
+    let moving = state
+        .with_request_tenant_index(tenant, TimeRange::new(5, 105).unwrap())
+        .await
+        .unwrap();
+    assert!(Arc::ptr_eq(&first.label_index, &moving.label_index));
+    assert!(Arc::ptr_eq(&first.block_index, &moving.block_index));
+    state.dynamic_index_cache.clear();
+    assert!(moving.label_index.as_ref() == &labels_index);
+    assert!(moving.block_index.as_ref() == &block_index);
 
     let shard_prefix =
         krabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant).to_string();

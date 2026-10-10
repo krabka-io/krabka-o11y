@@ -684,3 +684,1132 @@ The [pinned upstream source audit](grafana-upstream-source-comparison.md) separa
 
 
 After the backup/restore test recursion repair, all 385 ordinary Bazel targets pass with one code generation unit and retries disabled. Ignored Rust container cases are catalogued in the full-scope proof; the separately executed ten native wrappers contain 67 cases and zero ignored cases. This completes the ordinary scope on source `502ab8f4`, not qualification of the historical compiler image or of a new cache candidate. The global setting remains off because of the Loki query regression.
+
+## Large selective matcher workloads
+
+The 2026-10-09 investigation targets queries that select one series from a
+large tenant index. The original metrics resolver constructs complete matcher
+sets in input order. A negative matcher can construct almost every tenant
+fingerprint before a later equality keeps one. The original logs resolver
+clones the first equality posting, even when a later posting contains one
+fingerprint.
+
+The pinned Mimir source intersects restrictive postings before it subtracts
+negative postings. Loki scans distinct label values and has a finite regex
+posting shortcut. These are different algorithms, not timing measurements of
+the native services. The [source audit](grafana-upstream-source-comparison.md#postings-and-streaming-operators)
+records their commits and links.
+
+Both Krabka resolvers now start from the smallest exact posting. Metrics
+evaluates the remaining matchers within that set. Broad regex selectors keep
+the distinct-value scan when the candidate set exceeds the distinct-value
+count. Invalid matchers use sequential resolution. This preserves errors
+that an earlier empty intersection can skip. Logs keeps its own predicate
+semantics and intersects borrowed exact postings. Nested tenant/name/value
+dictionaries remove temporary owned tuple keys and full posting scans for
+label names.
+
+The benchmarks cover 1,000, 10,000, 100,000 and one million series.
+Single equalities, broad negatives, broad regexes and two broad equalities
+act as controls. Fixture construction is outside the measured query loop.
+The profiling driver uses separate, non-inlined query functions. Heaptrack
+stack filters exclude fixture allocations from the per-query counts.
+
+| Workload | Series | Original allocations per query | Candidate allocations per query |
+| --- | ---: | ---: | ---: |
+| Metrics: negative matcher before selective equality | 100,000 | 9,113 | 1 |
+| Metrics: negative matcher before selective equality | 1,000,000 | 90,936 | 1 |
+| Logs: broad equality before selective equality | 100,000 | 13,394 | 4 |
+| Logs: broad equality before selective equality | 1,000,000 | 133,523 | 4 |
+
+The first logs candidate reduced allocations to 14 but increased
+`broad_equality_last` time in all three pairs at 100,000 and one million
+streams. Median paired ratios were 1.246 and 1.227. That implementation was
+replaced with borrowed posting references and nested dictionaries. That
+refinement reduced allocations to six and improved the selective controls in
+all three pairs, but broad negative controls remained mixed. The initial
+measurements remain preserved as rejected evidence.
+
+A dedicated broad-negative capture at 100,000 streams records 3,479 CPU
+samples with none lost. About 55% land in `LabelPredicate::matches`; the
+percentage covers the whole capture, including construction. This selector
+excludes a value absent from the postings, yet still looks up every series
+and rebuilds its unchanged result. The final guard returns the posting result
+for all-equality selectors and absent negative values. Present negative
+values and regexes retain their label checks. Query allocations for this
+control fall from 22,494 to 13,384. Full-result cloning still scales with the
+number of returned fingerprints.
+
+Three final alternating logs pairs have lower means for all 28 cases. At
+one million streams, median run means are:
+
+| Logs query | Original | Final |
+| --- | ---: | ---: |
+| Broad equality before selective equality | 41.8 ms | 272 ns |
+| Selective equality before broad equality | 584 ns | 280 ns |
+| Broad negative | 630 ms | 40.1 ms |
+| Two broad equalities | 80.1 ms | 23.9 ms |
+
+The earlier three metrics pairs reduce the one-million-series negative-first
+selector from 62.7 ms to 158 ns. The final binary completes all 48 metrics
+cases; its single sanity pass measures that selector at 155 ns. Metrics
+resolver and query workloads are unchanged by the independent logs
+refinements. The combined harness was split into two Cargo targets. Broad
+regex timings remain mixed in the paired metrics evidence, with a median
+candidate/baseline ratio of 1.063; no broad-regex improvement is qualified.
+The regex posting investigation below uses that final binary as its baseline.
+
+Final correctness checks pass 338 blockstore unit tests, five public matcher
+regressions, 584 Loki corpus comparisons, the Mimir corpus wrapper and two
+Pyroscope native tests. Mimir records 1,782 cases, 18 skipped cases and 75
+existing divergences. The final unit executable uses cached Cargo dependency
+fingerprints and Rust optimization level 1; the public and native suites use
+Cargo release binaries. Both scoped Clippy runs pass. These are scoped checks,
+not a full Bazel-suite result.
+
+Metrics counts include the driver's one verification query. Logs has no
+verification query before the loop. Each fingerprint-set result is consumed
+through `black_box`. Fixture memory remains part of process RSS; these
+counts establish no resident-memory reduction.
+
+The comparison and profile tools now accept workloads through one million
+series or streams. The comparison ramp includes the requested maximum,
+including values between standard levels. Tests exercise the real phase
+loop with deployment and measurement stubs for all four signals. Defaults
+remain at 20,000. Arbitrary trace capacity tenants receive the same unlimited
+ingestion rate as predefined ramp tenants, in split and all-target roles.
+The explicit noisy-tenant override remains in place. The 76 new benchmark
+budgets remain unseeded until a run
+on the recorded BuildBuddy hardware.
+
+Build and run the workloads with:
+
+```bash
+tools/bench.sh --quick index_matchers log_index_matchers
+CARGO_PROFILE_RELEASE_DEBUG=line-tables-only cargo build \
+  --manifest-path benches/Cargo.toml --locked --release \
+  --example index_matchers_profile
+perf record -e cpu-clock:u -F 199 --call-graph dwarf,16384 -- \
+  benches/target/release/examples/index_matchers_profile 100000 2000 negative_first
+heaptrack benches/target/release/examples/index_matchers_profile \
+  1000000 20 logs_broad_equality_first
+```
+
+Use separate timing runs without a profiler. Preserve both release binaries
+and alternate their order on the same host. A fast candidate needs more
+iterations for a useful CPU profile; record that count before normalization.
+The local evidence lives under `qualification/evidence/large-index-2026-10-09/`.
+It includes raw perf and heaptrack files, Criterion estimates, binary hashes
+and the measured harness. Sampled periods attributed to the query wrappers
+are lower-bound diagnostics: incomplete recovered stacks prevent exact query
+CPU-cost attribution. This shared four-CPU host does not supply native service
+performance qualification on GCP. The
+[investigation record](../qualification/large-index-matchers-2026-10-09.json)
+pins source hashes, rejected evidence and verification scope.
+
+## Regex posting unions
+
+The follow-up capture uses the same five-label fixture and selects
+`{__name__="http_requests_total",job=~"job-(1|2|3)"}`. At one million series,
+the result contains 187,546 fingerprints. Three literal equality queries
+verify that count outside the profiling wrapper.
+
+The baseline CPU capture records 4,562 samples with none lost. Tree cloning
+accounts for 20.04% and tree insertion for 13.20% of the whole capture,
+including fixture construction and drop. Recovered stacks contain the query
+wrapper in 2,882 samples. These are attribution diagnostics; incomplete
+stacks and merged generic symbols prevent exact query CPU accounting.
+
+Two changes remove that work. Regex resolution collects matching postings
+and absent-label fingerprints into one bulk-built tree. When the smallest
+exact posting covers every tenant series and there is one broad regex, the
+resolver starts from the regex result. That exact posting cannot remove any
+of its fingerprints. Other broad selectors keep sequential resolution.
+Invalid matchers also use that path to preserve skipped-error behavior.
+
+The first regex candidate adds checks to the ordinary selective loop and
+slows several small controls by 10–17% in two clean timing pairs. A third
+diagnostic pair overlaps the cached formatter during refinement and is
+excluded from that decision. The refinement restores the original selective
+loop and moves tenant-wide regex planning into a separate non-inlined
+function. The rejected candidate's source, driver archive and timings remain
+preserved.
+
+The pinned Mimir implementation streams sorted posting iterators through a
+loser tree. Krabka still returns an owned set and sorts the collected values
+before bulk construction. This change does not implement Mimir's iterator API
+or finite-alternative regex parser shortcut.
+
+Three final alternating pairs complete all 48 metrics cases. Each case uses
+ten samples, a 0.3-second warmup and a one-second measurement target.
+The baseline is the final selective resolver from the preceding investigation.
+Median run means and median paired candidate/baseline ratios are:
+
+| Broad regex series | Baseline | Final | Paired ratio |
+| --- | ---: | ---: | ---: |
+| 1,000 | 53.0 µs | 34.5 µs | 0.665 |
+| 10,000 | 311 µs | 60.5 µs | 0.195 |
+| 100,000 | 4.08 ms | 0.422 ms | 0.105 |
+| 1,000,000 | 88.7 ms | 6.04 ms | 0.0687 |
+
+All three pairs improve this query at each size. The million-series
+`job_regex` control also improves in every pair, from 6.02 ms to 3.29 ms.
+Other controls are mixed. Of the remaining 44 IDs, 24 have higher median
+paired ratios. Three smaller absent-label controls have 12–18% higher ratios.
+Their median run means increase by about 8–19 ns. The million-series
+absent-label control has a ratio of 1.077. The change retains the large regex
+gain and accepts this measured small-selector cost. It establishes no native
+service performance gain or process RSS reduction.
+
+The final million-series CPU capture records 3,166 samples with none lost,
+using 1,500 timed queries and one verification query. Recovered stacks contain
+the query wrapper in 1,643 samples. Its sampled period per query is a 5.50 ms
+lower bound. Whole-process samples also cover fixture construction and drop.
+This diagnostic does not replace the separate unprofiled timings.
+
+| Broad regex workload | Baseline allocations per query | Candidate allocations per query |
+| --- | ---: | ---: |
+| 100,000 series | 17,870.1 | 1,991.1 |
+| 1,000,000 series | 175,908.4 | 17,325.4 |
+
+Allocation counts include one verification query, followed by 30 queries at
+100,000 series or 10 at one million. The wrapper stack filter excludes the
+literal equality checks and fixture construction. The averages include
+initial regex allocations. Initial captures overlap native Pyroscope checks;
+the refinement's allocation recaptures overlap a Cargo rebuild. Allocation
+counts are separate from unprofiled timing measurements. CPU captures and
+final paired timings wait for compiler jobs and native tests to finish.
+
+The regression ledger covers standalone regexes and both matcher orders with
+a tenant-wide exact posting. It checks absent and empty labels, Unicode, NUL,
+multiline values, complements and inline dot-all flags. No regex pattern is
+rewritten to an unconditional match.
+
+Final validation passes 338 blockstore unit tests, six Cargo release matcher
+regressions, both scoped Clippy checks and the repository formatter.
+The native Mimir wrapper passes with 1,782 cases, 18 skips and 75 existing
+divergences. All 584 native Loki comparisons and seven native Pyroscope tests
+pass before the final metrics-only planner refinement. Native Tempo and the
+full Bazel suite are outside this check. The final inventory check finds all
+48 metrics IDs; the 76 new metrics and logs budgets remain unseeded.
+The final fetch finds no difference from `origin/main` at `9e630202`.
+
+The [regex investigation record](../qualification/regex-postings-2026-10-09.json)
+preserves source and binary hashes, verification scope and raw evidence under
+`qualification/evidence/regex-postings-2026-10-09/`. The prior record keeps its
+original source hashes and points to snapshots for the files changed in this
+follow-up.
+
+Use the profiling driver with the `broad_regex` case:
+
+```bash
+perf record -e cpu-clock:u -F 199 --call-graph dwarf,16384 -- \
+  benches/target/release/examples/index_matchers_profile 1000000 1500 broad_regex
+heaptrack benches/target/release/examples/index_matchers_profile \
+  1000000 10 broad_regex
+```
+
+## Complete profile queries with repeated stacks
+
+The `profile_query` target adds complete-query coverage at 1,000 through
+1,000,000 samples. Its deterministic fixture has 256 repeated stack IDs across
+four symbol partitions, 16 frames per stack and 16 trace IDs. Each query
+checks its complete flamegraph against a separate sample ledger before timing.
+The frontend result cache is bypassed. Ordinary SQL-grouped queries are controls
+for the trace-selection paths, which retain individual samples.
+
+Three alternating baseline/candidate pairs ran on this VM, pinned to CPU 4,
+with compilers and profilers stopped. At one million samples:
+
+| Query | Baseline median mean | Candidate median mean | Median paired ratio |
+| --- | ---: | ---: | ---: |
+| All 16 traces | 3.255 s | 0.730 s | 0.2222 |
+| All traces, `main` call site | 2.698 s | 0.555 s | 0.2019 |
+| One trace | 0.452 s | 0.352 s | 0.7853 |
+| Ordinary grouped query | 0.1383 s | 0.1386 s | 1.0017 |
+
+The 10,000- and 100,000-sample grouped controls are about 4.8% and 5.0% slower
+by median paired ratio. The smallest one-trace case changes by about 0.2%.
+These controls remain in the qualification record; the new benchmark IDs stay
+unseeded, and existing numeric ratchet baselines are unchanged.
+
+At 100,000 samples, allocation captures each include one verification query
+and one timed query. Source-frame filtering attributes symbol resolution to
+`symbol_db_type.rs` and query tree insertion to `tree_type.rs` with a
+`merge_sql_to_tree.rs` caller. Counts per query fall from 3,500,000 to 9,380
+for symbol resolution and from 1,610,529 to 14,179 for tree insertion. The
+whole-process counts also include fixture generation and are not per-query
+allocation figures.
+
+The baseline and candidate million-sample CPU captures lose no samples.
+They include fixture creation, verification and three or ten timed queries,
+respectively; their whole-process percentages are attribution evidence rather
+than matched query CPU costs. After the change, tree insertion and string
+hashing dominate the report, and symbol resolution falls below its 0.5%
+report threshold. The merger reuses adjacent `(partition, stack ID)` runs
+within one Arrow batch and preserves individual signed values and their order.
+Tree insertion borrows names for existing children.
+
+[The qualification record](../qualification/profile-query-2026-10-09.json)
+contains all sixteen cases, confidence intervals, source and binary hashes,
+allocation counts and archived ELF identities. Raw captures and timings are
+under `qualification/evidence/profile-query-2026-10-09/`. Original ELF bytes
+are preserved in verified gzip archives; decompress them before regenerating
+symbolized reports. These engine measurements do not establish native API
+performance parity.
+
+Local native comparisons use `--application-cpus 2.5 --object-store-cpus 0.5`
+with the existing matched application/broker and MinIO memory budgets. The
+application cap includes Krabka's broker. Both backends use the same object
+store cap. When the VM hides the daemon's cgroups, the harness reads cumulative
+CPU and throttling counters from the local Docker Engine API and records the
+counter source in each telemetry sample. Host-activity and telemetry gates
+remain enabled.
+
+The local VM API pilots use one repetition and a requested 30-second measured
+window per cardinality. They are diagnostic Cargo deployments. The application
+and broker retain their scaled role shares; they do not share one movable CPU
+pool. Complete seed ledgers precede timing, and acknowledgements mean API
+acceptance under each backend's durability contract.
+
+| Signal and cardinality | Krabka query p99 | Upstream query p99 |
+| --- | ---: | ---: |
+| Metrics, 20,000 series | 0.289 s | Mimir: 0.081 s |
+| Metrics, 100,000 series | 1.399 s | Mimir: 0.505 s |
+| Logs, 5,000 streams | 0.149 s | Loki: 1.276 s |
+| Traces, 5,000 traces | 0.418 s | Tempo: 0.206 s |
+| Profiles, 1,000 series | 0.0288 s | Pyroscope: 0.0370 s |
+
+These single-run observations do not establish performance parity. At 100,000
+metric series, Krabka's ingest p99 is 2.215 seconds and fails the two-second
+objective. Mimir completes all four stages through 100,000 after private-address
+proxy bypass is added. The original failed Mimir attempt remains in the record.
+
+At 20,000 log streams, Krabka records two queries at roughly 13.5–14 seconds.
+Loki rejects writes with `Ingester is shutting down`; that stage cannot qualify
+a throughput comparison. At 20,000 traces, Krabka fails seed payload verification
+with a missing compacted Parquet object. Native Tempo's corresponding full-payload
+verification is stopped before completion; only its complete 1,000- and
+5,000-trace stages appear as measurements. These failures guide the next service
+investigations and do not count as successful large-dataset comparisons.
+
+The profile stage completes with zero API errors and complete telemetry for
+both backends. Krabka and Pyroscope ingest p99 are 0.0227 and 0.2946 seconds;
+their simultaneous application/broker RSS peaks are 142,996 and 143,980 KiB.
+The original profile pilot used a private PID namespace and missed RSS samples,
+so its objective gates fail. A host-process repeat fixes that visibility issue
+without changing application bytes or budgets. Both reports remain recorded.
+This API pilot covers only 1,000 series; the larger profile workload is the
+million-sample engine fixture above.
+
+Final profile validation passes 134 unit tests, four golden merges and seven
+native Pyroscope tests, plus scoped package and benchmark Clippy checks with
+`-D warnings`. A disk-full native attempt remains in the evidence; the identical
+linked test executable passes after cache recovery. The fixture seed's hex
+digit grouping is corrected after measurement without changing its value, and
+the measured source snapshot is preserved separately.
+
+Docker uses VFS on this 32 GiB VM. `--init-image` can supply a smaller image with
+BusyBox and the bootstrap binary for setup containers; its identity is recorded
+separately. Internal service names and private addresses bypass injected session
+proxies. This keeps MinIO and native frontend RPC traffic on the local network.
+
+Local service CPU captures also cover 20,000 log streams and 100,000 metric
+series. They sample the application role during concurrent writes and cold-window
+reads; broker and MinIO CPU are outside the captures. The logs capture loses no
+samples: `ScalarValue::eq` accounts for 80.65% of self CPU and filter statistics
+for another 6.30%. The pinned DataFusion `restricted_column` helper deduplicates
+literal `IN` values with `Vec::contains`. Log scan SQL supplies an unbounded
+fingerprint list, so that planning work grows quadratically. Metrics already
+bounds large fingerprint scan predicates. A bounded log scan predicate with the
+existing exact row membership check is a follow-up candidate; it is not changed
+by this profile-query optimization.
+
+The first 199 Hz metrics capture loses 47.41% of its samples and is excluded
+from attribution conclusions. Its 49 Hz repeat, with a larger ring buffer and
+8 KiB DWARF stacks, loses no samples. Metric-label fingerprinting accounts for
+12.11% of self CPU and blockstore-label fingerprinting for 5.32%; label-map and
+head-summary cloning also remain visible. A separate 15-second logs seed
+verification capture includes regex compilation and is not an ingest-only
+profile. All these captures are diagnostic and do not supply performance ratios.
+
+## Bounded log scan predicates
+
+The next round runs entirely on this VM. The `log_stream_query` benchmark
+persists ten rows per stream and grows from 1,000 to 100,000 streams, reaching
+one million rows. Seven query shapes cover broad regex and nonempty-value
+selectors, line filtering, sparse selections, time windows and single streams.
+Every process verifies its complete JSON response against an independent input
+ledger before timing. SQL planning, Parquet scans, pipeline evaluation and JSON
+construction are timed; fixture creation and stream-selection planning are not.
+The in-memory object store contains real Parquet but excludes network I/O.
+
+The scan keeps exact SQL `IN` predicates through 4,096 selected fingerprints.
+Larger selections use their fingerprint range, followed by the existing exact
+row membership check. The stream appender rejects unrelated fingerprint runs
+before decoding structured metadata. A 1,024 cutoff was rejected: a sparse
+1,563-stream selection at the largest size slowed from 0.206 to 0.384 seconds
+when the coarse range decoded extra rows.
+
+The final matrix contains 150 measurements pinned to CPU 4, without concurrent
+compilers or profilers. At 20,000 streams, three alternating pairs give:
+
+| Query | Baseline median | Candidate median | Median paired ratio |
+| --- | ---: | ---: | ---: |
+| All streams, nonempty-value selector | 5.962 s | 1.545 s | 0.2608 |
+| All streams, regex selector | 18.063 s | 14.039 s | 0.7785 |
+| One quarter of streams | 0.584 s | 0.377 s | 0.6333 |
+| Quarter selection, line and time filters | 0.321 s | 0.185 s | 0.5549 |
+
+At 100,000 streams, the single paired nonempty-value query falls from 157.425
+to 9.090 seconds, a 17.3-fold improvement. The candidate has three runs at
+that size; the baseline has one. The other largest broad and quarter-selection
+cases measure candidate growth only. Largest rare and single-stream controls
+retain three pairs. The rare controls are about 7.8% slower at 20,000 streams
+and 7.3% slower at 100,000 by median paired ratio. The 1,000-stream line-and-time
+control is about 10.6% slower. All controls and run ranges remain recorded;
+the 28 new benchmark IDs remain unseeded and existing numeric budgets are unchanged.
+
+Matched CPU captures at 20,000 streams include fixture creation, verification
+and three timed nonempty-value queries, with no lost samples. `ScalarValue::eq`
+accounts for 61.94% of baseline self CPU and falls below the candidate report's
+0.5% threshold. Heap captures of the quarter selection include fixture creation,
+verification and one timed query. Whole-process allocation calls fall from
+6,676,958 to 6,339,237; peak heap remains 229.98 MB. RSS including heaptrack
+overhead rises from 329.54 to 386.85 MB. These figures do not establish reduced
+peak memory or per-query allocation counts.
+
+A fresh native comparison preserves Loki's default 90% WAL disk threshold.
+The earlier `Ingester is shutting down` error came from disk throttling:
+the pinned ingester returns that same error when `wal.IsDiskThrottled()` is true.
+Verified cache archival creates sufficient free space for the repeat. Its
+initial configuration-permission failure remains recorded alongside the
+successful repeat, which has zero API errors on both backends at all three
+completed cardinalities.
+
+| Streams | Krabka query p99 | Loki query p99 | Krabka ingest p99 | Loki ingest p99 |
+| --- | ---: | ---: | ---: | ---: |
+| 1,000 | 0.250 s | 0.084 s | 0.240 s | 0.019 s |
+| 5,000 | 0.177 s | 1.904 s | 0.055 s | 0.022 s |
+| 20,000 | 0.599 s | 2.030 s | 5.020 s | 0.031 s |
+
+These are single-run API observations under the same local CPU and memory
+budgets, with host-activity and telemetry gates enabled. Both backends fail
+the harness objective at 20,000 and stop before the requested 100,000 stage.
+They are diagnostic deployments with different durability contracts, and
+do not establish parity or a matched native before/after improvement.
+
+A separate 49 Hz service capture during concurrent writes and reads loses no
+samples. The resolved report shows query-state cloning and label-index work;
+it does not establish the cause of the ingest wait. Its ingest p99 is 5.128
+seconds. Broad regex queries also remain expensive in the engine fixture:
+the largest candidate query takes 78.872 seconds, with regex construction
+visible in the exploratory capture. Query-state sharing, regex reuse and
+ingest wait attribution are the next investigations.
+
+The [qualification record](../qualification/log-scan-predicate-2026-10-10.json)
+preserves source and ELF hashes, all timings, build commands, CPU and heap
+scope, native reports, failures and the raw evidence manifest. Validation
+passes 70 querier and 22 object-store tests, including full stream and numeric
+responses with unrelated fingerprints inside the coarse range, plus scoped
+Clippy checks with `-D warnings`. Cached Cargo dependencies are reused through
+recorded direct compiler commands with matched production compilation flags;
+these local builds are separate from the PR's Cargo and Bazel CI gates.
+
+## Reusing LogQL regex compilation
+
+The next CPU investigation runs on this VM against the bounded-predicate
+candidate above. At 20,000 streams, regex automaton construction dominates the
+broad selector profile. Reported `regex_automata` functions account for 57.50%
+of self CPU at a 0.5% reporting threshold. The pinned Loki implementation
+constructs reusable regexp filters and also simplifies suitable expressions
+into literal filters. This round keeps constructor-validated selector and line
+regexes for reuse. It preserves selector anchoring, line matching, negation and
+public-field edits; equality compares source fields independently of cached
+compiled state. Literal simplification and field/template regex paths remain
+separate investigations.
+
+The same persisted fixture now includes positive and negative regex line
+filters, giving nine shapes at four sizes. All 216 measurements complete as
+three alternating pairs per shape and size, pinned to CPU 4 without concurrent
+compilation or profiling. Each process verifies its complete JSON response
+before timing. At one million rows:
+
+| Query | Baseline median | Candidate median | Median paired ratio |
+| --- | ---: | ---: | ---: |
+| Broad regex selector | 76.324 s | 8.627 s | 0.1097 |
+| Regex selector with literal line filter | 38.906 s | 6.600 s | 0.1713 |
+| Nonempty-value selector with positive regex line filter | 29.500 s | 6.477 s | 0.2202 |
+| Nonempty-value selector with negative regex line filter | 30.777 s | 6.418 s | 0.2087 |
+| Nonempty-value selector control | 8.632 s | 8.218 s | 0.9483 |
+
+At 200,000 rows, the broad regex selector falls from 14.030 to 1.575 seconds.
+Controls retain a 5.6% slowdown for the 5,000-stream rare selection, 11.8% for
+the 20,000-stream single selection and 6.1% for the largest line/time selection,
+by median paired ratio. Their individual run ranges overlap; all pairs remain
+recorded. The eight additional benchmark IDs stay unseeded, bringing the
+inventory extension to 128. The 85 historical numeric budgets are unchanged.
+
+Both 199 Hz CPU captures lose no samples and include fixture creation, one
+verification query and three timed broad queries. No candidate
+`regex_automata` symbol reaches the report's 0.5% threshold. The baseline
+capture uses the preceding round's ELF with the unchanged broad-query fixture;
+the timing matrix rebuilds both drivers with the additional line cases.
+Percentages include fixture costs and do not quantify query-only CPU speedup.
+
+Heap captures at 5,000 streams include fixture creation, one verification
+query and one timed query. Whole-process allocation calls fall from 31,662,593
+to 5,062,337 for the broad selector and from 16,074,505 to 3,424,507 for the
+positive regex line filter. Peak heap stays approximately 97 MB and 60 MB,
+respectively. Line-filter RSS including heaptrack overhead rises slightly,
+from 181.84 to 182.33 MB. These are whole-process allocation counts and
+instrumented peaks, rather than per-query counts or reduced peak-memory claims.
+
+Validation passes 435 scoped LogQL and querier tests, including public-field
+mutation, clone equality, selector anchoring, empty/missing labels, Unicode,
+newlines and positive/negative line matching. Scoped Clippy checks pass with
+`-D warnings`; the Criterion target lists all 36 log query IDs. Recorded direct
+compiler commands reuse the cached Cargo graph, separately from normal PR CI.
+
+The [qualification record](../qualification/log-regex-reuse-2026-10-10.json)
+preserves all pairs, CPU and allocation captures, source/ELF identities,
+verified library archives and build recovery failures. Native API observations
+above predate regex reuse; this round does not attribute native gains or
+performance parity to engine measurements. Ingest wait attribution, cloned
+query state and larger native comparisons remain unfinished.
+
+## Sharing immutable query indexes
+
+The preceding native log profile attributes 18.9% of cumulative samples to
+query-state cloning. Cache hits and request/shard clones copied complete label
+and block indexes. Krabka now shares immutable `Arc` snapshots, preserving
+tenant keys, TTLs and compaction-frontier cache generations. An active request
+keeps its captured indexes after cache replacement or clearing. Loki likewise
+reuses loaded index readers and cached index objects; the
+[source comparison](grafana-upstream-source-comparison.md#loki) records the
+pinned implementation.
+
+A new frontend fixture includes production HTTP preparation, selection,
+planning, shard execution, Parquet reads, serialization and body consumption.
+It persists real Parquet and tenant manifests on a private local filesystem.
+The index cache is warmed, the result cache is disabled, and fixture limits
+allow complete broad responses. Requests run through the router in-process,
+with filesystem pages warmed by verification. They do not measure network
+traffic or remote storage. Each process verifies the API envelope and all
+labels/rows against an independent input ledger before timing; variable
+execution statistics are excluded from equality.
+
+All 168 measurements completed on the current VM, with three alternating
+pairs for seven shapes at four sizes. No GCP benchmark VM was launched.
+At 100,000 streams and one million rows:
+
+| Request | Baseline median | Candidate median | Median paired ratio |
+| --- | --- | --- | --- |
+| All streams | 14.033 s | 13.851 s | 1.0127 |
+| All streams, small shard-byte budget | 20.441 s | 17.286 s | 0.8562 |
+| One quarter of streams | 4.355 s | 3.835 s | 0.8807 |
+| Rare selector | 1.375 s | 0.299 s | 0.2177 |
+| One stream | 1.094 s | 0.0167 s | 0.0146 |
+| Empty result | 1.164 s | 0.000182 s | 0.000141 |
+| Label values | 1.881 s | 1.685 s | 0.8859 |
+
+Ratios are medians of corresponding candidate/baseline pairs, rather than
+ratios of the two independent medians. The broad unsharded control has no
+established improvement: its paired ratio is 1.0127 at the largest size and
+1.0191 at the smallest. Every run range is retained in the record.
+
+Separate 199 Hz CPU captures include fixture construction, one verification
+request and 50 timed empty requests at 20,000 streams, with zero lost samples.
+The baseline's largest reported query-state clone entry accounts for 15.51%
+of cumulative samples. No candidate clone entry reaches the 0.5% threshold,
+but its capture has only 86 samples and is dominated by fixture construction.
+These captures establish attribution, not a query-only CPU ratio; cumulative
+caller percentages can overlap.
+
+Heap captures at 5,000 streams include fixture construction and one
+verification request. For 20 timed empty requests, allocation calls fall from
+6,791,531 to 615,145. For three timed sharded broad requests, calls fall from
+16,210,876 to 13,438,791. Peak heap remains approximately 57 MB and 80 MB,
+respectively. Empty-result RSS including heaptrack overhead increases from
+115.22 to 118.72 MB; sharded RSS falls from 256.86 to 248.77 MB. These are
+whole-process counts and instrumented peaks, not per-query allocations or
+general peak-memory savings.
+
+Validation passes 585 tests: 427 observability unit tests, 70 querier tests,
+22 object-store tests, 56 range-query tests and ten tenant-limit tests. Full
+unit coverage also caught a rule-filter fixture that used a `LabelMatcher`
+struct literal after the earlier regex cache change; it now uses the validated
+constructor. Scoped Clippy, formatting, all 28 new Criterion IDs, 31 ratchet
+self-tests, 46 dependency-pin checks and locked offline Linux metadata pass.
+The inventory contains 156 additional unseeded IDs across these rounds;
+all 85 historical numeric budgets are unchanged. The current inventory hash
+and the original seeded-file hash are recorded separately.
+
+The [qualification record](../qualification/query-state-sharing-2026-10-10.json)
+preserves all timing pairs, CPU/heap captures, source and binary identities,
+verified archives, reproduction commands and failed build recovery attempts.
+Direct builds reuse the exact cached Cargo dependency graph and remain
+separate from normal PR CI. This round adds no fresh native deployment
+comparison. Ingest wait attribution, bounded shard label-index rebuilding,
+metadata enumeration and larger native comparisons remain unfinished;
+overall performance parity is unqualified.
+
+## Bounded shard label selection
+
+A focused 20,000-stream sharded capture after immutable index sharing still
+attributes 8.81% of cumulative samples to `state_for_bounds`, including 5.15%
+in `LabelIndex::tenant_series`. That method copies every tenant label set
+into an owned vector before the frontend filters shard bounds. Loki instead
+reuses label and chunk buffers while walking postings; the pinned
+[source comparison](grafana-upstream-source-comparison.md#loki) describes its
+callback ownership contract.
+
+The initial candidate collects tenant fingerprints, selects the inclusive
+shard range, then borrows and copies only those labels into the existing
+bounded index. It preserves canonical labels and tenant selection, while
+still constructing the full tenant fingerprint set and rebuilding a bounded
+index. The same filesystem frontend fixture passes all 48 complete payload
+checks, with three alternating pairs for sharded and unsharded broad requests
+at four sizes, on the current VM.
+
+At 100,000 streams, the initial sharded median falls from 17.364 to 16.289
+seconds, with a median paired ratio of 0.9444. The 20,000-stream unsharded
+control regresses by paired ratio 1.0825; its independently computed medians
+are 2.343 and 2.357 seconds, with overlapping run ranges. The 5,000-stream
+sharded paired ratio is also 1.0249, with overlapping ranges. All observations
+remain in the [initial experiment record](../qualification/shard-label-selection-2026-10-10.json).
+
+Matched-count CPU captures include fixture creation, one verification request
+and three timed sharded requests at 20,000 streams, with zero lost samples.
+Reported bounded preparation falls from 8.81% to 3.11% of cumulative samples.
+The candidate has no `tenant_series` entry at the 0.5% reporting threshold.
+These are whole-process attribution percentages; cumulative callers overlap
+and do not establish query-only CPU ratios.
+
+Heap captures include fixture creation, one verification request and three
+timed sharded requests at 5,000 streams. Allocation calls fall from 13,438,770
+to 12,337,038; peak heap remains 80.43 MB. Instrumented RSS falls from 245.31
+to 226.76 MB. These are whole-process counts and include profiler overhead.
+All 148 querier, object-store and range-query tests pass, along with production
+and full unit-source Clippy checks.
+
+The separate [refinement record](../qualification/shard-label-selection-refined-2026-10-10.json)
+isolates bounded preparation in a non-inlined helper. Its largest unsharded
+control still regresses by paired ratio 1.0647. Both direct builds used
+different Rust crate metadata tags from the baseline, which can change code
+layout. The records retain that confound; they do not attribute the control
+changes to the algorithm or inlining alone.
+
+The [final repeat](../qualification/shard-label-selection-matched-2026-10-10.json)
+keeps the refined source and matches the baseline metadata tags for both the
+observability library and fixture. All 48 measurements verify complete
+payloads, with three alternating pairs. The retained candidate has these
+results:
+
+| Request | Baseline median | Candidate median | Median paired ratio |
+| --- | --- | --- | --- |
+| Sharded, 5,000 streams | 0.468 s | 0.425 s | 0.9125 |
+| Sharded, 20,000 streams | 2.655 s | 2.456 s | 0.9376 |
+| Sharded, 100,000 streams | 18.070 s | 16.950 s | 0.9714 |
+| Unsharded, 1,000 streams | 0.0563 s | 0.0601 s | 1.0663 |
+| Unsharded, 100,000 streams | 14.579 s | 14.304 s | 0.9984 |
+
+The 5,000- and 20,000-stream sharded ranges are disjoint in these three pairs.
+The largest sharded result is smaller by median paired ratio, with overlapping
+ranges and one slower candidate pair. The smallest unsharded control retains
+a 6.6% paired regression with overlapping ranges. Medians and paired ratios
+are distinct statistics; all ranges remain in the record. This repeat removes
+the metadata-tag difference but does not prove that it caused the earlier
+regressions.
+
+The final CPU capture loses no samples and attributes 2.74% of cumulative
+samples to the partial-bounds helper, against the baseline's 8.81% bounded
+preparation entry. Scope remains fixture creation, one verification request
+and three timed sharded requests. Final whole-process heap counts fall from
+13,438,776 to 12,337,011, with peak heap 80.43/80.42 MB and instrumented RSS
+242.68/226.03 MB. Each capture includes fixture construction, one verification
+and three timed requests at 5,000 streams. These attribution and allocation
+figures do not establish query-only CPU or general memory savings.
+
+The final build again passes 148 integration tests and production/full
+unit-source Clippy. Source snapshots, exact compiler options, ELF identities,
+verified archives, all failed and completed experiments and reproduction
+commands are retained. Each experiment's evidence manifest remains separate.
+This round adds no native deployment comparison or overall upstream parity
+claim. Borrowed fingerprint-range traversal, avoiding repeated bounded-index
+rebuilds, native ingest wait attribution and larger native comparisons remain
+unfinished.
+
+## Native ingest diagnosis on the current VM
+
+The [fresh native diagnostic](../qualification/ingest-wait-2026-10-10.json)
+uses the retained bounded-label candidate, 20,000 streams and 200,000 seed
+rows. Independent readback verifies every seeded label and row. Each
+measured write contains 1,000 entries at every cardinality; cardinality does
+not multiply the measured request size. Two writers submit once per second
+while cold-window queries run at a 250 ms interval. The application and
+broker share a 2.5 CPU budget, with a separate 0.5 CPU MinIO budget.
+
+The 30-second instrumented run accepts 60 writes and completes 113 queries
+with zero errors or empty query results. Ingest p99 is 0.376 s and query p99
+is 0.574 s. The earlier 5.020 s ingest p99 does not recur, and its cause
+remains unresolved. This is one fresh Krabka diagnostic, without a fresh
+Loki deployment or a causal before/after latency claim. Kafka `Acks::All`
+and API acknowledgement semantics remain in force. Loki's default WAL disk
+guard was not changed.
+
+The CPU capture samples application and broker userspace at 49 Hz, losing
+no samples. Exact mounted-binary symbol resolution attributes 37.14% of
+cumulative samples to `merge_tenant_shard_indexes`, 8.01% of self samples to
+label-index insertion, 4.77% to `malloc`, and 6.47% to `cfree`. Cumulative
+callers overlap; these percentages do not measure request wait time. They
+identify repeated tenant-index materialization as the next optimization
+target. The seed ledger is updated while readback proceeds, so an
+intermediate `verified: false` means the check is incomplete; its final
+value verifies all 200,000 rows.
+
+## Reusing one cached tenant shard
+
+A request that overlaps exactly one persisted tenant shard now retains its
+immutable label and block indexes. The shard reader already filters both
+indexes to the requested tenant. Multiple shards still use the existing
+merge, including first-descriptor deduplication. TTLs, frontier generations
+and old-request snapshot lifetimes retain their existing rules. The
+moving-window cache test checks shared identity and complete contents after
+cache clearing.
+
+The added `log_query_frontend/shards_*` fixtures use real local Parquet and
+an immutable shard snapshot. The shard cache lasts one hour, while the
+request-index and result caches expire immediately. This exposes the
+preparation cost of windows that do not reuse the merged request cache.
+The same four stream counts reach one million rows; every timed process
+first verifies its complete API envelope, labels and rows against the input
+ledger. Fixture creation and verification are excluded from timings.
+
+The [paired experiment](../qualification/single-shard-index-reuse-2026-10-10.json)
+passes all 96 primary payload checks, with three alternating pairs at each
+size. At 100,000 streams:
+
+| Request over cached shard | Baseline median | Candidate median | Median paired ratio |
+| --- | --- | --- | --- |
+| All streams | 14.370 s | 13.878 s | 0.9715 |
+| Roughly one sixty-fourth | 0.699 s | 0.273 s | 0.3900 |
+| One stream | 0.462 s | 0.0180 s | 0.0389 |
+| Empty result | 0.437 s | 0.000371 s | 0.000849 |
+
+Selective and empty-result ranges are disjoint at this size. Broad ranges
+overlap, and the smallest broad case retains a 6.1% median paired regression
+with overlapping ranges. The 5,000-stream broad paired ratio is 1.0076. All
+measurements and ranges remain in the record; broad response construction
+continues to dominate large requests.
+
+CPU captures include fixture creation, one verification request and 50 timed
+empty-result requests at 20,000 streams. They lose no samples. Baseline
+merging accounts for 41.67% of cumulative samples; the candidate has no
+merge entry at the 0.5% threshold. Its 100 samples are dominated by fixture
+construction, so these captures do not establish a query-only CPU ratio.
+Whole-process heap captures include construction, one verification and 20
+timed empty-result requests at 5,000 streams. Allocation calls fall from
+3,566,134 to 751,799, while peak heap remains 57.18 MB. Instrumented RSS is
+102.58/100.73 MB; no general memory advantage is inferred.
+
+All 585 unit and scoped integration tests pass, as do strict production,
+unit-source, fixture, profiling-driver and Criterion lint checks. The 44
+Criterion IDs include 16 new unseeded shard cases; all 85 historical numeric
+budgets remain unchanged. Native profiling supplied the hypothesis, while
+this experiment measures local synthetic frontend requests. A fresh native
+candidate/upstream comparison remains unfinished.
+
+The 24 manifest-cache control measurements also verify complete payloads.
+Their largest broad case retains a 3.9% median paired regression, with
+overlapping ranges and all three candidate pairs slower. The largest empty
+control rises from 150 to 177 microseconds (paired ratio 1.1760), with
+disjoint ranges. These control costs are retained alongside the selective
+shard gains and require a separate repeat before a broader performance claim.
+
+The [separate control repeat](../qualification/single-shard-index-control-repeat-2026-10-10.json)
+verifies all 12 observations using the identical retained executables and
+three alternating pairs. Broad medians are 13.571/14.693 s
+with median paired ratio 1.0827; empty medians are
+181.0/199.0 microseconds with paired ratio
+1.1992. The slower controls recur. The single-shard
+change is retained for its much larger selective and empty-request gains,
+with this tradeoff explicit. The following response experiment investigates
+broad-response costs; a fresh native candidate/upstream comparison remains
+outstanding.
+
+## Moving owned stream response JSON
+
+The [broad-control profile](../qualification/manifest-control-profile-2026-10-10.json)
+finds expensive response construction and `serde_json::Value` serialization.
+Its whole-process allocation totals differ by only ten calls between the
+preceding variants, so it does not isolate the earlier control slowdown.
+It supplies a separate hypothesis: `json!` serializes owned, completed JSON
+trees again, copying their strings and allocating replacement containers.
+
+Folded responses now consume each entry's timestamp and line into JSON
+strings. Completed stream results move into the success envelope. Existing
+categorized construction stays intact and also benefits from the outer move.
+The frontend still builds a JSON tree for merging; this is not a streaming
+HTTP encoder.
+
+The [response experiment](../qualification/response-json-moves-2026-10-10.json)
+uses the unmodified preceding candidate executable as its baseline and
+verifies all 96 observations across three alternating pairs. Fixture creation
+and complete ledger verification precede timing. Manifest-index caching lasts
+one hour, result caching is disabled, and local Parquet storage is warmed.
+At 100,000 streams and one million rows:
+
+| Request | Baseline median | Candidate median | Median paired ratio |
+| --- | --- | --- | --- |
+| All streams | 14.067 s | 11.153 s | 0.8391 |
+| All streams with query shards | 16.503 s | 14.089 s | 0.8538 |
+| One stream | 24.0 ms | 19.3 ms | 0.7549 |
+| Empty result | 202 us | 197 us | 1.0085 |
+
+Both largest broad cases improve in every pair with disjoint ranges. The
+ratio is the median of pair ratios, so it can differ from the ratio of
+medians. The largest empty control retains a 0.9% paired regression; at
+1,000 streams, single and empty cases retain 0.4% and 2.8% regressions.
+These control ranges overlap, and all measurements remain in the record.
+
+Whole-process CPU captures include construction, verification and three
+timed broad requests at 20,000 streams. They lose no samples. Response-builder
+cumulative attribution falls from 31.41% to 3.60%; overlapping callers and
+available callchains limit this comparison. It is not a query-only CPU ratio.
+Whole-process allocation captures at 5,000 streams include the same request
+counts: calls fall from 10,392,874 to 8,192,836, while peak heap stays at
+80.42 MB. Instrumented RSS is 216.85/215.75 MB. This does not qualify a
+general memory advantage.
+
+All 585 unit and scoped integration tests, strict production/unit/fixture/
+driver lint and managed formatting checks pass. Benchmark IDs and the 85
+historic numeric budgets remain unchanged. All work runs on this VM;
+temporary verified build dependencies in RAM are removed before timing.
+Fixture storage and WAL locations remain unchanged. A fresh native upstream
+comparison remains unfinished.
+
+## Skipping global selection when every entry fits
+
+The response candidate's CPU profile attributes 5.52% of whole-process
+cumulative samples to global stream-limit selection. That path parses every
+timestamp, sorts all entries, builds a selection set and tests membership
+even when the requested limit includes the entire response. A checked
+remaining-count pass now skips those steps when all entries fit. Empty or
+missing-value streams are still removed. Requests that need truncation keep
+the existing algorithm, ordering and tie handling.
+
+The [limit experiment](../qualification/inclusive-log-limit-2026-10-10.json)
+uses the unchanged response candidate as its baseline. All 96 measurements
+verify complete payloads before timing across three alternating pairs and
+four cardinalities. At one million rows, the broad medians are
+11.582/10.495 s, with median paired ratio 0.9152. Every pair improves, but
+the ranges overlap. The largest sharded paired ratio is 0.9496 with one
+slower candidate pair; its medians are 13.922/13.943 s. These different
+statistics do not qualify a consistent sharded advantage.
+
+Initial median regressions remain recorded: 2.3% for the smallest broad
+case, 4.1% for the 5,000-stream sharded case, 7.9% for its empty control,
+and 0.8% for the largest empty control. All ranges overlap. An additional
+18 verified observations repeat the first three cases with 20, 10 and
+1,000 timed iterations per process. Their median paired ratios are
+0.9464, 0.9580 and 0.9714, so those initial regressions do not recur.
+Both sets of observations remain in the record.
+
+Whole-process CPU profiles include construction, one verification request
+and three timed broad requests at 20,000 streams, with no lost samples.
+The baseline attributes 8.10% cumulative samples to global selection; the
+candidate has no entry above the 0.5% reporting threshold. Available
+callchains and overlapping callers limit attribution; this is not a
+query-only CPU ratio. Whole-process heap captures at 5,000 streams use the
+same request counts. Allocation calls fall from 8,192,858 to 8,116,350;
+peak heap remains 80.42 MB, while instrumented RSS rises from 219.45 to
+233.78 MB. The change is retained for avoiding redundant selection, with
+the mixed timings and higher instrumented RSS explicit.
+
+All 586 tests, strict lint and managed formatting pass. The new regression
+covers forward/backward ties, zero and maximum limits, both sides of the
+result-count boundary, and empty streams. Benchmark IDs and historic numeric
+budgets remain unchanged. Compiler outputs and build dependencies temporarily
+use RAM to fit this VM's disk capacity; they are removed or moved to verified
+disk artifacts before timing. Successful test executables are hashed and
+removed, with compiler commands and logs retained. Fixture and WAL storage
+remain unchanged; a fresh native upstream comparison remains unfinished.
+
+## Filesystem scope and explicit workspace repeat
+
+The frontend timing runners above did not set `TMPDIR`. This VM's default
+temporary directory resolves to `/tmp`, mounted as tmpfs. Ambient `TMPDIR`
+was not recorded for each earlier process, so those timings must be treated
+as warmed tmpfs Parquet rather than disk-backed storage. CPU and allocation
+runners explicitly used the workspace on the root overlay filesystem.
+The tracked frontend records now qualify that distinction. Frozen raw files
+and their hashes remain unchanged, including earlier annotations that
+incorrectly called the timed fixtures disk-backed. Native WAL locations and
+Loki's default disk guard were unaffected.
+
+The [explicit workspace repeat](../qualification/disk-frontend-scope-2026-10-10.json)
+sets and records `TMPDIR=/workspace/scratch/disk-frontend-fixtures`, verifies
+the overlay mount, and compares the same three retained executables at one
+million rows. Nine complete response checks pass. Each version occupies
+each order position once across three triples; fixture construction and
+ledger verification precede timing and warm the files.
+
+| Retained version | Median broad request | Median paired ratio |
+| --- | --- | --- |
+| Before response copying optimization | 13.574 s | Reference |
+| Owned response values | 11.164 s | 0.8224 versus reference |
+| Owned values plus limit fast path | 10.801 s | 0.9287 versus owned values; 0.7980 versus reference |
+
+Both changes improve in every triple, with disjoint ranges between adjacent
+versions. This supports the retained optimizations on explicitly selected,
+warmed workspace storage. Three observations per version do not qualify
+cold storage, network I/O, concurrent ingest, sharded requests, or native
+upstream parity. No new CPU or allocation captures are taken in this repeat.
+
+
+## Rejected borrowed metric-label conversion
+
+The native metrics profile identifies intermediate tree cloning in cold
+label resolution. The [borrowed-label experiment](../qualification/borrowed-metric-labels-2026-10-10.json)
+tries converting borrowed index labels directly into final `MetricLabels`,
+while retaining canonical hashing and stored-ID order. One executable contains
+both paths, using an aliased blockstore crate and the unchanged cached metrics
+library. It mirrors the two conversion implementations; it does not execute
+the production PromQL caller or query engine.
+
+All 72 observations verify the complete canonical-keyed label map before
+timing. Three alternating pairs cover broad, selective and empty selectors
+at four sizes, with eight labels per series. Stored row IDs deliberately
+differ from canonical fingerprints; values include Unicode, NUL and long
+strings. Setup and verification are excluded from timing. The fixture is
+an in-memory index, so these are not storage or HTTP measurements.
+
+| Broad selector | Owned median | Borrowed median | Median paired ratio |
+| --- | --- | --- | --- |
+| 1,000 series | 1.690 ms | 1.379 ms | 0.8071 |
+| 20,000 series | 84.779 ms | 79.011 ms | 0.9320 |
+| 100,000 series | 534.435 ms | 565.829 ms | 1.0454 |
+| 1,000,000 series | 6.261 s | 4.442 s | 0.7046 |
+
+The million-series case improves in every pair with disjoint ranges. The
+100,000-series case slows in every pair, with narrowly overlapping ranges.
+One selective million-series pair also slows by 23.6%. Empty cases take tens
+to hundreds of nanoseconds, making their small ratios difficult to attribute.
+Every observation remains recorded; the prototype is rejected and all three
+production and test files are restored byte for byte.
+
+CPU captures include construction, independent expected labels, one verification
+and 50 timed broad resolutions at 20,000 series. Both lose zero samples.
+Intermediate tree cloning disappears above the 0.5% reporting threshold,
+while canonical hashing remains about 24% self. Label conversion and result
+tree construction receive more relative attribution. These overlapping,
+whole-process samples do not isolate the 100,000-series slowdown. Heap captures
+at 5,000 series include setup, verification and 20 timed resolutions:
+allocation calls fall from 2,476,820 to 2,371,568, peak heap from 16.41 to
+16.22 MB, and instrumented RSS from 30.86 to 28.27 MB. Lower allocation
+traffic does not qualify a reliable latency advantage.
+
+The prototype passes 339 blockstore tests, strict production and full unit-source
+lint, and managed formatting. The actual PromQL caller is not compiled or
+qualified because rejection occurs at the isolated resolver stage. Verified
+RAM build dependencies are removed before timing; the demo is restored healthy.
+The pinned [Mimir packed-label approach](grafana-upstream-source-comparison.md#packed-labels-and-compressed-head-samples)
+returns slices from a packed string. This experiment still clones strings
+into a tree and does not implement that representation or qualify upstream
+parity. Canonical hash, wire format and retained benchmark budgets stay intact.
+
+
+## Partial selection for truncated log responses
+
+The inclusive-limit fast path above leaves full sorting and selected-position
+set construction in requests that discard rows. The
+[partial-selection experiment](../qualification/partial-log-limit-2026-10-10.json)
+replaces those steps with `select_nth_unstable_by` and a strict cutoff tuple.
+Timestamp, stream position and entry position form a unique ordering, so
+comparing each original entry against the first excluded tuple keeps exactly
+the requested count and preserves ties and per-stream order. A zero limit
+clears immediately. The inclusive count guard proves the selection index is
+in bounds. Truncated requests parse timestamps twice; a tuple vector and
+complete JSON materialization remain.
+
+One executable includes the exact original and candidate production helper
+bodies. All 192 observations verify a complete response against an independent
+fixture ledger before timing, across three alternating pairs, both directions,
+four row counts and four limits. Each stream holds ten rows with timestamps
+shared across streams. JSON construction and cloning precede the timer;
+final response disposal follows it. These are helper measurements, without
+HTTP, Parquet, concurrent writes or native upstream services.
+
+At one million rows in 100,000 streams:
+
+| Limit and direction | Original median | Candidate median | Median paired ratio |
+| --- | --- | --- | --- |
+| 100, forward | 398.702 ms | 186.934 ms | 0.4846 |
+| 100, backward | 413.522 ms | 185.642 ms | 0.4711 |
+| Half, forward | 288.502 ms | 141.764 ms | 0.4762 |
+| Half, backward | 287.356 ms | 136.459 ms | 0.4802 |
+| Zero, forward | 234.344 ms | 78.135 ms | 0.3269 |
+| Zero, backward | 233.747 ms | 78.193 ms | 0.3438 |
+
+All largest truncated and zero-limit pairs improve with disjoint ranges.
+The only median paired regression is 1.3% for the 20,000-row backward
+full-result control, with two slower pairs and overlapping ranges. Its
+independent medians are 87.822/87.867 us. All observations remain preserved;
+a ratio of medians differs from a median of paired ratios.
+
+Four whole-process CPU captures include construction, independent verification,
+cloning, disposal and 20 timed resolutions at 100,000 rows. They lose no
+samples but have only 205–273 samples each. Stable-quicksort self attribution
+is 6.41% for limit 100 and 2.93% for half; candidate partition attribution
+is 1.46% and 1.59%. Timestamp parsing receives more relative attribution,
+consistent with the extra pass. These sparse captures do not qualify a
+normalized helper or service CPU gain. Four heap captures at 20,000 rows
+include the same setup and ten timed resolutions. Allocation calls are
+nearly unchanged for limit 100 (1,244,570/1,244,449), and fall from
+1,254,492 to 1,244,449 for half. Peak heap falls by 0.48 MB in both cases;
+JSON construction and cloning dominate. No general memory advantage is
+qualified. The failed first heap launcher and successful recovery remain
+recorded; completed CPU captures are not repeated.
+
+All 587 tests, strict production/full-unit-source lint, a driver check with
+warnings denied and managed formatting pass. The new regression checks
+scrambled timestamps, cross-stream ties, malformed and non-string timestamps,
+limit boundaries, both directions and retained warnings. Verified RAM build
+dependencies are removed before timing, successful test executables are
+hashed and removed, and the complete original production library is archived
+with byte verification. The demo is restored healthy. Benchmark inventory
+and 85 historic numeric budgets stay unchanged.
+
+Pinned [Loki ReadBatch](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/iter/entry_iterator.go#L681)
+stops its ordered iterator at the requested count. This smaller optimization
+reduces Krabka's selection after materialization; it does not implement that
+streaming approach. The preceding full frontend workspace measurements use
+the earlier retained executable. No new full HTTP or native comparison is
+claimed for partial selection; overall upstream parity remains unqualified.
+
+
+## Rejected flat mask for log selection
+
+The cutoff profile above identifies the cost of parsing timestamps twice.
+The [flat-mask prototype](../qualification/flat-log-limit-2026-10-10.json)
+tries smaller `(timestamp, flat position)` tuples and a boolean selection
+mask. Flat positions preserve the same stream/entry tie order, and retention
+can use the mask without another parse. The mask uses one byte per row;
+its element storage plus two-field tuples is theoretically 17 bytes per row
+instead of 24 for three-field tuples, excluding capacity and JSON storage.
+These structural differences do not establish a performance gain.
+
+All 192 complete independent response checks pass in three alternating pairs,
+with the same four sizes, limits, directions and helper-only timing scope as
+the retained cutoff experiment. Forward selection of 100 entries shows:
+
+| Input rows | Cutoff median | Mask median | Median paired ratio |
+| --- | --- | --- | --- |
+| 1,000 | 53.480 us | 44.540 us | 0.8272 |
+| 20,000 | 1.377 ms | 1.909 ms | 1.3891 |
+| 100,000 | 17.139 ms | 30.472 ms | 1.7704 |
+| 1,000,000 | 183.373 ms | 337.942 ms | 1.8111 |
+
+Both million-row limit-100 cases and both half-limit cases regress in every
+pair with disjoint ranges. Half-limit paired ratios are 1.3979 and 1.4010.
+Small truncated cases improve, but that does not qualify retaining a change
+that slows the large controls. The helper is restored to the retained cutoff
+implementation byte for byte; the candidate is not rebuilt or qualified as
+a full production crate.
+
+Four CPU captures at 100,000 rows include setup, independent verification,
+cloning/disposal and 100 timed helper iterations. They contain 879–1,167
+samples with zero lost samples. In the half-limit capture, timestamp parsing
+falls from 14.57% to 6.98% self while `Value` drop-glue attribution rises
+from 4.88% to 12.25%. Those relative whole-process percentages do not isolate
+the cause of the timed-helper regression. Sample counts come from actual
+`PERF_RECORD_SAMPLE` records; a rounded report header initially parsed as
+one sample is corrected in the tracked record, with all raw files preserved.
+Four heap captures at 20,000 rows and ten timed iterations allocate eleven
+extra times, with 0.15 MB less peak heap. Instrumented RSS differs by only
+0.09/0.07 MB. No normalized CPU or general memory improvement is qualified.
+
+All measurements and profiles run on this VM with the demo paused and restored
+healthy afterward. Verified build-only RAM dependencies are removed before
+timing. The retained source still matches the previously tested implementation;
+all 587 tests and strict lint passed for that source. Benchmark IDs, historical
+budgets, WAL locations and default disk guards remain unchanged. The next
+investigation needs to explain row disposal and allocation behavior or measure
+complete HTTP processing; this experiment does not qualify upstream parity.
+
+## Finite-limit complete HTTP qualification
+
+The [finite-limit frontend record](../qualification/limited-log-frontend-2026-10-10.json)
+compares the preserved production libraries immediately before and after the
+retained partial-selection change. Both executables use the same new fixture,
+compiler options, dependency graph and CPU affinity. Requests include
+preparation, planning, actual warmed Parquet reads, serialization and complete
+body consumption. Result caching is disabled. Fixture construction and an
+independent generated-input ledger check precede each process's timer.
+
+These measurements explicitly put fixture files on the workspace overlay;
+the two executables reside in RAM during measurement. All work runs on this
+VM with the demo paused and restored healthy afterward. Three alternating
+pairs cover 1,000–100,000 streams, ten rows per stream, manifest and shard
+requests limited to 100 entries, and the existing complete-result control.
+All 72 primary response checks pass. Selected primary results are:
+
+| Input rows | Request | Baseline median | Candidate median | Median paired ratio |
+| --- | --- | --- | --- | --- |
+| 10,000 | Manifest, limit 100 | 39.894 ms | 44.251 ms | 1.1092 |
+| 10,000 | Sharded, limit 100 | 45.017 ms | 47.340 ms | 1.0516 |
+| 50,000 | Manifest, limit 100 | 160.296 ms | 160.779 ms | 1.0030 |
+| 50,000 | Sharded, limit 100 | 238.087 ms | 247.746 ms | 1.0067 |
+| 200,000 | Manifest, limit 100 | 824.634 ms | 874.448 ms | 1.0584 |
+| 200,000 | Sharded, limit 100 | 1.084 s | 0.977 s | 0.9624 |
+| 1,000,000 | Manifest, limit 100 | 5.133 s | 5.158 s | 1.0010 |
+| 1,000,000 | Sharded, limit 100 | 7.021 s | 6.379 s | 0.8972 |
+
+Every primary case has overlapping ranges, including the complete-result
+controls preserved in the record. The two manifest cases slower in every
+initial pair receive twelve longer verified observations, with 100 iterations
+at 10,000 rows and twenty at 200,000 rows. Their paired median ratios become
+1.0050 and 0.9987, with overlapping ranges. Preserve both rounds separately:
+the complete request results are mixed and do not qualify a consistent
+general HTTP gain from the roughly twofold helper improvement above.
+
+Four whole-process CPU captures at 200,000 rows include construction, the
+independent oracle, verification, three timed requests and disposal. Actual
+sample counts are 865/878 for manifest requests and 959/997 for shard requests,
+with zero lost samples. The global JSON limit helper does not appear above
+the reports' 0.5% threshold; that does not establish zero cost. Production
+call chains instead include timestamp parsing during record sorting and
+`trim_multiple_streams_before_encoding`. Label comparisons and hashing have
+multiple callers, including the fixture oracle, and need caller attribution
+before choosing another production change. Two allocation captures at
+50,000 rows include setup, verification and one timed request. Calls are
+3,949,866/3,949,879, peak heap is 66.08 MB in both, and instrumented RSS is
+185.89/186.61 MB. No memory advantage is qualified.
+
+The initial fixture lint fails on a positional format argument, and the shell
+launcher incorrectly continues into timing. Both measured executables share
+that captured source and each independently verifies its complete response.
+The correction uses the named format argument with the same URI. A separate
+validation build passes strict fixture/driver lint, lists all 52 frontend
+Criterion IDs, and verifies twenty boundary responses across 1, 9, 10, 99
+and 100 streams with both manifest and shard requests. Its results are not
+pooled into timings. Managed formatting passes. Production remains the
+previously tested implementation with 587 passing tests. Eight new IDs are
+unseeded; all 85 historical numeric budgets remain unchanged.
+
+Full symbolized reports are preserved with lossless gzip verification, along
+with raw CPU/allocation captures, source snapshots and exact commands.
+Build dependencies are removed before timing. After reports and controls,
+the two measured executables are hashed and removed without an ELF archive;
+re-symbolizing raw CPU data requires rebuilding from the retained library
+archives and fixture source. This limitation is explicit in the record.
+
+Pinned [Loki ReadBatch](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/iter/entry_iterator.go#L681)
+stops an ordered iterator at the requested count. Krabka already merges
+per-stream heads with a heap before encoding these finite-limit responses,
+although it still materializes and sorts entries and repeatedly parses
+timestamp strings. That earlier stage explains why optimizing the later
+global JSON selection need not improve this workload. Timestamp handling
+in actual sort/trim callers is the next profiling target; no new production
+change or native upstream comparison is claimed by this qualification.
