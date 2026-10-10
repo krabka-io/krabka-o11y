@@ -1618,3 +1618,72 @@ The pinned [Mimir packed-label approach](grafana-upstream-source-comparison.md#p
 returns slices from a packed string. This experiment still clones strings
 into a tree and does not implement that representation or qualify upstream
 parity. Canonical hash, wire format and retained benchmark budgets stay intact.
+
+
+## Partial selection for truncated log responses
+
+The inclusive-limit fast path above leaves full sorting and selected-position
+set construction in requests that discard rows. The
+[partial-selection experiment](../qualification/partial-log-limit-2026-10-10.json)
+replaces those steps with `select_nth_unstable_by` and a strict cutoff tuple.
+Timestamp, stream position and entry position form a unique ordering, so
+comparing each original entry against the first excluded tuple keeps exactly
+the requested count and preserves ties and per-stream order. A zero limit
+clears immediately. The inclusive count guard proves the selection index is
+in bounds. Truncated requests parse timestamps twice; a tuple vector and
+complete JSON materialization remain.
+
+One executable includes the exact original and candidate production helper
+bodies. All 192 observations verify a complete response against an independent
+fixture ledger before timing, across three alternating pairs, both directions,
+four row counts and four limits. Each stream holds ten rows with timestamps
+shared across streams. JSON construction and cloning precede the timer;
+final response disposal follows it. These are helper measurements, without
+HTTP, Parquet, concurrent writes or native upstream services.
+
+At one million rows in 100,000 streams:
+
+| Limit and direction | Original median | Candidate median | Median paired ratio |
+| --- | --- | --- | --- |
+| 100, forward | 398.702 ms | 186.934 ms | 0.4846 |
+| 100, backward | 413.522 ms | 185.642 ms | 0.4711 |
+| Half, forward | 288.502 ms | 141.764 ms | 0.4762 |
+| Half, backward | 287.356 ms | 136.459 ms | 0.4802 |
+| Zero, forward | 234.344 ms | 78.135 ms | 0.3269 |
+| Zero, backward | 233.747 ms | 78.193 ms | 0.3438 |
+
+All largest truncated and zero-limit pairs improve with disjoint ranges.
+The only median paired regression is 1.3% for the 20,000-row backward
+full-result control, with two slower pairs and overlapping ranges. Its
+independent medians are 87.822/87.867 us. All observations remain preserved;
+a ratio of medians differs from a median of paired ratios.
+
+Four whole-process CPU captures include construction, independent verification,
+cloning, disposal and 20 timed resolutions at 100,000 rows. They lose no
+samples but have only 205–273 samples each. Stable-quicksort self attribution
+is 6.41% for limit 100 and 2.93% for half; candidate partition attribution
+is 1.46% and 1.59%. Timestamp parsing receives more relative attribution,
+consistent with the extra pass. These sparse captures do not qualify a
+normalized helper or service CPU gain. Four heap captures at 20,000 rows
+include the same setup and ten timed resolutions. Allocation calls are
+nearly unchanged for limit 100 (1,244,570/1,244,449), and fall from
+1,254,492 to 1,244,449 for half. Peak heap falls by 0.48 MB in both cases;
+JSON construction and cloning dominate. No general memory advantage is
+qualified. The failed first heap launcher and successful recovery remain
+recorded; completed CPU captures are not repeated.
+
+All 587 tests, strict production/full-unit-source lint, a driver check with
+warnings denied and managed formatting pass. The new regression checks
+scrambled timestamps, cross-stream ties, malformed and non-string timestamps,
+limit boundaries, both directions and retained warnings. Verified RAM build
+dependencies are removed before timing, successful test executables are
+hashed and removed, and the complete original production library is archived
+with byte verification. The demo is restored healthy. Benchmark inventory
+and 85 historic numeric budgets stay unchanged.
+
+Pinned [Loki ReadBatch](https://github.com/grafana/loki/blob/7a40404f32b3e6464c9cfc6cc7dd75a40f3931da/pkg/iter/entry_iterator.go#L681)
+stops its ordered iterator at the requested count. This smaller optimization
+reduces Krabka's selection after materialization; it does not implement that
+streaming approach. The preceding full frontend workspace measurements use
+the earlier retained executable. No new full HTTP or native comparison is
+claimed for partial selection; overall upstream parity remains unqualified.

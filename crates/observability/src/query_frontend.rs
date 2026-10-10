@@ -562,6 +562,10 @@ pub(crate) fn apply_global_stream_limit(
     else {
         return;
     };
+    if limit == 0 {
+        streams.clear();
+        return;
+    }
     // An inclusive limit needs no global timestamp ordering or selection set.
     if streams
         .iter()
@@ -588,7 +592,9 @@ pub(crate) fn apply_global_stream_limit(
             );
         }
     }
-    entries.sort_by(|left, right| {
+    // Only membership in the first `limit` entries matters. Keep original
+    // stream order below rather than sorting the rest of the global response.
+    let compare = |left: &(i64, usize, usize), right: &(i64, usize, usize)| {
         let time_order = match direction {
             LokiDirection::Forward => left.0.cmp(&right.0),
             LokiDirection::Backward => right.0.cmp(&left.0),
@@ -596,17 +602,20 @@ pub(crate) fn apply_global_stream_limit(
         time_order
             .then_with(|| left.1.cmp(&right.1))
             .then_with(|| left.2.cmp(&right.2))
-    });
-    let selected = entries
-        .into_iter()
-        .take(limit)
-        .map(|(_, stream, entry)| (stream, entry))
-        .collect::<BTreeSet<_>>();
+    };
+    // Stream and entry positions make the order unique, so a strict cutoff
+    // keeps exactly `limit` entries without building a membership set.
+    let cutoff = *entries.select_nth_unstable_by(limit, compare).1;
+    drop(entries);
     for (stream_index, stream) in streams.iter_mut().enumerate() {
         if let Some(values) = stream["values"].as_array_mut() {
             let mut entry_index = 0;
-            values.retain(|_| {
-                let keep = selected.contains(&(stream_index, entry_index));
+            values.retain(|entry| {
+                let keep = compare(
+                    &(entry_timestamp(entry), stream_index, entry_index),
+                    &cutoff,
+                )
+                .is_lt();
                 entry_index += 1;
                 keep
             });

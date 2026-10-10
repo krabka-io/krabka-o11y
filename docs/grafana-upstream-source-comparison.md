@@ -507,8 +507,12 @@ Loki's pinned [`ReadBatch`](https://github.com/grafana/loki/blob/7a40404f32b3e64
 consumes entries from its ordered iterator until the requested output count
 is reached. Krabka still materializes stream results. Its frontend now avoids
 building a global timestamp order and selection set when every returned entry
-already fits the requested limit. Truncating requests retain their existing
-selection algorithm. This smaller change preserves Krabka's established tie
-handling; it does not implement Loki's incremental iterator consumption. The
+already fits the requested limit. Truncating requests now use partial tuple
+selection and a strict cutoff, preserving timestamp ties and original
+per-stream order while removing full sorting and membership-set construction.
+The [partial-selection experiment](../qualification/partial-log-limit-2026-10-10.json)
+verifies and profiles this helper through one million rows; it does not time
+HTTP or upstream services. These changes preserve Krabka's established tie
+handling; they do not implement Loki's incremental iterator consumption. The
 source checksum and measured scope are retained in the
 [limit experiment](../qualification/inclusive-log-limit-2026-10-10.json).
