@@ -13,7 +13,7 @@ pub(crate) fn metric_samples_from_batches(
 ) -> Result<MetricSamples, QueryError> {
     let mut samples: MetricSamples = BTreeMap::new();
 
-    for_each_query_row(batches, |row| {
+    for_each_query_row(batches, &plan.fingerprints, |row| {
         append_matching_metric_row(
             &mut samples,
             plan,
