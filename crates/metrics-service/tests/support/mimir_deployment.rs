@@ -654,6 +654,39 @@ async fn frontend(deployment: &Deployment) -> TestResult<ContainerAsync<GenericI
     Ok(container)
 }
 
+// Both tenants' gauge and histogram ranges, as the frontend answers them.
+// The ranges span `times` at a one-second step.
+async fn assert_frontend_ranges(deployment: &Deployment, base: &str, times: &[i64]) -> TestResult {
+    let bounds = (times[0], times[times.len() - 1], 1000);
+    for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
+        for (metric, expected) in [
+            (
+                "frontend_gauge",
+                float_matrix(
+                    "frontend_gauge",
+                    &times.iter().map(|&time| (time, value)).collect::<Vec<_>>(),
+                    json!({}),
+                ),
+            ),
+            (
+                "frontend_histogram",
+                histogram_matrix("frontend_histogram", times),
+            ),
+        ] {
+            assert!(
+                data(
+                    &deployment.client,
+                    &range_url(base, metric, bounds)?,
+                    tenant
+                )
+                .await?
+                    == expected
+            );
+        }
+    }
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "requires the Bazel Docker deployment"]
 async fn frontend_preserves_unaligned_float_and_histogram_queries_across_cache_hits() -> TestResult
@@ -710,32 +743,7 @@ async fn frontend_preserves_unaligned_float_and_histogram_queries_across_cache_h
     let frontend = frontend(&deployment).await?;
     let base = base_url(&frontend, DATA_PORT).await?;
     for _ in 0..2 {
-        for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-            for (metric, expected) in [
-                (
-                    "frontend_gauge",
-                    float_matrix(
-                        "frontend_gauge",
-                        &times.iter().map(|&time| (time, value)).collect::<Vec<_>>(),
-                        json!({}),
-                    ),
-                ),
-                (
-                    "frontend_histogram",
-                    histogram_matrix("frontend_histogram", &times),
-                ),
-            ] {
-                assert!(
-                    data(
-                        &deployment.client,
-                        &range_url(&base, metric, bounds)?,
-                        tenant
-                    )
-                    .await?
-                        == expected
-                );
-            }
-        }
+        assert_frontend_ranges(&deployment, &base, &times).await?;
     }
     wait_metric(
         &deployment,
@@ -748,32 +756,7 @@ async fn frontend_preserves_unaligned_float_and_histogram_queries_across_cache_h
     // A fresh process must hit the same object-store cache, with tenant keys intact.
     let reopened = self::frontend(&deployment).await?;
     let base = base_url(&reopened, DATA_PORT).await?;
-    for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-        for (metric, expected) in [
-            (
-                "frontend_gauge",
-                float_matrix(
-                    "frontend_gauge",
-                    &times.iter().map(|&time| (time, value)).collect::<Vec<_>>(),
-                    json!({}),
-                ),
-            ),
-            (
-                "frontend_histogram",
-                histogram_matrix("frontend_histogram", &times),
-            ),
-        ] {
-            assert!(
-                data(
-                    &deployment.client,
-                    &range_url(&base, metric, bounds)?,
-                    tenant
-                )
-                .await?
-                    == expected
-            );
-        }
-    }
+    assert_frontend_ranges(&deployment, &base, &times).await?;
     wait_metric(
         &deployment,
         &reopened,

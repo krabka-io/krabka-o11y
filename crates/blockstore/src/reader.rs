@@ -65,20 +65,8 @@ mod tests {
     #[tokio::test]
     async fn write_then_read_round_trips_rows() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let schema = Arc::new(Schema::new(vec![
-            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
-            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
-            Field::new("line", DataType::Utf8, true),
-        ]));
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(UInt64Array::from(vec![10_u64, 20])),
-                Arc::new(Int64Array::from(vec![100_i64, 200])),
-                Arc::new(StringArray::from(vec!["x", "y"])),
-            ],
-        )
-        .unwrap();
+        let schema = line_schema();
+        let batch = two_line_batch(["x", "y"]);
 
         BlockWriter::new(store.clone())
             .write_block("t", "b.parquet", schema, std::slice::from_ref(&batch))
@@ -165,11 +153,7 @@ mod tests {
     #[tokio::test]
     async fn read_block_row_groups_returns_the_selected_group() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let schema = Arc::new(Schema::new(vec![
-            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
-            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
-            Field::new("line", DataType::Utf8, true),
-        ]));
+        let schema = line_schema();
         let group = |fp: u64, ts: i64, line: &str| {
             RecordBatch::try_new(
                 schema.clone(),
@@ -208,20 +192,8 @@ mod tests {
     #[tokio::test]
     async fn read_block_with_max_bytes_rejects_over_cap_block() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let schema = Arc::new(Schema::new(vec![
-            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
-            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
-            Field::new("line", DataType::Utf8, true),
-        ]));
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(UInt64Array::from(vec![10_u64, 20])),
-                Arc::new(Int64Array::from(vec![100_i64, 200])),
-                Arc::new(StringArray::from(vec!["x", "y"])),
-            ],
-        )
-        .unwrap();
+        let schema = line_schema();
+        let batch = two_line_batch(["x", "y"]);
 
         BlockWriter::new(store.clone())
             .write_block("t", "b.parquet", schema, &[batch])
@@ -247,35 +219,10 @@ mod tests {
     #[tokio::test]
     async fn read_row_group_metadata_reports_every_group() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let schema = Arc::new(Schema::new(vec![
-            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
-            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
-            Field::new("line", DataType::Utf8, true),
-        ]));
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(UInt64Array::from(vec![10_u64, 20])),
-                Arc::new(Int64Array::from(vec![100_i64, 200])),
-                Arc::new(StringArray::from(vec!["first", "second"])),
-            ],
-        )
-        .unwrap();
+        let batch = two_line_batch(["first", "second"]);
 
         // One row per row group → exactly two row groups.
-        let object_writer = BufWriter::new(store.clone(), Path::from("meta.parquet"));
-        let props = WriterProperties::builder()
-            .set_max_row_group_row_count(Some(1))
-            .set_write_batch_size(1)
-            .set_key_value_metadata(Some(vec![parquet::file::metadata::KeyValue::new(
-                crate::PERSISTED_BLOCK_FORMAT_KEY.to_string(),
-                Some(crate::PERSISTED_BLOCK_FORMAT_VERSION.to_string()),
-            )]))
-            .build();
-        let mut writer =
-            AsyncArrowWriter::try_new(object_writer, schema.clone(), Some(props)).unwrap();
-        writer.write(&batch).await.unwrap();
-        writer.close().await.unwrap();
+        write_one_row_per_group(&store, "meta.parquet", &batch).await;
 
         let meta = read_row_group_metadata(store.clone(), "meta.parquet")
             .await
@@ -307,6 +254,43 @@ mod tests {
         assert2::assert!(project(&meta) == vec![(0, true), (1, true)]);
     }
 
+    fn line_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
+            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
+            Field::new("line", DataType::Utf8, true),
+        ]))
+    }
+
+    fn two_line_batch(lines: [&str; 2]) -> RecordBatch {
+        RecordBatch::try_new(
+            line_schema(),
+            vec![
+                Arc::new(UInt64Array::from(vec![10_u64, 20])),
+                Arc::new(Int64Array::from(vec![100_i64, 200])),
+                Arc::new(StringArray::from(lines.to_vec())),
+            ],
+        )
+        .unwrap()
+    }
+
+    // One row per row group, so a two-row batch makes exactly two groups.
+    async fn write_one_row_per_group(store: &Arc<dyn ObjectStore>, key: &str, batch: &RecordBatch) {
+        let object_writer = BufWriter::new(store.clone(), Path::from(key));
+        let props = WriterProperties::builder()
+            .set_max_row_group_row_count(Some(1))
+            .set_write_batch_size(1)
+            .set_key_value_metadata(Some(vec![parquet::file::metadata::KeyValue::new(
+                crate::PERSISTED_BLOCK_FORMAT_KEY.to_string(),
+                Some(crate::PERSISTED_BLOCK_FORMAT_VERSION.to_string()),
+            )]))
+            .build();
+        let mut writer =
+            AsyncArrowWriter::try_new(object_writer, batch.schema(), Some(props)).unwrap();
+        writer.write(batch).await.unwrap();
+        writer.close().await.unwrap();
+    }
+
     fn empty_cache() -> BlockMetadataCache {
         BlockMetadataCache::new(Arc::new(
             datafusion::execution::cache::default_cache::DefaultCache::new(1024 * 1024),
@@ -314,11 +298,7 @@ mod tests {
     }
 
     async fn write_test_block(store: &Arc<dyn ObjectStore>, key: &str, lines: &[&str]) {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
-            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
-            Field::new("line", DataType::Utf8, true),
-        ]));
+        let schema = line_schema();
         let rows = i64::try_from(lines.len()).unwrap();
         let batch = RecordBatch::try_new(
             schema.clone(),
@@ -504,34 +484,9 @@ mod tests {
     #[tokio::test]
     async fn read_block_row_groups_reads_only_selected_groups() {
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let schema = Arc::new(Schema::new(vec![
-            Field::new(crate::COL_FINGERPRINT, DataType::UInt64, false),
-            Field::new(crate::COL_TIMESTAMP, DataType::Int64, false),
-            Field::new("line", DataType::Utf8, true),
-        ]));
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(UInt64Array::from(vec![10_u64, 20])),
-                Arc::new(Int64Array::from(vec![100_i64, 200])),
-                Arc::new(StringArray::from(vec!["first", "second"])),
-            ],
-        )
-        .unwrap();
+        let batch = two_line_batch(["first", "second"]);
 
-        let object_writer = BufWriter::new(store.clone(), Path::from("rg.parquet"));
-        let props = WriterProperties::builder()
-            .set_max_row_group_row_count(Some(1))
-            .set_write_batch_size(1)
-            .set_key_value_metadata(Some(vec![parquet::file::metadata::KeyValue::new(
-                crate::PERSISTED_BLOCK_FORMAT_KEY.to_string(),
-                Some(crate::PERSISTED_BLOCK_FORMAT_VERSION.to_string()),
-            )]))
-            .build();
-        let mut writer =
-            AsyncArrowWriter::try_new(object_writer, schema.clone(), Some(props)).unwrap();
-        writer.write(&batch).await.unwrap();
-        writer.close().await.unwrap();
+        write_one_row_per_group(&store, "rg.parquet", &batch).await;
 
         let got = read_block_row_groups_with_max_bytes(
             store.clone(),

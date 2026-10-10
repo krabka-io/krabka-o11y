@@ -194,17 +194,22 @@ mod tests {
 
     #[test]
     fn clock_reading_decl_requires_the_signal_columns_and_sorts_by_series_then_time() {
+        // Every column is required and non-null; only the fingerprint is unsigned.
+        let required = [
+            (COL_FINGERPRINT, DataType::UInt64),
+            (COL_TIMESTAMP, DataType::Int64),
+            (CCOL_READING_UNIX_NANOS, DataType::Int64),
+            (CCOL_UNCERTAINTY_NANOS, DataType::Int64),
+            (CCOL_INGEST_UNIX_NANOS, DataType::Int64),
+        ]
+        .into_iter()
+        .map(|(name, data_type)| RequiredColumn::new(name, data_type, false))
+        .collect();
         assert!(
             clock_reading_decl()
                 == BlockSchema {
-                    required: vec![
-                        RequiredColumn::new(COL_FINGERPRINT, DataType::UInt64, false),
-                        RequiredColumn::new(COL_TIMESTAMP, DataType::Int64, false),
-                        RequiredColumn::new(CCOL_READING_UNIX_NANOS, DataType::Int64, false),
-                        RequiredColumn::new(CCOL_UNCERTAINTY_NANOS, DataType::Int64, false),
-                        RequiredColumn::new(CCOL_INGEST_UNIX_NANOS, DataType::Int64, false),
-                    ],
-                    sort_key: vec![COL_FINGERPRINT.to_string(), COL_TIMESTAMP.to_string()],
+                    required,
+                    sort_key: [COL_FINGERPRINT, COL_TIMESTAMP].map(String::from).to_vec(),
                     bloom_columns: vec![],
                 }
         );

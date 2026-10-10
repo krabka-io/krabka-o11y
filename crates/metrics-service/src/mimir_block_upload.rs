@@ -17,7 +17,7 @@ use krabka_observability::server_security::Principal;
 use object_store::{ObjectStoreExt as _, PutPayload, path::Path as ObjectPath};
 use serde::{Deserialize, Serialize};
 
-use crate::MimirTenantAdminState;
+use crate::{MimirTenantAdminState, mimir_tenant_admin::read_optional_json};
 
 const UPLOAD_PREFIX: &str = "mimir-block-uploads";
 const MAX_META_BYTES: usize = 1024 * 1024;
@@ -94,10 +94,8 @@ pub(crate) async fn start_block_upload(
         Ok(parameters) => parameters,
         Err(response) => return *response,
     };
-    match load_state(&state, &tenant, &block).await {
-        Ok(Some(saved)) => return state_conflict(saved.result),
-        Ok(None) => {}
-        Err(error) => return internal(error),
+    if let Some(refusal) = refuse_existing_upload(&state, &tenant, &block).await {
+        return refusal;
     }
     if body.len() > MAX_META_BYTES {
         return error(
@@ -131,10 +129,8 @@ pub(crate) async fn upload_block_file(
         Ok(parameters) => parameters,
         Err(response) => return *response,
     };
-    match load_state(&state, &tenant, &block).await {
-        Ok(Some(saved)) => return state_conflict(saved.result),
-        Ok(None) => {}
-        Err(error) => return internal(error),
+    if let Some(refusal) = refuse_existing_upload(&state, &tenant, &block).await {
+        return refusal;
     }
     let Some(path) = raw_query.as_deref().and_then(upload_path) else {
         return error(StatusCode::BAD_REQUEST, "missing or invalid file path");
@@ -546,20 +542,27 @@ async fn object_bytes(
         .map_err(|error| error.to_string())
 }
 
+/// The response that refuses an upload already under way or settled, or
+/// `None` when the block has no upload state yet.
+async fn refuse_existing_upload(
+    state: &MimirTenantAdminState,
+    tenant: &str,
+    block: &str,
+) -> Option<Response> {
+    match load_state(state, tenant, block).await {
+        Ok(Some(saved)) => Some(state_conflict(saved.result)),
+        Ok(None) => None,
+        Err(error) => Some(internal(error)),
+    }
+}
+
 async fn load_meta(
     state: &MimirTenantAdminState,
     tenant: &str,
     block: &str,
 ) -> Result<Option<UploadMeta>, String> {
     let key = upload_object_key(tenant, block, "uploading-meta.json");
-    let bytes = match state.store.get(&key).await {
-        Ok(object) => object.bytes().await.map_err(|error| error.to_string())?,
-        Err(object_store::Error::NotFound { .. }) => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    serde_json::from_slice(&bytes)
-        .map(Some)
-        .map_err(|error| error.to_string())
+    read_optional_json(&state.store, &key).await
 }
 
 async fn load_state(
@@ -568,14 +571,7 @@ async fn load_state(
     block: &str,
 ) -> Result<Option<StoredUploadState>, String> {
     let key = upload_object_key(tenant, block, "state.json");
-    let bytes = match state.store.get(&key).await {
-        Ok(object) => object.bytes().await.map_err(|error| error.to_string())?,
-        Err(object_store::Error::NotFound { .. }) => return Ok(None),
-        Err(error) => return Err(error.to_string()),
-    };
-    serde_json::from_slice(&bytes)
-        .map(Some)
-        .map_err(|error| error.to_string())
+    read_optional_json(&state.store, &key).await
 }
 
 async fn save_state(

@@ -8,9 +8,11 @@ pub(crate) fn decode_otlp_stateful_bytes_partial(
 ) -> Result<PartialOtlpDecode, OtlpError> {
     decode_otlp_inner_partial(
         &MetricsData::decode(body)?,
-        strategy,
-        Some(accumulator),
-        additional_resource_attributes,
+        OtlpDecodeOptions {
+            strategy,
+            accumulator: Some(accumulator),
+            additional_resource_attributes,
+        },
     )
 }
 

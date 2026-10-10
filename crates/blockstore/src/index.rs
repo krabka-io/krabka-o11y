@@ -425,7 +425,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_query_shard_matcher_filters_by_series_fingerprint_modulo() {
+    fn resolve_query_shard_selects_by_series_fingerprint_modulo() {
         let mut idx = Index::new();
         let series = (0..12)
             .map(|id| labels(&[("app", "api"), ("series", &id.to_string())]))
@@ -434,54 +434,27 @@ mod tests {
             idx.add_series("t", labels.fingerprint(), labels);
         }
 
-        let expected = series
-            .iter()
-            .map(Labels::fingerprint)
-            .filter(|fp| fp % 2 == 0)
-            .collect::<BTreeSet<_>>();
-        let got = idx
-            .resolve(
-                "t",
-                &[
-                    LabelMatcher::new("app", MatchOp::Eq, "api"),
-                    LabelMatcher::new("__query_shard__", MatchOp::Eq, "1_of_2"),
-                ],
-            )
-            .unwrap();
+        // `=` keeps the shard's own series; `!=` returns the complement.
+        for (op, keep_remainder) in [(MatchOp::Eq, 0), (MatchOp::Neq, 1)] {
+            let expected = series
+                .iter()
+                .map(Labels::fingerprint)
+                .filter(|fp| fp % 2 == keep_remainder)
+                .collect::<BTreeSet<_>>();
+            let got = idx
+                .resolve(
+                    "t",
+                    &[
+                        LabelMatcher::new("app", MatchOp::Eq, "api"),
+                        LabelMatcher::new("__query_shard__", op, "1_of_2"),
+                    ],
+                )
+                .unwrap();
 
-        assert2::assert!(!expected.is_empty());
-        assert2::assert!(expected.len() < series.len());
-        assert2::assert!(got == expected);
-    }
-
-    #[test]
-    fn resolve_query_shard_not_equal_returns_complement() {
-        let mut idx = Index::new();
-        let series = (0..12)
-            .map(|id| labels(&[("app", "api"), ("series", &id.to_string())]))
-            .collect::<Vec<_>>();
-        for labels in &series {
-            idx.add_series("t", labels.fingerprint(), labels);
+            assert2::assert!(!expected.is_empty());
+            assert2::assert!(expected.len() < series.len());
+            assert2::assert!(got == expected);
         }
-
-        let expected = series
-            .iter()
-            .map(Labels::fingerprint)
-            .filter(|fp| fp % 2 != 0)
-            .collect::<BTreeSet<_>>();
-        let got = idx
-            .resolve(
-                "t",
-                &[
-                    LabelMatcher::new("app", MatchOp::Eq, "api"),
-                    LabelMatcher::new("__query_shard__", MatchOp::Neq, "1_of_2"),
-                ],
-            )
-            .unwrap();
-
-        assert2::assert!(!expected.is_empty());
-        assert2::assert!(expected.len() < series.len());
-        assert2::assert!(got == expected);
     }
 
     #[test]
@@ -1549,7 +1522,10 @@ mod max_index_snapshot_bytes;
 mod parse_index_shard_location;
 mod parse_shard_bound_key;
 mod plan_tenant_index_shards;
+mod push_dictionary_id;
 mod push_ivarint;
+mod push_len;
+mod push_string;
 mod push_uvarint;
 mod read_index_shard;
 mod save_index_shards;
@@ -1582,9 +1558,11 @@ pub use max_index_snapshot_bytes::MAX_INDEX_SNAPSHOT_BYTES;
 pub(crate) use parse_index_shard_location::parse_index_shard_location;
 pub(crate) use parse_shard_bound_key::parse_shard_bound_key;
 use plan_tenant_index_shards::plan_tenant_index_shards;
+pub(crate) use push_dictionary_id::push_dictionary_id;
 pub(crate) use push_ivarint::push_ivarint;
+pub(crate) use push_len::push_len;
+pub(crate) use push_string::push_string;
 pub(crate) use push_uvarint::push_uvarint;
 use read_index_shard::read_index_shard;
-use save_index_shards::save_index_shards;
 pub(crate) use shard_bound_key::shard_bound_key;
 use tenant_index::TenantIndex;

@@ -8,21 +8,21 @@
 //! The listed tenant gets the limits in the file. An unlisted one gets the
 //! defaults.
 
-use std::{
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::{net::SocketAddr, sync::Arc};
 
 use assert2::check;
-use async_trait::async_trait;
-use bytes::Bytes;
 use krabka_metrics::{
-    OverridesProvider, WalRecord,
-    distributor::{DistributorState, ProduceError, WalSink, serve},
+    OverridesProvider,
+    distributor::{DistributorState, serve},
     wire::pb,
 };
 use krabka_observability::server_security::ServerSecurity;
 use prost::Message;
+
+#[path = "support/recording_sink.rs"]
+mod recording_sink;
+
+use self::recording_sink::RecordingSink;
 
 const TIGHT: &str = "tenant-tight";
 const LOOSE: &str = "tenant-loose";
@@ -33,30 +33,6 @@ overrides:
     max_series_per_request: 1
     max_samples_per_series: 1
 ";
-
-/// In-memory WAL sink. It records every appended `WalRecord` and never touches
-/// a broker.
-#[derive(Default)]
-struct RecordingSink {
-    records: Mutex<Vec<WalRecord>>,
-}
-
-#[async_trait]
-impl WalSink for RecordingSink {
-    async fn append(&self, _key: Bytes, record: WalRecord) -> Result<(), ProduceError> {
-        self.records
-            .lock()
-            .expect("recording sink poisoned")
-            .push(record);
-        Ok(())
-    }
-}
-
-impl RecordingSink {
-    fn len(&self) -> usize {
-        self.records.lock().expect("recording sink poisoned").len()
-    }
-}
 
 /// A snappy-compressed `remote_write` v1 body holding `series` series with
 /// `samples` samples each.

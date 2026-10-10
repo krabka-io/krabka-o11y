@@ -30,7 +30,6 @@ use arrow::{
     datatypes::{DataType, Field, Schema, SchemaRef},
     record_batch::RecordBatch,
 };
-use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{StreamExt as _, TryStreamExt as _, stream::BoxStream};
 use krabka_blockstore::{
@@ -40,9 +39,8 @@ use krabka_blockstore::{
 };
 use krabka_units::{Time, convert::TimeExt as _};
 use object_store::{
-    CopyOptions, Error as ObjectStoreError, GetOptions, GetResult, GetResultPayload, ListResult,
-    MultipartUpload, ObjectMeta, ObjectStore, ObjectStoreExt as _, PutMultipartOptions, PutOptions,
-    PutPayload, PutResult, path::Path,
+    Error as ObjectStoreError, GetOptions, GetResult, GetResultPayload, ObjectMeta, ObjectStore,
+    ObjectStoreExt as _, PutOptions, PutPayload, PutResult, path::Path,
 };
 
 /// The attempts every case gives the retry layer.
@@ -88,40 +86,10 @@ macro_rules! delegate_object_store {
             }
         }
 
-        #[async_trait]
-        impl ObjectStore for $wrapper {
+        krabka_blockstore::delegate_object_store! {
+            $wrapper => inner;
+            forward [put_multipart_opts, list_with_delimiter, copy_opts, delete_stream];
             $($overrides)*
-
-            async fn put_multipart_opts(
-                &self,
-                location: &Path,
-                options: PutMultipartOptions,
-            ) -> object_store::Result<Box<dyn MultipartUpload>> {
-                self.inner.put_multipart_opts(location, options).await
-            }
-
-            async fn list_with_delimiter(
-                &self,
-                prefix: Option<&Path>,
-            ) -> object_store::Result<ListResult> {
-                self.inner.list_with_delimiter(prefix).await
-            }
-
-            async fn copy_opts(
-                &self,
-                from: &Path,
-                to: &Path,
-                options: CopyOptions,
-            ) -> object_store::Result<()> {
-                self.inner.copy_opts(from, to, options).await
-            }
-
-            fn delete_stream(
-                &self,
-                locations: BoxStream<'static, object_store::Result<Path>>,
-            ) -> BoxStream<'static, object_store::Result<Path>> {
-                self.inner.delete_stream(locations)
-            }
         }
     };
 }

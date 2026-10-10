@@ -1168,7 +1168,8 @@ mod tests {
     }
 
     use super::{
-        DeltaAccumulator, TranslationStrategy, decode_otlp, decode_otlp_inner, decode_otlp_stateful,
+        DeltaAccumulator, OtlpDecodeOptions, TranslationStrategy, decode_otlp, decode_otlp_inner,
+        decode_otlp_stateful,
     };
     use crate::{
         BucketSpan,
@@ -1418,16 +1419,67 @@ mod tests {
         check!(dropped[0].exemplars.is_empty());
     }
 
-    #[test]
-    fn monotonic_sum_gets_total_suffix() {
-        let data = metrics_data(Metric {
-            name: "http.server.requests".into(),
+    // An OTLP metric's name and unit, before translation.
+    #[derive(Clone, Copy)]
+    struct MetricIdentity<'a> {
+        name: &'a str,
+        unit: &'a str,
+    }
+
+    // A cumulative monotonic sum with one point of 7.0 at 2s.
+    fn cumulative_counter(identity: MetricIdentity<'_>) -> MetricsData {
+        metrics_data(Metric {
+            name: identity.name.into(),
+            unit: identity.unit.into(),
             data: Some(metric::Data::Sum(Sum {
                 data_points: vec![number_point(7.0, 2_000_000, Vec::new())],
                 aggregation_temporality: AggregationTemporality::Cumulative as i32,
                 is_monotonic: true,
             })),
             ..Default::default()
+        })
+    }
+
+    fn gauge_at_two_seconds(identity: MetricIdentity<'_>, reading: f64) -> MetricsData {
+        metrics_data(Metric {
+            name: identity.name.into(),
+            unit: identity.unit.into(),
+            data: Some(metric::Data::Gauge(Gauge {
+                data_points: vec![number_point(reading, 2_000_000, Vec::new())],
+            })),
+            ..Default::default()
+        })
+    }
+
+    fn positive_buckets(
+        offset: i32,
+        bucket_counts: Vec<u64>,
+    ) -> exponential_histogram_data_point::Buckets {
+        exponential_histogram_data_point::Buckets {
+            offset,
+            bucket_counts,
+        }
+    }
+
+    fn rpc_duration_histogram(
+        point: ExponentialHistogramDataPoint,
+        temporality: AggregationTemporality,
+    ) -> MetricsData {
+        metrics_data(Metric {
+            name: "rpc.server.duration".into(),
+            data: Some(metric::Data::ExponentialHistogram(ExponentialHistogram {
+                data_points: vec![point],
+                aggregation_temporality: temporality as i32,
+            })),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn monotonic_sum_gets_total_suffix() {
+        let data = cumulative_counter(MetricIdentity {
+            name: "http.server.requests",
+            unit: "",
         });
 
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
@@ -1438,14 +1490,9 @@ mod tests {
 
     #[test]
     fn default_translation_collapses_repeated_replacement_underscores() {
-        let data = metrics_data(Metric {
-            name: "http--server..requests".into(),
-            data: Some(metric::Data::Sum(Sum {
-                data_points: vec![number_point(7.0, 2_000_000, Vec::new())],
-                aggregation_temporality: AggregationTemporality::Cumulative as i32,
-                is_monotonic: true,
-            })),
-            ..Default::default()
+        let data = cumulative_counter(MetricIdentity {
+            name: "http--server..requests",
+            unit: "",
         });
 
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
@@ -1455,15 +1502,9 @@ mod tests {
 
     #[test]
     fn default_translation_adds_unit_suffix_before_total_suffix() {
-        let data = metrics_data(Metric {
-            name: "k8s.pod.cpu.time".into(),
-            unit: "s".into(),
-            data: Some(metric::Data::Sum(Sum {
-                data_points: vec![number_point(7.0, 2_000_000, Vec::new())],
-                aggregation_temporality: AggregationTemporality::Cumulative as i32,
-                is_monotonic: true,
-            })),
-            ..Default::default()
+        let data = cumulative_counter(MetricIdentity {
+            name: "k8s.pod.cpu.time",
+            unit: "s",
         });
 
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
@@ -1476,14 +1517,13 @@ mod tests {
 
     #[test]
     fn default_translation_converts_rate_units_to_prometheus_suffixes() {
-        let data = metrics_data(Metric {
-            name: "network.io".into(),
-            unit: "By/s".into(),
-            data: Some(metric::Data::Gauge(Gauge {
-                data_points: vec![number_point(1024.0, 2_000_000, Vec::new())],
-            })),
-            ..Default::default()
-        });
+        let data = gauge_at_two_seconds(
+            MetricIdentity {
+                name: "network.io",
+                unit: "By/s",
+            },
+            1024.0,
+        );
 
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
 
@@ -1492,14 +1532,13 @@ mod tests {
 
     #[test]
     fn default_translation_converts_meter_rate_unit_to_prometheus_suffix() {
-        let data = metrics_data(Metric {
-            name: "vehicle.speed".into(),
-            unit: "m/s".into(),
-            data: Some(metric::Data::Gauge(Gauge {
-                data_points: vec![number_point(12.5, 2_000_000, Vec::new())],
-            })),
-            ..Default::default()
-        });
+        let data = gauge_at_two_seconds(
+            MetricIdentity {
+                name: "vehicle.speed",
+                unit: "m/s",
+            },
+            12.5,
+        );
 
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
 
@@ -1508,14 +1547,13 @@ mod tests {
 
     #[test]
     fn default_translation_drops_ucum_unit_annotations_before_suffix_conversion() {
-        let data = metrics_data(Metric {
-            name: "network.io".into(),
-            unit: "By{packet}/s".into(),
-            data: Some(metric::Data::Gauge(Gauge {
-                data_points: vec![number_point(1024.0, 2_000_000, Vec::new())],
-            })),
-            ..Default::default()
-        });
+        let data = gauge_at_two_seconds(
+            MetricIdentity {
+                name: "network.io",
+                unit: "By{packet}/s",
+            },
+            1024.0,
+        );
 
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
 
@@ -1885,9 +1923,11 @@ mod tests {
 
         let series = decode_otlp_inner(
             &data,
-            TranslationStrategy::default(),
-            None,
-            &["k8s.cluster.name".into()],
+            OtlpDecodeOptions {
+                strategy: TranslationStrategy::default(),
+                accumulator: None,
+                additional_resource_attributes: &["k8s.cluster.name".into()],
+            },
         )
         .unwrap();
         let metric = series
@@ -2058,30 +2098,23 @@ mod tests {
 
     #[test]
     fn exponential_histogram_decodes_to_native_histogram() {
-        let data = metrics_data(Metric {
-            name: "rpc.server.duration".into(),
-            data: Some(metric::Data::ExponentialHistogram(ExponentialHistogram {
-                data_points: vec![ExponentialHistogramDataPoint {
-                    time_unix_nano: 3_000_000,
-                    start_time_unix_nano: 1_000_000,
-                    count: 6,
-                    sum: Some(12.0),
-                    scale: 3,
-                    zero_count: 1,
-                    positive: Some(exponential_histogram_data_point::Buckets {
-                        offset: -1,
-                        bucket_counts: vec![2, 3],
-                    }),
-                    negative: Some(exponential_histogram_data_point::Buckets {
-                        offset: 4,
-                        bucket_counts: vec![1],
-                    }),
-                    ..Default::default()
-                }],
-                aggregation_temporality: AggregationTemporality::Cumulative as i32,
-            })),
-            ..Default::default()
-        });
+        let data = rpc_duration_histogram(
+            ExponentialHistogramDataPoint {
+                time_unix_nano: 3_000_000,
+                start_time_unix_nano: 1_000_000,
+                count: 6,
+                sum: Some(12.0),
+                scale: 3,
+                zero_count: 1,
+                positive: Some(positive_buckets(-1, vec![2, 3])),
+                negative: Some(exponential_histogram_data_point::Buckets {
+                    offset: 4,
+                    bucket_counts: vec![1],
+                }),
+                ..Default::default()
+            },
+            AggregationTemporality::Cumulative,
+        );
 
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
 
@@ -2103,31 +2136,24 @@ mod tests {
 
     #[test]
     fn exponential_histogram_decodes_exemplar_trace_context_and_filtered_attributes() {
-        let data = metrics_data(Metric {
-            name: "rpc.server.duration".into(),
-            data: Some(metric::Data::ExponentialHistogram(ExponentialHistogram {
-                data_points: vec![ExponentialHistogramDataPoint {
-                    time_unix_nano: 3_000_000,
-                    count: 2,
-                    sum: Some(5.0),
-                    scale: 1,
-                    positive: Some(exponential_histogram_data_point::Buckets {
-                        offset: 0,
-                        bucket_counts: vec![2],
-                    }),
-                    exemplars: vec![Exemplar {
-                        filtered_attributes: vec![kv("span.kind", "server")],
-                        time_unix_nano: 2_500_000,
-                        value: Some(otlp_exemplar::Value::AsDouble(2.5)),
-                        span_id: vec![0xab, 0xcd],
-                        trace_id: vec![0x01, 0x23, 0x45, 0x67],
-                    }],
-                    ..Default::default()
+        let data = rpc_duration_histogram(
+            ExponentialHistogramDataPoint {
+                time_unix_nano: 3_000_000,
+                count: 2,
+                sum: Some(5.0),
+                scale: 1,
+                positive: Some(positive_buckets(0, vec![2])),
+                exemplars: vec![Exemplar {
+                    filtered_attributes: vec![kv("span.kind", "server")],
+                    time_unix_nano: 2_500_000,
+                    value: Some(otlp_exemplar::Value::AsDouble(2.5)),
+                    span_id: vec![0xab, 0xcd],
+                    trace_id: vec![0x01, 0x23, 0x45, 0x67],
                 }],
-                aggregation_temporality: AggregationTemporality::Cumulative as i32,
-            })),
-            ..Default::default()
-        });
+                ..Default::default()
+            },
+            AggregationTemporality::Cumulative,
+        );
 
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
 
@@ -2164,10 +2190,7 @@ mod tests {
                 count: 1,
                 sum: Some(0.5),
                 scale: 0,
-                positive: Some(exponential_histogram_data_point::Buckets {
-                    offset: 0,
-                    bucket_counts: vec![1],
-                }),
+                positive: Some(positive_buckets(0, vec![1])),
                 ..Default::default()
             }],
             aggregation_temporality: AggregationTemporality::Cumulative as i32,
@@ -2203,46 +2226,32 @@ mod tests {
 
     #[test]
     fn delta_exponential_histogram_accumulates_to_cumulative_native_histogram() {
-        let first = metrics_data(Metric {
-            name: "rpc.server.duration".into(),
-            data: Some(metric::Data::ExponentialHistogram(ExponentialHistogram {
-                data_points: vec![ExponentialHistogramDataPoint {
-                    time_unix_nano: 2_000_000,
-                    start_time_unix_nano: 1_000_000,
-                    count: 4,
-                    sum: Some(6.0),
-                    scale: 1,
-                    zero_count: 1,
-                    positive: Some(exponential_histogram_data_point::Buckets {
-                        offset: 0,
-                        bucket_counts: vec![2, 1],
-                    }),
-                    ..Default::default()
-                }],
-                aggregation_temporality: AggregationTemporality::Delta as i32,
-            })),
-            ..Default::default()
-        });
-        let second = metrics_data(Metric {
-            name: "rpc.server.duration".into(),
-            data: Some(metric::Data::ExponentialHistogram(ExponentialHistogram {
-                data_points: vec![ExponentialHistogramDataPoint {
-                    time_unix_nano: 3_000_000,
-                    start_time_unix_nano: 1_000_000,
-                    count: 3,
-                    sum: Some(5.0),
-                    scale: 1,
-                    zero_count: 2,
-                    positive: Some(exponential_histogram_data_point::Buckets {
-                        offset: 0,
-                        bucket_counts: vec![1, 2],
-                    }),
-                    ..Default::default()
-                }],
-                aggregation_temporality: AggregationTemporality::Delta as i32,
-            })),
-            ..Default::default()
-        });
+        let first = rpc_duration_histogram(
+            ExponentialHistogramDataPoint {
+                time_unix_nano: 2_000_000,
+                start_time_unix_nano: 1_000_000,
+                count: 4,
+                sum: Some(6.0),
+                scale: 1,
+                zero_count: 1,
+                positive: Some(positive_buckets(0, vec![2, 1])),
+                ..Default::default()
+            },
+            AggregationTemporality::Delta,
+        );
+        let second = rpc_duration_histogram(
+            ExponentialHistogramDataPoint {
+                time_unix_nano: 3_000_000,
+                start_time_unix_nano: 1_000_000,
+                count: 3,
+                sum: Some(5.0),
+                scale: 1,
+                zero_count: 2,
+                positive: Some(positive_buckets(0, vec![1, 2])),
+                ..Default::default()
+            },
+            AggregationTemporality::Delta,
+        );
         let mut accumulator = DeltaAccumulator::default();
 
         let first_series =
@@ -2267,44 +2276,30 @@ mod tests {
 
     #[test]
     fn delta_exponential_histogram_accumulates_different_span_layouts() {
-        let first = metrics_data(Metric {
-            name: "rpc.server.duration".into(),
-            data: Some(metric::Data::ExponentialHistogram(ExponentialHistogram {
-                data_points: vec![ExponentialHistogramDataPoint {
-                    time_unix_nano: 2_000_000,
-                    start_time_unix_nano: 1_000_000,
-                    count: 2,
-                    sum: Some(3.0),
-                    scale: 1,
-                    positive: Some(exponential_histogram_data_point::Buckets {
-                        offset: 0,
-                        bucket_counts: vec![2],
-                    }),
-                    ..Default::default()
-                }],
-                aggregation_temporality: AggregationTemporality::Delta as i32,
-            })),
-            ..Default::default()
-        });
-        let second = metrics_data(Metric {
-            name: "rpc.server.duration".into(),
-            data: Some(metric::Data::ExponentialHistogram(ExponentialHistogram {
-                data_points: vec![ExponentialHistogramDataPoint {
-                    time_unix_nano: 3_000_000,
-                    start_time_unix_nano: 1_000_000,
-                    count: 3,
-                    sum: Some(5.0),
-                    scale: 1,
-                    positive: Some(exponential_histogram_data_point::Buckets {
-                        offset: 1,
-                        bucket_counts: vec![3],
-                    }),
-                    ..Default::default()
-                }],
-                aggregation_temporality: AggregationTemporality::Delta as i32,
-            })),
-            ..Default::default()
-        });
+        let first = rpc_duration_histogram(
+            ExponentialHistogramDataPoint {
+                time_unix_nano: 2_000_000,
+                start_time_unix_nano: 1_000_000,
+                count: 2,
+                sum: Some(3.0),
+                scale: 1,
+                positive: Some(positive_buckets(0, vec![2])),
+                ..Default::default()
+            },
+            AggregationTemporality::Delta,
+        );
+        let second = rpc_duration_histogram(
+            ExponentialHistogramDataPoint {
+                time_unix_nano: 3_000_000,
+                start_time_unix_nano: 1_000_000,
+                count: 3,
+                sum: Some(5.0),
+                scale: 1,
+                positive: Some(positive_buckets(1, vec![3])),
+                ..Default::default()
+            },
+            AggregationTemporality::Delta,
+        );
         let mut accumulator = DeltaAccumulator::default();
 
         decode_otlp_stateful(&first, TranslationStrategy::default(), &mut accumulator).unwrap();
@@ -2327,26 +2322,19 @@ mod tests {
 
     #[test]
     fn exponential_histogram_shifts_otlp_lower_boundary_indexes_to_native_upper_boundary_indexes() {
-        let data = metrics_data(Metric {
-            name: "rpc.server.duration".into(),
-            data: Some(metric::Data::ExponentialHistogram(ExponentialHistogram {
-                data_points: vec![ExponentialHistogramDataPoint {
-                    count: 2,
-                    scale: 2,
-                    positive: Some(exponential_histogram_data_point::Buckets {
-                        offset: 0,
-                        bucket_counts: vec![1],
-                    }),
-                    negative: Some(exponential_histogram_data_point::Buckets {
-                        offset: 3,
-                        bucket_counts: vec![1],
-                    }),
-                    ..Default::default()
-                }],
-                aggregation_temporality: AggregationTemporality::Cumulative as i32,
-            })),
-            ..Default::default()
-        });
+        let data = rpc_duration_histogram(
+            ExponentialHistogramDataPoint {
+                count: 2,
+                scale: 2,
+                positive: Some(positive_buckets(0, vec![1])),
+                negative: Some(exponential_histogram_data_point::Buckets {
+                    offset: 3,
+                    bucket_counts: vec![1],
+                }),
+                ..Default::default()
+            },
+            AggregationTemporality::Cumulative,
+        );
 
         let series = decode_otlp(&data, TranslationStrategy::default()).unwrap();
         let hist = &series[0].histograms[0].1;
@@ -2357,22 +2345,15 @@ mod tests {
 
     #[test]
     fn exponential_histogram_rejects_scale_below_native_schema_range() {
-        let data = metrics_data(Metric {
-            name: "rpc.server.duration".into(),
-            data: Some(metric::Data::ExponentialHistogram(ExponentialHistogram {
-                data_points: vec![ExponentialHistogramDataPoint {
-                    count: 1,
-                    scale: -5,
-                    positive: Some(exponential_histogram_data_point::Buckets {
-                        offset: 0,
-                        bucket_counts: vec![1],
-                    }),
-                    ..Default::default()
-                }],
-                aggregation_temporality: AggregationTemporality::Cumulative as i32,
-            })),
-            ..Default::default()
-        });
+        let data = rpc_duration_histogram(
+            ExponentialHistogramDataPoint {
+                count: 1,
+                scale: -5,
+                positive: Some(positive_buckets(0, vec![1])),
+                ..Default::default()
+            },
+            AggregationTemporality::Cumulative,
+        );
 
         let err = decode_otlp(&data, TranslationStrategy::default()).unwrap_err();
 
@@ -2382,22 +2363,15 @@ mod tests {
 
     #[test]
     fn exponential_histogram_rejects_unrepresentable_downscale() {
-        let data = metrics_data(Metric {
-            name: "rpc.server.duration".into(),
-            data: Some(metric::Data::ExponentialHistogram(ExponentialHistogram {
-                data_points: vec![ExponentialHistogramDataPoint {
-                    count: 1,
-                    scale: 40,
-                    positive: Some(exponential_histogram_data_point::Buckets {
-                        offset: 0,
-                        bucket_counts: vec![1],
-                    }),
-                    ..Default::default()
-                }],
-                aggregation_temporality: AggregationTemporality::Cumulative as i32,
-            })),
-            ..Default::default()
-        });
+        let data = rpc_duration_histogram(
+            ExponentialHistogramDataPoint {
+                count: 1,
+                scale: 40,
+                positive: Some(positive_buckets(0, vec![1])),
+                ..Default::default()
+            },
+            AggregationTemporality::Cumulative,
+        );
 
         let err = decode_otlp(&data, TranslationStrategy::default()).unwrap_err();
 
@@ -2407,22 +2381,15 @@ mod tests {
 
     #[test]
     fn exponential_histogram_rejects_lossy_downscale() {
-        let data = metrics_data(Metric {
-            name: "rpc.server.duration".into(),
-            data: Some(metric::Data::ExponentialHistogram(ExponentialHistogram {
-                data_points: vec![ExponentialHistogramDataPoint {
-                    count: 3,
-                    scale: 9,
-                    positive: Some(exponential_histogram_data_point::Buckets {
-                        offset: 0,
-                        bucket_counts: vec![1, 2],
-                    }),
-                    ..Default::default()
-                }],
-                aggregation_temporality: AggregationTemporality::Cumulative as i32,
-            })),
-            ..Default::default()
-        });
+        let data = rpc_duration_histogram(
+            ExponentialHistogramDataPoint {
+                count: 3,
+                scale: 9,
+                positive: Some(positive_buckets(0, vec![1, 2])),
+                ..Default::default()
+            },
+            AggregationTemporality::Cumulative,
+        );
 
         let err = decode_otlp(&data, TranslationStrategy::default()).unwrap_err();
 
@@ -2480,6 +2447,7 @@ mod prometheus_unit_suffix;
 mod promoted_resource_attributes;
 mod reject_far_future_points;
 mod resource_metrics_timestamp_ms;
+mod scalar_point_series;
 mod scalar_series;
 mod scope_attributes;
 mod spanned_histogram_counts;
@@ -2504,7 +2472,7 @@ use compact_spanned_histogram_counts::compact_spanned_histogram_counts;
 pub use decode_otlp::decode_otlp;
 pub use decode_otlp_bytes::decode_otlp_bytes;
 pub(crate) use decode_otlp_inner::PartialOtlpDecode;
-use decode_otlp_inner::{decode_otlp_inner, decode_otlp_inner_partial};
+use decode_otlp_inner::{OtlpDecodeOptions, decode_otlp_inner, decode_otlp_inner_partial};
 pub use decode_otlp_stateful::decode_otlp_stateful;
 pub(crate) use decode_otlp_stateful::decode_otlp_stateful_with_promoted_resource_attributes;
 pub use decode_otlp_stateful_bytes::decode_otlp_stateful_bytes;
@@ -2546,6 +2514,7 @@ use prometheus_unit_suffix::prometheus_unit_suffix;
 use promoted_resource_attributes::promoted_resource_attributes;
 use reject_far_future_points::reject_far_future_points;
 use resource_metrics_timestamp_ms::resource_metrics_timestamp_ms;
+use scalar_point_series::{ExtraLabel, PointFamily, ScalarPointSeries, ScalarSeries};
 use scalar_series::scalar_series;
 use scope_attributes::scope_attributes;
 use spanned_histogram_counts::spanned_histogram_counts;

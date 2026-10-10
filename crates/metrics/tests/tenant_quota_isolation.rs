@@ -7,70 +7,23 @@
 //! HTTP 429, then pushes the SAME load to `org-b` and asserts that it still
 //! succeeds. That proves the token bucket is per-tenant and not global.
 
-use std::{
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::{net::SocketAddr, sync::Arc};
 
-use async_trait::async_trait;
-use bytes::Bytes;
 use krabka_metrics::{
-    OverridesProvider, WalRecord,
-    distributor::{DistributorState, ProduceError, WalSink, serve},
-    wire::pb,
+    OverridesProvider,
+    distributor::{DistributorState, serve},
 };
 use krabka_observability::server_security::ServerSecurity;
-use prost::Message;
+
+#[path = "support/recording_sink.rs"]
+mod recording_sink;
+#[path = "support/up_remote_write.rs"]
+mod up_remote_write;
+
+use self::{recording_sink::RecordingSink, up_remote_write::remote_write_v1_body};
 
 const ORG_A: &str = "org-a";
 const ORG_B: &str = "org-b";
-
-/// In-memory WAL sink. It records every appended `WalRecord` and never touches
-/// a broker.
-#[derive(Default)]
-struct RecordingSink {
-    records: Mutex<Vec<WalRecord>>,
-}
-
-#[async_trait]
-impl WalSink for RecordingSink {
-    async fn append(&self, _key: Bytes, record: WalRecord) -> Result<(), ProduceError> {
-        self.records
-            .lock()
-            .expect("recording sink poisoned")
-            .push(record);
-        Ok(())
-    }
-}
-
-impl RecordingSink {
-    fn len(&self) -> usize {
-        self.records.lock().expect("recording sink poisoned").len()
-    }
-}
-
-/// Minimal `remote_write` v1 body. It holds a single `up` series with one
-/// sample, snappy compressed, because the distributor requires
-/// `Content-Encoding: snappy`.
-fn remote_write_v1_body() -> Vec<u8> {
-    let req = pb::v1::WriteRequest {
-        timeseries: vec![pb::v1::TimeSeries {
-            labels: vec![pb::v1::Label {
-                name: "__name__".into(),
-                value: "up".into(),
-            }],
-            samples: vec![pb::v1::Sample {
-                value: 1.0,
-                timestamp: 100,
-            }],
-            ..Default::default()
-        }],
-        ..Default::default()
-    };
-    snap::raw::Encoder::new()
-        .compress_vec(&req.encode_to_vec())
-        .expect("snappy compress")
-}
 
 /// Per-tenant overrides. A rate limit holds org-a to a single sample of burst,
 /// and org-b is unlimited in practice. An unlisted tenant falls back to the

@@ -23,6 +23,8 @@ pub mod runtime;
 pub mod sample;
 pub mod schema;
 pub mod symbols;
+#[cfg(test)]
+mod test_support;
 pub mod tsdb_import;
 pub mod wal;
 pub mod wire;

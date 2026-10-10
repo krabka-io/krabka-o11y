@@ -25,8 +25,7 @@ use std::{
 };
 
 use assert2::{assert, check};
-use async_trait::async_trait;
-use futures::{TryStreamExt as _, stream::BoxStream};
+use futures::TryStreamExt as _;
 use krabka_metrics_service::{
     DEFAULT_UNBOUNDED_COMPATIBILITY_LOOKBACK, MimirTenantAdminState, RefreshingMetricBlockStore,
     mimir_tenant_admin_router, serve_prometheus_router,
@@ -34,10 +33,7 @@ use krabka_metrics_service::{
 use krabka_observability::server_security::ServerSecurity;
 use krabka_promql::{EngineOpts, PrometheusApiState, WalHead, prometheus_router};
 use krabka_units::prelude::*;
-use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
-};
+use object_store::{GetOptions, GetResult, ObjectStore, memory::InMemory, path::Path};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use testcontainers::{
@@ -654,24 +650,9 @@ impl std::fmt::Display for RangeFailingStore {
     }
 }
 
-#[async_trait]
-impl ObjectStore for RangeFailingStore {
-    async fn put_opts(
-        &self,
-        location: &Path,
-        payload: PutPayload,
-        options: PutOptions,
-    ) -> object_store::Result<PutResult> {
-        self.inner.put_opts(location, payload, options).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        options: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, options).await
-    }
+krabka_blockstore::delegate_object_store! {
+    RangeFailingStore => inner;
+    forward [put_opts, put_multipart_opts, delete_stream, list, list_with_delimiter, copy_opts];
 
     async fn get_opts(
         &self,
@@ -686,37 +667,10 @@ impl ObjectStore for RangeFailingStore {
         }
         self.inner.get_opts(location, options).await
     }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
-    }
 }
 
-#[tokio::test]
-async fn a_store_failure_on_the_index_probe_leaves_the_upload_validating() -> TestResult {
-    let store = Arc::new(RangeFailingStore::default());
-    let krabka = Krabka::start_with(store.clone()).await?;
-    let block = UploadBlock::fixture();
+// Starts the fixture upload and sends every file, without finishing it.
+async fn start_and_upload_files(krabka: &Krabka, block: &UploadBlock) -> TestResult {
     let (status, body) = krabka
         .post(
             krabka.upload_url(FIXTURE_ULID, "start"),
@@ -733,6 +687,15 @@ async fn a_store_failure_on_the_index_probe_leaves_the_upload_validating() -> Te
         let (status, body) = krabka.post(url, bytes.clone()).await?;
         assert!(status == StatusCode::OK, "file {path}: {body}");
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_store_failure_on_the_index_probe_leaves_the_upload_validating() -> TestResult {
+    let store = Arc::new(RangeFailingStore::default());
+    let krabka = Krabka::start_with(store.clone()).await?;
+    let block = UploadBlock::fixture();
+    start_and_upload_files(&krabka, &block).await?;
     store.fail_ranges.store(true, Ordering::SeqCst);
 
     let (failed_status, _) = krabka
@@ -772,22 +735,7 @@ async fn a_query_during_a_stopped_import_reads_all_samples_or_none() -> TestResu
         let store = Arc::new(CrashingStore::default());
         let krabka = Krabka::start_with(store.clone()).await?;
         let block = UploadBlock::fixture();
-        let (status, body) = krabka
-            .post(
-                krabka.upload_url(FIXTURE_ULID, "start"),
-                block.meta(FIXTURE_ULID),
-            )
-            .await?;
-        assert!(status == StatusCode::OK, "start: {body}");
-        for (path, bytes) in &block.uploaded {
-            let url = format!(
-                "{}?path={}",
-                krabka.upload_url(FIXTURE_ULID, "files"),
-                encode(path)
-            );
-            let (status, body) = krabka.post(url, bytes.clone()).await?;
-            assert!(status == StatusCode::OK, "file {path}: {body}");
-        }
+        start_and_upload_files(&krabka, &block).await?;
         store.crash_at(Some(CrashPoint {
             key_part: key_part.to_owned(),
             occurrence,

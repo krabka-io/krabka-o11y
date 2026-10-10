@@ -1,6 +1,6 @@
 use super::{
     AlertmanagerHttpSink, AlertmanagerSink, RulerWalError,
-    alertmanager_http_sink::encode_url_component,
+    alertmanager_http_sink::generator_url_for,
 };
 
 type AlertBatch = (Option<String>, Vec<krabka_promql::AlertmanagerAlert>);
@@ -87,11 +87,7 @@ impl AlertmanagerSink for QueuedAlertmanagerSink {
     }
 
     fn template_external_url(&self, alert_name: &str) -> String {
-        self.generator_url_template
-            .as_ref()
-            .map_or_else(String::new, |template| {
-                template.replace("{alertname}", &encode_url_component(alert_name))
-            })
+        generator_url_for(self.generator_url_template.as_deref(), alert_name)
     }
 
     async fn dispatch_alerts(

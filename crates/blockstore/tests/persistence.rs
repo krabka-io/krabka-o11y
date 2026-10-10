@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use krabka_blockstore::{
     BlockDescriptor, BlockKey, LabelIndex, LogBlockIndex as BlockIndex, LogBlockStoreError,
-    TimeRange, delete_tenant_log_index_shard_from_object_store, labels,
+    SeriesFingerprint, TimeRange, delete_tenant_log_index_shard_from_object_store, labels,
     log_tenant_index_manifest_object_path, log_tenant_index_shard_catalog_object_path,
     log_tenant_index_shard_manifest_object_path, read_log_index_manifest,
     read_log_index_manifest_from_object_store, read_tenant_log_index_manifest_from_object_store,
@@ -15,24 +15,172 @@ use object_store::{
     ObjectStoreExt as _, PutPayload, local::LocalFileSystem, path::Path as ObjectPath,
 };
 
+// Where a test block sits in the WAL and in time.
+#[derive(Clone, Copy)]
+struct BlockSlot {
+    first_offset: i64,
+    last_offset: i64,
+    time: TimeRange,
+}
+
+const EARLY: BlockSlot = BlockSlot {
+    first_offset: 10,
+    last_offset: 19,
+    time: TimeRange {
+        start_ns: 100,
+        end_ns: 199,
+    },
+};
+const MIDDLE: BlockSlot = BlockSlot {
+    first_offset: 20,
+    last_offset: 29,
+    time: TimeRange {
+        start_ns: 200,
+        end_ns: 299,
+    },
+};
+const LATE: BlockSlot = BlockSlot {
+    first_offset: 30,
+    last_offset: 39,
+    time: TimeRange {
+        start_ns: 400,
+        end_ns: 499,
+    },
+};
+
+// An `{app, env="prod"}` series of one tenant.
+#[derive(Clone, Copy)]
+struct TestSeries<'a> {
+    tenant: &'a str,
+    app: &'a str,
+}
+
+fn series(index: &mut LabelIndex, of: TestSeries<'_>) -> SeriesFingerprint {
+    index.insert_series(of.tenant, labels([("app", of.app), ("env", "prod")]))
+}
+
+// A block of one tenant on partition 0 that carries one series.
+#[derive(Clone, Copy)]
+struct TestBlock<'a> {
+    tenant: &'a str,
+    slot: BlockSlot,
+    series: SeriesFingerprint,
+}
+
+fn insert_block(blocks: &mut BlockIndex, block: TestBlock<'_>) {
+    let slot = block.slot;
+    blocks.insert(BlockDescriptor::new(
+        BlockKey::new(
+            block.tenant,
+            0,
+            slot.first_offset,
+            slot.last_offset,
+            slot.time,
+        ),
+        BTreeSet::from([block.series]),
+    ));
+}
+
+// One tenant-a block per slot, for api, worker and admin; returns admin.
+fn api_worker_admin_blocks(labels_index: &mut LabelIndex) -> (BlockIndex, SeriesFingerprint) {
+    let mut blocks = BlockIndex::default();
+    let mut admin = 0;
+    for (slot, app) in [(EARLY, "api"), (MIDDLE, "worker"), (LATE, "admin")] {
+        admin = series(
+            labels_index,
+            TestSeries {
+                tenant: "tenant-a",
+                app,
+            },
+        );
+        insert_block(
+            &mut blocks,
+            TestBlock {
+                tenant: "tenant-a",
+                slot,
+                series: admin,
+            },
+        );
+    }
+    (blocks, admin)
+}
+
+// Writes one tenant-a shard holding one api block, and returns its range.
+async fn write_one_api_shard(store: &LocalFileSystem, prefix: &ObjectPath) -> TimeRange {
+    let mut labels_index = LabelIndex::default();
+    let api = series(
+        &mut labels_index,
+        TestSeries {
+            tenant: "tenant-a",
+            app: "api",
+        },
+    );
+    let mut blocks = BlockIndex::default();
+    insert_block(
+        &mut blocks,
+        TestBlock {
+            tenant: "tenant-a",
+            slot: EARLY,
+            series: api,
+        },
+    );
+    let shard_range = TimeRange::new(100, 199).unwrap();
+    write_tenant_log_index_shards_to_object_store(
+        store,
+        prefix,
+        "tenant-a",
+        &[shard_range],
+        &labels_index,
+        &blocks,
+    )
+    .await
+    .unwrap();
+    shard_range
+}
+
 #[test]
 fn log_index_manifest_round_trips_label_and_block_indexes() {
     let dir = tempfile::tempdir().unwrap();
     let mut labels_index = LabelIndex::default();
-    let api = labels_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker =
-        labels_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
-    labels_index.insert_series("tenant-b", labels([("app", "api"), ("env", "prod")]));
+    let api = series(
+        &mut labels_index,
+        TestSeries {
+            tenant: "tenant-a",
+            app: "api",
+        },
+    );
+    let worker = series(
+        &mut labels_index,
+        TestSeries {
+            tenant: "tenant-a",
+            app: "worker",
+        },
+    );
+    series(
+        &mut labels_index,
+        TestSeries {
+            tenant: "tenant-b",
+            app: "api",
+        },
+    );
 
     let mut blocks = BlockIndex::default();
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(100, 199).unwrap()),
-        BTreeSet::from([api]),
-    ));
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(200, 299).unwrap()),
-        BTreeSet::from([worker]),
-    ));
+    insert_block(
+        &mut blocks,
+        TestBlock {
+            tenant: "tenant-a",
+            slot: EARLY,
+            series: api,
+        },
+    );
+    insert_block(
+        &mut blocks,
+        TestBlock {
+            tenant: "tenant-a",
+            slot: MIDDLE,
+            series: worker,
+        },
+    );
 
     write_log_index_manifest(dir.path(), &labels_index, &blocks).unwrap();
     let (loaded_labels, loaded_blocks) = read_log_index_manifest(dir.path()).unwrap();
@@ -47,19 +195,38 @@ async fn log_index_manifest_round_trips_through_object_store() {
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let prefix = ObjectPath::from("tenant-indexes");
     let mut labels_index = LabelIndex::default();
-    let api = labels_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker =
-        labels_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
+    let api = series(
+        &mut labels_index,
+        TestSeries {
+            tenant: "tenant-a",
+            app: "api",
+        },
+    );
+    let worker = series(
+        &mut labels_index,
+        TestSeries {
+            tenant: "tenant-a",
+            app: "worker",
+        },
+    );
 
     let mut blocks = BlockIndex::default();
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(100, 199).unwrap()),
-        BTreeSet::from([api]),
-    ));
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(200, 299).unwrap()),
-        BTreeSet::from([worker]),
-    ));
+    insert_block(
+        &mut blocks,
+        TestBlock {
+            tenant: "tenant-a",
+            slot: EARLY,
+            series: api,
+        },
+    );
+    insert_block(
+        &mut blocks,
+        TestBlock {
+            tenant: "tenant-a",
+            slot: MIDDLE,
+            series: worker,
+        },
+    );
 
     write_log_index_manifest_to_object_store(&store, &prefix, &labels_index, &blocks)
         .await
@@ -113,20 +280,38 @@ async fn tenant_log_index_manifest_round_trips_only_one_tenant() {
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let prefix = ObjectPath::from("tenant-indexes");
     let mut labels_index = LabelIndex::default();
-    let selected_api =
-        labels_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let other_tenant_api =
-        labels_index.insert_series("tenant-b", labels([("app", "api"), ("env", "prod")]));
+    let selected_api = series(
+        &mut labels_index,
+        TestSeries {
+            tenant: "tenant-a",
+            app: "api",
+        },
+    );
+    let other_tenant_api = series(
+        &mut labels_index,
+        TestSeries {
+            tenant: "tenant-b",
+            app: "api",
+        },
+    );
 
     let mut blocks = BlockIndex::default();
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(100, 199).unwrap()),
-        BTreeSet::from([selected_api]),
-    ));
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-b", 0, 10, 19, TimeRange::new(100, 199).unwrap()),
-        BTreeSet::from([other_tenant_api]),
-    ));
+    insert_block(
+        &mut blocks,
+        TestBlock {
+            tenant: "tenant-a",
+            slot: EARLY,
+            series: selected_api,
+        },
+    );
+    insert_block(
+        &mut blocks,
+        TestBlock {
+            tenant: "tenant-b",
+            slot: EARLY,
+            series: other_tenant_api,
+        },
+    );
 
     write_tenant_log_index_manifest_to_object_store(
         &store,
@@ -173,30 +358,22 @@ async fn tenant_log_index_shard_round_trips_only_matching_time_and_series() {
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let prefix = ObjectPath::from("tenant-indexes");
     let mut labels_index = LabelIndex::default();
-    let api = labels_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker =
-        labels_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
-    let admin = labels_index.insert_series("tenant-a", labels([("app", "admin"), ("env", "prod")]));
-    let other_tenant_api =
-        labels_index.insert_series("tenant-b", labels([("app", "api"), ("env", "prod")]));
-
-    let mut blocks = BlockIndex::default();
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(100, 199).unwrap()),
-        BTreeSet::from([api]),
-    ));
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(200, 299).unwrap()),
-        BTreeSet::from([worker]),
-    ));
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 30, 39, TimeRange::new(400, 499).unwrap()),
-        BTreeSet::from([admin]),
-    ));
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-b", 0, 10, 19, TimeRange::new(100, 199).unwrap()),
-        BTreeSet::from([other_tenant_api]),
-    ));
+    let (mut blocks, admin) = api_worker_admin_blocks(&mut labels_index);
+    let other_tenant_api = series(
+        &mut labels_index,
+        TestSeries {
+            tenant: "tenant-b",
+            app: "api",
+        },
+    );
+    insert_block(
+        &mut blocks,
+        TestBlock {
+            tenant: "tenant-b",
+            slot: EARLY,
+            series: other_tenant_api,
+        },
+    );
 
     let shard_range = TimeRange::new(150, 250).unwrap();
     write_tenant_log_index_shard_to_object_store(
@@ -233,24 +410,7 @@ async fn tenant_log_index_shard_catalog_selects_overlapping_shards_and_merges_in
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let prefix = ObjectPath::from("tenant-indexes");
     let mut labels_index = LabelIndex::default();
-    let api = labels_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let worker =
-        labels_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
-    let admin = labels_index.insert_series("tenant-a", labels([("app", "admin"), ("env", "prod")]));
-
-    let mut blocks = BlockIndex::default();
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(100, 199).unwrap()),
-        BTreeSet::from([api]),
-    ));
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 20, 29, TimeRange::new(200, 299).unwrap()),
-        BTreeSet::from([worker]),
-    ));
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 30, 39, TimeRange::new(400, 499).unwrap()),
-        BTreeSet::from([admin]),
-    ));
+    let (blocks, admin) = api_worker_admin_blocks(&mut labels_index);
 
     write_tenant_log_index_shards_to_object_store(
         &store,
@@ -299,24 +459,7 @@ async fn an_absent_shard_manifest_reads_as_an_empty_shard() {
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let prefix = ObjectPath::from("tenant-indexes");
-    let mut labels_index = LabelIndex::default();
-    let api = labels_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let mut blocks = BlockIndex::default();
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(100, 199).unwrap()),
-        BTreeSet::from([api]),
-    ));
-    let shard_range = TimeRange::new(100, 199).unwrap();
-    write_tenant_log_index_shards_to_object_store(
-        &store,
-        &prefix,
-        "tenant-a",
-        &[shard_range],
-        &labels_index,
-        &blocks,
-    )
-    .await
-    .unwrap();
+    let shard_range = write_one_api_shard(&store, &prefix).await;
 
     delete_tenant_log_index_shard_from_object_store(&store, &prefix, "tenant-a", shard_range)
         .await
@@ -345,24 +488,7 @@ async fn a_present_shard_manifest_that_is_malformed_or_of_another_version_fails_
     let dir = tempfile::tempdir().unwrap();
     let store = LocalFileSystem::new_with_prefix(dir.path()).unwrap();
     let prefix = ObjectPath::from("tenant-indexes");
-    let mut labels_index = LabelIndex::default();
-    let api = labels_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let mut blocks = BlockIndex::default();
-    blocks.insert(BlockDescriptor::new(
-        BlockKey::new("tenant-a", 0, 10, 19, TimeRange::new(100, 199).unwrap()),
-        BTreeSet::from([api]),
-    ));
-    let shard_range = TimeRange::new(100, 199).unwrap();
-    write_tenant_log_index_shards_to_object_store(
-        &store,
-        &prefix,
-        "tenant-a",
-        &[shard_range],
-        &labels_index,
-        &blocks,
-    )
-    .await
-    .unwrap();
+    let shard_range = write_one_api_shard(&store, &prefix).await;
     let manifest_path =
         log_tenant_index_shard_manifest_object_path(&prefix, "tenant-a", shard_range);
     let manifest_path = ObjectPath::from(format!(

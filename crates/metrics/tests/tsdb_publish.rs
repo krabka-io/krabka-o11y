@@ -5,8 +5,7 @@ use std::{
 };
 
 use assert2::{assert, check};
-use async_trait::async_trait;
-use futures::{TryStreamExt as _, stream::BoxStream};
+use futures::TryStreamExt as _;
 use krabka_blockstore::BlockLevel;
 use krabka_metrics::{
     CompactionIndex, CompactionIndexListing, CompactionIndexManifest, CompactionSeriesLabels,
@@ -18,9 +17,8 @@ use krabka_metrics::{
 };
 use krabka_units::{Time, secs};
 use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    ObjectStoreExt as _, PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory,
-    path::Path,
+    MultipartUpload, ObjectStore, ObjectStoreExt as _, PutMultipartOptions, PutOptions, PutPayload,
+    PutResult, memory::InMemory, path::Path,
 };
 use tsdb_fixture::{FIXTURE_MAX_TIME, FIXTURE_MIN_TIME, FIXTURE_ULID, fixture_files};
 
@@ -349,8 +347,10 @@ impl std::fmt::Display for RefusingStore {
     }
 }
 
-#[async_trait]
-impl ObjectStore for RefusingStore {
+krabka_blockstore::delegate_object_store! {
+    RefusingStore => inner;
+    forward [get_opts, delete_stream, list, list_with_delimiter, copy_opts];
+
     async fn put_opts(
         &self,
         location: &Path,
@@ -368,38 +368,6 @@ impl ObjectStore for RefusingStore {
     ) -> object_store::Result<Box<dyn MultipartUpload>> {
         self.check(location)?;
         self.inner.put_multipart_opts(location, options).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
     }
 }
 

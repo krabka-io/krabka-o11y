@@ -2,7 +2,7 @@ use super::{
     Arc, BTreeMap, BTreeSet, BlockIndex, BlockLevel, BlockMeta, BlockStoreError, ByteSize,
     DEFAULT_INDEX_SHARD_WIDTH, Deserialize, IndexShardPayload, LabelMatcher, Labels,
     MAX_INDEX_SNAPSHOT_BYTES, ObjectStore, QUERY_SHARD_LABEL, Result, Serialize, SeriesFingerprint,
-    TenantIndex, encode_index_shard, load_index_shards, matcher_matches_empty, save_index_shards,
+    TenantIndex, encode_index_shard, load_index_shards, matcher_matches_empty,
 };
 
 /// Multi-tenant in-memory index for label resolution and block pruning.
@@ -467,34 +467,7 @@ impl Index {
             .ordinals_overlapping(i64::MIN, i64::MAX)
             .into_iter()
             .collect::<BTreeSet<_>>();
-        // A shard is a document of its own, so its blocks are renumbered from
-        // zero and its postings point at those numbers.
-        let local = ordinals
-            .iter()
-            .enumerate()
-            .map(|(local, ordinal)| {
-                (
-                    *ordinal,
-                    u32::try_from(local).expect("a shard holds fewer blocks than the tenant"),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        let postings = tenant_index
-            .blocks
-            .postings_for(&ordinals)
-            .into_iter()
-            .map(|(fingerprint, ordinals)| {
-                let ordinals = ordinals
-                    .iter()
-                    .filter_map(|ordinal| local.get(ordinal).copied())
-                    .collect::<Vec<_>>();
-                (fingerprint, ordinals)
-            })
-            .collect::<BTreeMap<_, _>>();
-        let blocks = ordinals
-            .iter()
-            .map(|ordinal| tenant_index.blocks.entry(*ordinal))
-            .collect();
+        let (blocks, postings) = tenant_index.blocks.shard_local(&ordinals);
         encode_index_shard(&IndexShardPayload {
             tenant,
             series: &tenant_index.series,
@@ -572,7 +545,7 @@ impl Index {
         object_key: &str,
         shard_width: i64,
     ) -> Result<()> {
-        save_index_shards(self, store, object_key, shard_width).await
+        self.save_shards(store, object_key, shard_width).await
     }
 
     /// Loads every shard of an index, across every tenant.

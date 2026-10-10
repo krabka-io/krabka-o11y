@@ -22,7 +22,7 @@ use std::{
 use clap::Parser as _;
 
 use super::{
-    AuditHandle, Cli, RoleReadiness, ServerSecurity, Shutdown, run_querier,
+    AuditHandle, Cli, RoleLaunch, RoleReadiness, ServerSecurity, Shutdown, run_querier,
     spawn_shutdown_signal_listener,
 };
 
@@ -123,12 +123,14 @@ fn run_querier_child() {
         let shutdown = Shutdown::new();
         spawn_shutdown_signal_listener(shutdown.clone());
         run_querier(
-            cli,
-            krabka_promql::metrics::ServiceMetrics::new(),
-            RoleReadiness::new(),
+            RoleLaunch {
+                cli,
+                metrics: krabka_promql::metrics::ServiceMetrics::new(),
+                readiness: RoleReadiness::new(),
+                wal_security: None,
+                audit: AuditHandle::disabled(),
+            },
             ServerSecurity::default(),
-            None,
-            AuditHandle::disabled(),
             shutdown,
         )
         .await

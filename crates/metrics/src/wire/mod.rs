@@ -7,6 +7,8 @@ mod decoded;
 mod histogram;
 mod remote_read;
 pub mod remote_read_pb;
+#[cfg(test)]
+mod test_support;
 mod v1;
 mod v2;
 

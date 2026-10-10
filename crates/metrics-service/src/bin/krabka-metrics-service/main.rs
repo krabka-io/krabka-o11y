@@ -699,24 +699,15 @@ mod tests {
         ])
         .unwrap();
         check!(
-            configured.server_security.server_tls_cert_path
-                == Some(PathBuf::from("/etc/krabka/tls.crt"))
-        );
-        check!(
-            configured.server_security.server_tls_key_path
-                == Some(PathBuf::from("/etc/krabka/tls.key"))
-        );
-        check!(
-            configured.server_security.auth_credentials_config
-                == Some(PathBuf::from("/etc/krabka/credentials.yaml"))
-        );
-        check!(
-            configured.server_security.internal_client_token_path
-                == Some(PathBuf::from("/etc/krabka/internal-token"))
-        );
-        check!(
-            configured.server_security.internal_client_tls_ca_path
-                == Some(PathBuf::from("/etc/krabka/ca.pem"))
+            configured.server_security
+                == krabka_observability::server_security::ServerSecurityArgs {
+                    server_tls_cert_path: Some(PathBuf::from("/etc/krabka/tls.crt")),
+                    server_tls_key_path: Some(PathBuf::from("/etc/krabka/tls.key")),
+                    auth_credentials_config: Some(PathBuf::from("/etc/krabka/credentials.yaml")),
+                    internal_client_token_path: Some(PathBuf::from("/etc/krabka/internal-token")),
+                    internal_client_tls_ca_path: Some(PathBuf::from("/etc/krabka/ca.pem")),
+                    ..defaults.server_security.clone()
+                }
         );
         check!(configured.audit.topic.as_deref() == Some("krabka-audit"));
         check!(configured.audit.bootstrap.as_deref() == Some("audit-broker:9092"));
@@ -962,11 +953,14 @@ mod parse_positive_usize;
 mod parse_remote_read_max_body;
 mod query_engine_opts;
 mod require_role_topics;
+mod role_launch;
+mod role_object_store;
 mod run_all;
 mod run_querier;
 mod run_query_frontend;
 mod run_ruler;
 mod shutdown;
+mod spawn_role_wal_head_consumer;
 mod spawn_shutdown_signal_listener;
 mod spawn_wal_head_consumer_task;
 mod target;
@@ -984,10 +978,13 @@ use parse_positive_usize::parse_positive_usize;
 use parse_remote_read_max_body::parse_remote_read_max_body;
 use query_engine_opts::query_engine_opts;
 use require_role_topics::require_role_topics;
+use role_launch::RoleLaunch;
+use role_object_store::RoleObjectStore;
 use run_querier::run_querier;
 use run_query_frontend::run_query_frontend;
 use run_ruler::run_ruler;
 use shutdown::Shutdown;
+use spawn_role_wal_head_consumer::{WalHeadFeed, spawn_role_wal_head_consumer};
 use spawn_shutdown_signal_listener::spawn_shutdown_signal_listener;
 use spawn_wal_head_consumer_task::{WalHeadConsumerRecovery, spawn_wal_head_consumer_task};
 use target::Target;
@@ -1072,12 +1069,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let shutdown = Shutdown::new();
                         spawn_shutdown_signal_listener(shutdown.clone());
                         run_querier(
-                            cli,
-                            metrics,
-                            readiness,
+                            RoleLaunch {
+                                cli,
+                                metrics,
+                                readiness,
+                                wal_security,
+                                audit,
+                            },
                             server_security.clone(),
-                            wal_security,
-                            audit,
                             shutdown,
                         )
                         .await
@@ -1085,23 +1084,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     Target::QueryFrontend => {
                         run_query_frontend(
-                            cli,
-                            metrics,
-                            readiness,
+                            RoleLaunch {
+                                cli,
+                                metrics,
+                                readiness,
+                                wal_security,
+                                audit,
+                            },
                             &server_security,
-                            wal_security,
-                            audit,
                         )
                         .await
                     }
                     Target::Ruler => {
                         Box::pin(run_ruler(
-                            cli,
-                            metrics,
-                            readiness,
+                            RoleLaunch {
+                                cli,
+                                metrics,
+                                readiness,
+                                wal_security,
+                                audit,
+                            },
                             &server_security,
-                            wal_security,
-                            audit,
                         ))
                         .await
                     }

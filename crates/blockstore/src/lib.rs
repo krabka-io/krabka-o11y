@@ -12,6 +12,7 @@ mod block;
 mod block_index;
 mod bloom;
 mod compaction;
+mod delegate_object_store;
 mod erasure;
 mod error;
 mod index;
@@ -23,6 +24,7 @@ mod matcher;
 mod merge;
 mod metrics;
 mod nested_set;
+mod object_store_provider;
 mod object_store_semantics;
 mod path_escape;
 mod persisted_format;
@@ -107,6 +109,7 @@ pub use metrics::{
     MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreOperationLabel,
 };
 pub use nested_set::{NestedSet, SpanNode, assign_nested_set};
+pub use object_store_provider::{object_store_cloud, object_store_endpoint_host};
 pub use object_store_semantics::{
     ConditionalUpdateRequirement, OBJECT_STORE_PROBE_PREFIX, ObjectStoreAccess,
     ObjectStoreCapabilities, ObjectStoreSemanticsError, verify_object_store_access,

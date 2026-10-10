@@ -3,13 +3,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     hash::{DefaultHasher, Hash, Hasher},
-    sync::Arc,
 };
 
-use krabka_units::prelude::*;
-use object_store::ObjectStore;
 use serde::{Deserialize, Serialize};
-use tracing::instrument;
 
 use crate::{
     block::BlockMeta,
@@ -17,12 +13,13 @@ use crate::{
     bloom::{BloomShard, ShardedTraceBloom},
     compaction::{BlockLevel, CompactionCandidate, level_above},
     error::{BlockStoreError, Result},
-    index::{ByteReader, IndexShardRange, push_ivarint, push_uvarint},
+    index::{
+        ByteReader, IndexShardRange, push_dictionary_id, push_ivarint, push_len, push_string,
+        push_uvarint,
+    },
     index_snapshot::{
-        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, PendingBlockAdditions,
-        PendingBlockRemovals, PendingRemoval, SnapshotManifest, put_manifest_snapshot,
-        put_shard_payload, read_latest_snapshot_manifest, read_shard_payload,
-        shard_payload_content_hash, shard_payload_object_key, shard_ranges_for_span,
+        PendingBlockAdditions, PendingBlockRemovals, PendingRemoval, TenantShardMerge,
+        shard_ranges_for_span, touched_shard_ranges,
     },
 };
 

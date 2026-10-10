@@ -1,4 +1,6 @@
-use super::{PROFILE_SHARD_FORMAT_VERSION, PROFILE_SHARD_MAGIC, ProfileShard, push_uvarint};
+use super::{
+    PROFILE_SHARD_FORMAT_VERSION, PROFILE_SHARD_MAGIC, ProfileShard, push_len, push_uvarint,
+};
 
 /// Encodes one tenant's slot of a profile index as a shard payload.
 ///
@@ -26,11 +28,4 @@ pub(crate) fn encode_profile_shard(tenant: &str, shard: &ProfileShard) -> Vec<u8
         }
     }
     out
-}
-
-fn push_len(out: &mut Vec<u8>, len: usize) {
-    push_uvarint(
-        out,
-        u64::try_from(len).expect("a length in memory fits a u64"),
-    );
 }

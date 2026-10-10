@@ -1,41 +1,35 @@
-use krabka_blockstore::MeteredObjectStore;
-use krabka_client_consumer::IsolationLevel;
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
-    Arc, AuditHandle, AutoOffsetReset, Cli, ClientSecurity, Consumer, MimirTenantAdminState,
-    ObjectStore, PrometheusApiState, RoleReadiness, ServerSecurity, Shutdown, WalHead,
-    WalHeadConsumerRecovery, load_runtime_overrides, mimir_tenant_admin_router, prometheus_router,
-    query_engine_opts, readiness_router, serve_prometheus_router_joinable,
-    spawn_wal_head_consumer_task,
+    Arc, MimirTenantAdminState, PrometheusApiState, RoleLaunch, RoleObjectStore, ServerSecurity,
+    Shutdown, WalHead, WalHeadConsumerRecovery, WalHeadFeed, load_runtime_overrides,
+    mimir_tenant_admin_router, prometheus_router, query_engine_opts, readiness_router,
+    serve_prometheus_router_joinable, spawn_role_wal_head_consumer,
 };
 
 #[tracing::instrument(
     level = "info",
     name = "metrics.run_querier",
     skip_all,
-    fields(listen = %cli.listen, object_store = %cli.object_store_url, manifest_prefix = %cli.manifest_prefix, wal_topic = %cli.wal_topic),
+    fields(listen = %launch.cli.listen, object_store = %launch.cli.object_store_url, manifest_prefix = %launch.cli.manifest_prefix, wal_topic = %launch.cli.wal_topic),
 )]
 pub(crate) fn run_querier(
-    cli: Cli,
-    metrics: krabka_promql::metrics::ServiceMetrics,
-    readiness: RoleReadiness,
+    launch: RoleLaunch,
     security: ServerSecurity,
-    wal_security: Option<ClientSecurity>,
-    audit: AuditHandle,
     shutdown: Shutdown,
 ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static {
+    let RoleLaunch {
+        cli,
+        metrics,
+        readiness,
+        wal_security,
+        audit,
+    } = launch;
     let startup = readiness.gate("startup");
     Box::pin(tracing::Instrument::instrument(
         async move {
-            let object_store_url = url::Url::parse(&cli.object_store_url)?;
-            let (store, prefix) =
-                object_store::parse_url_opts(&object_store_url, std::env::vars())?;
-            let store: Arc<dyn ObjectStore> =
-                Arc::new(object_store::prefix::PrefixStore::new(store, prefix));
-            let object_store_metrics = metrics.object_store.clone();
-            readiness.track_object_store(object_store_metrics.clone());
-            let store = MeteredObjectStore::wrap(store, object_store_metrics);
+            let role_store = RoleObjectStore::open(&cli, &metrics, &readiness)?;
+            let store = Arc::clone(&role_store.store);
             let head = WalHead::with_retention(cli.wal_head_retention);
             let recovery_metrics = metrics.wal_consumer.clone();
             readiness.track_wal_consumer(recovery_metrics.clone());
@@ -58,53 +52,27 @@ pub(crate) fn run_querier(
                     .expect("configured WAL bootstrap registers a readiness gate")
                     .1
                     .clone();
-                let wal_head = head.clone();
-                let wal_topic = cli.wal_topic.clone();
-                let poll_timeout = cli.wal_poll_timeout;
                 let group_id = cli.wal_group_id.clone();
-                let client_id = cli.wal_client_id.clone();
-                let subscribe_topic = cli.wal_topic.clone();
                 tasks.adopt(
                     "metrics querier WAL head",
-                    spawn_wal_head_consumer_task(
-                        move || async move {
-                            Consumer::builder()
-                                .bootstrap(bootstrap)
-                                .maybe_security(wal_security)
-                                .dispatch_queue_capacity(cli.client_dispatch_queue_capacity)
-                                .frame_max(cli.client_frame_max)
-                                .group_id(group_id)
-                                .client_id(client_id)
-                                .auto_offset_reset(AutoOffsetReset::Earliest)
-                                .isolation_level(IsolationLevel::ReadCommitted)
-                                .subscribe([subscribe_topic])
-                                .enable_auto_commit(false)
-                                .build()
-                                .await
-                                .map_err(|error| error.to_string())
+                    spawn_role_wal_head_consumer(
+                        &cli,
+                        WalHeadFeed {
+                            bootstrap,
+                            security: wal_security,
+                            group_id,
+                            head: head.clone(),
+                            gate: wal_head_gate,
+                            recovery: WalHeadConsumerRecovery {
+                                metrics: Some(recovery_metrics),
+                                catch_up_gate: Some(readiness.gate("wal-catch-up")),
+                            },
                         },
-                        wal_head,
-                        wal_topic,
-                        poll_timeout,
                         shutdown.clone(),
-                        wal_head_gate,
-                        WalHeadConsumerRecovery {
-                            metrics: Some(recovery_metrics),
-                            catch_up_gate: Some(readiness.gate("wal-catch-up")),
-                        },
                     ),
                 );
             }
-            let metric_store = Arc::new(
-                krabka_metrics_service::RefreshingMetricBlockStore::new(
-                    Arc::clone(&store),
-                    object_store_url.clone(),
-                    &cli.manifest_prefix,
-                    head.clone(),
-                )
-                .with_cold_cache_ttl(cli.cold_cache_ttl)
-                .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback),
-            );
+            let metric_store = Arc::new(role_store.refreshing_metric_store(&cli, head.clone()));
             let state = PrometheusApiState::new(Arc::clone(&metric_store), query_engine_opts(&cli))
                 .with_erasure_store(Arc::clone(&store))
                 .with_max_concurrent_queries(cli.max_concurrent_queries)

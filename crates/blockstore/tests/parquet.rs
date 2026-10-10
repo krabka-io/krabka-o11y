@@ -13,6 +13,31 @@ use krabka_blockstore::{
 use krabka_units::prelude::*;
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
 
+struct ApiAndWorker {
+    api: u64,
+    worker: u64,
+}
+
+// Two series, written out of series and timestamp order.
+fn mixed_rows(series: &ApiAndWorker) -> Vec<LogRow> {
+    let ApiAndWorker { api, worker } = *series;
+    vec![
+        LogRow::new(worker, 20, "worker started", BTreeMap::new()),
+        LogRow::new(
+            api,
+            30,
+            "api error",
+            BTreeMap::from([("level".into(), "error".into())]),
+        ),
+        LogRow::new(
+            api,
+            10,
+            "api ok",
+            BTreeMap::from([("level".into(), "info".into())]),
+        ),
+    ]
+}
+
 #[test]
 fn parquet_log_block_round_trips_rows_sorted_by_series_and_timestamp() {
     let dir = tempfile::tempdir().unwrap();
@@ -22,47 +47,15 @@ fn parquet_log_block_round_trips_rows_sorted_by_series_and_timestamp() {
     let worker = series_fingerprint(&worker_labels);
     let key = BlockKey::new("tenant-a", 3, 50, 55, TimeRange::new(10, 30).unwrap());
 
-    let descriptor = write_log_block(
-        dir.path(),
-        &key,
-        vec![
-            LogRow::new(worker, 20, "worker started", BTreeMap::new()),
-            LogRow::new(
-                api,
-                30,
-                "api error",
-                BTreeMap::from([("level".into(), "error".into())]),
-            ),
-            LogRow::new(
-                api,
-                10,
-                "api ok",
-                BTreeMap::from([("level".into(), "info".into())]),
-            ),
-        ],
-    )
-    .unwrap();
+    let descriptor =
+        write_log_block(dir.path(), &key, mixed_rows(&ApiAndWorker { api, worker })).unwrap();
 
     assert2::assert!(descriptor.key == key.clone());
     assert2::assert!(descriptor.fingerprints == BTreeSet::from([api, worker]));
     check!(descriptor.size > ByteSize::ZERO);
 
     let rows = read_log_block(dir.path(), &key).unwrap();
-    let mut expected = vec![
-        LogRow::new(
-            api,
-            10,
-            "api ok",
-            BTreeMap::from([("level".into(), "info".into())]),
-        ),
-        LogRow::new(
-            api,
-            30,
-            "api error",
-            BTreeMap::from([("level".into(), "error".into())]),
-        ),
-        LogRow::new(worker, 20, "worker started", BTreeMap::new()),
-    ];
+    let mut expected = mixed_rows(&ApiAndWorker { api, worker });
     expected.sort_by_key(|row| (row.series_fingerprint, row.timestamp_ns));
 
     assert2::assert!(rows == expected);
@@ -157,21 +150,7 @@ async fn parquet_log_block_round_trips_through_object_store() {
         &store,
         &prefix,
         &key,
-        vec![
-            LogRow::new(worker, 20, "worker started", BTreeMap::new()),
-            LogRow::new(
-                api,
-                30,
-                "api error",
-                BTreeMap::from([("level".into(), "error".into())]),
-            ),
-            LogRow::new(
-                api,
-                10,
-                "api ok",
-                BTreeMap::from([("level".into(), "info".into())]),
-            ),
-        ],
+        mixed_rows(&ApiAndWorker { api, worker }),
     )
     .await
     .unwrap();
@@ -183,21 +162,7 @@ async fn parquet_log_block_round_trips_through_object_store() {
     let rows = read_log_block_from_object_store(&store, &prefix, &key)
         .await
         .unwrap();
-    let mut expected = vec![
-        LogRow::new(
-            api,
-            10,
-            "api ok",
-            BTreeMap::from([("level".into(), "info".into())]),
-        ),
-        LogRow::new(
-            api,
-            30,
-            "api error",
-            BTreeMap::from([("level".into(), "error".into())]),
-        ),
-        LogRow::new(worker, 20, "worker started", BTreeMap::new()),
-    ];
+    let mut expected = mixed_rows(&ApiAndWorker { api, worker });
     expected.sort_by_key(|row| (row.series_fingerprint, row.timestamp_ns));
 
     assert2::assert!(rows == expected);

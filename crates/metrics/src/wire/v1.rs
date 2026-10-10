@@ -17,10 +17,7 @@ mod tests {
     use prost::Message;
 
     use super::*;
-
-    fn snappy(body: &[u8]) -> Vec<u8> {
-        snap::raw::Encoder::new().compress_vec(body).unwrap()
-    }
+    use crate::wire::test_support::{check_up_sample_with_trace_exemplar, snappy};
 
     #[test]
     fn decodes_v1_samples_and_exemplars() {
@@ -49,10 +46,7 @@ mod tests {
 
         let decoded = decode_v1(&snappy(&req.encode_to_vec()), mebibytes(1)).unwrap();
 
-        assert!(decoded.len() == 1);
-        check!(decoded[0].labels.get("__name__") == Some("up"));
-        check!(decoded[0].samples == vec![DecodedSample::new(1000, 1.0)]);
-        check!(decoded[0].exemplars[0].labels.get("trace_id") == Some("abc"));
+        check_up_sample_with_trace_exemplar(&decoded);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use super::{
     AggregationTemporality, DecodedSeries, DeltaAccumulator, Histogram, KeyValue, Metric,
-    OtlpError, TranslationStrategy, accumulate_delta_float_series, classic_histogram_series,
-    metric_metadata, translated_metric_name,
+    OtlpError, PointFamily, TranslationStrategy, accumulate_delta_float_series,
+    classic_histogram_series, metric_metadata, translated_metric_name,
 };
 
 pub(crate) fn histogram_series(
@@ -15,8 +15,15 @@ pub(crate) fn histogram_series(
     let metadata = metric_metadata(metric, &name, "histogram");
     let mut out = Vec::new();
     for point in &histogram.data_points {
-        let mut point_series =
-            classic_histogram_series(&name, point, resource_attributes, Some(&metadata), strategy)?;
+        let mut point_series = classic_histogram_series(
+            point,
+            &PointFamily {
+                name: &name,
+                resource_attributes,
+                metadata: Some(&metadata),
+                strategy,
+            },
+        )?;
         if histogram.aggregation_temporality == AggregationTemporality::Delta as i32 {
             let Some(accumulator) = accumulator.as_deref_mut() else {
                 return Err(OtlpError::DeltaUnsupported(metric.name.clone()));

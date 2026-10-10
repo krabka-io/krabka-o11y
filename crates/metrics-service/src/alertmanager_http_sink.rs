@@ -19,6 +19,14 @@ impl std::fmt::Display for AlertmanagerDeliveryError {
     }
 }
 
+/// The generator URL of an alert: `template` with `{alertname}` filled in,
+/// or empty when no template is configured.
+pub(crate) fn generator_url_for(template: Option<&str>, alert_name: &str) -> String {
+    template.map_or_else(String::new, |template| {
+        template.replace("{alertname}", &encode_url_component(alert_name))
+    })
+}
+
 pub(crate) fn encode_url_component(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -154,11 +162,7 @@ impl AlertmanagerSink for AlertmanagerHttpSink {
     }
 
     fn template_external_url(&self, alert_name: &str) -> String {
-        self.generator_url_template
-            .as_ref()
-            .map_or_else(String::new, |template| {
-                template.replace("{alertname}", &encode_url_component(alert_name))
-            })
+        generator_url_for(self.generator_url_template.as_deref(), alert_name)
     }
 
     async fn dispatch_alerts(

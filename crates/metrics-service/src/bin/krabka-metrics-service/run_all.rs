@@ -7,8 +7,8 @@ use prometheus_client::registry::Registry;
 use tokio::sync::{Mutex, mpsc};
 
 use super::{
-    AuditService, Cli, ClientSecurity, RoleReadiness, ServerSecurity, Shutdown, WAL_TOPIC,
-    krabka_product, readiness_router, run_querier,
+    AuditService, Cli, ClientSecurity, RoleLaunch, RoleReadiness, ServerSecurity, Shutdown,
+    WAL_TOPIC, krabka_product, readiness_router, run_querier,
 };
 
 type RoleError = Box<dyn Error + Send + Sync>;
@@ -175,12 +175,14 @@ pub async fn serve_all(
     let query_readiness = readiness.for_role(RoleKind::Querier);
     stage(&mut drain, errors.clone(), "querier", move |token| {
         run_querier(
-            cli,
-            query_metrics,
-            query_readiness,
+            RoleLaunch {
+                cli,
+                metrics: query_metrics,
+                readiness: query_readiness,
+                wal_security,
+                audit,
+            },
             security.clone(),
-            wal_security,
-            audit,
             Shutdown::from(token),
         )
     });

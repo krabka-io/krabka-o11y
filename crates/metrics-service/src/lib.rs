@@ -384,8 +384,7 @@ mod tests {
     use krabka_promql::{AlertmanagerSink, MetricStore};
     use krabka_units::prelude::*;
     use object_store::{
-        CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-        PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
+        GetOptions, GetResult, ObjectMeta, ObjectStore, PutPayload, memory::InMemory, path::Path,
     };
     use tower::ServiceExt;
 
@@ -482,24 +481,9 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
-    impl ObjectStore for CountingObjectStore {
-        async fn put_opts(
-            &self,
-            location: &Path,
-            payload: PutPayload,
-            opts: PutOptions,
-        ) -> object_store::Result<PutResult> {
-            self.inner.put_opts(location, payload, opts).await
-        }
-
-        async fn put_multipart_opts(
-            &self,
-            location: &Path,
-            opts: PutMultipartOptions,
-        ) -> object_store::Result<Box<dyn MultipartUpload>> {
-            self.inner.put_multipart_opts(location, opts).await
-        }
+    krabka_blockstore::delegate_object_store! {
+        CountingObjectStore => inner;
+        forward [put_opts, put_multipart_opts, delete_stream, list_with_delimiter, copy_opts];
 
         async fn get_opts(
             &self,
@@ -563,13 +547,6 @@ mod tests {
             self.inner.get_ranges(location, ranges).await
         }
 
-        fn delete_stream(
-            &self,
-            locations: BoxStream<'static, object_store::Result<Path>>,
-        ) -> BoxStream<'static, object_store::Result<Path>> {
-            self.inner.delete_stream(locations)
-        }
-
         fn list(
             &self,
             prefix: Option<&Path>,
@@ -581,64 +558,41 @@ mod tests {
                 item
             }))
         }
-
-        async fn list_with_delimiter(
-            &self,
-            prefix: Option<&Path>,
-        ) -> object_store::Result<ListResult> {
-            self.inner.list_with_delimiter(prefix).await
-        }
-
-        async fn copy_opts(
-            &self,
-            from: &Path,
-            to: &Path,
-            options: CopyOptions,
-        ) -> object_store::Result<()> {
-            self.inner.copy_opts(from, to, options).await
-        }
     }
 
-    #[tokio::test]
-    async fn in_memory_router_serves_prometheus_query_api() {
-        let response = authenticated(super::in_memory_prometheus_router())
+    // GETs `uri` as tenant-a through an authenticated `router` and returns
+    // whether it succeeded, with its JSON body.
+    async fn get_as_tenant_a(router: axum::Router, uri: &str) -> (bool, serde_json::Value) {
+        let response = router
             .oneshot(
                 Request::builder()
-                    .uri("/api/v1/query?query=vector(1)&time=10")
+                    .uri(uri)
                     .header("x-scope-orgid", "tenant-a")
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-
         let status_is_success = response.status().is_success();
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert2::assert!(status_is_success);
-        assert2::assert!(body["status"].as_str() == Some("success"));
-        assert2::assert!(body["data"]["resultType"].as_str() == Some("vector"));
+        (status_is_success, serde_json::from_slice(&body).unwrap())
     }
 
     #[tokio::test]
-    async fn in_memory_router_serves_mimir_prefixed_query_api() {
-        let response = authenticated(super::in_memory_prometheus_router())
-            .oneshot(
-                Request::builder()
-                    .uri("/prometheus/api/v1/query?query=vector(1)&time=10")
-                    .header("x-scope-orgid", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        let status_is_success = response.status().is_success();
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert2::assert!(status_is_success);
-        assert2::assert!(body["status"].as_str() == Some("success"));
-        assert2::assert!(body["data"]["resultType"].as_str() == Some("vector"));
+    async fn in_memory_router_serves_prometheus_query_api_with_and_without_mimir_prefix() {
+        for uri in [
+            "/api/v1/query?query=vector(1)&time=10",
+            "/prometheus/api/v1/query?query=vector(1)&time=10",
+        ] {
+            let (status_is_success, body) =
+                get_as_tenant_a(authenticated(super::in_memory_prometheus_router()), uri).await;
+            assert2::assert!(status_is_success, "{uri}");
+            assert2::assert!(body["status"].as_str() == Some("success"), "{uri}");
+            assert2::assert!(
+                body["data"]["resultType"].as_str() == Some("vector"),
+                "{uri}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -649,20 +603,11 @@ mod tests {
         labels.insert("job", "api");
         store.push_float("tenant-a", labels, 10_000, 1.0);
 
-        let response = authenticated(super::prometheus_router_for_store(store))
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v1/query?query=up&time=10")
-                    .header("x-scope-orgid", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        let status_is_success = response.status().is_success();
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let (status_is_success, body) = get_as_tenant_a(
+            authenticated(super::prometheus_router_for_store(store)),
+            "/api/v1/query?query=up&time=10",
+        )
+        .await;
         assert2::assert!(status_is_success);
         assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
         assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
@@ -945,6 +890,35 @@ mod tests {
         }
     }
 
+    fn team_a_rule_group_upload(yaml: &'static str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/prometheus/config/v1/rules/team-a")
+            .header("x-scope-orgid", "tenant-a")
+            .header("content-type", "application/yaml")
+            .body(Body::from(yaml))
+            .unwrap()
+    }
+
+    // One ruler pass for tenant-a, as the only shard, at t=10s.
+    async fn evaluate_tenant_a_at_ten_seconds<S: krabka_promql::MetricStore + 'static>(
+        state: &std::sync::Arc<krabka_promql::PrometheusApiState<S>>,
+        wal_sink: &RecordingRulerWalSink,
+    ) -> krabka_promql::RulerGroupEvaluation {
+        let state_sink = super::PrometheusRulerStateSink::new(std::sync::Arc::clone(state));
+        super::evaluate_ruler_once(
+            state,
+            (wal_sink, &RecordingAlertmanagerSink, &state_sink),
+            &mut krabka_promql::RulerAlertState::default(),
+            &mut krabka_promql::RulerGroupState::default(),
+            &krabka_blockstore::TenantId::new("tenant-a").expect("a valid tenant id"),
+            krabka_promql::RulerShard::new(1, 1).unwrap(),
+            10_000,
+        )
+        .await
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn ruler_evaluation_reads_api_rules_and_appends_recording_wal_records() {
         let mut store = krabka_promql::InMemoryMetricStore::new();
@@ -958,43 +932,21 @@ mod tests {
         )));
 
         let response = router
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/prometheus/config/v1/rules/team-a")
-                    .header("x-scope-orgid", "tenant-a")
-                    .header("content-type", "application/yaml")
-                    .body(Body::from(
-                        r"
+            .oneshot(team_a_rule_group_upload(
+                r"
 name: recording
 interval: 1m
 rules:
   - record: job:up:sum
     expr: sum by (job) (up)
 ",
-                    ))
-                    .unwrap(),
-            )
+            ))
             .await
             .unwrap();
         assert2::assert!(response.status().is_success());
 
         let wal_sink = RecordingRulerWalSink::default();
-        let alert_sink = RecordingAlertmanagerSink;
-        let state_sink = super::PrometheusRulerStateSink::new(std::sync::Arc::clone(&state));
-        let mut alert_state = krabka_promql::RulerAlertState::default();
-        let mut group_state = krabka_promql::RulerGroupState::default();
-        let evaluation = super::evaluate_ruler_once(
-            &state,
-            (&wal_sink, &alert_sink, &state_sink),
-            &mut alert_state,
-            &mut group_state,
-            &krabka_blockstore::TenantId::new("tenant-a").expect("a valid tenant id"),
-            krabka_promql::RulerShard::new(1, 1).unwrap(),
-            10_000,
-        )
-        .await
-        .unwrap();
+        let evaluation = evaluate_tenant_a_at_ten_seconds(&state, &wal_sink).await;
 
         assert2::assert!(evaluation.recording_records == 1);
         let records = wal_sink.records();
@@ -1036,43 +988,21 @@ rules:
         )));
 
         let response = router
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/prometheus/config/v1/rules/team-a")
-                    .header("x-scope-orgid", "tenant-a")
-                    .header("content-type", "application/yaml")
-                    .body(Body::from(
-                        r"
+            .oneshot(team_a_rule_group_upload(
+                r"
 name: recording
 interval: 1m
 rules:
   - record: job:up:sum
     expr: sum(up)
 ",
-                    ))
-                    .unwrap(),
-            )
+            ))
             .await
             .unwrap();
         assert2::assert!(response.status().is_success());
 
         let wal_sink = RecordingRulerWalSink::default();
-        let alert_sink = RecordingAlertmanagerSink;
-        let state_sink = super::PrometheusRulerStateSink::new(std::sync::Arc::clone(&state));
-        let mut alert_state = krabka_promql::RulerAlertState::default();
-        let mut group_state = krabka_promql::RulerGroupState::default();
-        let evaluation = super::evaluate_ruler_once(
-            &state,
-            (&wal_sink, &alert_sink, &state_sink),
-            &mut alert_state,
-            &mut group_state,
-            &krabka_blockstore::TenantId::new("tenant-a").expect("a valid tenant id"),
-            krabka_promql::RulerShard::new(1, 1).unwrap(),
-            10_000,
-        )
-        .await
-        .unwrap();
+        let evaluation = evaluate_tenant_a_at_ten_seconds(&state, &wal_sink).await;
 
         assert2::assert!(evaluation.recording_records == 0);
         assert2::assert!(wal_sink.records().is_empty());
@@ -1122,18 +1052,9 @@ rules:
                 }
             }),
         );
-        let bound = super::serve_prometheus_router(
-            "127.0.0.1:0".parse().unwrap(),
-            router,
-            &krabka_observability::server_security::ServerSecurity::default(),
-            async {
-                std::future::pending::<()>().await;
-            },
-        )
-        .await
-        .unwrap();
+        let alerts_url = serve_until_dropped(router).await;
 
-        let sink = super::AlertmanagerHttpSink::new(format!("http://{bound}/api/v2/alerts"));
+        let sink = super::AlertmanagerHttpSink::new(alerts_url.clone());
         sink.dispatch_alerts_for_tenant(
             &krabka_blockstore::TenantId::new("tenant-a").unwrap(),
             vec![krabka_promql::AlertmanagerAlert {
@@ -1192,18 +1113,9 @@ rules:
                 }
             }),
         );
-        let bound = super::serve_prometheus_router(
-            "127.0.0.1:0".parse().unwrap(),
-            router,
-            &krabka_observability::server_security::ServerSecurity::default(),
-            async {
-                std::future::pending::<()>().await;
-            },
-        )
-        .await
-        .unwrap();
+        let alerts_url = serve_until_dropped(router).await;
         let sink = super::AlertmanagerHttpSink::with_delivery(
-            vec![format!("http://{bound}/api/v2/alerts")],
+            vec![alerts_url],
             std::collections::BTreeMap::from([
                 ("cluster".to_string(), "prod".into()),
                 ("severity".to_string(), "external-default".into()),
@@ -1263,20 +1175,11 @@ rules:
                 async { axum::http::StatusCode::OK }
             }),
         );
-        let bound = super::serve_prometheus_router(
-            "127.0.0.1:0".parse().unwrap(),
-            router,
-            &krabka_observability::server_security::ServerSecurity::default(),
-            async {
-                std::future::pending::<()>().await;
-            },
-        )
-        .await
-        .unwrap();
+        let alerts_url = serve_until_dropped(router).await;
         let sink = super::AlertmanagerHttpSink::with_delivery(
             vec![
                 format!("http://{stalled_bound}/api/v2/alerts"),
-                format!("http://{bound}/api/v2/alerts"),
+                alerts_url.clone(),
             ],
             std::collections::BTreeMap::new(),
             None,
@@ -1339,6 +1242,35 @@ rules:
         assert2::assert!(error.contains("endpoint 1: request failed"));
     }
 
+    // Serves `router` on a loopback port for the rest of the test and returns
+    // the Alertmanager alerts URL on it.
+    async fn serve_until_dropped(router: axum::Router) -> String {
+        let bound = super::serve_prometheus_router(
+            "127.0.0.1:0".parse().unwrap(),
+            router,
+            &krabka_observability::server_security::ServerSecurity::default(),
+            async {
+                std::future::pending::<()>().await;
+            },
+        )
+        .await
+        .unwrap();
+        format!("http://{bound}/api/v2/alerts")
+    }
+
+    fn instance_down_alert() -> krabka_promql::AlertmanagerAlert {
+        krabka_promql::AlertmanagerAlert {
+            labels: std::collections::BTreeMap::from([(
+                "alertname".to_string(),
+                "InstanceDown".to_string(),
+            )]),
+            annotations: std::collections::BTreeMap::new(),
+            starts_at_ms: 60_000,
+            ends_at_ms: None,
+            generator_url: String::new(),
+        }
+    }
+
     #[tokio::test]
     async fn alertmanager_queue_preserves_progress_and_eventually_resends() {
         use krabka_promql::AlertmanagerSink as _;
@@ -1362,19 +1294,10 @@ rules:
                 }
             }),
         );
-        let bound = super::serve_prometheus_router(
-            "127.0.0.1:0".parse().unwrap(),
-            router,
-            &krabka_observability::server_security::ServerSecurity::default(),
-            async {
-                std::future::pending::<()>().await;
-            },
-        )
-        .await
-        .unwrap();
+        let alerts_url = serve_until_dropped(router).await;
         let sink = super::QueuedAlertmanagerSink::new(
             super::AlertmanagerHttpSink::with_delivery(
-                vec![format!("http://{bound}/api/v2/alerts")],
+                vec![alerts_url],
                 std::collections::BTreeMap::new(),
                 None,
                 1,
@@ -1384,16 +1307,7 @@ rules:
             2,
             Duration::from_millis(1),
         );
-        let alert = krabka_promql::AlertmanagerAlert {
-            labels: std::collections::BTreeMap::from([(
-                "alertname".to_string(),
-                "InstanceDown".to_string(),
-            )]),
-            annotations: std::collections::BTreeMap::new(),
-            starts_at_ms: 60_000,
-            ends_at_ms: None,
-            generator_url: String::new(),
-        };
+        let alert = instance_down_alert();
 
         // Delivery failure does not fail or stall the evaluation-facing call.
         tokio::time::timeout(
@@ -1431,19 +1345,10 @@ rules:
                 }
             }),
         );
-        let bound = super::serve_prometheus_router(
-            "127.0.0.1:0".parse().unwrap(),
-            router,
-            &krabka_observability::server_security::ServerSecurity::default(),
-            async {
-                std::future::pending::<()>().await;
-            },
-        )
-        .await
-        .unwrap();
+        let alerts_url = serve_until_dropped(router).await;
         let sink = super::QueuedAlertmanagerSink::new(
             super::AlertmanagerHttpSink::with_delivery(
-                vec![format!("http://{bound}/api/v2/alerts")],
+                vec![alerts_url],
                 std::collections::BTreeMap::new(),
                 None,
                 1,
@@ -1453,16 +1358,7 @@ rules:
             1,
             Duration::ZERO,
         );
-        let alert = krabka_promql::AlertmanagerAlert {
-            labels: std::collections::BTreeMap::from([(
-                "alertname".to_string(),
-                "InstanceDown".to_string(),
-            )]),
-            annotations: std::collections::BTreeMap::new(),
-            starts_at_ms: 60_000,
-            ends_at_ms: None,
-            generator_url: String::new(),
-        };
+        let alert = instance_down_alert();
 
         sink.dispatch_alerts(vec![alert.clone()]).await.unwrap();
         request_started.notified().await;
@@ -1493,19 +1389,10 @@ rules:
                 }
             }),
         );
-        let bound = super::serve_prometheus_router(
-            "127.0.0.1:0".parse().unwrap(),
-            router,
-            &krabka_observability::server_security::ServerSecurity::default(),
-            async {
-                std::future::pending::<()>().await;
-            },
-        )
-        .await
-        .unwrap();
+        let alerts_url = serve_until_dropped(router).await;
         let sink = super::QueuedAlertmanagerSink::new(
             super::AlertmanagerHttpSink::with_delivery(
-                vec![format!("http://{bound}/api/v2/alerts")],
+                vec![alerts_url],
                 std::collections::BTreeMap::new(),
                 None,
                 3,
@@ -1515,16 +1402,7 @@ rules:
             2,
             Duration::ZERO,
         );
-        let alert = krabka_promql::AlertmanagerAlert {
-            labels: std::collections::BTreeMap::from([(
-                "alertname".to_string(),
-                "InstanceDown".to_string(),
-            )]),
-            annotations: std::collections::BTreeMap::new(),
-            starts_at_ms: 60_000,
-            ends_at_ms: None,
-            generator_url: String::new(),
-        };
+        let alert = instance_down_alert();
 
         sink.dispatch_alerts(vec![alert.clone()]).await.unwrap();
         sink.dispatch_alerts(vec![alert]).await.unwrap();
@@ -1557,18 +1435,9 @@ rules:
                 }
             }),
         );
-        let bound = super::serve_prometheus_router(
-            "127.0.0.1:0".parse().unwrap(),
-            router,
-            &krabka_observability::server_security::ServerSecurity::default(),
-            async {
-                std::future::pending::<()>().await;
-            },
-        )
-        .await
-        .unwrap();
+        let alerts_url = serve_until_dropped(router).await;
         let sink = Arc::new(super::QueuedAlertmanagerSink::new(
-            super::AlertmanagerHttpSink::new(format!("http://{bound}/api/v2/alerts")),
+            super::AlertmanagerHttpSink::new(alerts_url.clone()),
             1,
             Duration::ZERO,
         ));
@@ -2038,69 +1907,90 @@ rules:
         assert2::assert!(consumer.commit_calls == 1);
     }
 
+    // Where one compacted `up{job="api"}` block goes: tenant-a's float block
+    // `metrics/tenant-a/float/{stem}.parquet`, indexed by `{stem}.index`, at
+    // WAL offset `offset`.
+    struct ApiUpBlock {
+        stem: &'static str,
+        offset: i64,
+    }
+
+    impl ApiUpBlock {
+        // Writes one sample of 1.0 at 10s and publishes its manifest; returns
+        // the series' labels.
+        async fn publish(
+            &self,
+            object_store: &Arc<dyn ObjectStore>,
+            base: &url::Url,
+        ) -> krabka_blockstore::Labels {
+            let writer_store =
+                krabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
+            let mut labels = krabka_blockstore::Labels::new();
+            labels.insert("__name__", "up");
+            labels.insert("job", "api");
+            let fp = labels.fingerprint();
+            let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0, None)]).unwrap();
+            let block_meta = writer_store
+                .writer()
+                .write_block(
+                    "tenant-a",
+                    &format!("metrics/tenant-a/float/{}.parquet", self.stem),
+                    krabka_metrics::float_sample_schema(),
+                    &[batch],
+                )
+                .await
+                .unwrap();
+            let plan = krabka_metrics::CompactionObjectPlan {
+                block_key: block_meta.object_key.clone(),
+                index_key: format!("metrics/tenant-a/float/{}.index", self.stem),
+                first_offset: self.offset,
+                last_offset: self.offset,
+                row_count: block_meta.row_count,
+            };
+            let manifest = krabka_metrics::CompactionIndexManifest::from_block_meta(
+                krabka_metrics::MetricBlockKind::Float,
+                &plan,
+                &block_meta,
+                vec![krabka_metrics::CompactionSeriesLabels {
+                    fingerprint: fp,
+                    labels: labels.clone().into(),
+                }],
+            );
+            krabka_metrics::CompactionIndexSink::write_manifest(
+                &krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone()),
+                &manifest,
+            )
+            .await
+            .unwrap();
+            labels
+        }
+    }
+
+    // What an `ApiUpBlock` answers through `router`: `up{job="api"}` is 1 at 10s.
+    async fn assert_api_up_is_one_at_ten_seconds(router: axum::Router) {
+        let (status_is_success, body) =
+            get_as_tenant_a(router, "/api/v1/query?query=up&time=10").await;
+        assert2::assert!(status_is_success);
+        assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
+        assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
+    }
+
     #[tokio::test]
     async fn blockstore_router_loads_compaction_manifests_from_object_store() {
         let object_store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
         let base = url::Url::parse("memory:///").unwrap();
-        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
-        let mut labels = krabka_blockstore::Labels::new();
-        labels.insert("__name__", "up");
-        labels.insert("job", "api");
-        let fp = labels.fingerprint();
-        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0, None)]).unwrap();
-        let block_meta = writer_store
-            .writer()
-            .write_block(
-                "tenant-a",
-                "metrics/tenant-a/float/0001.parquet",
-                krabka_metrics::float_sample_schema(),
-                &[batch],
-            )
-            .await
-            .unwrap();
-        let plan = krabka_metrics::CompactionObjectPlan {
-            block_key: block_meta.object_key.clone(),
-            index_key: "metrics/tenant-a/float/0001.index".to_string(),
-            first_offset: 0,
-            last_offset: 0,
-            row_count: block_meta.row_count,
-        };
-        let manifest = krabka_metrics::CompactionIndexManifest::from_block_meta(
-            krabka_metrics::MetricBlockKind::Float,
-            &plan,
-            &block_meta,
-            vec![krabka_metrics::CompactionSeriesLabels {
-                fingerprint: fp,
-                labels: labels.into(),
-            }],
-        );
-        krabka_metrics::CompactionIndexSink::write_manifest(
-            &krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone()),
-            &manifest,
-        )
-        .await
-        .unwrap();
+        ApiUpBlock {
+            stem: "0001",
+            offset: 0,
+        }
+        .publish(&object_store, &base)
+        .await;
 
         let router = super::blockstore_prometheus_router(object_store, base, "metrics/tenant-a")
             .await
             .unwrap();
         let router = authenticated(router);
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v1/query?query=up&time=10")
-                    .header("x-scope-orgid", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert2::assert!(response.status().is_success());
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
-        assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
+        assert_api_up_is_one_at_ten_seconds(router).await;
     }
 
     #[tokio::test]
@@ -2206,61 +2096,14 @@ rules:
             "metrics/tenant-a",
         ));
 
-        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base);
-        let mut labels = krabka_blockstore::Labels::new();
-        labels.insert("__name__", "up");
-        labels.insert("job", "api");
-        let fp = labels.fingerprint();
-        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0, None)]).unwrap();
-        let block_meta = writer_store
-            .writer()
-            .write_block(
-                "tenant-a",
-                "metrics/tenant-a/float/0002.parquet",
-                krabka_metrics::float_sample_schema(),
-                &[batch],
-            )
-            .await
-            .unwrap();
-        let plan = krabka_metrics::CompactionObjectPlan {
-            block_key: block_meta.object_key.clone(),
-            index_key: "metrics/tenant-a/float/0002.index".to_string(),
-            first_offset: 1,
-            last_offset: 1,
-            row_count: block_meta.row_count,
-        };
-        let manifest = krabka_metrics::CompactionIndexManifest::from_block_meta(
-            krabka_metrics::MetricBlockKind::Float,
-            &plan,
-            &block_meta,
-            vec![krabka_metrics::CompactionSeriesLabels {
-                fingerprint: fp,
-                labels: labels.into(),
-            }],
-        );
-        krabka_metrics::CompactionIndexSink::write_manifest(
-            &krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store),
-            &manifest,
-        )
-        .await
-        .unwrap();
+        ApiUpBlock {
+            stem: "0002",
+            offset: 1,
+        }
+        .publish(&object_store, &base)
+        .await;
 
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v1/query?query=up&time=10")
-                    .header("x-scope-orgid", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert2::assert!(response.status().is_success());
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
-        assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
+        assert_api_up_is_one_at_ten_seconds(router).await;
     }
 
     #[tokio::test]
@@ -2270,44 +2113,12 @@ rules:
             CountingObjectStore::new(Arc::clone(&list_calls), millis(25)),
         );
         let base = url::Url::parse("memory:///").unwrap();
-        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
-        let mut labels = krabka_blockstore::Labels::new();
-        labels.insert("__name__", "up");
-        labels.insert("job", "api");
-        let fp = labels.fingerprint();
-        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0, None)]).unwrap();
-        let block_meta = writer_store
-            .writer()
-            .write_block(
-                "tenant-a",
-                "metrics/tenant-a/float/0005.parquet",
-                krabka_metrics::float_sample_schema(),
-                &[batch],
-            )
-            .await
-            .unwrap();
-        let plan = krabka_metrics::CompactionObjectPlan {
-            block_key: block_meta.object_key.clone(),
-            index_key: "metrics/tenant-a/float/0005.index".to_string(),
-            first_offset: 4,
-            last_offset: 4,
-            row_count: block_meta.row_count,
-        };
-        let manifest = krabka_metrics::CompactionIndexManifest::from_block_meta(
-            krabka_metrics::MetricBlockKind::Float,
-            &plan,
-            &block_meta,
-            vec![krabka_metrics::CompactionSeriesLabels {
-                fingerprint: fp,
-                labels: labels.into(),
-            }],
-        );
-        krabka_metrics::CompactionIndexSink::write_manifest(
-            &krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone()),
-            &manifest,
-        )
-        .await
-        .unwrap();
+        ApiUpBlock {
+            stem: "0005",
+            offset: 4,
+        }
+        .publish(&object_store, &base)
+        .await;
 
         let metric_store = super::RefreshingMetricBlockStore::new(
             object_store,
@@ -2623,44 +2434,12 @@ rules:
     async fn refreshing_router_merges_hot_head_with_compacted_blocks() {
         let object_store: std::sync::Arc<dyn ObjectStore> = std::sync::Arc::new(InMemory::new());
         let base = url::Url::parse("memory:///").unwrap();
-        let writer_store = krabka_blockstore::BlockStore::new(object_store.clone(), base.clone());
-        let mut labels = krabka_blockstore::Labels::new();
-        labels.insert("__name__", "up");
-        labels.insert("job", "api");
-        let fp = labels.fingerprint();
-        let batch = krabka_metrics::encode_float_samples(&[(fp, 10_000, 1.0, None)]).unwrap();
-        let block_meta = writer_store
-            .writer()
-            .write_block(
-                "tenant-a",
-                "metrics/tenant-a/float/0003.parquet",
-                krabka_metrics::float_sample_schema(),
-                &[batch],
-            )
-            .await
-            .unwrap();
-        let plan = krabka_metrics::CompactionObjectPlan {
-            block_key: block_meta.object_key.clone(),
-            index_key: "metrics/tenant-a/float/0003.index".to_string(),
-            first_offset: 2,
-            last_offset: 2,
-            row_count: block_meta.row_count,
-        };
-        let manifest = krabka_metrics::CompactionIndexManifest::from_block_meta(
-            krabka_metrics::MetricBlockKind::Float,
-            &plan,
-            &block_meta,
-            vec![krabka_metrics::CompactionSeriesLabels {
-                fingerprint: fp,
-                labels: labels.clone().into(),
-            }],
-        );
-        krabka_metrics::CompactionIndexSink::write_manifest(
-            &krabka_metrics::ObjectStoreCompactionIndexSink::new(object_store.clone()),
-            &manifest,
-        )
-        .await
-        .unwrap();
+        let labels = ApiUpBlock {
+            stem: "0003",
+            offset: 2,
+        }
+        .publish(&object_store, &base)
+        .await;
         let hot_store = krabka_promql::WalHead::new();
         hot_store.apply_wal_record(&krabka_metrics::WalRecord {
             tenant: "tenant-a".to_string(),
@@ -2684,20 +2463,9 @@ rules:
                 hot_store,
             ),
         );
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v1/query?query=up&time=20")
-                    .header("x-scope-orgid", "tenant-a")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert2::assert!(response.status().is_success());
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let (status_is_success, body) =
+            get_as_tenant_a(router, "/api/v1/query?query=up&time=20").await;
+        assert2::assert!(status_is_success);
         assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
         assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("2"));
     }
@@ -2747,10 +2515,9 @@ rules:
             .unwrap();
     }
 
-    #[tokio::test]
-    async fn replay_wal_head_records_decodes_applies_and_reports_commit_offsets() {
-        let head = krabka_promql::WalHead::new();
-        let record = krabka_metrics::WalRecord {
+    // `up` = 1.0 at 10s for tenant-a.
+    fn tenant_a_up_record() -> krabka_metrics::WalRecord {
+        krabka_metrics::WalRecord {
             tenant: "tenant-a".to_string(),
             labels: vec![("__name__".to_string(), "up".into())],
             payload: krabka_metrics::SamplePayload::Float {
@@ -2759,7 +2526,13 @@ rules:
                 start_timestamp_ms: None,
             },
             exemplars: Vec::new(),
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_wal_head_records_decodes_applies_and_reports_commit_offsets() {
+        let head = krabka_promql::WalHead::new();
+        let record = tenant_a_up_record();
         let encoded = record.encode().unwrap();
 
         let result = super::replay_wal_head_records(
@@ -2875,16 +2648,7 @@ rules:
     #[tokio::test]
     async fn poll_wal_head_consumer_once_replays_records_and_commits_on_progress() {
         let head = krabka_promql::WalHead::new();
-        let record = krabka_metrics::WalRecord {
-            tenant: "tenant-a".to_string(),
-            labels: vec![("__name__".to_string(), "up".into())],
-            payload: krabka_metrics::SamplePayload::Float {
-                timestamp_ms: 10_000,
-                value: 1.0,
-                start_timestamp_ms: None,
-            },
-            exemplars: Vec::new(),
-        };
+        let record = tenant_a_up_record();
         let mut consumer = RecordingWalHeadConsumer {
             batches: vec![vec![consumer_record(
                 krabka_metrics::WAL_TOPIC,
@@ -2948,16 +2712,7 @@ rules:
     #[tokio::test]
     async fn run_wal_head_consumer_loop_accumulates_until_stop_predicate() {
         let head = krabka_promql::WalHead::new();
-        let record = krabka_metrics::WalRecord {
-            tenant: "tenant-a".to_string(),
-            labels: vec![("__name__".to_string(), "up".into())],
-            payload: krabka_metrics::SamplePayload::Float {
-                timestamp_ms: 10_000,
-                value: 1.0,
-                start_timestamp_ms: None,
-            },
-            exemplars: Vec::new(),
-        };
+        let record = tenant_a_up_record();
         let encoded = record.encode().unwrap();
         let mut consumer = RecordingWalHeadConsumer {
             batches: vec![

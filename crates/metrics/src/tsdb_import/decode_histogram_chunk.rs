@@ -1,6 +1,6 @@
 use super::{
-    BitReader, ChunkError, HistogramLayout, NativeHistogram, STALE_NAN_BITS, XorState,
-    counter_reset_hint, i64_to_f64, stale_histogram, u64_to_f64,
+    BitReader, ChunkError, HistogramChunkState, HistogramLayout, NativeHistogram, STALE_NAN_BITS,
+    XorState, decode_histogram_samples, i64_to_f64, stale_histogram, u64_to_f64,
 };
 
 /// Decodes a Prometheus integer native-histogram chunk.
@@ -9,34 +9,10 @@ use super::{
 /// each sample after the first as a delta of those deltas. The decoder turns
 /// both into the absolute per-bucket counts that Krabka stores.
 pub fn decode_histogram_chunk(
-    data: &[u8],
+    chunk: &[u8],
     max_buckets: u64,
 ) -> Result<Vec<(i64, NativeHistogram)>, ChunkError> {
-    let (header, body) = data.split_at_checked(3).ok_or(ChunkError::Truncated)?;
-    let total = u16::from_be_bytes([header[0], header[1]]);
-    let reset_header = header[2];
-    if total == 0 {
-        return Ok(Vec::new());
-    }
-    let mut reader = BitReader::new(body);
-    let layout = HistogramLayout::read(&mut reader, max_buckets)?;
-    let mut state = IntegerState::new(&layout);
-    let mut samples = Vec::with_capacity(usize::from(total));
-    for index in 0..total {
-        let is_stale = if index == 0 {
-            state.read_first(&mut reader)?;
-            false
-        } else {
-            state.read_next(&mut reader)?
-        };
-        let histogram = if is_stale {
-            stale_histogram(false)
-        } else {
-            state.histogram(&layout, counter_reset_hint(reset_header, index))?
-        };
-        samples.push((state.timestamp, histogram));
-    }
-    Ok(samples)
+    decode_histogram_samples::<IntegerState>(chunk, max_buckets)
 }
 
 struct IntegerState {
@@ -54,7 +30,15 @@ struct IntegerState {
     negative_delta: Vec<i64>,
 }
 
-impl IntegerState {
+impl HistogramChunkState for IntegerState {
+    fn stale_marker() -> NativeHistogram {
+        stale_histogram(false)
+    }
+
+    fn timestamp(&self) -> i64 {
+        self.timestamp
+    }
+
     fn new(layout: &HistogramLayout) -> Self {
         Self {
             timestamp: 0,

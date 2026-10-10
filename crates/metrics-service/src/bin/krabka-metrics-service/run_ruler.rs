@@ -1,13 +1,12 @@
-use krabka_blockstore::MeteredObjectStore;
 use krabka_client_consumer::IsolationLevel;
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
-    Arc, AuditHandle, AutoOffsetReset, BrokerTransport, Cli, ClientSecurity, Consumer, LeaseConfig,
-    MemberId, ObjectStore, PrometheusApiState, Role, RoleReadiness, RulerAlertmanagerSink,
-    RulerShard, ServerSecurity, Shutdown, WalHead, install_bundled_rule_groups,
-    load_runtime_overrides, mimir_alertmanager_router, mimir_ruler_prometheus_router,
-    mimir_ruler_router, poll_ruler_state_consumer_once, query_engine_opts, readiness_router,
+    Arc, AutoOffsetReset, BrokerTransport, Cli, Consumer, LeaseConfig, MemberId,
+    PrometheusApiState, Role, RoleLaunch, RoleObjectStore, RulerAlertmanagerSink, RulerShard,
+    ServerSecurity, Shutdown, WalHead, install_bundled_rule_groups, load_runtime_overrides,
+    mimir_alertmanager_router, mimir_ruler_prometheus_router, mimir_ruler_router,
+    poll_ruler_state_consumer_once, query_engine_opts, readiness_router,
     run_fenced_ruler_evaluation_loop, run_ruler_state_consumer_loop,
     serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
 };
@@ -16,34 +15,25 @@ use super::{
     level = "info",
     name = "metrics.run_ruler",
     skip_all,
-    fields(listen = %cli.listen, tenant = %cli.ruler_tenant, shard_index = cli.ruler_shard_index, shard_total = cli.ruler_shard_total),
+    fields(listen = %launch.cli.listen, tenant = %launch.cli.ruler_tenant, shard_index = launch.cli.ruler_shard_index, shard_total = launch.cli.ruler_shard_total),
     err
 )]
 pub(crate) async fn run_ruler(
-    cli: Cli,
-    metrics: krabka_promql::metrics::ServiceMetrics,
-    readiness: RoleReadiness,
+    launch: RoleLaunch,
     security: &ServerSecurity,
-    wal_security: Option<ClientSecurity>,
-    audit: AuditHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let RoleLaunch {
+        cli,
+        metrics,
+        readiness,
+        wal_security,
+        audit,
+    } = launch;
     let ruler_metrics = metrics.clone();
-    let object_store_url = url::Url::parse(&cli.object_store_url)?;
-    let (store, prefix) = object_store::parse_url_opts(&object_store_url, std::env::vars())?;
-    let store: Arc<dyn ObjectStore> =
-        Arc::new(object_store::prefix::PrefixStore::new(store, prefix));
-    let object_store_metrics = metrics.object_store.clone();
-    readiness.track_object_store(object_store_metrics.clone());
-    let store = MeteredObjectStore::wrap(store, object_store_metrics);
-    let config_store = Arc::clone(&store);
-    let metric_store = krabka_metrics_service::RefreshingMetricBlockStore::new(
-        store,
-        object_store_url.clone(),
-        &cli.manifest_prefix,
-        WalHead::new(),
-    )
-    .with_cold_cache_ttl(cli.cold_cache_ttl)
-    .with_unbounded_compatibility_lookback(cli.unbounded_compatibility_lookback);
+    let role_store = RoleObjectStore::open(&cli, &metrics, &readiness)
+        .map_err(|error| -> Box<dyn std::error::Error> { error })?;
+    let config_store = Arc::clone(&role_store.store);
+    let metric_store = role_store.refreshing_metric_store(&cli, WalHead::new());
     let state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
         .with_max_concurrent_queries(cli.max_concurrent_queries)
         .with_query_timeout(cli.query_timeout)

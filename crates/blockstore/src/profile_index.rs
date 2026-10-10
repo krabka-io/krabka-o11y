@@ -7,26 +7,20 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     hash::{DefaultHasher, Hash, Hasher},
-    sync::Arc,
 };
 
 use krabka_units::prelude::*;
-use object_store::ObjectStore;
 use serde::{Deserialize, Serialize};
-use tracing::instrument;
 
 use crate::{
     block::BlockMeta,
     block_index::BlockIndex,
     compaction::{BlockLevel, CompactionCandidate, level_above},
     error::{BlockStoreError, Result},
-    index::{ByteReader, Index, IndexShardRange, decode_index_shard, push_uvarint},
+    index::{ByteReader, Index, IndexShardRange, decode_index_shard, push_len, push_uvarint},
     index_snapshot::{
-        DEFAULT_INDEX_SNAPSHOT_MAX, IndexSnapshotRetain, PendingBlockAdditions,
-        PendingBlockRemovals, PendingRemoval, SnapshotManifest, UNBOUNDED_SHARD_RANGE,
-        put_manifest_snapshot, put_shard_payload, read_latest_snapshot_manifest,
-        read_shard_payload, shard_payload_content_hash, shard_payload_object_key,
-        shard_ranges_for_span,
+        PendingBlockAdditions, PendingBlockRemovals, PendingRemoval, TenantShardMerge,
+        UNBOUNDED_SHARD_RANGE, shard_ranges_for_span, touched_shard_ranges,
     },
     labels::{Labels, SeriesFingerprint},
     matcher::LabelMatcher,
@@ -34,8 +28,10 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use assert2::check;
-    use object_store::{ObjectStoreExt as _, path::Path};
+    use object_store::{ObjectStore, ObjectStoreExt as _, path::Path};
 
     use super::*;
     use crate::{
@@ -116,6 +112,42 @@ mod tests {
             },
         );
         index.add_profile_block("t", "blocks/p1.parquet", vec![0, 1]);
+    }
+
+    // The series of the two checkout blocks a compaction merges.
+    struct CheckoutSeries {
+        cpu: SeriesFingerprint,
+        heap: SeriesFingerprint,
+    }
+
+    async fn compact_checkout_and_reload(
+        store: &Arc<dyn ObjectStore>,
+        index: &mut ProfileIndex,
+        checkout: CheckoutSeries,
+    ) -> ProfileIndex {
+        index.replace_profile_blocks(
+            "t",
+            &strings(&["cpu-checkout.parquet", "heap-checkout.parquet"]),
+            &[(
+                BlockMeta {
+                    tenant: "t".to_string(),
+                    object_key: "compacted.parquet".to_string(),
+                    min_ts: 100,
+                    max_ts: 399,
+                    row_count: 30,
+                    fingerprints: vec![checkout.cpu, checkout.heap],
+                    level: BlockLevel::INGESTED,
+                },
+                vec![9],
+            )],
+        );
+        index
+            .save_latest_snapshot(store, "index/profiles.json")
+            .await
+            .unwrap();
+        ProfileIndex::load_latest_snapshot(store, "index/profiles.json")
+            .await
+            .unwrap()
     }
 
     fn seed_with_blocks() -> (
@@ -675,30 +707,15 @@ mod tests {
             .await
             .unwrap();
 
-        index.replace_profile_blocks(
-            "t",
-            &strings(&["cpu-checkout.parquet", "heap-checkout.parquet"]),
-            &[(
-                BlockMeta {
-                    tenant: "t".to_string(),
-                    object_key: "compacted.parquet".to_string(),
-                    min_ts: 100,
-                    max_ts: 399,
-                    row_count: 30,
-                    fingerprints: vec![cpu_checkout_fp, heap_checkout_fp],
-                    level: BlockLevel::INGESTED,
-                },
-                vec![9],
-            )],
-        );
-        index
-            .save_latest_snapshot(&store, "index/profiles.json")
-            .await
-            .unwrap();
-
-        let loaded = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
-            .await
-            .unwrap();
+        let loaded = compact_checkout_and_reload(
+            &store,
+            &mut index,
+            CheckoutSeries {
+                cpu: cpu_checkout_fp,
+                heap: heap_checkout_fp,
+            },
+        )
+        .await;
         check!(block_keys(&loaded) == strings(&["compacted.parquet", "cpu-payments.parquet"]));
         check!(
             loaded
@@ -1229,30 +1246,15 @@ mod tests {
             .await
             .unwrap();
 
-        index.replace_profile_blocks(
-            "t",
-            &strings(&["cpu-checkout.parquet", "heap-checkout.parquet"]),
-            &[(
-                BlockMeta {
-                    tenant: "t".to_string(),
-                    object_key: "compacted.parquet".to_string(),
-                    min_ts: 100,
-                    max_ts: 399,
-                    row_count: 30,
-                    fingerprints: vec![cpu_checkout_fp, heap_checkout_fp],
-                    level: BlockLevel::INGESTED,
-                },
-                vec![9],
-            )],
-        );
-        index
-            .save_latest_snapshot(&store, "index/profiles.json")
-            .await
-            .unwrap();
-
-        let loaded = ProfileIndex::load_latest_snapshot(&store, "index/profiles.json")
-            .await
-            .unwrap();
+        let loaded = compact_checkout_and_reload(
+            &store,
+            &mut index,
+            CheckoutSeries {
+                cpu: cpu_checkout_fp,
+                heap: heap_checkout_fp,
+            },
+        )
+        .await;
         check!(loaded.block_level("compacted.parquet") == BlockLevel(1));
         check!(loaded.block_level("cpu-payments.parquet") == BlockLevel::INGESTED);
         check!(

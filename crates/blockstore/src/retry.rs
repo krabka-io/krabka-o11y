@@ -15,11 +15,9 @@
 
 use std::{error::Error, future::Future, num::NonZeroU32, sync::Arc, time::Duration};
 
-use async_trait::async_trait;
-use futures::stream::BoxStream;
 use object_store::{
-    CopyOptions, Error as ObjectStoreError, GetOptions, GetResult, ListResult, MultipartUpload,
-    ObjectMeta, ObjectStore, PutMultipartOptions, PutOptions, PutPayload, PutResult, path::Path,
+    CopyOptions, Error as ObjectStoreError, GetOptions, GetResult, ListResult, ObjectStore,
+    PutOptions, PutPayload, PutResult, path::Path,
 };
 use tokio::time::sleep;
 use tracing::warn;
@@ -36,7 +34,8 @@ mod tests {
     use assert2::check;
     use futures::StreamExt as _;
     use object_store::{
-        ObjectStore, ObjectStoreExt as _, PutPayload, memory::InMemory, path::Path,
+        MultipartUpload, ObjectStore, ObjectStoreExt as _, PutMultipartOptions, PutPayload,
+        memory::InMemory, path::Path,
     };
     use parquet::errors::ParquetError;
 
@@ -127,8 +126,10 @@ mod tests {
         }
     }
 
-    #[async_trait]
-    impl ObjectStore for FlakyObjectStore {
+    crate::delegate_object_store! {
+        FlakyObjectStore => inner;
+        forward [get_opts, list, delete_stream];
+
         async fn put_opts(
             &self,
             location: &Path,
@@ -152,21 +153,6 @@ mod tests {
             self.inner.put_multipart_opts(location, options).await
         }
 
-        async fn get_opts(
-            &self,
-            location: &Path,
-            options: GetOptions,
-        ) -> object_store::Result<GetResult> {
-            self.inner.get_opts(location, options).await
-        }
-
-        fn list(
-            &self,
-            prefix: Option<&Path>,
-        ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-            self.inner.list(prefix)
-        }
-
         async fn list_with_delimiter(
             &self,
             prefix: Option<&Path>,
@@ -187,13 +173,6 @@ mod tests {
                 return Err(error);
             }
             self.inner.copy_opts(from, to, options).await
-        }
-
-        fn delete_stream(
-            &self,
-            locations: BoxStream<'static, object_store::Result<Path>>,
-        ) -> BoxStream<'static, object_store::Result<Path>> {
-            self.inner.delete_stream(locations)
         }
     }
 

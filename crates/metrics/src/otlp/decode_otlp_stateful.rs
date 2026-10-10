@@ -1,5 +1,6 @@
 use super::{
-    DecodedSeries, DeltaAccumulator, MetricsData, OtlpError, TranslationStrategy, decode_otlp_inner,
+    DecodedSeries, DeltaAccumulator, MetricsData, OtlpDecodeOptions, OtlpError,
+    TranslationStrategy, decode_otlp_inner,
 };
 
 /// Translates OTLP metrics and accumulates delta temporality across calls.
@@ -10,7 +11,14 @@ pub fn decode_otlp_stateful(
     strategy: TranslationStrategy,
     accumulator: &mut DeltaAccumulator,
 ) -> Result<Vec<DecodedSeries>, OtlpError> {
-    decode_otlp_inner(data, strategy, Some(accumulator), &[])
+    decode_otlp_inner(
+        data,
+        OtlpDecodeOptions {
+            strategy,
+            accumulator: Some(accumulator),
+            additional_resource_attributes: &[],
+        },
+    )
 }
 
 pub(crate) fn decode_otlp_stateful_with_promoted_resource_attributes(
@@ -21,8 +29,10 @@ pub(crate) fn decode_otlp_stateful_with_promoted_resource_attributes(
 ) -> Result<Vec<DecodedSeries>, OtlpError> {
     decode_otlp_inner(
         data,
-        strategy,
-        Some(accumulator),
-        additional_resource_attributes,
+        OtlpDecodeOptions {
+            strategy,
+            accumulator: Some(accumulator),
+            additional_resource_attributes,
+        },
     )
 }
