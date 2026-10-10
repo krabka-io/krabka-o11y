@@ -4,6 +4,8 @@
 //! reads the object store back rather than the report: a pass that says it
 //! deleted a block and left the object is the failure these exist to catch.
 
+#[path = "../src/cpu_record.rs"]
+mod cpu_record;
 #[path = "../../blockstore/tests/support/lifecycle_store.rs"]
 mod lifecycle_store;
 
@@ -29,9 +31,12 @@ use krabka_profiles::{
 use krabka_units::{Time, hours};
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, memory::InMemory, path::Path};
 
-use self::lifecycle_store::{LifecycleStep, LifecycleStore};
+use self::{
+    cpu_record::{CPU_PROFILE_TYPE, CpuRecord, cpu_record},
+    lifecycle_store::{LifecycleStep, LifecycleStore},
+};
 
-const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
+const PT: &str = CPU_PROFILE_TYPE;
 const INDEX_KEY: &str = "index/profiles.json";
 /// An epoch-millisecond "now" the tests measure their blocks back from.
 const NOW_MS: i64 = 1_700_000_000_000;
@@ -94,39 +99,16 @@ fn options(
 }
 
 fn record(tenant: &str, function: &str, timestamp_ms: i64) -> ProfileRecord {
-    ProfileRecord {
-        tenant: tenant.to_string(),
-        labels: vec![
-            ("__name__".to_string(), "process_cpu".to_string()),
-            ("__profile_type__".to_string(), PT.to_string()),
-            ("service_name".to_string(), "api".to_string()),
-        ],
-        profile_type: PT.to_string(),
-        samples: vec![WalSample {
-            stacktrace_location_refs: vec![0],
-            value: 1,
-            // A WAL sample is stamped in nanoseconds and a block's bounds are
-            // epoch milliseconds, so the block builder divides on the way in.
-            timestamp_ns: timestamp_ms * NANOS_PER_MILLI,
-            span_id: None,
-            trace_id: None,
-        }],
-        symbols: WalSymbolSet {
-            strings: vec![String::new(), function.to_string()],
-            functions: vec![WalFunction {
-                name: 1,
-                system_name: 1,
-                filename: 0,
-                start_line: 0,
-            }],
-            locations: vec![WalLocation {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![(0, 1)],
-            }],
-            mappings: Vec::new(),
-        },
-    }
+    cpu_record(CpuRecord {
+        tenant,
+        service: "api",
+        stack: vec![0],
+        value: 1,
+        // A WAL sample is stamped in nanoseconds and a block's bounds are
+        // epoch milliseconds, so the block builder divides on the way in.
+        timestamp_ns: timestamp_ms * NANOS_PER_MILLI,
+        function,
+    })
 }
 
 /// Writes one block, its symbol database and its index entry, the way the

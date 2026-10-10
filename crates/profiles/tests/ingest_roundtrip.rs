@@ -19,7 +19,6 @@ use axum::{
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use krabka_blockstore::{ProfileIndex, TenantPolicy};
-use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
 use krabka_client_consumer::{AutoOffsetReset, Consumer, ConsumerRecord};
 use krabka_client_producer::Producer;
 use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
@@ -40,7 +39,7 @@ use tower::ServiceExt as _;
 use self::{
     render_roundtrip::{flame_names, flame_ticks, gzip_bytes},
     synthetic_cpu_profile::{FUNC_HOT, FUNC_WORK, SyntheticCpuProfile},
-    wal_topic::create_wal_topic,
+    wal_topic::WalTopicBroker,
 };
 
 #[path = "../src/bin/krabka-profiles/render_roundtrip.rs"]
@@ -69,7 +68,7 @@ async fn a_pushed_profile_lands_in_a_queryable_block() {
     let response = broker.push(push_request(TENANT)).await;
     assert!(response.status() == StatusCode::OK);
 
-    let wal_records = consume_wal_records(&broker.bootstrap).await;
+    let wal_records = consume_wal_records(&broker.wal.bootstrap).await;
     assert!(wal_records.len() == 1);
     let wal_record = decode_wal_record(&wal_records[0]);
 
@@ -169,35 +168,25 @@ async fn a_push_with_a_path_unsafe_tenant_never_reaches_the_wal() {
     let response = broker.push(push_request("../escape")).await;
 
     check!(response.status() == StatusCode::BAD_REQUEST);
-    assert!(consume_wal_records(&broker.bootstrap).await.is_empty());
+    assert!(consume_wal_records(&broker.wal.bootstrap).await.is_empty());
 }
 
 /// A broker with the profiles WAL topic, the WAL a distributor appends to.
 struct WalBroker {
-    _broker: BrokerHandle,
-    _tempdir: tempfile::TempDir,
-    bootstrap: String,
+    wal: WalTopicBroker,
 }
 
 impl WalBroker {
     async fn start() -> Self {
-        let tempdir = tempfile::TempDir::new().expect("tempdir");
-        let broker = Broker::start(BrokerConfig::for_tests(tempdir.path().to_path_buf()))
-            .await
-            .expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
-        create_wal_topic(&bootstrap).await;
         Self {
-            _broker: broker,
-            _tempdir: tempdir,
-            bootstrap,
+            wal: WalTopicBroker::start().await,
         }
     }
 
     /// Sends `request` to a distributor whose sink appends to this broker.
     async fn push(&self, request: Request<Body>) -> Response<Body> {
         let producer = Producer::builder()
-            .bootstrap(&self.bootstrap)
+            .bootstrap(&self.wal.bootstrap)
             .build()
             .await
             .expect("producer build");

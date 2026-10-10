@@ -1,5 +1,5 @@
-use super::{Arc, BlockStoreError, ByteSize, ByteSizeExt as _, Bytes, ObjectStore, Path, Result};
-use crate::index::capped_read_error;
+use super::{Arc, ByteSize, ByteSizeExt as _, Bytes, ObjectStore, Path, Result};
+use crate::index::{CappedObject, capped_read_error, oversized_object_error};
 
 /// Reads one shard payload, refusing to buffer more than `max_bytes` of it.
 ///
@@ -14,13 +14,17 @@ pub(crate) async fn read_shard_payload(
     let path = Path::from(object_key);
     match krabka_object_store::v013::read_capped(store, &path, max_bytes.bytes_u64()).await {
         Ok(bytes) => Ok(bytes),
-        Err(error) => Err(match error {
-            krabka_object_store::v013::ObjectStoreError::TooLarge {
-                size, max_bytes, ..
-            } => BlockStoreError::InvalidBlock(format!(
-                "index shard payload `{object_key}` is {size} bytes, exceeds cap of {max_bytes} bytes"
-            )),
-            other => capped_read_error(store, &path, other).await,
-        }),
+        Err(error) => Err(
+            match oversized_object_error(
+                CappedObject {
+                    label: "index shard payload",
+                    name: &object_key,
+                },
+                &error,
+            ) {
+                Some(oversized) => oversized,
+                None => capped_read_error(store, &path, error).await,
+            },
+        ),
     }
 }

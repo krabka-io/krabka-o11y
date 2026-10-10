@@ -632,6 +632,20 @@ mod tests {
         }
     }
 
+    /// `tenant-a`'s rows for one series, fingerprint 7, named `metric_name`,
+    /// with no samples yet.
+    fn series_seven_rows(metric_name: &str) -> super::TenantCompactionRows {
+        super::TenantCompactionRows {
+            tenant: "tenant-a".to_string(),
+            series_labels: BTreeMap::from([(7, labels(&[("__name__", metric_name)]).into())]),
+            float_rows: Vec::new(),
+            histogram_rows: Vec::new(),
+            exemplar_rows: Vec::new(),
+            metadata_rows: Vec::new(),
+            clock_rows: Vec::new(),
+        }
+    }
+
     /// Writes one float block and its index manifest the way the compactor
     /// writes them, and answers with the manifest the sweep will read.
     async fn write_float_block(
@@ -644,17 +658,13 @@ mod tests {
         let sink = super::ObjectStoreCompactionIndexSink::new(store.clone());
         let rows = super::TenantCompactionRows {
             tenant: tenant.to_string(),
-            series_labels: BTreeMap::from([(7, labels(&[("__name__", "up")]).into())]),
             float_rows: vec![FloatRow {
                 fingerprint: 7,
                 timestamp_ms,
                 value: 1.0,
                 start_timestamp_ms: None,
             }],
-            histogram_rows: Vec::new(),
-            exemplar_rows: Vec::new(),
-            metadata_rows: Vec::new(),
-            clock_rows: Vec::new(),
+            ..series_seven_rows("up")
         };
         let mut writes = super::write_compacted_tenant_blocks(
             &block_writer,
@@ -671,6 +681,61 @@ mod tests {
 
     async fn exists(store: &Arc<dyn ObjectStore>, key: &str) -> bool {
         store.head(&Path::from(key)).await.is_ok()
+    }
+
+    /// Which of the stubborn tenant's two objects the backend refuses to
+    /// delete.
+    enum RefusedObject {
+        Block,
+        Manifest,
+    }
+
+    /// One retention pass over two expired tenants, `tenant-a` the stubborn one
+    /// whose refused object the backend keeps.
+    struct OneRefusalPass {
+        seeded: Arc<dyn ObjectStore>,
+        stubborn: super::CompactionIndexManifest,
+        yielding: super::CompactionIndexManifest,
+        stats: super::CompactionRetentionStats,
+    }
+
+    async fn retain_past_one_refusal(refused: RefusedObject) -> OneRefusalPass {
+        let inner = Arc::new(InMemory::new());
+        let seeded: Arc<dyn ObjectStore> = inner.clone();
+        let stubborn = write_float_block(&seeded, "tenant-a", 1, NOW_MS - 10_000).await;
+        let yielding = write_float_block(&seeded, "tenant-b", 3, NOW_MS - 10_000).await;
+        let refused_key = match refused {
+            RefusedObject::Block => &stubborn.block_key,
+            RefusedObject::Manifest => &stubborn.index_key,
+        };
+        let object_store = RefusesOneDelete::refusing(&inner, refused_key);
+        let windows = BTreeMap::from([
+            ("tenant-a".to_string(), secs(5)),
+            ("tenant-b".to_string(), secs(5)),
+        ]);
+
+        let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
+            .await
+            .expect("a refused delete is not a failed pass");
+        OneRefusalPass {
+            seeded,
+            stubborn,
+            yielding,
+            stats,
+        }
+    }
+
+    /// The failure a pass reports for the object `RefusesOneDelete` refuses.
+    fn refused_deletion(key: &str) -> BlockDeletionFailure {
+        BlockDeletionFailure {
+            object_key: key.to_string(),
+            failed_key: key.to_string(),
+            error: object_store::Error::Generic {
+                store: REFUSING_STORE,
+                source: REFUSAL.into(),
+            }
+            .to_string(),
+        }
     }
 
     fn one_object_deleted() -> CompactionRetentionPhase {
@@ -912,19 +977,12 @@ overrides:
     /// behind it in the bucket for as long as that object refuses.
     #[tokio::test]
     async fn one_object_that_will_not_delete_does_not_stop_the_others() {
-        let inner = Arc::new(InMemory::new());
-        let seeded: Arc<dyn ObjectStore> = inner.clone();
-        let stubborn = write_float_block(&seeded, "tenant-a", 1, NOW_MS - 10_000).await;
-        let yielding = write_float_block(&seeded, "tenant-b", 3, NOW_MS - 10_000).await;
-        let object_store = RefusesOneDelete::refusing(&inner, &stubborn.block_key);
-        let windows = BTreeMap::from([
-            ("tenant-a".to_string(), secs(5)),
-            ("tenant-b".to_string(), secs(5)),
-        ]);
-
-        let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
-            .await
-            .expect("a refused delete is not a failed pass");
+        let OneRefusalPass {
+            seeded,
+            stubborn,
+            yielding,
+            stats,
+        } = retain_past_one_refusal(RefusedObject::Block).await;
 
         check!(
             stats
@@ -944,15 +1002,7 @@ overrides:
                     blocks_deleted: CompactionRetentionPhase {
                         deleted: 1,
                         absent: 0,
-                        failures: vec![BlockDeletionFailure {
-                            object_key: stubborn.block_key.clone(),
-                            failed_key: stubborn.block_key.clone(),
-                            error: object_store::Error::Generic {
-                                store: REFUSING_STORE,
-                                source: REFUSAL.into(),
-                            }
-                            .to_string(),
-                        }],
+                        failures: vec![refused_deletion(&stubborn.block_key)],
                     },
                     orphans: OrphanSweepStats {
                         listed: 1,
@@ -1002,19 +1052,12 @@ overrides:
     /// ordering exists to prevent.
     #[tokio::test]
     async fn an_expired_block_whose_manifest_will_not_delete_is_left_alone() {
-        let inner = Arc::new(InMemory::new());
-        let seeded: Arc<dyn ObjectStore> = inner.clone();
-        let stubborn = write_float_block(&seeded, "tenant-a", 1, NOW_MS - 10_000).await;
-        let yielding = write_float_block(&seeded, "tenant-b", 3, NOW_MS - 10_000).await;
-        let object_store = RefusesOneDelete::refusing(&inner, &stubborn.index_key);
-        let windows = BTreeMap::from([
-            ("tenant-a".to_string(), secs(5)),
-            ("tenant-b".to_string(), secs(5)),
-        ]);
-
-        let stats = super::enforce_compaction_retention(&object_store, at_ms(NOW_MS), &windows)
-            .await
-            .expect("a refused delete is not a failed pass");
+        let OneRefusalPass {
+            seeded,
+            stubborn,
+            yielding,
+            stats,
+        } = retain_past_one_refusal(RefusedObject::Manifest).await;
 
         check!(
             stats
@@ -1023,15 +1066,7 @@ overrides:
                     manifests_retired: CompactionRetentionPhase {
                         deleted: 1,
                         absent: 0,
-                        failures: vec![BlockDeletionFailure {
-                            object_key: stubborn.index_key.clone(),
-                            failed_key: stubborn.index_key.clone(),
-                            error: object_store::Error::Generic {
-                                store: REFUSING_STORE,
-                                source: REFUSAL.into(),
-                            }
-                            .to_string(),
-                        }],
+                        failures: vec![refused_deletion(&stubborn.index_key)],
                     },
                     // One block, not two: the tenant whose manifest refused is
                     // not offered to the second phase at all.
@@ -1246,8 +1281,6 @@ overrides:
         let block_writer = krabka_blockstore::BlockWriter::new(object_store.clone());
         let sink = RecordingIndexSink::default();
         let rows = super::TenantCompactionRows {
-            tenant: "tenant-a".to_string(),
-            series_labels: BTreeMap::from([(7, labels(&[("__name__", "up")]).into())]),
             float_rows: vec![
                 FloatRow {
                     fingerprint: 7,
@@ -1262,10 +1295,7 @@ overrides:
                     start_timestamp_ms: None,
                 },
             ],
-            histogram_rows: Vec::new(),
-            exemplar_rows: Vec::new(),
-            metadata_rows: Vec::new(),
-            clock_rows: Vec::new(),
+            ..series_seven_rows("up")
         };
 
         let writes = super::write_compacted_tenant_blocks(&block_writer, &sink, &rows, 42, 99)
@@ -1300,14 +1330,6 @@ overrides:
         let block_writer = krabka_blockstore::BlockWriter::new(object_store.clone());
         let sink = RecordingIndexSink::default();
         let rows = super::TenantCompactionRows {
-            tenant: "tenant-a".to_string(),
-            series_labels: BTreeMap::from([(
-                7,
-                labels(&[("__name__", "http_requests_total")]).into(),
-            )]),
-            float_rows: Vec::new(),
-            histogram_rows: Vec::new(),
-            exemplar_rows: Vec::new(),
             metadata_rows: vec![super::MetadataRow {
                 fingerprint: 7,
                 metric_family_name: "http_requests_total".to_string(),
@@ -1315,7 +1337,7 @@ overrides:
                 help: "Total HTTP requests.".to_string(),
                 unit: "requests".to_string(),
             }],
-            clock_rows: Vec::new(),
+            ..series_seven_rows("http_requests_total")
         };
 
         let writes = super::write_compacted_tenant_blocks(&block_writer, &sink, &rows, 42, 99)
@@ -2485,8 +2507,9 @@ overrides:
         assert!(consumer.take_revoked_partitions().is_empty());
     }
 
-    #[test]
-    fn compact_wal_records_extracts_histograms_and_exemplars() {
+    /// A `tenant-a` float sample of `request_duration_seconds` carrying one
+    /// exemplar with a trace ID, a span ID and one further label.
+    fn traced_request_duration_record() -> WalRecord {
         let mut record = float_record("tenant-a", "request_duration_seconds", "api", 20);
         record.exemplars = vec![WalExemplar {
             labels: vec![
@@ -2497,6 +2520,12 @@ overrides:
             value: 2.0,
             timestamp_ms: 19,
         }];
+        record
+    }
+
+    #[test]
+    fn compact_wal_records_extracts_histograms_and_exemplars() {
+        let record = traced_request_duration_record();
         let hist_record = WalRecord {
             tenant: "tenant-a".into(),
             labels: record.labels.clone(),
@@ -2712,16 +2741,7 @@ overrides:
 
     #[test]
     fn encode_tenant_batches_builds_exemplar_sidecar_batch() {
-        let mut record = float_record("tenant-a", "request_duration_seconds", "api", 20);
-        record.exemplars = vec![WalExemplar {
-            labels: vec![
-                ("trace_id".into(), "abc".into()),
-                ("span_id".into(), "def".into()),
-                ("kind".into(), "slow".into()),
-            ],
-            value: 2.0,
-            timestamp_ms: 19,
-        }];
+        let record = traced_request_duration_record();
         let compacted = compact_wal_records(std::slice::from_ref(&record));
 
         let batches = encode_tenant_batches(&compacted[0]).unwrap();
@@ -2874,6 +2894,7 @@ mod write_compacted_block;
 mod write_compacted_tenant_blocks;
 mod write_compacted_tenant_blocks_with_partition;
 mod write_compacted_tenant_partition_blocks;
+mod write_compaction_batch_windows;
 mod write_compaction_partition_window;
 
 use clock_columns::ClockColumns;
@@ -2981,4 +3002,5 @@ use write_compacted_block::write_compacted_block;
 pub use write_compacted_tenant_blocks::write_compacted_tenant_blocks;
 use write_compacted_tenant_blocks_with_partition::write_compacted_tenant_blocks_with_partition;
 pub use write_compacted_tenant_partition_blocks::write_compacted_tenant_partition_blocks;
+use write_compaction_batch_windows::write_compaction_batch_windows;
 use write_compaction_partition_window::write_compaction_partition_window;

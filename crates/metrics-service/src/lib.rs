@@ -603,14 +603,10 @@ mod tests {
         labels.insert("job", "api");
         store.push_float("tenant-a", labels, 10_000, 1.0);
 
-        let (status_is_success, body) = get_as_tenant_a(
-            authenticated(super::prometheus_router_for_store(store)),
-            "/api/v1/query?query=up&time=10",
-        )
+        assert_api_up_is_one_at_ten_seconds(authenticated(super::prometheus_router_for_store(
+            store,
+        )))
         .await;
-        assert2::assert!(status_is_success);
-        assert2::assert!(body["data"]["result"][0]["metric"]["job"].as_str() == Some("api"));
-        assert2::assert!(body["data"]["result"][0]["value"][1].as_str() == Some("1"));
     }
 
     /// The `MetricStore` impl on the refreshing store is delegation: resolve
@@ -1196,18 +1192,9 @@ rules:
             Duration::from_secs(1),
         );
 
-        sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
-            labels: std::collections::BTreeMap::from([(
-                "alertname".to_string(),
-                "InstanceDown".to_string(),
-            )]),
-            annotations: std::collections::BTreeMap::new(),
-            starts_at_ms: 60_000,
-            ends_at_ms: None,
-            generator_url: String::new(),
-        }])
-        .await
-        .unwrap();
+        sink.dispatch_alerts(vec![instance_down_alert()])
+            .await
+            .unwrap();
 
         assert2::assert!(received.load(Ordering::SeqCst) == 1);
     }
@@ -1223,16 +1210,7 @@ rules:
             Duration::from_millis(20),
         );
         let error = sink
-            .dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
-                labels: std::collections::BTreeMap::from([(
-                    "alertname".to_string(),
-                    "InstanceDown".to_string(),
-                )]),
-                annotations: std::collections::BTreeMap::new(),
-                starts_at_ms: 60_000,
-                ends_at_ms: None,
-                generator_url: String::new(),
-            }])
+            .dispatch_alerts(vec![instance_down_alert()])
             .await
             .unwrap_err()
             .to_string();
@@ -1442,14 +1420,8 @@ rules:
             Duration::ZERO,
         ));
         let alert = krabka_promql::AlertmanagerAlert {
-            labels: std::collections::BTreeMap::from([(
-                "alertname".to_string(),
-                "InstanceDown".to_string(),
-            )]),
-            annotations: std::collections::BTreeMap::new(),
-            starts_at_ms: 60_000,
             ends_at_ms: Some(120_000),
-            generator_url: String::new(),
+            ..instance_down_alert()
         };
         sink.dispatch_alerts(vec![alert]).await.unwrap();
         started.notified().await;
@@ -1485,18 +1457,9 @@ rules:
             1,
             Duration::ZERO,
         );
-        sink.dispatch_alerts(vec![krabka_promql::AlertmanagerAlert {
-            labels: std::collections::BTreeMap::from([(
-                "alertname".to_string(),
-                "InstanceDown".to_string(),
-            )]),
-            annotations: std::collections::BTreeMap::new(),
-            starts_at_ms: 60_000,
-            ends_at_ms: None,
-            generator_url: String::new(),
-        }])
-        .await
-        .unwrap();
+        sink.dispatch_alerts(vec![instance_down_alert()])
+            .await
+            .unwrap();
 
         let error = sink.shutdown(Duration::from_millis(20)).await.unwrap_err();
 
@@ -1508,19 +1471,7 @@ rules:
         let sink = super::AlertmanagerHttpSink::new("not a URL");
 
         let error = sink
-            .deliver(
-                None,
-                vec![krabka_promql::AlertmanagerAlert {
-                    labels: std::collections::BTreeMap::from([(
-                        "alertname".to_string(),
-                        "InstanceDown".to_string(),
-                    )]),
-                    annotations: std::collections::BTreeMap::new(),
-                    starts_at_ms: 60_000,
-                    ends_at_ms: None,
-                    generator_url: String::new(),
-                }],
-            )
+            .deliver(None, vec![instance_down_alert()])
             .await
             .unwrap_err();
 

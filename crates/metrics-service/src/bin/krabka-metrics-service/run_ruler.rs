@@ -2,13 +2,12 @@ use krabka_client_consumer::IsolationLevel;
 use krabka_observability::{CriticalTaskError, SupervisedTasks};
 
 use super::{
-    Arc, AutoOffsetReset, BrokerTransport, Cli, Consumer, LeaseConfig, MemberId,
-    PrometheusApiState, Role, RoleLaunch, RoleObjectStore, RulerAlertmanagerSink, RulerShard,
-    ServerSecurity, Shutdown, WalHead, install_bundled_rule_groups, load_runtime_overrides,
-    mimir_alertmanager_router, mimir_ruler_prometheus_router, mimir_ruler_router,
-    poll_ruler_state_consumer_once, query_engine_opts, readiness_router,
-    run_fenced_ruler_evaluation_loop, run_ruler_state_consumer_loop,
-    serve_prometheus_router_joinable, spawn_shutdown_signal_listener,
+    Arc, AutoOffsetReset, BrokerTransport, Cli, Consumer, LeaseConfig, MemberId, Role, RoleLaunch,
+    RoleObjectStore, RulerAlertmanagerSink, RulerShard, ServerSecurity, Shutdown, WalHead,
+    install_bundled_rule_groups, load_runtime_overrides, mimir_alertmanager_router,
+    mimir_ruler_prometheus_router, mimir_ruler_router, poll_ruler_state_consumer_once,
+    readiness_router, run_fenced_ruler_evaluation_loop, run_ruler_state_consumer_loop,
+    serve_prometheus_router_joinable, serving_api_state, spawn_shutdown_signal_listener,
 };
 
 #[tracing::instrument(
@@ -34,14 +33,7 @@ pub(crate) async fn run_ruler(
         .map_err(|error| -> Box<dyn std::error::Error> { error })?;
     let config_store = Arc::clone(&role_store.store);
     let metric_store = role_store.refreshing_metric_store(&cli, WalHead::new());
-    let state = PrometheusApiState::new(Arc::new(metric_store), query_engine_opts(&cli))
-        .with_max_concurrent_queries(cli.max_concurrent_queries)
-        .with_query_timeout(cli.query_timeout)
-        .with_remote_read_max_body(cli.remote_read_max_body)
-        .with_runtime_status(
-            krabka_observability::LogLevelControl::process().level(),
-            None,
-        )
+    let state = serving_api_state(Arc::new(metric_store), &cli)
         .with_mimir_config_store(config_store)
         .with_metrics(metrics)
         .with_audit(audit);

@@ -1,7 +1,7 @@
 use super::{
-    BTreeMap, BlockEntry, BlockLevel, BlockList, BlockListRepr, BlockStoreError, ByteReader,
+    BTreeMap, BlockEntry, BlockList, BlockListRepr, BlockStoreError, ByteReader,
     INDEX_SHARD_FORMAT_VERSION, INDEX_SHARD_MAGIC, Index, Labels, Result, SeriesFingerprint,
-    TenantIndex,
+    ShardBlockBounds, TenantIndex,
 };
 
 /// Decodes one shard into a single-tenant [`Index`].
@@ -64,17 +64,12 @@ fn decode(bytes: &[u8]) -> Result<Index> {
     let mut previous_min = 0_i64;
     for _ in 0..block_count {
         let object_key = reader.string("a block object key")?;
-        let min_ts = previous_min.wrapping_add(reader.ivarint("a block start")?);
-        let max_ts = min_ts.wrapping_add(reader.ivarint("a block span")?);
+        let ShardBlockBounds { min_ts, max_ts } = reader.block_bounds(previous_min)?;
         previous_min = min_ts;
         let row_count = reader.count_unbounded("a block row count")?;
         let fingerprint_count = reader.count_unbounded("a block fingerprint count")?;
         let fingerprint_digest = reader.u64_le("a block fingerprint digest")?;
-        let level = BlockLevel(
-            u32::try_from(reader.uvarint("a block level")?).map_err(|_| {
-                BlockStoreError::InvalidBlock("names a compaction level beyond u32".to_string())
-            })?,
-        );
+        let level = reader.block_level()?;
         entries.push(BlockEntry {
             object_key,
             min_ts,

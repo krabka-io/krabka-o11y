@@ -4669,19 +4669,14 @@ async fn compare_populated_query_analysis(
         for (base, tenant) in [(oracle_base, None), (krabka_base, Some(TENANT))] {
             evidence["active_case"] = json!({"method": "AnalyzeQuery", "backend": base,
                 "request": request, "classification": "matched"});
-            let json: AnalyzeQueryResponse = serde_json::from_value(
-                connect_json(
-                    client,
-                    base,
-                    tenant,
-                    "AnalyzeQuery",
-                    serde_json::to_value(&request)?,
-                )
-                .await?,
-            )?;
-            let binary: AnalyzeQueryResponse =
-                connect_protobuf(client, base, tenant, "AnalyzeQuery", &request).await?;
-            for (transport, response) in [("json", json), ("protobuf", binary)] {
+            let backend = RpcBackend {
+                client,
+                base,
+                tenant,
+            };
+            for (transport, response) in
+                analyze_query_over_both_transports(backend, &request).await?
+            {
                 if assert_queried_series_count(&response, expected).is_err()
                     && evidence.get("failure_diagnostics").is_none()
                 {
@@ -4707,13 +4702,14 @@ async fn compare_populated_query_analysis(
                 }
                 record_profile_rpc_case(
                     evidence,
-                    json!({
-                        "method": "AnalyzeQuery", "name": name, "backend": base, "transport": transport,
-                        "request": request, "classification": "matched",
-                        "status": if assert_queried_series_count(&response, expected).is_ok() { "passed" } else { "failed" },
-                        "expected_count": expected, "actual_count": response.query_impact.as_ref().map(|impact| impact.total_queried_series),
-                        "response":response,"comparison_fields":["query_impact.total_queried_series"],
-                    }),
+                    with_queried_series_outcome(
+                        json!({
+                            "method": "AnalyzeQuery", "name": name, "backend": base, "transport": transport,
+                            "request": request, "classification": "matched",
+                        }),
+                        &response,
+                        expected,
+                    ),
                 )?;
                 if let Err(error) = assert_queried_series_count(&response, expected) {
                     analysis_failures.push(format!("{error}: backend={base}, transport={transport}, request={request:?}, response={response:?}"));
@@ -4747,19 +4743,14 @@ async fn compare_populated_query_analysis(
     ] {
         let request = AnalyzeQueryRequest { query, start, end };
         for (base, tenant) in [(oracle_base, None), (krabka_base, Some(TENANT))] {
-            let json: AnalyzeQueryResponse = serde_json::from_value(
-                connect_json(
-                    client,
-                    base,
-                    tenant,
-                    "AnalyzeQuery",
-                    serde_json::to_value(&request)?,
-                )
-                .await?,
-            )?;
-            let binary: AnalyzeQueryResponse =
-                connect_protobuf(client, base, tenant, "AnalyzeQuery", &request).await?;
-            for (transport, response) in [("json", json), ("protobuf", binary)] {
+            let backend = RpcBackend {
+                client,
+                base,
+                tenant,
+            };
+            for (transport, response) in
+                analyze_query_over_both_transports(backend, &request).await?
+            {
                 let expected = AnalyzeQueryResponse::default();
                 let passed = response == expected;
                 record_profile_rpc_case(
@@ -4788,30 +4779,26 @@ async fn compare_populated_query_analysis(
     for (base, tenant, expected) in [(oracle_base, None, 1), (krabka_base, Some(TENANT), 1)] {
         evidence["active_case"] = json!({"method": "AnalyzeQuery", "backend": base,
             "request": excluded_time, "classification": "matched"});
-        let json: AnalyzeQueryResponse = serde_json::from_value(
-            connect_json(
-                client,
-                base,
-                tenant,
-                "AnalyzeQuery",
-                serde_json::to_value(&excluded_time)?,
-            )
-            .await?,
-        )?;
-        let binary: AnalyzeQueryResponse =
-            connect_protobuf(client, base, tenant, "AnalyzeQuery", &excluded_time).await?;
-        for (transport, response) in [("json", json), ("protobuf", binary)] {
+        let backend = RpcBackend {
+            client,
+            base,
+            tenant,
+        };
+        for (transport, response) in
+            analyze_query_over_both_transports(backend, &excluded_time).await?
+        {
             record_profile_rpc_case(
                 evidence,
-                json!({
-                    "method": "AnalyzeQuery", "name":"excluded time", "backend": base, "transport": transport,
-                    "request": excluded_time, "classification": "matched",
-                    "reason": "pinned v1 Head.Series returns all selector-matching series within an overlapping head without per-profile time filtering",
-                    "source": "https://github.com/grafana/pyroscope/blob/7aeaa0ff91e83538b3ff0d09bfefb168bddc022d/pkg/phlaredb/head.go#L498-L532",
-                    "status": if assert_queried_series_count(&response, expected).is_ok() { "passed" } else { "failed" },
-                    "expected_count": expected, "actual_count": response.query_impact.as_ref().map(|impact| impact.total_queried_series),
-                        "response":response,"comparison_fields":["query_impact.total_queried_series"],
-                }),
+                with_queried_series_outcome(
+                    json!({
+                        "method": "AnalyzeQuery", "name":"excluded time", "backend": base, "transport": transport,
+                        "request": excluded_time, "classification": "matched",
+                        "reason": "pinned v1 Head.Series returns all selector-matching series within an overlapping head without per-profile time filtering",
+                        "source": "https://github.com/grafana/pyroscope/blob/7aeaa0ff91e83538b3ff0d09bfefb168bddc022d/pkg/phlaredb/head.go#L498-L532",
+                    }),
+                    &response,
+                    expected,
+                ),
             )?;
             if let Err(error) = assert_queried_series_count(&response, expected) {
                 analysis_failures.push(format!("{error}: backend={base}, transport={transport}, v1 head-series compatibility, request={excluded_time:?}, response={response:?}"));
@@ -5298,6 +5285,60 @@ async fn assert_v1_heatmap_capability(
     Ok(())
 }
 
+/// One backend a querier RPC is sent to: its base URL, and the tenant header
+/// Krabka needs and the single-tenant oracle does not.
+#[derive(Clone, Copy)]
+struct RpcBackend<'a> {
+    client: &'a reqwest::Client,
+    base: &'a str,
+    tenant: Option<&'a str>,
+}
+
+/// `request`'s `AnalyzeQuery` answer from `backend`, once over JSON and once
+/// over protobuf, each named by its transport.
+async fn analyze_query_over_both_transports(
+    backend: RpcBackend<'_>,
+    request: &pb::querier::v1::AnalyzeQueryRequest,
+) -> TestResult<[(&'static str, pb::querier::v1::AnalyzeQueryResponse); 2]> {
+    let RpcBackend {
+        client,
+        base,
+        tenant,
+    } = backend;
+    let json: pb::querier::v1::AnalyzeQueryResponse = serde_json::from_value(
+        connect_json(
+            client,
+            base,
+            tenant,
+            "AnalyzeQuery",
+            serde_json::to_value(request)?,
+        )
+        .await?,
+    )?;
+    let binary: pb::querier::v1::AnalyzeQueryResponse =
+        connect_protobuf(client, base, tenant, "AnalyzeQuery", request).await?;
+    Ok([("json", json), ("protobuf", binary)])
+}
+
+/// Orders exemplars, and each exemplar's labels, canonically, so two backends
+/// that return the same exemplars in different orders compare equal.
+fn sort_exemplars(exemplars: &mut [pb::querier::v1::Exemplar]) {
+    for exemplar in exemplars.iter_mut() {
+        exemplar
+            .labels
+            .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
+    }
+    exemplars.sort_by_key(|e| {
+        (
+            e.timestamp,
+            e.value,
+            e.profile_id.clone(),
+            e.trace_id.clone(),
+            e.span_id.clone(),
+        )
+    });
+}
+
 async fn connect_protobuf<Req: prost::Message, Resp: prost::Message + Default>(
     client: &reqwest::Client,
     base: &str,
@@ -5376,6 +5417,31 @@ fn normalized_flamegraph_stacks(
     }
     stacks.sort();
     Ok(stacks)
+}
+
+/// `case` with the outcome of an `AnalyzeQuery` series-count comparison
+/// appended after its own fields: whether `response` queried `expected`
+/// series, both counts, the response, and the field compared.
+fn with_queried_series_outcome(
+    mut case: Value,
+    response: &pb::querier::v1::AnalyzeQueryResponse,
+    expected: u64,
+) -> Value {
+    case["status"] = json!(if assert_queried_series_count(response, expected).is_ok() {
+        "passed"
+    } else {
+        "failed"
+    });
+    case["expected_count"] = json!(expected);
+    case["actual_count"] = json!(
+        response
+            .query_impact
+            .as_ref()
+            .map(|impact| impact.total_queried_series)
+    );
+    case["response"] = json!(response);
+    case["comparison_fields"] = json!(["query_impact.total_queried_series"]);
+    case
 }
 
 fn assert_queried_series_count(
@@ -6841,20 +6907,7 @@ fn profile_v2_response_value(method: &str, response: Value) -> TestResult<Value>
                     .labels
                     .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
                 for point in &mut series.points {
-                    for exemplar in &mut point.exemplars {
-                        exemplar
-                            .labels
-                            .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
-                    }
-                    point.exemplars.sort_by_key(|e| {
-                        (
-                            e.timestamp,
-                            e.value,
-                            e.profile_id.clone(),
-                            e.trace_id.clone(),
-                            e.span_id.clone(),
-                        )
-                    });
+                    sort_exemplars(&mut point.exemplars);
                 }
             }
             response
@@ -6870,20 +6923,7 @@ fn profile_v2_response_value(method: &str, response: Value) -> TestResult<Value>
                     .labels
                     .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
                 for slot in &mut series.slots {
-                    for exemplar in &mut slot.exemplars {
-                        exemplar
-                            .labels
-                            .sort_by(|a, b| (&a.name, &a.value).cmp(&(&b.name, &b.value)));
-                    }
-                    slot.exemplars.sort_by_key(|e| {
-                        (
-                            e.timestamp,
-                            e.value,
-                            e.profile_id.clone(),
-                            e.trace_id.clone(),
-                            e.span_id.clone(),
-                        )
-                    });
+                    sort_exemplars(&mut slot.exemplars);
                 }
             }
             response

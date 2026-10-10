@@ -6,7 +6,6 @@ use std::{sync::Arc, time::Duration};
 
 use assert2::assert;
 use krabka_blockstore::ProfileIndex;
-use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
 use krabka_client_consumer::{AutoOffsetReset, Consumer};
 use krabka_client_producer::Producer;
 use krabka_profiles::{
@@ -20,7 +19,7 @@ use object_store::ObjectStore;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use self::wal_topic::create_wal_topic;
+use self::wal_topic::WalTopicBroker;
 
 #[path = "../../src/bin/krabka-profiles/wal_topic.rs"]
 mod wal_topic;
@@ -39,19 +38,14 @@ pub struct RestartConsumer<'a> {
 
 /// A broker with the profiles WAL topic and one record in it.
 pub struct OneRecordBroker {
-    _broker: BrokerHandle,
-    _tempdir: tempfile::TempDir,
+    _broker: WalTopicBroker,
     pub bootstrap: String,
 }
 
 impl OneRecordBroker {
     pub async fn start() -> Self {
-        let tempdir = tempfile::TempDir::new().expect("tempdir");
-        let broker = Broker::start(BrokerConfig::for_tests(tempdir.path().to_path_buf()))
-            .await
-            .expect("broker start");
-        let bootstrap = broker.listen_addr().to_string();
-        create_wal_topic(&bootstrap).await;
+        let broker = WalTopicBroker::start().await;
+        let bootstrap = broker.bootstrap.clone();
         let producer = Producer::builder()
             .bootstrap(&bootstrap)
             .build()
@@ -63,7 +57,6 @@ impl OneRecordBroker {
             .expect("append the WAL record");
         Self {
             _broker: broker,
-            _tempdir: tempdir,
             bootstrap,
         }
     }

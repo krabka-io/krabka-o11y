@@ -2343,40 +2343,29 @@ mod tests {
         assert!(hist.negative_spans[0].offset == 4);
     }
 
+    /// A scale below the native schema range, and one too fine to downscale
+    /// to it, are both refused by naming the scale.
     #[test]
-    fn exponential_histogram_rejects_scale_below_native_schema_range() {
-        let data = rpc_duration_histogram(
-            ExponentialHistogramDataPoint {
-                count: 1,
-                scale: -5,
-                positive: Some(positive_buckets(0, vec![1])),
-                ..Default::default()
-            },
-            AggregationTemporality::Cumulative,
-        );
+    fn exponential_histogram_rejects_scales_outside_the_native_schema_range() {
+        for scale in [-5, 40] {
+            let data = rpc_duration_histogram(
+                ExponentialHistogramDataPoint {
+                    count: 1,
+                    scale,
+                    positive: Some(positive_buckets(0, vec![1])),
+                    ..Default::default()
+                },
+                AggregationTemporality::Cumulative,
+            );
 
-        let err = decode_otlp(&data, TranslationStrategy::default()).unwrap_err();
+            let err = decode_otlp(&data, TranslationStrategy::default()).unwrap_err();
 
-        assert!(matches!(err, super::OtlpError::Invalid(_, _)));
-        assert!(format!("{err}").contains("scale -5"));
-    }
-
-    #[test]
-    fn exponential_histogram_rejects_unrepresentable_downscale() {
-        let data = rpc_duration_histogram(
-            ExponentialHistogramDataPoint {
-                count: 1,
-                scale: 40,
-                positive: Some(positive_buckets(0, vec![1])),
-                ..Default::default()
-            },
-            AggregationTemporality::Cumulative,
-        );
-
-        let err = decode_otlp(&data, TranslationStrategy::default()).unwrap_err();
-
-        assert!(matches!(err, super::OtlpError::Invalid(_, _)));
-        assert!(format!("{err}").contains("scale 40"));
+            assert!(
+                matches!(err, super::OtlpError::Invalid(_, _)),
+                "scale {scale}"
+            );
+            assert!(format!("{err}").contains(&format!("scale {scale}")));
+        }
     }
 
     #[test]
@@ -2427,6 +2416,7 @@ mod exemplars_from_otlp;
 mod exponential_histogram_series;
 mod exponential_histogram_to_native;
 mod gauge_series;
+mod histogram_family;
 mod histogram_series;
 mod insert_attributes;
 mod instrumentation_scope_attributes;
@@ -2492,6 +2482,7 @@ use exemplars_from_otlp::exemplars_from_otlp;
 use exponential_histogram_series::exponential_histogram_series;
 pub use exponential_histogram_to_native::exponential_histogram_to_native;
 use gauge_series::gauge_series;
+use histogram_family::HistogramFamily;
 use histogram_series::histogram_series;
 use insert_attributes::insert_attributes;
 use instrumentation_scope_attributes::instrumentation_scope_attributes;

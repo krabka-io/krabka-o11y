@@ -2,6 +2,7 @@ use super::{
     Arc, BlockStoreError, ByteSize, ByteSizeExt as _, Bytes, ObjectStore, ObjectStoreExt as _,
     Path, Result,
 };
+use crate::index::{CappedObject, capped_read_error, oversized_object_error};
 
 /// Outcome of reading a snapshot object.
 ///
@@ -23,41 +24,24 @@ pub(crate) async fn read_index_snapshot_bytes(
     max_bytes: ByteSize,
     label: &str,
 ) -> Result<IndexSnapshotBytes> {
-    match krabka_object_store::v013::read_capped(store, path, max_bytes.bytes_u64()).await {
-        Ok(bytes) => Ok(IndexSnapshotBytes::Present(bytes)),
-        Err(error) => Err(match error {
-            krabka_object_store::v013::ObjectStoreError::TooLarge {
-                size, max_bytes, ..
-            } => BlockStoreError::InvalidBlock(format!(
-                "{label} `{path}` is {size} bytes, exceeds cap of {max_bytes} bytes"
-            )),
-            krabka_object_store::v013::ObjectStoreError::Backend(message)
-            | krabka_object_store::v013::ObjectStoreError::InvalidConfig(message) => {
-                BlockStoreError::ObjectStore(message)
-            }
-            krabka_object_store::v013::ObjectStoreError::Io(error) => {
-                BlockStoreError::ObjectStore(error.to_string())
-            }
-            not_found @ krabka_object_store::v013::ObjectStoreError::NotFound(_) => {
-                return match store.head(path).await {
-                    // The object is there after all, so the read is the
-                    // failure, not the absence.
-                    Ok(_) => Err(BlockStoreError::ObjectStore(not_found.to_string())),
-                    Err(missing @ object_store::Error::NotFound { .. }) => {
-                        Ok(IndexSnapshotBytes::Absent(BlockStoreError::ObjectStore(
-                            missing.to_string(),
-                        )))
-                    }
-                    Err(error) => Err(BlockStoreError::ObjectStore(error.to_string())),
-                };
-            }
-            // Write-side variants: `read_capped` cannot raise them, but
-            // they are part of the enum, so surface them like any other
-            // backend failure rather than widening the read path.
-            conflict @ (krabka_object_store::v013::ObjectStoreError::AlreadyExists(_)
-            | krabka_object_store::v013::ObjectStoreError::Precondition { .. }) => {
-                BlockStoreError::ObjectStore(conflict.to_string())
-            }
-        }),
+    let error =
+        match krabka_object_store::v013::read_capped(store, path, max_bytes.bytes_u64()).await {
+            Ok(bytes) => return Ok(IndexSnapshotBytes::Present(bytes)),
+            Err(error) => error,
+        };
+    if let Some(oversized) = oversized_object_error(CappedObject { label, name: path }, &error) {
+        return Err(oversized);
     }
+    if let krabka_object_store::v013::ObjectStoreError::NotFound(_) = error {
+        return match store.head(path).await {
+            // The object is there after all, so the read is the failure, not
+            // the absence.
+            Ok(_) => Err(BlockStoreError::ObjectStore(error.to_string())),
+            Err(missing @ object_store::Error::NotFound { .. }) => Ok(IndexSnapshotBytes::Absent(
+                BlockStoreError::ObjectStore(missing.to_string()),
+            )),
+            Err(error) => Err(BlockStoreError::ObjectStore(error.to_string())),
+        };
+    }
+    Err(capped_read_error(store, path, error).await)
 }

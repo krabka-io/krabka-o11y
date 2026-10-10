@@ -11,14 +11,7 @@ pub(crate) async fn merge_sql_to_tree(
     call_sites: &[String],
     trace_ids: Option<&[Vec<u8>]>,
 ) -> Result<(), ProfileError> {
-    let batches = scan
-        .ctx
-        .sql(sql)
-        .await
-        .map_err(|err| ProfileError::Plan(err.to_string()))?
-        .collect()
-        .await
-        .map_err(|err| ProfileError::Exec(err.to_string()))?;
+    let batches = scan.collect_sql(sql).await?;
     for batch in batches {
         let partitions = batch.column(0).as_primitive::<UInt64Type>();
         let stacktrace_ids = batch.column(1).as_primitive::<UInt64Type>();

@@ -77,14 +77,22 @@ mod tests {
         ]))
     }
 
-    async fn seeded_store() -> (BlockStore, SchemaRef) {
+    fn memory_block_store() -> BlockStore {
         let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let base = url::Url::parse("memory:///").unwrap();
-        let mut bs = BlockStore::new(object_store, base);
+        BlockStore::new(object_store, url::Url::parse("memory:///").unwrap())
+    }
+
+    fn app_labels(app: &str) -> Labels {
+        let mut labels = Labels::new();
+        labels.insert("app", app);
+        labels
+    }
+
+    async fn seeded_store() -> (BlockStore, SchemaRef) {
+        let mut bs = memory_block_store();
         let schema = log_schema();
 
-        let mut api = Labels::new();
-        api.insert("app", "api");
+        let api = app_labels("api");
         let fp = api.fingerprint();
 
         let batch = RecordBatch::try_new(
@@ -166,15 +174,11 @@ mod tests {
     /// Two series in one block, spread over four timestamps each, so a scan can
     /// narrow by series, by window, or by both.
     async fn two_series_store() -> (BlockStore, SchemaRef, Labels, Labels) {
-        let object_store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-        let base = url::Url::parse("memory:///").unwrap();
-        let mut bs = BlockStore::new(object_store, base);
+        let mut bs = memory_block_store();
         let schema = log_schema();
 
-        let mut api = Labels::new();
-        api.insert("app", "api");
-        let mut web = Labels::new();
-        web.insert("app", "web");
+        let api = app_labels("api");
+        let web = app_labels("web");
 
         let fps = [api.fingerprint(); 4]
             .into_iter()

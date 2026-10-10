@@ -24,10 +24,13 @@ use std::{
 
 use assert2::assert;
 use clap::Parser as _;
-use krabka_broker::{Broker, BrokerConfig};
 
 use self::sigterm_child::terminate_and_wait_for_exit;
-use super::{Cli, run, wal_topic::create_wal_topic};
+use super::{
+    Cli, run,
+    sigterm_child_runtime::{SigtermChildRuntime, free_loopback_addr},
+    wal_topic::WalTopicBroker,
+};
 
 /// Set on the child re-execution of this test binary, and carries the broker
 /// the child's WAL tail reads.
@@ -56,14 +59,8 @@ fn sigterm_makes_the_querier_process_exit() {
         .enable_all()
         .build()
         .expect("parent runtime");
-    let broker = runtime.block_on(async {
-        let broker = Broker::start(BrokerConfig::for_tests(dir.path().join("broker")))
-            .await
-            .expect("broker start");
-        create_wal_topic(&broker.listen_addr().to_string()).await;
-        broker
-    });
-    let bootstrap = broker.listen_addr().to_string();
+    let broker = runtime.block_on(WalTopicBroker::start());
+    let bootstrap = broker.bootstrap.clone();
 
     let listen = free_loopback_addr();
     let admin = free_loopback_addr();
@@ -91,19 +88,7 @@ fn sigterm_makes_the_querier_process_exit() {
 
 /// The role under test: the binary's own `run`, on the real querier arm.
 fn run_querier_child(bootstrap: &str) {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("child runtime");
-    // Registered before the parent can see anything this process exports, so
-    // the parent's `kill` cannot land in the window before the role installs
-    // its own. Tokio's handlers are process-wide and refcounted, so the one
-    // the role installs later is this same registration.
-    let _terminate = runtime
-        .block_on(async {
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        })
-        .expect("install SIGTERM handler");
+    let runtime = SigtermChildRuntime::start();
 
     let listen = std::env::var(CHILD_LISTEN).expect("child listen address");
     let admin = std::env::var(CHILD_ADMIN).expect("child admin address");
@@ -124,18 +109,6 @@ fn run_querier_child(bootstrap: &str) {
     .expect("child CLI");
 
     runtime.block_on(async { run(cli).await.expect("the querier role returns on SIGTERM") });
-}
-
-/// An address nothing is listening on yet.
-///
-/// The child needs its ports named before it starts, because the parent scrapes
-/// one of them.
-fn free_loopback_addr() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a free port");
-    listener
-        .local_addr()
-        .expect("the bound address")
-        .to_string()
 }
 
 /// Blocks until the child's admin port reports at least one WAL poll.

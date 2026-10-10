@@ -32,15 +32,15 @@ use std::{
 use assert2::{assert, check};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use clap::Parser as _;
-use krabka_broker::{Broker, BrokerConfig, BrokerHandle};
 use serde_json::{Value, json};
 
 use super::{
     Cli,
     render_roundtrip::{flame_names, flame_ticks, gzip_bytes},
     run,
+    sigterm_child_runtime::{SigtermChildRuntime, free_loopback_addr},
     synthetic_cpu_profile::{FUNC_HOT, FUNC_WORK, SyntheticCpuProfile},
-    wal_topic::create_wal_topic,
+    wal_topic::WalTopicBroker,
 };
 
 /// Set on the child re-execution, and carries the broker the child's roles
@@ -107,19 +107,14 @@ fn a_push_at_the_ingest_door_is_answered_at_the_query_door() {
         .lock()
         .expect("serialize all-in-one tests");
 
-    let dir = tempfile::tempdir().expect("temporary directory");
-    let runtime = parent_runtime();
-    let broker = start_broker(&runtime, dir.path());
-    let bootstrap = broker.listen_addr().to_string();
-    let listen = free_loopback_addr();
-    let admin = free_loopback_addr();
-    let _serving = spawn_all_child(INGEST_TEST, INGEST_CHILD, &bootstrap, &listen, &admin);
+    let parent = start_all_in_one(&INGEST);
+    let listen = parent.listen.as_str();
 
-    runtime.block_on(async {
+    parent.runtime.block_on(async {
         // Every role's gates, on the one port, before anything is pushed. A
         // push accepted by a process whose block builder had not yet reached
         // the broker would be a race this suite could not tell from a bug.
-        wait_until_ready(&listen, Duration::from_secs(90)).await;
+        wait_until_ready(listen, Duration::from_secs(90)).await;
 
         let now_ms = epoch_millis();
         let archived_ms =
@@ -132,7 +127,7 @@ fn a_push_at_the_ingest_door_is_answered_at_the_query_door() {
         // for it to come from is a block in the object store the block builder
         // wrote to -- which is the point.
         push(
-            &listen,
+            listen,
             &[
                 ServiceProfile {
                     service: ARCHIVED_SERVICE,
@@ -147,7 +142,7 @@ fn a_push_at_the_ingest_door_is_answered_at_the_query_door() {
         .await;
 
         let render = render_until_answered(
-            &listen,
+            listen,
             ARCHIVED_SERVICE,
             archived_ms - 60_000,
             archived_ms + 60_000,
@@ -185,23 +180,18 @@ fn a_sigterm_stops_every_role_and_the_process_exits_cleanly() {
         .lock()
         .expect("serialize all-in-one tests");
 
-    let dir = tempfile::tempdir().expect("temporary directory");
-    let runtime = parent_runtime();
-    let broker = start_broker(&runtime, dir.path());
-    let bootstrap = broker.listen_addr().to_string();
-    let listen = free_loopback_addr();
-    let admin = free_loopback_addr();
-    let mut serving = spawn_all_child(SIGTERM_TEST, SIGTERM_CHILD, &bootstrap, &listen, &admin);
+    let mut parent = start_all_in_one(&SIGTERM);
+    let listen = parent.listen.as_str();
 
-    runtime.block_on(async {
+    parent.runtime.block_on(async {
         // Signalled only once every role is up. A stop that arrived mid-start
         // would exercise the start's own cancellation paths instead of the
         // drain.
-        wait_until_ready(&listen, Duration::from_secs(90)).await;
+        wait_until_ready(listen, Duration::from_secs(90)).await;
         // Something in the WAL, so the block builder has a partition
         // assignment and an offset to commit rather than nothing to drain.
         push(
-            &listen,
+            listen,
             &[ServiceProfile {
                 service: RECENT_SERVICE,
                 at_ms: epoch_millis(),
@@ -215,12 +205,12 @@ fn a_sigterm_stops_every_role_and_the_process_exits_cleanly() {
     // forbidden workspace-wide so `libc::kill` is not an option.
     let signalled = Command::new("/bin/sh")
         .arg("-c")
-        .arg(format!("kill -TERM {}", serving.0.id()))
+        .arg(format!("kill -TERM {}", parent.child.0.id()))
         .status()
         .expect("send SIGTERM");
     assert!(signalled.success());
 
-    let status = serving.wait_for_exit(Duration::from_mins(1));
+    let status = parent.child.wait_for_exit(Duration::from_mins(1));
 
     assert!(status.code() == Some(0), "`--target all` exited {status}");
 }
@@ -228,19 +218,7 @@ fn a_sigterm_stops_every_role_and_the_process_exits_cleanly() {
 /// The role under test, in the child: the binary's own `run`, on the real
 /// `--target all` composition, built from a real `Cli`.
 fn run_all_child(bootstrap: &str, flags: &[&str]) {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("child runtime");
-    // Registered before the parent can see anything this process exports, so
-    // the parent's `kill` cannot land in the window before the roles install
-    // their own. Tokio's handlers are process-wide and refcounted, so the one
-    // installed later is this same registration.
-    let _terminate = runtime
-        .block_on(async {
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        })
-        .expect("install SIGTERM handler");
+    let runtime = SigtermChildRuntime::start();
 
     let listen = std::env::var(CHILD_LISTEN).expect("child listen address");
     let admin = std::env::var(CHILD_ADMIN).expect("child admin address");
@@ -273,25 +251,56 @@ fn run_all_child(bootstrap: &str, flags: &[&str]) {
     runtime.block_on(async { run(cli).await.expect("`--target all` returns on SIGTERM") });
 }
 
-/// Re-executes this test binary as the named test, with the environment that
-/// makes it the child rather than the parent.
-fn spawn_all_child(
-    test: &str,
-    marker: &str,
-    bootstrap: &str,
-    listen: &str,
-    admin: &str,
-) -> ChildGuard {
-    ChildGuard(
+/// One of this suite's tests: its name, which the child re-executes, and the
+/// variable whose presence makes a process that child.
+struct AllInOneTest {
+    name: &'static str,
+    child_marker: &'static str,
+}
+
+const INGEST: AllInOneTest = AllInOneTest {
+    name: INGEST_TEST,
+    child_marker: INGEST_CHILD,
+};
+const SIGTERM: AllInOneTest = AllInOneTest {
+    name: SIGTERM_TEST,
+    child_marker: SIGTERM_CHILD,
+};
+
+/// The parent's side of a test: a broker, and a `--target all` child serving
+/// on its own free ports.
+struct AllInOneParent {
+    // Fields drop in declaration order: the child before the broker it speaks
+    // to, and the broker before the runtime it serves from.
+    child: ChildGuard,
+    /// The child's Pyroscope port.
+    listen: String,
+    _broker: WalTopicBroker,
+    runtime: tokio::runtime::Runtime,
+}
+
+/// Starts a broker and re-executes this test binary as `test`, with the
+/// environment that makes it the child rather than the parent.
+fn start_all_in_one(test: &AllInOneTest) -> AllInOneParent {
+    let runtime = parent_runtime();
+    let broker = runtime.block_on(WalTopicBroker::start());
+    let listen = free_loopback_addr();
+    let child = ChildGuard(
         Command::new(std::env::current_exe().expect("test executable"))
-            .args(["--exact", test, "--nocapture"])
-            .env(marker, bootstrap)
-            .env(CHILD_LISTEN, listen)
-            .env(CHILD_ADMIN, admin)
+            .args(["--exact", test.name, "--nocapture"])
+            .env(test.child_marker, &broker.bootstrap)
+            .env(CHILD_LISTEN, &listen)
+            .env(CHILD_ADMIN, free_loopback_addr())
             .env("RUST_LOG", "warn")
             .spawn()
             .expect("spawn the `--target all` child"),
-    )
+    );
+    AllInOneParent {
+        child,
+        listen,
+        _broker: broker,
+        runtime,
+    }
 }
 
 /// Kills the process whatever the test does, including panicking out of an
@@ -329,16 +338,6 @@ fn parent_runtime() -> tokio::runtime::Runtime {
         .expect("parent runtime")
 }
 
-fn start_broker(runtime: &tokio::runtime::Runtime, dir: &std::path::Path) -> BrokerHandle {
-    runtime.block_on(async {
-        let broker = Broker::start(BrokerConfig::for_tests(dir.join("broker")))
-            .await
-            .expect("broker start");
-        create_wal_topic(&broker.listen_addr().to_string()).await;
-        broker
-    })
-}
-
 fn epoch_millis() -> i64 {
     i64::try_from(
         SystemTime::now()
@@ -347,16 +346,6 @@ fn epoch_millis() -> i64 {
             .as_millis(),
     )
     .expect("epoch milliseconds fit in i64")
-}
-
-/// An address nothing is listening on yet. The child's ports have to be named
-/// before it starts, because the parent connects to them.
-fn free_loopback_addr() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a free port");
-    listener
-        .local_addr()
-        .expect("the bound address")
-        .to_string()
 }
 
 /// Polls `/ready` on the Pyroscope port until every role's gates are met.

@@ -1,6 +1,6 @@
 use super::{
     AlertmanagerHttpSink, AlertmanagerSink, RulerWalError,
-    alertmanager_http_sink::generator_url_for,
+    alertmanager_http_sink::AlertTemplateDefaults,
 };
 
 type AlertBatch = (Option<String>, Vec<krabka_promql::AlertmanagerAlert>);
@@ -15,8 +15,7 @@ type AlertSender = tokio::sync::mpsc::Sender<AlertBatch>;
 pub struct QueuedAlertmanagerSink {
     sender: std::sync::Arc<tokio::sync::Mutex<Option<AlertSender>>>,
     worker: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    external_labels: std::collections::BTreeMap<String, String>,
-    generator_url_template: Option<String>,
+    alert_templates: AlertTemplateDefaults,
 }
 
 impl QueuedAlertmanagerSink {
@@ -26,8 +25,7 @@ impl QueuedAlertmanagerSink {
         capacity: usize,
         resend_delay: std::time::Duration,
     ) -> Self {
-        let external_labels = sink.external_labels.clone();
-        let generator_url_template = sink.generator_url_template.clone();
+        let alert_templates = sink.alert_templates.clone();
         let (sender, mut receiver) = tokio::sync::mpsc::channel::<(
             Option<String>,
             Vec<krabka_promql::AlertmanagerAlert>,
@@ -52,8 +50,7 @@ impl QueuedAlertmanagerSink {
         Self {
             sender: std::sync::Arc::new(tokio::sync::Mutex::new(Some(sender))),
             worker: std::sync::Arc::new(tokio::sync::Mutex::new(Some(worker))),
-            external_labels,
-            generator_url_template,
+            alert_templates,
         }
     }
 
@@ -83,11 +80,11 @@ impl QueuedAlertmanagerSink {
 #[async_trait::async_trait]
 impl AlertmanagerSink for QueuedAlertmanagerSink {
     fn template_external_labels(&self) -> krabka_blockstore::Labels {
-        krabka_blockstore::Labels::from_pairs(self.external_labels.clone())
+        self.alert_templates.external_labels()
     }
 
     fn template_external_url(&self, alert_name: &str) -> String {
-        generator_url_for(self.generator_url_template.as_deref(), alert_name)
+        self.alert_templates.external_url(alert_name)
     }
 
     async fn dispatch_alerts(

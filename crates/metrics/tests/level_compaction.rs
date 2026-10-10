@@ -179,16 +179,21 @@ fn manifest(
     }
 }
 
-#[tokio::test]
-async fn two_level_zero_blocks_in_one_window_become_one_level_one_block() {
-    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let first = write_float_block(
-        &store,
+// `tenant-a`'s block from offset 1: series 7 at `NOW_MS` and one second on.
+async fn write_first_tenant_a_block(store: &Arc<dyn ObjectStore>) -> CompactionIndexManifest {
+    write_float_block(
+        store,
         "tenant-a",
         1,
         &[(7, NOW_MS, 1.0), (7, NOW_MS + 1_000, 2.0)],
     )
-    .await;
+    .await
+}
+
+#[tokio::test]
+async fn two_level_zero_blocks_in_one_window_become_one_level_one_block() {
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    let first = write_first_tenant_a_block(&store).await;
     let second = write_float_block(
         &store,
         "tenant-a",
@@ -1073,13 +1078,7 @@ async fn manifest_listing_follows_publication_replacement_and_removal() {
 #[tokio::test]
 async fn compaction_keeps_complete_samples_tenants_and_deferred_deletion() {
     let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
-    let first = write_float_block(
-        &store,
-        "tenant-a",
-        1,
-        &[(7, NOW_MS, 1.0), (7, NOW_MS + 1_000, 2.0)],
-    )
-    .await;
+    let first = write_first_tenant_a_block(&store).await;
     let second = write_float_block(&store, "tenant-a", 3, &[(7, NOW_MS + 2_000, 3.0)]).await;
     let untouched = write_float_block(&store, "tenant-b", 5, &[(9, NOW_MS, 90.0)]).await;
     let mut deferred = DeferredBlockDeletions::new();

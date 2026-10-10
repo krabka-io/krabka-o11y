@@ -11,14 +11,7 @@ pub async fn timestamp_total_points(
     scan: &crate::ProfileScan,
     sql: &str,
 ) -> Result<Vec<(i64, i64)>, ProfileError> {
-    let batches = scan
-        .ctx
-        .sql(sql)
-        .await
-        .map_err(|err| ProfileError::Plan(err.to_string()))?
-        .collect()
-        .await
-        .map_err(|err| ProfileError::Exec(err.to_string()))?;
+    let batches = scan.collect_sql(sql).await?;
     let mut points = Vec::new();
     for batch in batches {
         let timestamps = batch.column(0).as_primitive::<Int64Type>();

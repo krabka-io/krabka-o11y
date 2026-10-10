@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use super::{
     Arc, BlockStoreError, ByteSize, ByteSizeExt as _, Bytes, ObjectStore, ObjectStoreExt as _,
     Path, Result,
@@ -16,14 +18,44 @@ pub(crate) async fn read_index_shard(
 ) -> Result<Bytes> {
     match krabka_object_store::v013::read_capped(store, path, max_bytes.bytes_u64()).await {
         Ok(bytes) => Ok(bytes),
-        Err(error) => Err(match error {
-            krabka_object_store::v013::ObjectStoreError::TooLarge {
-                size, max_bytes, ..
-            } => BlockStoreError::InvalidBlock(format!(
-                "index shard `{path}` is {size} bytes, exceeds cap of {max_bytes} bytes"
-            )),
-            other => capped_read_error(store, path, other).await,
-        }),
+        Err(error) => Err(
+            match oversized_object_error(
+                CappedObject {
+                    label: "index shard",
+                    name: path,
+                },
+                &error,
+            ) {
+                Some(oversized) => oversized,
+                None => capped_read_error(store, path, error).await,
+            },
+        ),
+    }
+}
+
+/// An object a capped read names in its errors: the kind of object, and the
+/// object itself.
+#[derive(Clone, Copy)]
+pub(crate) struct CappedObject<'a> {
+    pub(crate) label: &'a str,
+    pub(crate) name: &'a dyn Display,
+}
+
+/// Reports a `read_capped` refusal of an object over its cap as an
+/// [`BlockStoreError::InvalidBlock`] that names `object`, and returns `None`
+/// for every other failure.
+pub(crate) fn oversized_object_error(
+    object: CappedObject<'_>,
+    error: &krabka_object_store::v013::ObjectStoreError,
+) -> Option<BlockStoreError> {
+    let CappedObject { label, name } = object;
+    match error {
+        krabka_object_store::v013::ObjectStoreError::TooLarge {
+            size, max_bytes, ..
+        } => Some(BlockStoreError::InvalidBlock(format!(
+            "{label} `{name}` is {size} bytes, exceeds cap of {max_bytes} bytes"
+        ))),
+        _ => None,
     }
 }
 

@@ -71,6 +71,7 @@ mod tests {
 
         use crate::{
             IndexShardRange,
+            awkward_tenants::AWKWARD_TENANTS,
             index::shard_bound_key,
             index_snapshot::{
                 MAX_SHARD_SLOTS_PER_RECORD, SnapshotManifest, UNBOUNDED_SHARD_RANGE,
@@ -296,26 +297,11 @@ mod tests {
         /// from that key alone whether an object is the index's to delete.
         #[test]
         fn a_tenant_never_widens_a_payload_key_past_its_own_segment() {
-            let awkward = [
-                ("plain", "tenant-a"),
-                ("separator", "a/b"),
-                ("relative", ".."),
-                ("current", "."),
-                ("traversal", "../../etc"),
-                ("absolute", "/etc/passwd"),
-                ("space", "a b"),
-                ("star", "a*b"),
-                ("marker", "a!b"),
-                ("quote", "a'b"),
-                ("brackets", "(a)"),
-                ("backslash", "a\\b"),
-                ("non ASCII", "\u{e9}"),
-            ];
             let prefix = shard_payload_prefix_for_key(KEY);
             let range = IndexShardRange::new(10, 20);
             let content = shard_payload_content_hash(b"payload");
 
-            for (name, tenant) in awkward {
+            for (name, tenant) in AWKWARD_TENANTS {
                 let key = shard_payload_object_key(KEY, tenant, range, &content);
                 let rest = key
                     .strip_prefix(&prefix)

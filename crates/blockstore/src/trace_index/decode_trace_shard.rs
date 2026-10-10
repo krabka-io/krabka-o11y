@@ -1,5 +1,5 @@
 use super::{
-    BTreeMap, BTreeSet, BlockLevel, BlockStoreError, BloomShard, ByteReader, Result,
+    BTreeMap, BTreeSet, BlockStoreError, BloomShard, ByteReader, Result, ShardBlockBounds,
     ShardedTraceBloom, TRACE_SHARD_FORMAT_VERSION, TRACE_SHARD_MAGIC, TraceBlockStats,
 };
 
@@ -53,15 +53,10 @@ fn decode(bytes: &[u8]) -> Result<(String, Vec<TraceBlockStats>)> {
     let mut previous_min = 0_i64;
     for _ in 0..block_count {
         let object_key = reader.string("a block object key")?;
-        let min_ts = previous_min.wrapping_add(reader.ivarint("a block start")?);
-        let max_ts = min_ts.wrapping_add(reader.ivarint("a block span")?);
+        let ShardBlockBounds { min_ts, max_ts } = reader.block_bounds(previous_min)?;
         previous_min = min_ts;
         let row_count = reader.count_unbounded("a block row count")?;
-        let level = BlockLevel(
-            u32::try_from(reader.uvarint("a block level")?).map_err(|_| {
-                BlockStoreError::InvalidBlock("names a compaction level beyond u32".to_string())
-            })?,
-        );
+        let level = reader.block_level()?;
 
         let tag_name_count = reader.count("tag names of a block")?;
         let mut tag_names = BTreeSet::new();

@@ -260,6 +260,19 @@ mod tests {
         ))
     }
 
+    /// Pushes the fixture CPU profile for `tenant_name`.
+    async fn push_cpu_profile(
+        state: &DistributorState,
+        tenant_name: &str,
+    ) -> Result<(), ProfilesError> {
+        process_raw(
+            state,
+            &tenant(tenant_name),
+            vec![crate::wire::test_fixtures::raw_profile_cpu()],
+        )
+        .await
+    }
+
     fn tenant(name: &str) -> TenantId {
         TenantId::new(name).expect("a valid tenant id")
     }
@@ -635,13 +648,7 @@ mod tests {
             assert!(matches!(error, ProfilesError::Decode(_)), "{error}");
             assert!(sink.0.lock().unwrap().is_empty());
         }
-        process_raw(
-            &state,
-            &tenant("tenant-a"),
-            vec![crate::wire::test_fixtures::raw_profile_cpu()],
-        )
-        .await
-        .unwrap();
+        push_cpu_profile(&state, "tenant-a").await.unwrap();
         assert!(sink.0.lock().unwrap().len() == 1);
     }
 
@@ -761,23 +768,11 @@ overrides:
 
         // `tenant-b` names no override entry, so only the defaults can reject
         // it. Before the two limit systems collapsed into one, they could not.
-        let err = process_raw(
-            &state,
-            &tenant("tenant-b"),
-            vec![crate::wire::test_fixtures::raw_profile_cpu()],
-        )
-        .await
-        .unwrap_err();
+        let err = push_cpu_profile(&state, "tenant-b").await.unwrap_err();
         assert!(err.to_string().contains("value exceeds 3 bytes"), "{err}");
 
         // `tenant-a` raises the cap above the fixture's longest value.
-        process_raw(
-            &state,
-            &tenant("tenant-a"),
-            vec![crate::wire::test_fixtures::raw_profile_cpu()],
-        )
-        .await
-        .unwrap();
+        push_cpu_profile(&state, "tenant-a").await.unwrap();
 
         assert!(sink.0.lock().unwrap().len() == 1);
     }
@@ -842,22 +837,10 @@ overrides:
 ",
         );
 
-        let err = process_raw(
-            &state,
-            &tenant("tenant-b"),
-            vec![crate::wire::test_fixtures::raw_profile_cpu()],
-        )
-        .await
-        .unwrap_err();
+        let err = push_cpu_profile(&state, "tenant-b").await.unwrap_err();
         assert!(err.to_string().contains("name exceeds 4 bytes"), "{err}");
 
-        process_raw(
-            &state,
-            &tenant("tenant-a"),
-            vec![crate::wire::test_fixtures::raw_profile_cpu()],
-        )
-        .await
-        .unwrap();
+        push_cpu_profile(&state, "tenant-a").await.unwrap();
         assert!(sink.0.lock().unwrap().len() == 1);
     }
 
@@ -946,13 +929,7 @@ defaults:
 ",
         );
 
-        let err = process_raw(
-            &state,
-            &tenant("tenant-a"),
-            vec![crate::wire::test_fixtures::raw_profile_cpu()],
-        )
-        .await
-        .unwrap_err();
+        let err = push_cpu_profile(&state, "tenant-a").await.unwrap_err();
 
         assert!(err.to_string().contains("too many label names"));
         assert!(sink.0.lock().unwrap().is_empty());
@@ -973,20 +950,8 @@ overrides:
             .unwrap(),
         ));
 
-        let err = process_raw(
-            &state,
-            &tenant("tenant-a"),
-            vec![crate::wire::test_fixtures::raw_profile_cpu()],
-        )
-        .await
-        .unwrap_err();
-        process_raw(
-            &state,
-            &tenant("tenant-b"),
-            vec![crate::wire::test_fixtures::raw_profile_cpu()],
-        )
-        .await
-        .unwrap();
+        let err = push_cpu_profile(&state, "tenant-a").await.unwrap_err();
+        push_cpu_profile(&state, "tenant-b").await.unwrap();
 
         assert!(err.to_string().contains("value exceeds"));
     }
@@ -1082,27 +1047,9 @@ overrides:
             .unwrap(),
         ));
 
-        process_raw(
-            &state,
-            &tenant("tenant-a"),
-            vec![crate::wire::test_fixtures::raw_profile_cpu()],
-        )
-        .await
-        .unwrap();
-        let err = process_raw(
-            &state,
-            &tenant("tenant-a"),
-            vec![crate::wire::test_fixtures::raw_profile_cpu()],
-        )
-        .await
-        .unwrap_err();
-        process_raw(
-            &state,
-            &tenant("tenant-b"),
-            vec![crate::wire::test_fixtures::raw_profile_cpu()],
-        )
-        .await
-        .unwrap();
+        push_cpu_profile(&state, "tenant-a").await.unwrap();
+        let err = push_cpu_profile(&state, "tenant-a").await.unwrap_err();
+        push_cpu_profile(&state, "tenant-b").await.unwrap();
 
         assert!(err.to_string().contains("ingestion rate exceeded"), "{err}");
         assert!(sink.0.lock().unwrap().len() == 2);
@@ -1427,13 +1374,7 @@ overrides:
         assert!(err.to_string().contains("max series exceeded"), "{err}");
 
         // Nothing was reserved, so a single-series write afterwards succeeds.
-        process_raw(
-            &state,
-            &tenant("tenant-a"),
-            vec![crate::wire::test_fixtures::raw_profile_cpu()],
-        )
-        .await
-        .unwrap();
+        push_cpu_profile(&state, "tenant-a").await.unwrap();
         assert!(sink.0.lock().unwrap().len() == 1);
     }
 

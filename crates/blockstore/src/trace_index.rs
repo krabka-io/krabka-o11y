@@ -14,8 +14,8 @@ use crate::{
     compaction::{BlockLevel, CompactionCandidate, level_above},
     error::{BlockStoreError, Result},
     index::{
-        ByteReader, IndexShardRange, push_dictionary_id, push_ivarint, push_len, push_string,
-        push_uvarint,
+        ByteReader, IndexShardRange, ShardBlockBounds, push_dictionary_id, push_ivarint, push_len,
+        push_string, push_uvarint,
     },
     index_snapshot::{
         PendingBlockAdditions, PendingBlockRemovals, PendingRemoval, TenantShardMerge,

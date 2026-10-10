@@ -678,33 +678,53 @@ async fn frontend(deployment: &Deployment) -> TestResult<ContainerAsync<GenericI
 // The ranges span `times` at a one-second step.
 async fn assert_frontend_ranges(deployment: &Deployment, base: &str, times: &[i64]) -> TestResult {
     let bounds = (times[0], times[times.len() - 1], 1000);
-    for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-        for (metric, expected) in [
-            (
-                "frontend_gauge",
-                float_matrix(
-                    "frontend_gauge",
-                    &times.iter().map(|&time| (time, value)).collect::<Vec<_>>(),
-                    json!({}),
-                ),
-            ),
-            (
-                "frontend_histogram",
-                histogram_matrix("frontend_histogram", times),
-            ),
-        ] {
-            assert!(
-                data(
-                    &deployment.infrastructure.client,
-                    &range_url(base, metric, bounds)?,
-                    tenant
-                )
-                .await?
-                    == expected
-            );
-        }
+    for FrontendRange {
+        tenant,
+        metric,
+        expected,
+    } in frontend_ranges(times)
+    {
+        assert!(
+            data(
+                &deployment.infrastructure.client,
+                &range_url(base, metric, bounds)?,
+                tenant
+            )
+            .await?
+                == expected
+        );
     }
     Ok(())
+}
+
+// One tenant's expected answer to one frontend range query.
+struct FrontendRange {
+    tenant: &'static str,
+    metric: &'static str,
+    expected: Value,
+}
+
+// Both tenants' gauge and histogram ranges over `times`, as the frontend
+// answers them.
+fn frontend_ranges(times: &[i64]) -> Vec<FrontendRange> {
+    let mut ranges = Vec::new();
+    for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
+        ranges.push(FrontendRange {
+            tenant,
+            metric: "frontend_gauge",
+            expected: float_matrix(
+                "frontend_gauge",
+                &times.iter().map(|&time| (time, value)).collect::<Vec<_>>(),
+                json!({}),
+            ),
+        });
+        ranges.push(FrontendRange {
+            tenant,
+            metric: "frontend_histogram",
+            expected: histogram_matrix("frontend_histogram", times),
+        });
+    }
+    ranges
 }
 
 #[tokio::test]
@@ -734,29 +754,19 @@ async fn frontend_preserves_unaligned_float_and_histogram_queries_across_cache_h
     let times: Vec<_> = (0..7).map(|step| START_MS + 125 + step * 1000).collect();
     let bounds = (times[0], times[6], 1000);
     // Every evaluation is 125ms off the step grid and crosses four split windows.
-    for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-        for (metric, expected) in [
-            (
-                "frontend_gauge",
-                float_matrix(
-                    "frontend_gauge",
-                    &times.iter().map(|&time| (time, value)).collect::<Vec<_>>(),
-                    json!({}),
-                ),
-            ),
-            (
-                "frontend_histogram",
-                histogram_matrix("frontend_histogram", &times),
-            ),
-        ] {
-            wait_data(
-                &deployment.infrastructure.client,
-                &range_url(&cold_base, metric, bounds)?,
-                tenant,
-                &expected,
-            )
-            .await?;
-        }
+    for FrontendRange {
+        tenant,
+        metric,
+        expected,
+    } in frontend_ranges(&times)
+    {
+        wait_data(
+            &deployment.infrastructure.client,
+            &range_url(&cold_base, metric, bounds)?,
+            tenant,
+            &expected,
+        )
+        .await?;
     }
     builder.stop_with_timeout(Some(30)).await?;
     deployment.hot.stop_with_timeout(Some(30)).await?;

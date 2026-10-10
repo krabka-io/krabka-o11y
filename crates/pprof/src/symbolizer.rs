@@ -210,9 +210,10 @@ mod tests {
         if is_llvm_cov_run() {
             return;
         }
-        let _ = object_symbol_anchor();
-        let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-        let address = object_symbol_anchor_address(&bytes);
+        let OwnExecutable {
+            bytes,
+            anchor_address: address,
+        } = own_executable();
         let resolver = ObjectSymbolResolver::from_bytes(&bytes).unwrap();
 
         let frames = resolver
@@ -248,9 +249,10 @@ mod tests {
         if is_llvm_cov_run() {
             return;
         }
-        let _ = object_symbol_anchor();
-        let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-        let address = object_symbol_anchor_address(&bytes);
+        let OwnExecutable {
+            bytes,
+            anchor_address: address,
+        } = own_executable();
         let resolver = ObjectSymbolResolver::from_bytes(&bytes).unwrap();
 
         let frames = resolver
@@ -290,9 +292,10 @@ mod tests {
         if is_llvm_cov_run() {
             return;
         }
-        let _ = object_symbol_anchor();
-        let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
-        let address = object_symbol_anchor_address(&bytes);
+        let OwnExecutable {
+            bytes,
+            anchor_address: address,
+        } = own_executable();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
         let max_debuginfo = ByteSize::from_bytes(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
@@ -383,10 +386,11 @@ mod tests {
         if is_llvm_cov_run() {
             return;
         }
-        let _ = object_symbol_anchor();
         let exe = std::env::current_exe().unwrap();
-        let bytes = std::fs::read(&exe).unwrap();
-        let address = object_symbol_anchor_address(&bytes);
+        let OwnExecutable {
+            anchor_address: address,
+            ..
+        } = own_executable();
         let resolver = FileSystemResolver::default();
         let request = SymbolizeRequest {
             build_id: String::new(),
@@ -589,6 +593,25 @@ mod tests {
         server_thread.join().unwrap();
         assert!(out.is_none());
         assert!(followed.load(Ordering::Relaxed) == 0);
+    }
+
+    /// The test binary's own bytes, and the address of
+    /// `object_symbol_anchor` in them.
+    #[cfg(target_os = "linux")]
+    struct OwnExecutable {
+        bytes: Vec<u8>,
+        anchor_address: u64,
+    }
+
+    #[cfg(target_os = "linux")]
+    fn own_executable() -> OwnExecutable {
+        let _ = object_symbol_anchor();
+        let bytes = std::fs::read(std::env::current_exe().unwrap()).unwrap();
+        let anchor_address = object_symbol_anchor_address(&bytes);
+        OwnExecutable {
+            bytes,
+            anchor_address,
+        }
     }
 
     #[cfg(target_os = "linux")]

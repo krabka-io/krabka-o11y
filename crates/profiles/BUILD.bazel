@@ -2,8 +2,12 @@ load("//bazel:defs.bzl", "crate_binary", "crate_library", "crate_tests")
 
 package(default_visibility = ["//visibility:public"])
 
-# Consumed by `crate.from_cargo` (see //MODULE.bazel).
-exports_files(["Cargo.toml"])
+# Consumed by `crate.from_cargo` (see //MODULE.bazel). The `SIGTERM` child
+# runtime is the test helper //crates/metrics-service reaches with `#[path]`.
+exports_files([
+    "Cargo.toml",
+    "src/bin/krabka-profiles/sigterm_child_runtime.rs",
+])
 
 crate_library(
     name = "profiles",
@@ -56,8 +60,9 @@ crate_tests(
         },
     },
     # The shared lifecycle and hooked stores, reached with `#[path]` from
-    # //crates/blockstore, and the fixtures shared with the binary's own suites, reached with `#[path]`
-    # from `src/bin/krabka-profiles`.
+    # //crates/blockstore, and the fixtures shared with the binary's own suites
+    # and the unit tests, reached with `#[path]` from `src/bin/krabka-profiles`
+    # and `src`.
     extra_srcs = {
         "block_builder_drain": ["src/bin/krabka-profiles/wal_topic.rs"],
         "block_builder_object_store_retry": [
@@ -70,7 +75,10 @@ crate_tests(
             "src/bin/krabka-profiles/synthetic_cpu_profile.rs",
             "src/bin/krabka-profiles/wal_topic.rs",
         ],
-        "lifecycle": ["//crates/blockstore:tests/support/lifecycle_store.rs"],
+        "lifecycle": [
+            "//crates/blockstore:tests/support/lifecycle_store.rs",
+            "src/cpu_record.rs",
+        ],
         "pyroscope_deployment": ["//crates/metrics-service:tests/support/container_deployment.rs"],
         "pyroscope_differential": [
             "//crates/metrics-service:tests/support/generated_differential.rs",

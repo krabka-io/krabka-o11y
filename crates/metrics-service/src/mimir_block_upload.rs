@@ -151,11 +151,9 @@ pub(crate) async fn upload_block_file(
 
 pub(crate) async fn finish_block_upload(
     State(state): State<MimirTenantAdminState>,
-    Path(block): Path<String>,
-    axum::Extension(principal): axum::Extension<Principal>,
-    headers: HeaderMap,
+    caller: UploadCaller,
 ) -> Response {
-    let (tenant, block) = match request_parameters(&headers, &principal, &block) {
+    let (tenant, block) = match caller.request_parameters() {
         Ok(parameters) => parameters,
         Err(response) => return *response,
     };
@@ -221,11 +219,9 @@ pub(crate) async fn finish_block_upload(
 
 pub(crate) async fn check_block_upload(
     State(state): State<MimirTenantAdminState>,
-    Path(block): Path<String>,
-    axum::Extension(principal): axum::Extension<Principal>,
-    headers: HeaderMap,
+    caller: UploadCaller,
 ) -> Response {
-    let (tenant, block) = match request_parameters(&headers, &principal, &block) {
+    let (tenant, block) = match caller.request_parameters() {
         Ok(parameters) => parameters,
         Err(response) => return *response,
     };
@@ -256,18 +252,6 @@ pub(crate) async fn check_block_upload(
         Ok(None) => error(StatusCode::NOT_FOUND, "block doesn't exist"),
         Err(error) => internal(error),
     }
-}
-
-fn request_parameters(
-    headers: &HeaderMap,
-    principal: &Principal,
-    block: &str,
-) -> Result<(String, String), Box<Response>> {
-    let tenant = krabka_metrics::authorized_tenant_from_headers(headers, principal)
-        .map_err(|error| Box::new(error.into_response()))?;
-    let block = canonical_block_id(block)
-        .ok_or_else(|| Box::new(error(StatusCode::BAD_REQUEST, "invalid block ID")))?;
-    Ok((tenant.as_str().to_owned(), block))
 }
 
 fn canonical_block_id(block: &str) -> Option<String> {
@@ -539,11 +523,23 @@ async fn object_bytes(
 /// its `{block}` path segment, its authenticated principal and its headers.
 ///
 /// Extracting it rejects only what the separate extractors would have; the
-/// tenant and block ID are resolved by [`open_upload`].
+/// tenant and block ID are resolved by [`UploadCaller::request_parameters`].
 pub(crate) struct UploadCaller {
     block: String,
     principal: Principal,
     headers: HeaderMap,
+}
+
+impl UploadCaller {
+    /// The caller's authorized tenant and canonical block ID, or the response
+    /// that refuses them.
+    fn request_parameters(&self) -> Result<(String, String), Box<Response>> {
+        let tenant = krabka_metrics::authorized_tenant_from_headers(&self.headers, &self.principal)
+            .map_err(|error| Box::new(error.into_response()))?;
+        let block = canonical_block_id(&self.block)
+            .ok_or_else(|| Box::new(error(StatusCode::BAD_REQUEST, "invalid block ID")))?;
+        Ok((tenant.as_str().to_owned(), block))
+    }
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for UploadCaller {
@@ -572,7 +568,7 @@ async fn open_upload(
     state: &MimirTenantAdminState,
     caller: &UploadCaller,
 ) -> Result<(String, String), Box<Response>> {
-    let (tenant, block) = request_parameters(&caller.headers, &caller.principal, &caller.block)?;
+    let (tenant, block) = caller.request_parameters()?;
     if let Some(refusal) = refuse_existing_upload(state, &tenant, &block).await {
         return Err(Box::new(refusal));
     }

@@ -182,17 +182,7 @@ def proposal(name, baseline, release):
         f"- Reported version: `{reported}`",
         f"- Compare: https://github.com/{repo}/compare/{baseline['revision']}...{revision}",
         "",
-        "### Added surfaces",
-        *(f"- `{item}`" for item in added),
-        *([] if added else ["- None detected in retained patches."]),
-        "",
-        "### Removed surfaces",
-        *(f"- `{item}`" for item in removed),
-        *([] if removed else ["- None detected in retained patches."]),
-        "",
-        "### Protobuf changes",
-        *(f"- `{item}`" for item in protobuf),
-        *([] if protobuf else ["- None."]),
+        *surface_change_lines(added, removed, protobuf),
         "",
         "### Known divergences to review",
         *(f"- {item}" for item in divergences),
@@ -204,6 +194,22 @@ def proposal(name, baseline, release):
         "This is a review proposal only. Automation does not promote oracle pins.",
     ])
     return {"title": title, "body": body, "release_line": line.group(), "revision": revision, "digest": digest}
+
+
+def surface_change_lines(added, removed, protobuf):
+    return [
+        "### Added surfaces",
+        *(f"- `{item}`" for item in added),
+        *([] if added else ["- None detected in retained patches."]),
+        "",
+        "### Removed surfaces",
+        *(f"- `{item}`" for item in removed),
+        *([] if removed else ["- None detected in retained patches."]),
+        "",
+        "### Protobuf changes",
+        *(f"- `{item}`" for item in protobuf),
+        *([] if protobuf else ["- None."]),
+    ]
 
 
 def otlp_proposal(baseline, release):
@@ -228,17 +234,7 @@ def otlp_proposal(baseline, release):
         f"- Source SHA-256: `{source_sha}`",
         f"- Compare: https://github.com/{repo}/compare/{baseline['revision']}...{revision}",
         "",
-        "### Added surfaces",
-        *(f"- `{item}`" for item in added),
-        *([] if added else ["- None detected in retained patches."]),
-        "",
-        "### Removed surfaces",
-        *(f"- `{item}`" for item in removed),
-        *([] if removed else ["- None detected in retained patches."]),
-        "",
-        "### Protobuf changes",
-        *(f"- `{item}`" for item in protobuf),
-        *([] if protobuf else ["- None."]),
+        *surface_change_lines(added, removed, protobuf),
         "",
         "### Known divergences to review",
         "- None recorded.",

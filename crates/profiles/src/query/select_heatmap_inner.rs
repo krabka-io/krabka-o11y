@@ -1,8 +1,9 @@
 use super::{
     Arc, BTreeMap, ConnectError, ConnectRequest, ConnectResponse, EndMs, Extension, HeaderMap,
-    HeatmapSlotsMillis, Principal, ProfileStore, QuerierState, SpanHeatmapRequest, StartMs,
-    TimeExt, authorize_tenant, connect_error, heatmap_from_points, heatmap_time_buckets, limit, pb,
-    step_from_secs, tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
+    HeatmapExemplarRequest, HeatmapSlotsMillis, Principal, ProfileStore, QuerierState,
+    SpanHeatmapRequest, StartMs, TimeExt, authorize_tenant, connect_error, heatmap_from_points,
+    heatmap_time_buckets, limit, pb, step_from_secs, tenant_connect_error,
+    tenant_denied_connect_error, tenant_from_headers,
 };
 
 pub(crate) async fn select_heatmap_inner<S>(
@@ -36,29 +37,24 @@ where
     .map_err(connect_error)?;
     let step_ms = step.millis_i64();
     let scan_start = req.start.saturating_sub(step_ms);
+    let exemplar_request = HeatmapExemplarRequest {
+        tenant: &tenant,
+        profile_type: &req.profile_type_id,
+        label_selector: &req.label_selector,
+        group_by: &req.group_by,
+        slots: HeatmapSlotsMillis {
+            start: scan_start,
+            end: req.end,
+            step: step_ms,
+        },
+    };
     let span_exemplars = match req.exemplar_type {
         exemplar_type if exemplar_type == pb::querier::v1::ExemplarType::Span as i32 => state
-            .select_heatmap_span_exemplars(
-                (&tenant, &req.profile_type_id, &req.label_selector),
-                &req.group_by,
-                HeatmapSlotsMillis {
-                    start: scan_start,
-                    end: req.end,
-                    step: step_ms,
-                },
-            )
+            .select_heatmap_span_exemplars(exemplar_request)
             .await
             .map_err(connect_error)?,
         exemplar_type if exemplar_type == pb::querier::v1::ExemplarType::Individual as i32 => state
-            .select_heatmap_individual_exemplars(
-                (&tenant, &req.profile_type_id, &req.label_selector),
-                &req.group_by,
-                HeatmapSlotsMillis {
-                    start: scan_start,
-                    end: req.end,
-                    step: step_ms,
-                },
-            )
+            .select_heatmap_individual_exemplars(exemplar_request)
             .await
             .map_err(connect_error)?,
         _ => BTreeMap::new(),

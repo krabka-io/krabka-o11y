@@ -45,9 +45,12 @@ crate_library(name = "metrics-service")
 crate_binary(
     name = "krabka-metrics-service",
     crate_root = "src/bin/krabka-metrics-service/main.rs",
-    # The `SIGTERM` helper shared with the other signal binaries, reached with
-    # `#[path]` from //crates/observability.
-    extra_srcs = ["//crates/observability:tests/support/sigterm_child.rs"],
+    # The `SIGTERM` helpers shared with the other signal binaries, reached with
+    # `#[path]` from //crates/observability and //crates/profiles.
+    extra_srcs = [
+        "//crates/observability:tests/support/sigterm_child.rs",
+        "//crates/profiles:src/bin/krabka-profiles/sigterm_child_runtime.rs",
+    ],
     lib = ":metrics-service",
 )
 

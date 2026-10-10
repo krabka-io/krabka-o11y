@@ -1,7 +1,7 @@
 use super::{
-    AggregationTemporality, DecodedSeries, DeltaAccumulator, Histogram, KeyValue, Metric,
-    OtlpError, PointFamily, TranslationStrategy, accumulate_delta_float_series,
-    classic_histogram_series, metric_metadata, translated_metric_name,
+    AggregationTemporality, DecodedSeries, DeltaAccumulator, Histogram, HistogramFamily, KeyValue,
+    Metric, OtlpError, PointFamily, TranslationStrategy, accumulate_delta_float_series,
+    classic_histogram_series,
 };
 
 pub(crate) fn histogram_series(
@@ -11,8 +11,7 @@ pub(crate) fn histogram_series(
     strategy: TranslationStrategy,
     mut accumulator: Option<&mut DeltaAccumulator>,
 ) -> Result<Vec<DecodedSeries>, OtlpError> {
-    let name = translated_metric_name(metric, strategy, false);
-    let metadata = metric_metadata(metric, &name, "histogram");
+    let HistogramFamily { name, metadata } = HistogramFamily::of(metric, strategy);
     let mut out = Vec::new();
     for point in &histogram.data_points {
         let mut point_series = classic_histogram_series(

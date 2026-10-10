@@ -30,14 +30,7 @@ pub async fn call_site_profile_totals(
         value = PCOL_VALUE,
         table = scan.samples_table,
     );
-    let batches = scan
-        .ctx
-        .sql(&sql)
-        .await
-        .map_err(|err| ProfileError::Plan(err.to_string()))?
-        .collect()
-        .await
-        .map_err(|err| ProfileError::Exec(err.to_string()))?;
+    let batches = scan.collect_sql(&sql).await?;
 
     let mut per_profile: BTreeMap<(i64, u64), i64> = BTreeMap::new();
     for batch in batches {

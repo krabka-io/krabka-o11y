@@ -677,19 +677,18 @@ overrides:
         );
     }
 
-    /// The per-series sample cap counts samples, histograms and exemplars
-    /// together. All three are populated here and the total is placed either
-    /// side of the limit, because a sum that subtracts one term instead of
-    /// adding it still produces a number -- just a smaller one that slips
-    /// under the cap.
-    #[test]
-    fn the_per_series_sample_cap_counts_all_three_collections() {
-        use crate::{
-            histogram::NativeHistogram,
-            wire::{DecodedExemplar, DecodedSample},
-        };
+    /// How many samples, histograms and exemplars a test series carries.
+    #[derive(Clone, Copy, Default)]
+    struct CollectionCounts {
+        samples: usize,
+        histograms: usize,
+        exemplars: usize,
+    }
 
-        let histogram = || NativeHistogram {
+    /// A `requests` series with `counts` of each collection, every entry at
+    /// its own index as its timestamp.
+    fn counted_series(counts: CollectionCounts) -> DecodedSeries {
+        let histogram = || crate::histogram::NativeHistogram {
             schema: 0,
             is_float: false,
             reset_hint: crate::ResetHint::Unknown,
@@ -704,27 +703,34 @@ overrides:
             custom_values: None,
             start_timestamp_ms: None,
         };
-        let series = |samples: usize, histograms: usize, exemplars: usize| {
-            let mut labels = Labels::default();
-            labels.insert("__name__", "requests");
-            DecodedSeries {
-                labels,
-                samples: (0..samples)
-                    .map(|i| DecodedSample::new(i64::try_from(i).expect("small"), 1.0))
-                    .collect(),
-                histograms: (0..histograms)
-                    .map(|i| (i64::try_from(i).expect("small"), histogram()))
-                    .collect(),
-                exemplars: (0..exemplars)
-                    .map(|i| DecodedExemplar {
-                        labels: Labels::default(),
-                        timestamp_ms: i64::try_from(i).expect("small"),
-                        value: 1.0,
-                    })
-                    .collect(),
-                metadata: None,
-            }
-        };
+        let mut labels = Labels::default();
+        labels.insert("__name__", "requests");
+        DecodedSeries {
+            labels,
+            samples: (0..counts.samples)
+                .map(|i| crate::wire::DecodedSample::new(i64::try_from(i).expect("small"), 1.0))
+                .collect(),
+            histograms: (0..counts.histograms)
+                .map(|i| (i64::try_from(i).expect("small"), histogram()))
+                .collect(),
+            exemplars: (0..counts.exemplars)
+                .map(|i| crate::wire::DecodedExemplar {
+                    labels: Labels::default(),
+                    timestamp_ms: i64::try_from(i).expect("small"),
+                    value: 1.0,
+                })
+                .collect(),
+            metadata: None,
+        }
+    }
+
+    /// The per-series sample cap counts samples, histograms and exemplars
+    /// together. All three are populated here and the total is placed either
+    /// side of the limit, because a sum that subtracts one term instead of
+    /// adding it still produces a number -- just a smaller one that slips
+    /// under the cap.
+    #[test]
+    fn the_per_series_sample_cap_counts_all_three_collections() {
         let limits = super::Limits {
             max_samples_per_series: 6,
             max_series_per_request: 10,
@@ -733,37 +739,117 @@ overrides:
 
         // Three, two and one make exactly the cap, which is allowed.
         check!(
-            super::validate(&[series(3, 2, 1)], &limits).is_ok(),
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    samples: 3,
+                    histograms: 2,
+                    exemplars: 1
+                })],
+                &limits
+            )
+            .is_ok(),
             "exactly at the cap"
         );
 
         // One more of any kind is over it, whichever collection grows.
         check!(
-            super::validate(&[series(4, 2, 1)], &limits).is_err(),
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    samples: 4,
+                    histograms: 2,
+                    exemplars: 1
+                })],
+                &limits
+            )
+            .is_err(),
             "one more sample"
         );
         check!(
-            super::validate(&[series(3, 3, 1)], &limits).is_err(),
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    samples: 3,
+                    histograms: 3,
+                    exemplars: 1
+                })],
+                &limits
+            )
+            .is_err(),
             "one more histogram"
         );
         check!(
-            super::validate(&[series(3, 2, 2)], &limits).is_err(),
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    samples: 3,
+                    histograms: 2,
+                    exemplars: 2
+                })],
+                &limits
+            )
+            .is_err(),
             "one more exemplar"
         );
 
         // Each collection alone reaches the cap on its own terms.
-        check!(super::validate(&[series(6, 0, 0)], &limits).is_ok());
-        check!(super::validate(&[series(7, 0, 0)], &limits).is_err());
-        check!(super::validate(&[series(0, 7, 0)], &limits).is_err());
-        check!(super::validate(&[series(0, 0, 7)], &limits).is_err());
+        check!(
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    samples: 6,
+                    ..CollectionCounts::default()
+                })],
+                &limits
+            )
+            .is_ok()
+        );
+        check!(
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    samples: 7,
+                    ..CollectionCounts::default()
+                })],
+                &limits
+            )
+            .is_err()
+        );
+        check!(
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    histograms: 7,
+                    ..CollectionCounts::default()
+                })],
+                &limits
+            )
+            .is_err()
+        );
+        check!(
+            super::validate(
+                &[counted_series(CollectionCounts {
+                    exemplars: 7,
+                    ..CollectionCounts::default()
+                })],
+                &limits
+            )
+            .is_err()
+        );
 
         // The series cap is separate and counts series, not samples.
-        let many = vec![series(1, 0, 0); 10];
+        let many = vec![
+            counted_series(CollectionCounts {
+                samples: 1,
+                ..CollectionCounts::default()
+            });
+            10
+        ];
         check!(
             super::validate(&many, &limits).is_ok(),
             "ten series is the cap"
         );
-        let too_many = vec![series(1, 0, 0); 11];
+        let too_many = vec![
+            counted_series(CollectionCounts {
+                samples: 1,
+                ..CollectionCounts::default()
+            });
+            11
+        ];
         check!(
             super::validate(&too_many, &limits).is_err(),
             "eleven is over it"
@@ -845,71 +931,57 @@ overrides:
     /// counts, dropping any one of the three looks the same.
     #[test]
     fn a_decoded_batch_counts_samples_histograms_and_exemplars() {
-        use crate::{
-            histogram::NativeHistogram,
-            wire::{DecodedExemplar, DecodedSample},
-        };
-
-        let series = |samples: usize, histograms: usize, exemplars: usize| DecodedSeries {
-            labels: Labels::default(),
-            samples: (0..samples)
-                .map(|i| DecodedSample::new(i64::try_from(i).expect("small"), 1.0))
-                .collect(),
-            histograms: (0..histograms)
-                .map(|i| {
-                    (
-                        i64::try_from(i).expect("small"),
-                        NativeHistogram {
-                            schema: 0,
-                            is_float: false,
-                            reset_hint: crate::ResetHint::Unknown,
-                            zero_threshold: 0.0,
-                            zero_count: 0.0,
-                            count: 0.0,
-                            sum: 0.0,
-                            positive_spans: Vec::new(),
-                            positive_counts: Vec::new(),
-                            negative_spans: Vec::new(),
-                            negative_counts: Vec::new(),
-                            custom_values: None,
-                            start_timestamp_ms: None,
-                        },
-                    )
-                })
-                .collect(),
-            exemplars: (0..exemplars)
-                .map(|i| DecodedExemplar {
-                    labels: Labels::default(),
-                    timestamp_ms: i64::try_from(i).expect("small"),
-                    value: 1.0,
-                })
-                .collect(),
-            metadata: None,
-        };
-
         // Three different counts, so dropping any one term is distinguishable
         // from dropping either other.
-        check!(super::decoded_sample_count(&[series(3, 5, 7)]) == 15);
         check!(
-            super::decoded_sample_count(&[series(3, 0, 0)]) == 3,
+            super::decoded_sample_count(&[counted_series(CollectionCounts {
+                samples: 3,
+                histograms: 5,
+                exemplars: 7
+            })]) == 15
+        );
+        check!(
+            super::decoded_sample_count(&[counted_series(CollectionCounts {
+                samples: 3,
+                ..CollectionCounts::default()
+            })]) == 3,
             "samples alone"
         );
         check!(
-            super::decoded_sample_count(&[series(0, 5, 0)]) == 5,
+            super::decoded_sample_count(&[counted_series(CollectionCounts {
+                histograms: 5,
+                ..CollectionCounts::default()
+            })]) == 5,
             "histograms alone"
         );
         check!(
-            super::decoded_sample_count(&[series(0, 0, 7)]) == 7,
+            super::decoded_sample_count(&[counted_series(CollectionCounts {
+                exemplars: 7,
+                ..CollectionCounts::default()
+            })]) == 7,
             "exemplars alone"
         );
 
         // Several series add up rather than the largest winning.
-        check!(super::decoded_sample_count(&[series(3, 0, 0), series(4, 0, 0)]) == 7);
+        check!(
+            super::decoded_sample_count(&[
+                counted_series(CollectionCounts {
+                    samples: 3,
+                    ..CollectionCounts::default()
+                }),
+                counted_series(CollectionCounts {
+                    samples: 4,
+                    ..CollectionCounts::default()
+                })
+            ]) == 7
+        );
 
         // Nothing at all is zero, not one.
         check!(super::decoded_sample_count(&[]) == 0);
         check!(
-            super::decoded_sample_count(&[series(0, 0, 0)]) == 0,
+            super::decoded_sample_count(&[counted_series(CollectionCounts {
+                ..CollectionCounts::default()
+            })]) == 0,
             "an empty series counts none"
         );
     }
@@ -1652,16 +1724,21 @@ overrides:
         snappy(&req.encode_to_vec())
     }
 
+    /// One `http_requests_total` series with a single sample, 1 at 100ms.
+    fn http_requests_total_series() -> crate::wire::pb::v1::TimeSeries {
+        crate::wire::pb::v1::TimeSeries {
+            labels: vec![label("__name__", "http_requests_total")],
+            samples: vec![crate::wire::pb::v1::Sample {
+                value: 1.0,
+                timestamp: 100,
+            }],
+            ..Default::default()
+        }
+    }
+
     fn v1_body_with_metadata() -> Vec<u8> {
         let req = crate::wire::pb::v1::WriteRequest {
-            timeseries: vec![crate::wire::pb::v1::TimeSeries {
-                labels: vec![label("__name__", "http_requests_total")],
-                samples: vec![crate::wire::pb::v1::Sample {
-                    value: 1.0,
-                    timestamp: 100,
-                }],
-                ..Default::default()
-            }],
+            timeseries: vec![http_requests_total_series()],
             metadata: vec![crate::wire::pb::v1::MetricMetadata {
                 r#type: crate::wire::pb::v1::metric_metadata::MetricType::Counter as i32,
                 metric_family_name: "http_requests_total".into(),
@@ -1675,17 +1752,12 @@ overrides:
     fn v1_body_with_exemplar_label_value(value: &str) -> Vec<u8> {
         let req = crate::wire::pb::v1::WriteRequest {
             timeseries: vec![crate::wire::pb::v1::TimeSeries {
-                labels: vec![label("__name__", "http_requests_total")],
-                samples: vec![crate::wire::pb::v1::Sample {
-                    value: 1.0,
-                    timestamp: 100,
-                }],
                 exemplars: vec![crate::wire::pb::v1::Exemplar {
                     labels: vec![label("trace_id", value)],
                     value: 1.0,
                     timestamp: 100,
                 }],
-                ..Default::default()
+                ..http_requests_total_series()
             }],
             ..Default::default()
         };
@@ -2792,43 +2864,32 @@ overrides:
 
     #[tokio::test]
     async fn push_requires_snappy_content_encoding() {
-        let (state, sink) = test_state();
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", "up")])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        // No encoding at all, and an encoding other than snappy.
+        for content_encoding in [None, Some("gzip")] {
+            let (state, sink) = test_state();
+            let mut request = Request::builder()
+                .method("POST")
+                .uri("/api/v1/push")
+                .header("Content-Type", "application/x-protobuf");
+            if let Some(encoding) = content_encoding {
+                request = request.header("Content-Encoding", encoding);
+            }
+            let response = router(state)
+                .oneshot(
+                    request
+                        .header("X-Scope-OrgID", "tenant-a")
+                        .body(Body::from(v1_body(vec![label("__name__", "up")])))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
 
-        assert!(response.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE);
-        assert!(sink.records().is_empty());
-    }
-
-    #[tokio::test]
-    async fn push_rejects_non_snappy_content_encoding() {
-        let (state, sink) = test_state();
-        let response = router(state)
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/push")
-                    .header("Content-Type", "application/x-protobuf")
-                    .header("Content-Encoding", "gzip")
-                    .header("X-Scope-OrgID", "tenant-a")
-                    .body(Body::from(v1_body(vec![label("__name__", "up")])))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert!(response.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE);
-        assert!(sink.records().is_empty());
+            check!(
+                response.status() == StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "{content_encoding:?}"
+            );
+            check!(sink.records().is_empty(), "{content_encoding:?}");
+        }
     }
 
     #[tokio::test]
@@ -3865,6 +3926,7 @@ mod indicator;
 mod influx_push;
 mod influx_push_inner;
 mod ingest_clock;
+mod ingest_request_start;
 mod ingest_span;
 mod ingest_stamp;
 mod insert_written_header;
@@ -3951,6 +4013,7 @@ use indicator::indicator;
 use influx_push::influx_push;
 use influx_push_inner::influx_push_inner;
 pub use ingest_clock::IngestClock;
+use ingest_request_start::IngestRequestStart;
 use ingest_span::ingest_span;
 use ingest_stamp::ingest_stamp;
 use insert_written_header::insert_written_header;

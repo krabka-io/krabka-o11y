@@ -16,6 +16,8 @@
 
 #[path = "../../../../observability/tests/support/sigterm_child.rs"]
 mod sigterm_child;
+#[path = "../../../../profiles/src/bin/krabka-profiles/sigterm_child_runtime.rs"]
+mod sigterm_child_runtime;
 
 use std::{
     process::Command,
@@ -24,7 +26,10 @@ use std::{
 
 use clap::Parser as _;
 
-use self::sigterm_child::terminate_and_wait_for_exit;
+use self::{
+    sigterm_child::terminate_and_wait_for_exit,
+    sigterm_child_runtime::{SigtermChildRuntime, free_loopback_addr},
+};
 use super::{
     AuditHandle, Cli, RoleLaunch, RoleReadiness, ServerSecurity, Shutdown, run_querier,
     spawn_shutdown_signal_listener,
@@ -80,19 +85,7 @@ fn sigterm_makes_the_querier_process_exit() {
 /// The role under test: the binary's own `run_querier`, pointed at a broker
 /// that never answers.
 fn run_querier_child() {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("child runtime");
-    // Registered before the parent can reach anything this process binds, so
-    // the parent's `kill` cannot land in the window before the role installs
-    // its own. Tokio's handlers are process-wide and refcounted, so the one
-    // the role installs later is this same registration.
-    let _terminate = runtime
-        .block_on(async {
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        })
-        .expect("install SIGTERM handler");
+    let runtime = SigtermChildRuntime::start();
 
     let listen = std::env::var(CHILD_LISTEN).expect("child listen address");
     let admin = std::env::var(CHILD_ADMIN).expect("child admin address");
@@ -130,15 +123,6 @@ fn run_querier_child() {
         .await
         .expect("the querier role returns on SIGTERM");
     });
-}
-
-/// An address nothing is listening on yet.
-fn free_loopback_addr() -> String {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a free port");
-    listener
-        .local_addr()
-        .expect("the bound address")
-        .to_string()
 }
 
 fn wait_for_listener(addr: &str, within: Duration) {

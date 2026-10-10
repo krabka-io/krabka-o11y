@@ -15,14 +15,7 @@ pub(crate) async fn merge_scan_to_pprof(
         call_sites,
     } = merge;
     let sql = sample_selector_sql(scan, sample_selector);
-    let batches = scan
-        .ctx
-        .sql(&sql)
-        .await
-        .map_err(|err| ProfileError::Plan(err.to_string()))?
-        .collect()
-        .await
-        .map_err(|err| ProfileError::Exec(err.to_string()))?;
+    let batches = scan.collect_sql(&sql).await?;
     let mut samples = BTreeMap::<Vec<ResolvedLocation>, i64>::new();
     for batch in batches {
         let partitions = batch.column(0).as_primitive::<UInt64Type>();

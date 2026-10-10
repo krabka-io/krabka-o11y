@@ -105,8 +105,10 @@ mod tests {
     use super::*;
     use crate::{
         blockbuilder::build_block,
-        test_support::{build_test_block, index_with_series},
-        wal::{ProfileRecord, WalSample, WalSymbolSet},
+        test_support::{
+            CpuRecord, build_test_block, cold_api_flamegraph, cpu_record, index_with_series,
+        },
+        wal::{ProfileRecord, WalSample},
     };
 
     const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
@@ -472,13 +474,8 @@ mod tests {
         let meta_a = build_test_block(&store, std::slice::from_ref(&rec_a), 0).await;
         let meta_b = build_test_block(&store, std::slice::from_ref(&rec_b), 1).await;
         let index = index_with_series([&rec_a], &[&meta_a, &meta_b]);
-        let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
-        let engine = FlameEngine::new(cold, EngineOpts::default());
 
-        let fg = engine
-            .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
-            .await
-            .unwrap();
+        let fg = cold_api_flamegraph(store, index).await;
 
         assert!(fg.total == 12);
         assert!(fg.names.iter().any(|name| name == "main"));
@@ -871,41 +868,14 @@ mod tests {
         value: i64,
         timestamp_ns: i64,
     ) -> ProfileRecord {
-        ProfileRecord {
-            tenant: tenant.to_string(),
-            labels: vec![
-                ("__name__".to_string(), "process_cpu".to_string()),
-                ("__profile_type__".to_string(), PT.to_string()),
-                ("service_name".to_string(), service.to_string()),
-            ],
-            profile_type: PT.to_string(),
-            samples: vec![WalSample {
-                stacktrace_location_refs: stack,
-                value,
-                timestamp_ns,
-                span_id: None,
-                trace_id: None,
-            }],
-            symbols: symbols(),
-        }
-    }
-
-    fn symbols() -> WalSymbolSet {
-        WalSymbolSet {
-            strings: vec![String::new(), "main".to_string()],
-            functions: vec![crate::wal::WalFunction {
-                name: 1,
-                system_name: 1,
-                filename: 0,
-                start_line: 0,
-            }],
-            locations: vec![crate::wal::WalLocation {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![(0, 1)],
-            }],
-            mappings: Vec::new(),
-        }
+        cpu_record(CpuRecord {
+            tenant,
+            service,
+            stack,
+            value,
+            timestamp_ns,
+            function: "main",
+        })
     }
 }
 

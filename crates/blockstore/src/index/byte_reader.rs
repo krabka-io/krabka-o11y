@@ -1,4 +1,4 @@
-use super::{BlockStoreError, Result};
+use super::{BlockLevel, BlockStoreError, Result};
 
 /// A cursor over an encoded index shard.
 ///
@@ -9,6 +9,12 @@ use super::{BlockStoreError, Result};
 pub(crate) struct ByteReader<'bytes> {
     bytes: &'bytes [u8],
     at: usize,
+}
+
+/// The time bounds of one block record in an index shard.
+pub(crate) struct ShardBlockBounds {
+    pub(crate) min_ts: i64,
+    pub(crate) max_ts: i64,
 }
 
 impl<'bytes> ByteReader<'bytes> {
@@ -103,6 +109,22 @@ impl<'bytes> ByteReader<'bytes> {
         usize::try_from(value).map_err(|_| {
             BlockStoreError::InvalidBlock(format!("index shard {what} does not fit a usize"))
         })
+    }
+
+    /// A block's start, delta-coded against the previous block's start, then
+    /// its span.
+    pub(crate) fn block_bounds(&mut self, previous_min_ts: i64) -> Result<ShardBlockBounds> {
+        let min_ts = previous_min_ts.wrapping_add(self.ivarint("a block start")?);
+        let max_ts = min_ts.wrapping_add(self.ivarint("a block span")?);
+        Ok(ShardBlockBounds { min_ts, max_ts })
+    }
+
+    /// A block's compaction level, rejected when it does not fit a `u32`.
+    pub(crate) fn block_level(&mut self) -> Result<BlockLevel> {
+        let level = u32::try_from(self.uvarint("a block level")?).map_err(|_| {
+            BlockStoreError::InvalidBlock("names a compaction level beyond u32".to_string())
+        })?;
+        Ok(BlockLevel(level))
     }
 
     pub(crate) const fn is_exhausted(&self) -> bool {

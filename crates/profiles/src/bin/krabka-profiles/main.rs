@@ -1096,6 +1096,8 @@ mod sigterm_exits_the_querier;
 #[cfg(all(test, unix))]
 mod render_roundtrip;
 #[cfg(all(test, unix))]
+mod sigterm_child_runtime;
+#[cfg(all(test, unix))]
 mod synthetic_cpu_profile;
 #[cfg(all(test, unix))]
 mod wal_topic;

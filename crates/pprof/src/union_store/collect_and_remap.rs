@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use arrow::{
     array::{Array, AsArray, BooleanArray},
@@ -78,16 +78,9 @@ pub(crate) async fn collect_and_remap(
     symbols: &mut UnionSymbols,
 ) -> Result<Vec<RecordBatch>, ProfileError> {
     let partition_base = source_id << 56;
-    symbols.insert(partition_base, scan.symbols);
+    symbols.insert(partition_base, Arc::clone(&scan.symbols));
     let sql = format!("SELECT * FROM {}", scan.samples_table);
-    let batches = scan
-        .ctx
-        .sql(&sql)
-        .await
-        .map_err(|err| ProfileError::Plan(err.to_string()))?
-        .collect()
-        .await
-        .map_err(|err| ProfileError::Exec(err.to_string()))?;
+    let batches = scan.collect_sql(&sql).await?;
     batches
         .into_iter()
         .map(|batch| remap_partitions(&batch, partition_base))

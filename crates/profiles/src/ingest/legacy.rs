@@ -205,6 +205,18 @@ mod tests {
         tree_node(suffix, value, children)
     }
 
+    /// Five trie nodes: "main;" with the children "work" (which has its own
+    /// child ";inner") and "idle", then a second top-level node, "other".
+    fn five_node_trie() -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend(trie_node("main;", 0, 2));
+        body.extend(trie_node("work", 7, 1));
+        body.extend(trie_node(";inner", 4, 0));
+        body.extend(trie_node("idle", 3, 0));
+        body.extend(trie_node("other", 2, 0));
+        body
+    }
+
     /// `trie_to_pprof` builds each node's key by appending its suffix to its
     /// parent's, then splits the finished key on ';' into frames.
     ///
@@ -214,12 +226,7 @@ mod tests {
     /// exercised rather than a single tree.
     #[test]
     fn trie_nodes_extend_their_parents_key() {
-        let mut body = Vec::new();
-        body.extend(trie_node("main;", 0, 2));
-        body.extend(trie_node("work", 7, 1));
-        body.extend(trie_node(";inner", 4, 0));
-        body.extend(trie_node("idle", 3, 0));
-        body.extend(trie_node("other", 2, 0));
+        let body = five_node_trie();
 
         let profile =
             super::trie_to_pprof("app", "bytes", &body, LegacyDecodeLimits::default()).unwrap();
@@ -246,12 +253,7 @@ mod tests {
     /// indistinguishable from the one next to it.
     #[test]
     fn the_trie_limits_admit_exactly_their_boundary() {
-        let mut body = Vec::new();
-        body.extend(trie_node("main;", 0, 2));
-        body.extend(trie_node("work", 7, 1));
-        body.extend(trie_node(";inner", 4, 0));
-        body.extend(trie_node("idle", 3, 0));
-        body.extend(trie_node("other", 2, 0));
+        let body = five_node_trie();
         let decode = |limits| super::trie_to_pprof("app", "bytes", &body, limits);
 
         // Five nodes fit a budget of five, and not one of four.

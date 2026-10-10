@@ -391,6 +391,21 @@ fn series(
     }
 }
 
+// A series named `name` with one sample, 1.0 at `timestamp_ms`, in the first
+// segment.
+fn one_sample_series(name: &'static str, timestamp_ms: i64) -> SyntheticSeries {
+    series(
+        vec![("__name__", name)],
+        vec![chunk(0, &[(timestamp_ms, 1.0)])],
+    )
+}
+
+fn series_order_error_for_a() -> TsdbImportError {
+    TsdbImportError::SeriesOrder {
+        labels: r#"{__name__="a"}"#.to_owned(),
+    }
+}
+
 fn chunk(segment: usize, samples: &[(i64, f64)]) -> SyntheticChunk {
     SyntheticChunk {
         segment,
@@ -509,25 +524,15 @@ fn malformed_synthetic_blocks_fail_with_a_specific_error() {
         ),
         (
             "duplicate series",
-            vec![
-                series(vec![("__name__", "a")], vec![chunk(0, &[(10, 1.0)])]),
-                series(vec![("__name__", "a")], vec![chunk(0, &[(20, 1.0)])]),
-            ],
+            vec![one_sample_series("a", 10), one_sample_series("a", 20)],
             None,
-            TsdbImportError::SeriesOrder {
-                labels: r#"{__name__="a"}"#.to_owned(),
-            },
+            series_order_error_for_a(),
         ),
         (
             "series out of order",
-            vec![
-                series(vec![("__name__", "b")], vec![chunk(0, &[(10, 1.0)])]),
-                series(vec![("__name__", "a")], vec![chunk(0, &[(20, 1.0)])]),
-            ],
+            vec![one_sample_series("b", 10), one_sample_series("a", 20)],
             None,
-            TsdbImportError::SeriesOrder {
-                labels: r#"{__name__="a"}"#.to_owned(),
-            },
+            series_order_error_for_a(),
         ),
         (
             "labels out of order",

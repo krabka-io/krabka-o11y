@@ -133,6 +133,15 @@ impl<S: ProfileStore> FlameEngine<S> {
         Arc::clone(&self.cache_metrics)
     }
 
+    /// `max_nodes`, or the engine default when it is not positive.
+    const fn max_nodes_or_default(&self, max_nodes: i64) -> i64 {
+        if max_nodes > 0 {
+            max_nodes
+        } else {
+            self.opts.default_max_nodes
+        }
+    }
+
     #[must_use]
     pub fn with_admission_limits(
         mut self,
@@ -163,12 +172,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 &[],
             )
             .await?;
-        let max_nodes = if max_nodes > 0 {
-            max_nodes
-        } else {
-            self.opts.default_max_nodes
-        };
-        Ok(tree.to_flamegraph(max_nodes))
+        Ok(tree.to_flamegraph(self.max_nodes_or_default(max_nodes)))
     }
 
     /// # Errors
@@ -227,12 +231,7 @@ impl<S: ProfileStore> FlameEngine<S> {
             )
             .await?;
         }
-        let max_nodes = if max_nodes > 0 {
-            max_nodes
-        } else {
-            self.opts.default_max_nodes
-        };
-        Ok(tree.to_flamegraph(max_nodes))
+        Ok(tree.to_flamegraph(self.max_nodes_or_default(max_nodes)))
     }
 
     /// # Errors
@@ -282,12 +281,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 call_sites,
             })
             .await?;
-        let max_nodes = if max_nodes > 0 {
-            max_nodes
-        } else {
-            self.opts.default_max_nodes
-        };
-        Ok(tree.to_flamegraph(max_nodes))
+        Ok(tree.to_flamegraph(self.max_nodes_or_default(max_nodes)))
     }
 
     /// # Errors
@@ -337,12 +331,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 call_sites,
             })
             .await?;
-        let max_nodes = if max_nodes > 0 {
-            max_nodes
-        } else {
-            self.opts.default_max_nodes
-        };
-        Ok(tree.to_pyroscope_tree_bytes(max_nodes))
+        Ok(tree.to_pyroscope_tree_bytes(self.max_nodes_or_default(max_nodes)))
     }
 
     /// # Errors
@@ -370,12 +359,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 &[],
             )
             .await?;
-        let max_nodes = if max_nodes > 0 {
-            max_nodes
-        } else {
-            self.opts.default_max_nodes
-        };
-        Ok(merged.to_flamegraph(max_nodes))
+        Ok(merged.to_flamegraph(self.max_nodes_or_default(max_nodes)))
     }
 
     /// # Errors
@@ -425,12 +409,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 call_sites,
             )
             .await?;
-        let max_nodes = if max_nodes > 0 {
-            max_nodes
-        } else {
-            self.opts.default_max_nodes
-        };
-        Ok(merged.to_flamegraph(max_nodes))
+        Ok(merged.to_flamegraph(self.max_nodes_or_default(max_nodes)))
     }
 
     /// # Errors
@@ -480,12 +459,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 call_sites,
             )
             .await?;
-        let max_nodes = if max_nodes > 0 {
-            max_nodes
-        } else {
-            self.opts.default_max_nodes
-        };
-        Ok(merged.to_pyroscope_tree_bytes(max_nodes))
+        Ok(merged.to_pyroscope_tree_bytes(self.max_nodes_or_default(max_nodes)))
     }
 
     async fn execute_tree_shards(
@@ -896,11 +870,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 call_sites: right_call_sites,
             })
             .await?;
-        let max_nodes = if max_nodes > 0 {
-            max_nodes
-        } else {
-            self.opts.default_max_nodes
-        };
+        let max_nodes = self.max_nodes_or_default(max_nodes);
         Ok(diff_trees(&left_tree, &right_tree, max_nodes))
     }
 
@@ -988,11 +958,7 @@ impl<S: ProfileStore> FlameEngine<S> {
         let (tenant, profile_type, label_selector) = query;
         let (start_ms, end_ms) = range;
         let profile_type = ProfileType::parse(profile_type)?;
-        let max_nodes = if max_nodes > 0 {
-            max_nodes
-        } else {
-            self.opts.default_max_nodes
-        };
+        let max_nodes = self.max_nodes_or_default(max_nodes);
         let profile = self
             .merge_to_pprof(
                 ProfileMerge {
@@ -1033,12 +999,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 &[],
             )
             .await?;
-        let max_nodes = if max_nodes > 0 {
-            max_nodes
-        } else {
-            self.opts.default_max_nodes
-        };
-        Ok(tree.to_flamegraph(max_nodes))
+        Ok(tree.to_flamegraph(self.max_nodes_or_default(max_nodes)))
     }
 
     /// # Errors
@@ -1062,12 +1023,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 &[],
             )
             .await?;
-        let max_nodes = if max_nodes > 0 {
-            max_nodes
-        } else {
-            self.opts.default_max_nodes
-        };
-        Ok(tree.to_pyroscope_tree_bytes(max_nodes))
+        Ok(tree.to_pyroscope_tree_bytes(self.max_nodes_or_default(max_nodes)))
     }
 
     /// Merges the span profile over every range shard, and resolves a
@@ -1102,11 +1058,7 @@ impl<S: ProfileStore> FlameEngine<S> {
                 &[],
             )
             .await?;
-        let max_nodes = if max_nodes > 0 {
-            max_nodes
-        } else {
-            self.opts.default_max_nodes
-        };
+        let max_nodes = self.max_nodes_or_default(max_nodes);
         Ok((merged, max_nodes))
     }
 

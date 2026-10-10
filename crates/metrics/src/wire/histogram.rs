@@ -623,6 +623,7 @@ mod v2_reset_hint;
 mod v2_spans;
 mod v2_zero_count;
 mod validate_spans_and_counts;
+mod validated_native_histogram;
 
 use check_side::check_side;
 use counts::counts;
@@ -641,3 +642,4 @@ use v2_reset_hint::v2_reset_hint;
 use v2_spans::v2_spans;
 use v2_zero_count::v2_zero_count;
 pub(crate) use validate_spans_and_counts::validate_spans_and_counts;
+use validated_native_histogram::validated_native_histogram;

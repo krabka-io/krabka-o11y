@@ -110,8 +110,10 @@ mod tests {
     use crate::{
         blockbuilder::build_block,
         cold_store::ColdProfileStore,
-        test_support::{build_test_block, index_with_series},
-        wal::{ProfileRecord, WalSample, WalSymbolSet},
+        test_support::{
+            CpuRecord, build_test_block, cold_api_flamegraph, cpu_record, index_with_series,
+        },
+        wal::ProfileRecord,
     };
 
     const PT: &str = "process_cpu:cpu:nanoseconds:cpu:nanoseconds";
@@ -176,12 +178,7 @@ mod tests {
         assert!(
             BlockIndex::candidate_blocks(&index, "t", 0, i64::MAX) == vec![meta.object_key.clone()]
         );
-        let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
-        let engine = FlameEngine::new(cold, EngineOpts::default());
-        let fg = engine
-            .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
-            .await
-            .unwrap();
+        let fg = cold_api_flamegraph(store, index).await;
 
         check!(fg.total == 12);
         for name in ["main", "worker"] {
@@ -729,12 +726,7 @@ mod tests {
         check!(BlockIndex::block_count(&index, "t") == 1);
 
         // The surviving block still answers the query the four inputs did.
-        let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
-        let engine = FlameEngine::new(cold, EngineOpts::default());
-        let fg = engine
-            .select_merge_stacktraces("t", PT, r#"{service_name="api"}"#, 0, i64::MAX, 0)
-            .await
-            .unwrap();
+        let fg = cold_api_flamegraph(store, index).await;
         check!(fg.total == 4);
     }
 
@@ -749,41 +741,14 @@ mod tests {
         function: &str,
         timestamp_ns: i64,
     ) -> ProfileRecord {
-        ProfileRecord {
-            tenant: tenant.to_string(),
-            labels: vec![
-                ("__name__".to_string(), "process_cpu".to_string()),
-                ("__profile_type__".to_string(), PT.to_string()),
-                ("service_name".to_string(), service.to_string()),
-            ],
-            profile_type: PT.to_string(),
-            samples: vec![WalSample {
-                stacktrace_location_refs: vec![0],
-                value,
-                timestamp_ns,
-                span_id: None,
-                trace_id: None,
-            }],
-            symbols: symbols(function),
-        }
-    }
-
-    fn symbols(function: &str) -> WalSymbolSet {
-        WalSymbolSet {
-            strings: vec![String::new(), function.to_string()],
-            functions: vec![crate::wal::WalFunction {
-                name: 1,
-                system_name: 1,
-                filename: 0,
-                start_line: 0,
-            }],
-            locations: vec![crate::wal::WalLocation {
-                address: 0,
-                mapping_id: 0,
-                lines: vec![(0, 1)],
-            }],
-            mappings: Vec::new(),
-        }
+        cpu_record(CpuRecord {
+            tenant,
+            service,
+            stack: vec![0],
+            value,
+            timestamp_ns,
+            function,
+        })
     }
 }
 

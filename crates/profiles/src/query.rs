@@ -2387,15 +2387,11 @@ overrides:
         );
     }
 
-    #[tokio::test]
-    async fn profile_types_health_probe_ignores_query_range_limit_when_range_omitted() {
-        let state = Arc::new(QuerierState::new_with_limits(
-            Arc::new(store_with_frame("main.work")),
-            Limits {
-                max_query_length: secs(1),
-                ..Limits::default()
-            },
-        ));
+    /// The range-omitted `ProfileTypes` health probe, answered by `state`,
+    /// lists at least one profile type.
+    async fn assert_health_probe_lists_profile_types<S: ProfileStore + 'static>(
+        state: Arc<QuerierState<S>>,
+    ) {
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
         let response = post_querier(bound, "ProfileTypes", json!({})).await;
 
@@ -2406,6 +2402,60 @@ overrides:
                 .is_some_and(|profile_types| !profile_types.is_empty()),
             "{response}"
         );
+    }
+
+    /// A `SelectSeries` request for `api` over the first minute, grouped by
+    /// service, with its call sites narrowed to `hot.path`.
+    fn hot_path_select_series() -> serde_json::Value {
+        json!({
+            "profileTypeID": PT,
+            "labelSelector": r#"{service_name="api"}"#,
+            "start": 0,
+            "end": 60_000,
+            "groupBy": ["service_name"],
+            "step": 60.0,
+            "stackTraceSelector": {
+                "callSite": [{ "name": "hot.path" }]
+            }
+        })
+    }
+
+    fn hot_path_select_series_with_span_exemplars() -> serde_json::Value {
+        let mut request = hot_path_select_series();
+        request["exemplarType"] = json!("EXEMPLAR_TYPE_SPAN");
+        request
+    }
+
+    /// `AnalyzeQuery` for `api`'s series of one profile type, over a store
+    /// that holds two.
+    async fn analyze_api_query_over_two_profile_types() -> serde_json::Value {
+        let state = Arc::new(
+            QuerierState::new(Arc::new(store_with_two_profile_types()))
+                .with_query_analysis_series_enabled(true),
+        );
+        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
+        post_querier(
+            bound,
+            "AnalyzeQuery",
+            json!({
+                "start": 1,
+                "end": 100,
+                "query": format!(r#"{PT}{{service_name="api"}}"#),
+            }),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn profile_types_health_probe_ignores_query_range_limit_when_range_omitted() {
+        let state = Arc::new(QuerierState::new_with_limits(
+            Arc::new(store_with_frame("main.work")),
+            Limits {
+                max_query_length: secs(1),
+                ..Limits::default()
+            },
+        ));
+        assert_health_probe_lists_profile_types(state).await;
     }
 
     #[tokio::test]
@@ -2421,22 +2471,7 @@ overrides:
             },
         ]))));
         let (bound, _shutdown_tx) = serve_on_loopback(state).await;
-        let response = post_querier(
-            bound,
-            "SelectSeries",
-            json!({
-                "profileTypeID": PT,
-                "labelSelector": r#"{service_name="api"}"#,
-                "start": 0,
-                "end": 60_000,
-                "groupBy": ["service_name"],
-                "step": 60.0,
-                "stackTraceSelector": {
-                    "callSite": [{ "name": "hot.path" }]
-                }
-            }),
-        )
-        .await;
+        let response = post_querier(bound, "SelectSeries", hot_path_select_series()).await;
 
         let points: Vec<pb::querier::v1::Point> =
             serde_json::from_value(response["series"][0]["points"].clone()).unwrap();
@@ -2615,18 +2650,7 @@ overrides:
         let response = post_querier(
             bound,
             "SelectSeries",
-            json!({
-                "profileTypeID": PT,
-                "labelSelector": r#"{service_name="api"}"#,
-                "start": 0,
-                "end": 60_000,
-                "groupBy": ["service_name"],
-                "step": 60.0,
-                "stackTraceSelector": {
-                    "callSite": [{ "name": "hot.path" }]
-                },
-                "exemplarType": "EXEMPLAR_TYPE_SPAN"
-            }),
+            hot_path_select_series_with_span_exemplars(),
         )
         .await;
 
@@ -3074,21 +3098,7 @@ overrides:
 
     #[tokio::test]
     async fn analyze_query_returns_scope_and_impact_for_matching_series() {
-        let state = Arc::new(
-            QuerierState::new(Arc::new(store_with_two_profile_types()))
-                .with_query_analysis_series_enabled(true),
-        );
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
-        let response = post_querier(
-            bound,
-            "AnalyzeQuery",
-            json!({
-                "start": 1,
-                "end": 100,
-                "query": format!(r#"{PT}{{service_name="api"}}"#),
-            }),
-        )
-        .await;
+        let response = analyze_api_query_over_two_profile_types().await;
 
         check!(response.get("valid").is_none(), "{response}");
         check!(
@@ -3164,21 +3174,7 @@ overrides:
 
     #[tokio::test]
     async fn analyze_query_counts_only_the_queried_profile_type() {
-        let state = Arc::new(
-            QuerierState::new(Arc::new(store_with_two_profile_types()))
-                .with_query_analysis_series_enabled(true),
-        );
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
-        let response = post_querier(
-            bound,
-            "AnalyzeQuery",
-            json!({
-                "start": 1,
-                "end": 100,
-                "query": format!(r#"{PT}{{service_name="api"}}"#),
-            }),
-        )
-        .await;
+        let response = analyze_api_query_over_two_profile_types().await;
 
         assert!(
             response
@@ -3452,16 +3448,7 @@ overrides:
         // The range-omitted (`start==0 && end==0`) health probe must still work
         // even though the default cap now rejects explicit unbounded ranges.
         let state = Arc::new(QuerierState::new(Arc::new(store_with_frame("main.work"))));
-        let (bound, _shutdown_tx) = serve_on_loopback(state).await;
-        let response = post_querier(bound, "ProfileTypes", json!({})).await;
-
-        assert!(
-            response
-                .get("profileTypes")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|profile_types| !profile_types.is_empty()),
-            "{response}"
-        );
+        assert_health_probe_lists_profile_types(state).await;
     }
 
     #[tokio::test]
@@ -3601,6 +3588,7 @@ mod deserialize_group_by;
 mod diff_handler;
 mod diff_inner;
 mod dot_escape;
+mod escape_quoted;
 mod flame_graph;
 mod flame_graph_diff;
 mod flamebearer_diff_json;
@@ -3610,6 +3598,7 @@ mod flamegraph_dot;
 mod frames_match_call_sites;
 mod get_profile_stats_handler;
 mod get_profile_stats_inner;
+mod heatmap_exemplar_request;
 mod heatmap_from_points;
 mod heatmap_individual_exemplars_from_scan;
 mod heatmap_series;
@@ -3709,6 +3698,7 @@ use deserialize_group_by::deserialize_group_by;
 use diff_handler::diff_handler;
 use diff_inner::diff_inner;
 use dot_escape::dot_escape;
+use escape_quoted::{TabEscape, escape_quoted};
 use flamebearer_diff_json::flamebearer_diff_json;
 use flamebearer_json::flamebearer_json;
 use flamebearer_metadata::flamebearer_metadata;
@@ -3716,6 +3706,7 @@ use flamegraph_dot::flamegraph_dot;
 use frames_match_call_sites::frames_match_call_sites;
 use get_profile_stats_handler::get_profile_stats_handler;
 use get_profile_stats_inner::get_profile_stats_inner;
+use heatmap_exemplar_request::HeatmapExemplarRequest;
 use heatmap_from_points::heatmap_from_points;
 use heatmap_individual_exemplars_from_scan::heatmap_individual_exemplars_from_scan;
 use heatmap_slot_timestamp::heatmap_slot_timestamp;

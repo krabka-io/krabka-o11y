@@ -1,16 +1,39 @@
 //! Fixtures shared by the crate's unit-test modules.
 
+#[path = "cpu_record.rs"]
+mod cpu_record;
+
 use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
 use krabka_blockstore::{BlockIndex as _, BlockMeta, Labels, ObjectStoreMetrics, ProfileIndex};
 use krabka_observability::server_security::ServerSecurity;
+use krabka_pprof::{EngineOpts, FlameEngine, FlameGraph};
 use object_store::ObjectStore;
 
+pub use self::cpu_record::{CPU_PROFILE_TYPE, CpuRecord, cpu_record};
 use crate::{
     blockbuilder::build_block,
-    wal::ProfileRecord,
+    cold_store::ColdProfileStore,
+    wal::{ProfileRecord, WalFunction, WalLocation, WalSample, WalSymbolSet},
     wire::pb::otlp_profiles::{Function, Line, Location, ProfilesDictionary, Stack, ValueType},
 };
+
+/// Tenant `t`'s `api` flame graph over all time, as a cold store over
+/// `store` and `index` answers it.
+pub async fn cold_api_flamegraph(store: Arc<dyn ObjectStore>, index: ProfileIndex) -> FlameGraph {
+    let cold = Arc::new(ColdProfileStore::new(store, Arc::new(index)));
+    FlameEngine::new(cold, EngineOpts::default())
+        .select_merge_stacktraces(
+            "t",
+            CPU_PROFILE_TYPE,
+            r#"{service_name="api"}"#,
+            0,
+            i64::MAX,
+            0,
+        )
+        .await
+        .unwrap()
+}
 
 /// Writes `records`, all read at WAL offset `wal_offset`, as one profile
 /// block for tenant `t`, partition 0.
