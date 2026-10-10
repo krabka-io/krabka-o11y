@@ -33,6 +33,10 @@ use crate::{
 };
 
 #[cfg(test)]
+#[path = "../tests/support/flaky_put_store.rs"]
+mod flaky_put_store;
+
+#[cfg(test)]
 mod tests {
     use std::sync::{
         Arc,
@@ -48,8 +52,8 @@ mod tests {
     use bytes::Bytes;
     use futures::{FutureExt, StreamExt as _};
     use object_store::{
-        MultipartUpload, ObjectStore, ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload,
-        PutResult, UploadPart,
+        MultipartUpload, ObjectStore, ObjectStoreExt, PutMultipartOptions, PutPayload, PutResult,
+        UploadPart,
         memory::InMemory,
         path::{Path, Path as ObjectPath},
     };
@@ -62,7 +66,7 @@ mod tests {
         },
     };
 
-    use super::*;
+    use super::{flaky_put_store::flaky_put_store, *};
     use crate::{
         block_index::RequiredColumn,
         reader::read_block,
@@ -212,62 +216,6 @@ mod tests {
         assert2::assert!(head.is_ok());
     }
 
-    /// A store whose first `failures` puts fail with `error`, counting every
-    /// attempt. Every other operation delegates to an in-memory store, so what
-    /// a retried write actually left behind can be read back.
-    #[derive(Debug)]
-    struct FlakyPutStore {
-        inner: InMemory,
-        remaining_failures: std::sync::atomic::AtomicUsize,
-        attempts: std::sync::atomic::AtomicUsize,
-        error: fn() -> object_store::Error,
-    }
-
-    impl FlakyPutStore {
-        fn new(failures: usize, error: fn() -> object_store::Error) -> Self {
-            Self {
-                inner: InMemory::new(),
-                remaining_failures: std::sync::atomic::AtomicUsize::new(failures),
-                attempts: std::sync::atomic::AtomicUsize::new(0),
-                error,
-            }
-        }
-
-        fn attempts(&self) -> usize {
-            self.attempts.load(Ordering::SeqCst)
-        }
-    }
-
-    impl std::fmt::Display for FlakyPutStore {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("FlakyPutStore")
-        }
-    }
-
-    crate::delegate_object_store! {
-        FlakyPutStore => inner;
-        forward [put_multipart_opts, get_opts, list, list_with_delimiter, copy_opts, delete_stream];
-
-        async fn put_opts(
-            &self,
-            location: &ObjectPath,
-            payload: PutPayload,
-            options: PutOptions,
-        ) -> object_store::Result<PutResult> {
-            self.attempts.fetch_add(1, Ordering::SeqCst);
-            if self
-                .remaining_failures
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                    (left > 0).then(|| left - 1)
-                })
-                .is_ok()
-            {
-                return Err((self.error)());
-            }
-            self.inner.put_opts(location, payload, options).await
-        }
-    }
-
     fn timed_out() -> object_store::Error {
         object_store::Error::Generic {
             store: "S3",
@@ -292,7 +240,7 @@ mod tests {
     /// holds one object.
     #[tokio::test]
     async fn a_block_write_that_fails_transiently_is_retried_into_a_single_block() {
-        let store = Arc::new(FlakyPutStore::new(2, timed_out));
+        let store = Arc::new(flaky_put_store(2, timed_out));
         let writer = BlockWriter::with_retry_policy(
             Arc::clone(&store) as Arc<dyn ObjectStore>,
             crate::ObjectStoreRetryPolicy::immediate(4),
@@ -308,7 +256,6 @@ mod tests {
         assert2::check!(meta.row_count == 4);
         assert2::check!(store.attempts() == 3);
         let objects: Vec<String> = store
-            .inner
             .list(None)
             .map(|meta| {
                 meta.expect("listing an in-memory store")
@@ -325,7 +272,7 @@ mod tests {
     /// reported on the first attempt.
     #[tokio::test]
     async fn a_permanently_refused_block_write_is_reported_without_retrying() {
-        let store = Arc::new(FlakyPutStore::new(usize::MAX, forbidden));
+        let store = Arc::new(flaky_put_store(usize::MAX, forbidden));
         let writer = BlockWriter::with_retry_policy(
             Arc::clone(&store) as Arc<dyn ObjectStore>,
             crate::ObjectStoreRetryPolicy::immediate(4),

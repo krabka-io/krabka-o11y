@@ -22,6 +22,14 @@ crate_library(
 
 crate_tests(
     data = glob(["tests/testdata/**"]),
+    # The shared near-miss and token-salad query generators, reached with
+    # `#[path]` from //crates/logql.
+    extra_srcs = {
+        "parser_proptest": [
+            "//crates/logql:tests/support/seed_splice.rs",
+            "//crates/logql:tests/support/token_salad.rs",
+        ],
+    },
     feature_variants = EXPERIMENTAL,
     lib = "promql",
     # The sweep rebuilds the crate once per mutant, so a shard's wall clock is

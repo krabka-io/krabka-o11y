@@ -1,4 +1,23 @@
-use super::*;
+use super::{
+    ByteSize, ByteSizeExt as _, CompactionMetrics, Counter, Family, IngestBytes, IngestHelpText,
+    IngestInstruments, IngestItems, IngestRequest, ObjectStoreMetrics, PipelineInstruments,
+    QueryHelpText, QueryInstruments, QueryRequest, Registry, RequestOutcome, SharedRegistry,
+    StatusLabel, TenantLabel, Time, TimeExt as _, WalConsumerMetrics, WalProduceMetrics,
+    register_in_new_registry,
+};
+
+const INGEST_HELP: IngestHelpText = IngestHelpText {
+    requests: "Ingest requests handled, labelled by outcome (ok/error).",
+    bytes: "Cumulative ingest request body bytes accepted.",
+    items: "Cumulative profiles/samples ingested.",
+    duration: "Ingest handler latency in seconds.",
+    wal_append_failures: "Cumulative WAL/produce append failures on the ingest path.",
+};
+
+const QUERY_HELP: QueryHelpText = QueryHelpText {
+    requests: "Query requests handled, labelled by route and outcome (ok/error).",
+    duration: "Per-route query handler latency in seconds.",
+};
 
 /// Cheaply-clonable bundle of metric handles plus the shared registry.
 ///
@@ -7,20 +26,13 @@ use super::*;
 #[derive(Clone)]
 pub struct ServiceMetrics {
     pub registry: SharedRegistry,
-    /// Ingest requests, labelled by outcome. Renders as
-    /// `krabka_profiles_ingest_requests_total{status}`.
-    pub ingest_requests: Family<StatusLabel, Counter>,
-    /// Cumulative ingest body bytes accepted. Renders as
-    /// `krabka_profiles_ingest_bytes_total`.
-    pub ingest_bytes: Counter,
-    /// Cumulative profile/sample items ingested. Renders as
-    /// `krabka_profiles_ingest_items_total`.
-    pub ingest_items: Counter,
-    /// Ingest handler latency in seconds.
-    pub ingest_duration: Histogram,
-    /// Cumulative WAL/produce append failures. Renders as
+    /// Ingest requests by outcome, accepted body bytes, accepted
+    /// profile/sample items, handler latency, and WAL/produce append
+    /// failures. They render as `krabka_profiles_ingest_requests_total{status}`,
+    /// `krabka_profiles_ingest_bytes_total`, `krabka_profiles_ingest_items_total`,
+    /// `krabka_profiles_ingest_duration_seconds` and
     /// `krabka_profiles_wal_append_failures_total`.
-    pub wal_append_failures: Counter,
+    pub ingest: IngestInstruments,
     /// Cumulative profile samples accepted, labelled by tenant. Renders as
     /// `krabka_profiles_ingest_samples_total{tenant}`. The service adds to it
     /// once per ingest request, by the number of WAL samples that the request
@@ -29,11 +41,10 @@ pub struct ServiceMetrics {
     /// Cumulative profile sample blocks flushed to object storage by the
     /// block-builder. Renders as `krabka_profiles_blocks_built_total`.
     pub blocks_built: Counter,
-    /// Query requests, labelled by route + outcome. Renders as
-    /// `krabka_profiles_query_requests_total{route,status}`.
-    pub query_requests: Family<RouteStatusLabel, Counter>,
-    /// Per-route query handler latency in seconds.
-    pub query_duration: Family<RouteLabel, Histogram>,
+    /// Query requests by route and outcome, and per-route handler latency.
+    /// They render as `krabka_profiles_query_requests_total{route,status}`
+    /// and `krabka_profiles_query_duration_seconds{route}`.
+    pub query: QueryInstruments,
     /// Debug-info uploads retried after pending state became stale.
     pub debuginfo_upload_retries: Counter,
     /// Debug-info HTTP uploads that exceeded their deadline.
@@ -62,112 +73,62 @@ impl ServiceMetrics {
     /// Build a fresh registry, register every metric, and return the bundle.
     #[must_use]
     pub fn new() -> Self {
-        let mut registry = Registry::with_prefix("krabka_profiles");
+        register_in_new_registry("krabka_profiles", Self::register)
+    }
 
-        let ingest_requests = Family::<StatusLabel, Counter>::default();
-        let ingest_bytes = Counter::default();
-        let ingest_items = Counter::default();
-        let ingest_duration = Histogram::new([
-            0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
-        ]);
-        let wal_append_failures = Counter::default();
+    fn register(registry: &mut Registry, shared: SharedRegistry) -> Self {
+        let ingest = IngestInstruments::register(registry, &INGEST_HELP);
         let ingest_samples = Family::<TenantLabel, Counter>::default();
-        let blocks_built = Counter::default();
-        let query_requests = Family::<RouteStatusLabel, Counter>::default();
-        let query_duration = Family::<RouteLabel, Histogram>::new_with_constructor(|| {
-            Histogram::new([0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0])
-        });
-        let debuginfo_upload_retries = Counter::default();
-        let debuginfo_upload_timeouts = Counter::default();
-        let symbolizer_cache_requests = Family::<StatusLabel, Counter>::default();
-
-        registry.register(
-            "ingest_requests",
-            "Ingest requests handled, labelled by outcome (ok/error).",
-            ingest_requests.clone(),
-        );
-        registry.register(
-            "ingest_bytes",
-            "Cumulative ingest request body bytes accepted.",
-            ingest_bytes.clone(),
-        );
-        registry.register(
-            "ingest_items",
-            "Cumulative profiles/samples ingested.",
-            ingest_items.clone(),
-        );
-        registry.register(
-            "ingest_duration_seconds",
-            "Ingest handler latency in seconds.",
-            ingest_duration.clone(),
-        );
-        registry.register(
-            "wal_append_failures",
-            "Cumulative WAL/produce append failures on the ingest path.",
-            wal_append_failures.clone(),
-        );
         registry.register(
             "ingest_samples",
             "Cumulative profile samples accepted, labelled by tenant.",
             ingest_samples.clone(),
         );
+        let blocks_built = Counter::default();
         registry.register(
             "blocks_built",
             "Cumulative profile sample blocks flushed to object storage by the block-builder.",
             blocks_built.clone(),
         );
-        registry.register(
-            "query_requests",
-            "Query requests handled, labelled by route and outcome (ok/error).",
-            query_requests.clone(),
-        );
-        registry.register(
-            "query_duration_seconds",
-            "Per-route query handler latency in seconds.",
-            query_duration.clone(),
-        );
+        let query = QueryInstruments::register(registry, &QUERY_HELP);
+        let debuginfo_upload_retries = Counter::default();
         registry.register(
             "debuginfo_upload_retries",
             "Debug-info uploads retried after stale pending state.",
             debuginfo_upload_retries.clone(),
         );
+        let debuginfo_upload_timeouts = Counter::default();
         registry.register(
             "debuginfo_upload_timeouts",
             "Debug-info HTTP uploads that exceeded their deadline.",
             debuginfo_upload_timeouts.clone(),
         );
+        let symbolizer_cache_requests = Family::<StatusLabel, Counter>::default();
         registry.register(
             "symbolizer_cache_requests",
             "Uploaded-symbol cache lookups labelled hit or miss.",
             symbolizer_cache_requests.clone(),
         );
-
-        // These three come from the shared modules, so the four signals export
-        // the same instrument under their own prefix and one dashboard reads
-        // all four.
-        let wal_consumer = WalConsumerMetrics::register(&mut registry);
-        let wal_produce = WalProduceMetrics::register(&mut registry);
-        let compaction = CompactionMetrics::register(&mut registry);
-        let object_store = ObjectStoreMetrics::register(&mut registry);
-
-        Self {
-            registry: Arc::new(Mutex::new(registry)),
+        let PipelineInstruments {
             wal_consumer,
             wal_produce,
             compaction,
             object_store,
-            ingest_requests,
-            ingest_bytes,
-            ingest_items,
-            ingest_duration,
-            wal_append_failures,
+        } = PipelineInstruments::register(registry);
+
+        Self {
+            registry: shared,
+            ingest,
             ingest_samples,
             blocks_built,
-            query_requests,
-            query_duration,
+            query,
             debuginfo_upload_retries,
             debuginfo_upload_timeouts,
             symbolizer_cache_requests,
+            wal_consumer,
+            wal_produce,
+            compaction,
+            object_store,
         }
     }
 
@@ -178,28 +139,23 @@ impl ServiceMetrics {
     /// separately at the WAL or produce error site. A 4xx client or validation
     /// error is an `ok=false` request, but it is not a WAL failure.
     pub fn record_ingest(&self, ok: bool, bytes: IngestBytes, items: IngestItems, elapsed: Time) {
-        let status = if ok { "ok" } else { "error" };
-        self.ingest_requests
-            .get_or_create(&StatusLabel {
-                status: status.into(),
-            })
-            .inc();
-        if bytes.0 > 0 {
-            self.ingest_bytes.inc_by(bytes.0);
-        }
-        if items.0 > 0 {
-            self.ingest_items.inc_by(items.0);
-        }
-        // `prometheus-client` histograms take fractional seconds, so the extent
-        // is extracted here, at the exposition seam.
-        self.ingest_duration.observe(elapsed.secs_f64());
+        self.ingest.record(IngestRequest {
+            outcome: if ok {
+                RequestOutcome::Ok
+            } else {
+                RequestOutcome::Error
+            },
+            body: ByteSize::from_bytes(bytes.0),
+            items: items.0,
+            elapsed,
+        });
     }
 
     /// Record one WAL or produce append failure, that is, a failed durable write
     /// to the profiles WAL topic. This is distinct from a 4xx client or
     /// validation rejection.
     pub fn record_wal_append_failure(&self) {
-        self.wal_append_failures.inc();
+        self.ingest.record_wal_append_failure();
     }
 
     /// Add `samples` to the per-tenant cumulative ingested-samples counter.
@@ -232,18 +188,15 @@ impl ServiceMetrics {
     /// Record one query request outcome on `route`: bump the per-route+status
     /// request counter and observe the per-route latency.
     pub fn record_query(&self, route: &str, ok: bool, elapsed: Time) {
-        let status = if ok { "ok" } else { "error" };
-        self.query_requests
-            .get_or_create(&RouteStatusLabel {
-                route: route.into(),
-                status: status.into(),
-            })
-            .inc();
-        self.query_duration
-            .get_or_create(&RouteLabel {
-                route: route.into(),
-            })
-            .observe(elapsed.secs_f64());
+        self.query.record(QueryRequest {
+            route,
+            outcome: if ok {
+                RequestOutcome::Ok
+            } else {
+                RequestOutcome::Error
+            },
+            elapsed_secs: elapsed.secs_f64(),
+        });
     }
 
     /// Record one lookup in the per-pass uploaded-symbol cache.

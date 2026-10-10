@@ -13,6 +13,8 @@
 
 #[path = "support/parquet_files.rs"]
 mod parquet_files;
+#[path = "support/sigterm_child.rs"]
+mod sigterm_child;
 
 use std::{
     collections::BTreeMap,
@@ -32,7 +34,7 @@ use krabka_observability::{
 use krabka_units::Time;
 use object_store::{local::LocalFileSystem, path::Path as ObjectPath};
 
-use self::parquet_files::parquet_files_under;
+use self::{parquet_files::parquet_files_under, sigterm_child::terminate_and_wait_for_exit};
 
 /// Set on the child re-execution of this test binary, and holds the directory
 /// the child and the parent communicate through.
@@ -64,17 +66,7 @@ fn sigterm_drains_the_compactor_before_the_process_exits() {
     let committed = wait_for_file(&root.join("committed"), Duration::from_secs(45));
     assert!(!committed.trim().is_empty());
 
-    // Through `sh` rather than a `kill` binary: the shell builtin is always
-    // there, including inside a Bazel test sandbox, and `unsafe_code` is
-    // forbidden workspace-wide so `libc::kill` is not an option.
-    let signalled = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(format!("kill -TERM {}", child.id()))
-        .status()
-        .expect("send SIGTERM");
-    assert!(signalled.success());
-
-    let status = wait_for_exit(&mut child, Duration::from_secs(30));
+    let status = terminate_and_wait_for_exit(&mut child, Duration::from_secs(30));
 
     // Exited of its own accord: `code()` is `None` for a process a signal
     // killed, which is what an unheard SIGTERM leaves behind.
@@ -216,19 +208,6 @@ fn wait_for_file(path: &std::path::Path, within: Duration) -> String {
         std::thread::sleep(Duration::from_millis(20));
     }
     panic!("{} never appeared", path.display());
-}
-
-fn wait_for_exit(child: &mut std::process::Child, within: Duration) -> std::process::ExitStatus {
-    let deadline = Instant::now() + within;
-    while Instant::now() < deadline {
-        match child.try_wait().expect("poll the child") {
-            Some(status) => return status,
-            None => std::thread::sleep(Duration::from_millis(20)),
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    panic!("the role did not exit within {within:?} of SIGTERM");
 }
 
 /// Every block the compactor physically wrote under the index prefix.

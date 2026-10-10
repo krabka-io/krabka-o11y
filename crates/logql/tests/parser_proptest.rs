@@ -25,6 +25,8 @@
 
 #[path = "support/seed_splice.rs"]
 mod seed_splice;
+#[path = "support/token_salad.rs"]
+mod token_salad;
 
 use std::{collections::BTreeMap, fmt::Write as _};
 
@@ -177,25 +179,11 @@ fn arbitrary_text() -> impl Strategy<Value = String> {
     .prop_map(String::from_iter)
 }
 
-/// Concatenated grammar tokens, separated by nothing or a space.
-fn token_salad() -> impl Strategy<Value = String> {
-    prop::collection::vec((prop::sample::select(TOKENS), any::<bool>()), 1..14).prop_map(|parts| {
-        let mut out = String::new();
-        for (token, spaced) in parts {
-            out.push_str(token);
-            if spaced {
-                out.push(' ');
-            }
-        }
-        out
-    })
-}
-
 /// Every string a caller can put in the `query` parameter.
 fn arbitrary_query() -> impl Strategy<Value = String> {
     prop_oneof![
         2 => arbitrary_text(),
-        3 => token_salad(),
+        3 => token_salad::spaced_token_salad(TOKENS),
         3 => seed_splice::mutated_seed(SEED_QUERIES),
     ]
 }

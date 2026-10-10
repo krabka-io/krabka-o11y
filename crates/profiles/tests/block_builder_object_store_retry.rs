@@ -18,18 +18,19 @@ use std::sync::{
 
 use assert2::{assert, check};
 use async_trait::async_trait;
-use futures::stream::BoxStream;
 use krabka_blockstore::ObjectStoreRetryPolicy;
-use object_store::{
-    CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, memory::InMemory, path::Path,
-};
+use object_store::{ObjectStore, PutPayload, path::Path};
 
-use self::block_builder_support::{
-    ConsumedBuilder, OneRecordBroker, RestartConsumer, indexed_block_count,
+use self::{
+    block_builder_support::{
+        ConsumedBuilder, OneRecordBroker, RestartConsumer, indexed_block_count,
+    },
+    hooked_store::{HookedStore, StoreHooks},
 };
 
 mod block_builder_support;
+#[path = "../../blockstore/tests/support/hooked_store.rs"]
+mod hooked_store;
 
 /// A 5xx, a timeout or a reset connection -- what the `object_store` clients
 /// report once their own retry budget is spent.
@@ -48,30 +49,29 @@ fn permanent_failure() -> object_store::Error {
     }
 }
 
-/// An in-memory store whose first `failures` writes *under the index prefix*
-/// fail with `error`.
+/// The hooks of an in-memory store whose first `failures` writes *under the
+/// index prefix* fail with `error`.
 ///
 /// Only the index writes are made to fail, because the index store is the one
 /// the block-builder wraps with [`BlockBuilderConfig::object_store_retry`].
 /// The block write is retried by the `BlockWriter` under its own policy and
 /// has its own coverage in `krabka-blockstore`; leaving it alone here keeps
 /// this test's schedule entirely injected, so nothing sleeps.
-#[derive(Debug)]
-struct FlakyIndexStore {
-    inner: InMemory,
+struct FlakyIndexHooks {
     remaining_failures: AtomicUsize,
     index_put_attempts: AtomicUsize,
     error: fn() -> object_store::Error,
 }
 
-impl FlakyIndexStore {
-    fn new(failures: usize, error: fn() -> object_store::Error) -> Self {
-        Self {
-            inner: InMemory::new(),
+type FlakyIndexStore = HookedStore<FlakyIndexHooks>;
+
+impl FlakyIndexHooks {
+    fn store(failures: usize, error: fn() -> object_store::Error) -> FlakyIndexStore {
+        HookedStore::new(Self {
             remaining_failures: AtomicUsize::new(failures),
             index_put_attempts: AtomicUsize::new(0),
             error,
-        }
+        })
     }
 
     fn index_put_attempts(&self) -> usize {
@@ -79,20 +79,11 @@ impl FlakyIndexStore {
     }
 }
 
-impl std::fmt::Display for FlakyIndexStore {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("FlakyIndexStore")
-    }
-}
-
 #[async_trait]
-impl ObjectStore for FlakyIndexStore {
-    async fn put_opts(
-        &self,
-        location: &Path,
-        payload: PutPayload,
-        options: PutOptions,
-    ) -> object_store::Result<PutResult> {
+impl StoreHooks for FlakyIndexHooks {
+    const NAME: &'static str = "FlakyIndexStore";
+
+    async fn before_put(&self, location: &Path, _payload: &PutPayload) -> object_store::Result<()> {
         if location.as_ref().starts_with("index/") {
             self.index_put_attempts.fetch_add(1, Ordering::SeqCst);
             if self
@@ -105,54 +96,14 @@ impl ObjectStore for FlakyIndexStore {
                 return Err((self.error)());
             }
         }
-        self.inner.put_opts(location, payload, options).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &Path,
-        options: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, options).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &Path,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &Path,
-        to: &Path,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<Path>>,
-    ) -> BoxStream<'static, object_store::Result<Path>> {
-        self.inner.delete_stream(locations)
+        Ok(())
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_drain_rides_out_a_transient_object_store_and_commits_once() {
     let broker = TestBroker::start("krabka-profiles-retry-transient").await;
-    let flaky = Arc::new(FlakyIndexStore::new(2, transient_failure));
+    let flaky = Arc::new(FlakyIndexHooks::store(2, transient_failure));
     let store: Arc<dyn ObjectStore> = Arc::clone(&flaky) as Arc<dyn ObjectStore>;
 
     let (drained, index_key) = broker.drain_with(&store, &flaky).await;
@@ -170,7 +121,7 @@ async fn a_drain_rides_out_a_transient_object_store_and_commits_once() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_drain_refused_by_the_store_fails_at_once_and_leaves_the_offset() {
     let broker = TestBroker::start("krabka-profiles-retry-permanent").await;
-    let flaky = Arc::new(FlakyIndexStore::new(usize::MAX, permanent_failure));
+    let flaky = Arc::new(FlakyIndexHooks::store(usize::MAX, permanent_failure));
     let store: Arc<dyn ObjectStore> = Arc::clone(&flaky) as Arc<dyn ObjectStore>;
 
     let (drained, _index_key) = broker.drain_with(&store, &flaky).await;

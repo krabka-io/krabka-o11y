@@ -45,6 +45,7 @@ pub mod audit;
 pub mod compaction_metrics;
 pub mod recovery_cut;
 pub mod server_security;
+pub mod service_metrics;
 pub mod topic_contract;
 pub mod wal_client_security;
 pub mod wal_consumer_metrics;
@@ -312,8 +313,8 @@ pub(crate) use self::{
             distributor_router_with_sink, with_role_ops_routes,
         },
         value_conversion::{
-            hex_string, metadata_value_to_string, otlp_value_to_json, parse_structured_metadata,
-            proto_value_to_string,
+            encode_lower_hex, metadata_value_to_string, otlp_value_to_json,
+            parse_structured_metadata, proto_value_to_string,
         },
     },
     error::query_errors::{

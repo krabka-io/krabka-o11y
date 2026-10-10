@@ -14,6 +14,9 @@
 //! `status.code()` is `Some(0)` only for a process that returned from `main`.
 //! A process a signal killed reports `None`.
 
+#[path = "../../../../observability/tests/support/sigterm_child.rs"]
+mod sigterm_child;
+
 use std::{
     process::Command,
     time::{Duration, Instant},
@@ -21,6 +24,7 @@ use std::{
 
 use clap::Parser as _;
 
+use self::sigterm_child::terminate_and_wait_for_exit;
 use super::{
     AuditHandle, Cli, RoleLaunch, RoleReadiness, ServerSecurity, Shutdown, run_querier,
     spawn_shutdown_signal_listener,
@@ -68,17 +72,7 @@ fn sigterm_makes_the_querier_process_exit() {
     // needs.
     wait_for_listener(&listen, Duration::from_secs(45));
 
-    // Through `sh` rather than a `kill` binary: the shell builtin is always
-    // there, including inside a Bazel test sandbox, and `unsafe_code` is
-    // forbidden workspace-wide so `libc::kill` is not an option.
-    let signalled = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(format!("kill -TERM {}", child.id()))
-        .status()
-        .expect("send SIGTERM");
-    assert2::assert!(signalled.success());
-
-    let status = wait_for_exit(&mut child, Duration::from_secs(30));
+    let status = terminate_and_wait_for_exit(&mut child, Duration::from_secs(30));
 
     assert2::assert!(status.code() == Some(0));
 }
@@ -156,17 +150,4 @@ fn wait_for_listener(addr: &str, within: Duration) {
         std::thread::sleep(Duration::from_millis(50));
     }
     panic!("the querier never bound {addr} within {within:?}");
-}
-
-fn wait_for_exit(child: &mut std::process::Child, within: Duration) -> std::process::ExitStatus {
-    let deadline = Instant::now() + within;
-    while Instant::now() < deadline {
-        match child.try_wait().expect("poll the child") {
-            Some(status) => return status,
-            None => std::thread::sleep(Duration::from_millis(20)),
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    panic!("the querier did not exit within {within:?} of SIGTERM");
 }

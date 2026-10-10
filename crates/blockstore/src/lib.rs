@@ -20,6 +20,7 @@ mod index_snapshot;
 mod labels;
 mod lifecycle;
 mod log_blockstore;
+mod lower_hex;
 mod matcher;
 mod merge;
 mod metrics;
@@ -98,6 +99,7 @@ pub use log_blockstore::{
     write_tenant_log_index_shard_catalog_to_object_store,
     write_tenant_log_index_shard_to_object_store, write_tenant_log_index_shards_to_object_store,
 };
+pub use lower_hex::encode_lower_hex;
 pub use matcher::{
     LabelMatcher, MatchOp, QUERY_SHARD_LABEL, QueryShardSelector, parse_query_shard_selector,
 };
@@ -108,7 +110,7 @@ pub use merge::{
 pub use metrics::{
     MeteredObjectStore, ObjectStoreMetrics, ObjectStoreOperation, ObjectStoreOperationLabel,
 };
-pub use nested_set::{NestedSet, SpanNode, assign_nested_set};
+pub use nested_set::{CycleSpans, NestedSet, SpanNode, assign_nested_set};
 pub use object_store_provider::{object_store_cloud, object_store_endpoint_host};
 pub use object_store_semantics::{
     ConditionalUpdateRequirement, OBJECT_STORE_PROBE_PREFIX, ObjectStoreAccess,
@@ -144,7 +146,7 @@ pub use retry::{
     retry_object_store, transient_object_store_error,
 };
 pub use span_block::{
-    AttrValue, SpanAttr, SpanEvent, SpanLink, SpanRow, encode_span_rows,
+    AttrValue, SpanAttr, SpanColumnBuilders, SpanEvent, SpanLink, SpanRow, encode_span_rows,
     encode_span_rows_with_promoted_attrs,
 };
 pub use span_id::{

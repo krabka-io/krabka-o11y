@@ -7,8 +7,8 @@ use std::{
 
 use arrow::{
     array::{
-        ArrayRef, BooleanBuilder, FixedSizeBinaryBuilder, Float64Builder, Int32Builder,
-        Int64Builder, StringBuilder,
+        ArrayRef, BooleanBuilder, FixedSizeBinaryBuilder, Float64Builder, Int64Builder,
+        StringBuilder,
     },
     datatypes::DataType,
     record_batch::RecordBatch,
@@ -26,6 +26,12 @@ use crate::{
         EVENT_ATTR_PREFIX, INSTRUMENTATION_ATTR_PREFIX, InputSpan, LINK_ATTR_PREFIX, NestedSet,
         assign_nested_set, span_schema_with_attrs,
     },
+    span_matching::{
+        attr_values_match, collect_event_values, collect_link_values, enum_int_matches,
+        event_matcher_matches_absence, event_matcher_matches_event, int_matches,
+        link_matcher_matches_absence, link_matcher_matches_link, nested_presence_matches,
+        nil_matches, string_matches, typed_value_parts,
+    },
     store::{MatchCmp, MatchScope, MatchValue, ScanResult, SpanMatcher, SpanStore},
 };
 
@@ -39,6 +45,7 @@ mod tests {
     use crate::{
         result::{AttrValue, EventRef, LinkRef},
         span_columns::{COL_NS_LEFT, COL_PARENT_ID, InputSpan},
+        span_matching::present_value_matches,
     };
 
     /// `int_matches` is the numeric comparison behind every integer attribute
@@ -1931,41 +1938,25 @@ mod tests {
 
 mod attr_builder;
 mod attr_data_type;
-mod attr_matches;
-mod attr_values_match;
-mod bool_matches;
 mod child_count_for;
-mod collect_event_values;
-mod collect_link_values;
 mod collect_span_intrinsic_values;
 mod collect_trace_intrinsic_values;
-mod enum_int_matches;
-mod event_matcher_matches_absence;
-mod event_matcher_matches_event;
 mod event_tags;
 mod expansion_matchers;
-mod float_matches;
 mod in_memory_span_store;
 mod instrumentation_matches;
-mod int_matches;
 mod intrinsic_matches;
 mod intrinsic_tags;
 mod is_event_matcher;
 mod is_link_matcher;
 mod kind_enum_value;
-mod link_matcher_matches_absence;
-mod link_matcher_matches_link;
 mod link_tags;
 mod matcher_matches;
 mod matching_events_for_scan;
 mod matching_links_for_scan;
 mod nested_attr_value;
-mod nested_attribute_key_matches;
 mod nested_event_matchers_match;
 mod nested_link_matchers_match;
-mod nested_presence_matches;
-mod nil_matches;
-mod present_value_matches;
 mod resource_matches;
 mod scan_builders;
 mod scoped_attribute_tag;
@@ -1974,46 +1965,28 @@ mod span_matches;
 mod span_ref;
 mod status_enum_value;
 mod stored_trace;
-mod string_matches;
-mod typed_value_parts;
 
 use attr_builder::AttrBuilder;
 use attr_data_type::attr_data_type;
-use attr_matches::attr_matches;
-use attr_values_match::attr_values_match;
-use bool_matches::bool_matches;
 use child_count_for::child_count_for;
-use collect_event_values::collect_event_values;
-use collect_link_values::collect_link_values;
 use collect_span_intrinsic_values::collect_span_intrinsic_values;
 use collect_trace_intrinsic_values::collect_trace_intrinsic_values;
-use enum_int_matches::enum_int_matches;
-use event_matcher_matches_absence::event_matcher_matches_absence;
-use event_matcher_matches_event::event_matcher_matches_event;
 use event_tags::EVENT_TAGS;
 use expansion_matchers::expansion_matchers;
-use float_matches::float_matches;
 pub use in_memory_span_store::InMemorySpanStore;
 use instrumentation_matches::instrumentation_matches;
-use int_matches::int_matches;
 use intrinsic_matches::intrinsic_matches;
 use intrinsic_tags::INTRINSIC_TAGS;
 use is_event_matcher::is_event_matcher;
 use is_link_matcher::is_link_matcher;
 use kind_enum_value::kind_enum_value;
-use link_matcher_matches_absence::link_matcher_matches_absence;
-use link_matcher_matches_link::link_matcher_matches_link;
 use link_tags::LINK_TAGS;
 use matcher_matches::matcher_matches;
 use matching_events_for_scan::matching_events_for_scan;
 use matching_links_for_scan::matching_links_for_scan;
 use nested_attr_value::nested_attr_value;
-use nested_attribute_key_matches::nested_attribute_key_matches;
 use nested_event_matchers_match::nested_event_matchers_match;
 use nested_link_matchers_match::nested_link_matchers_match;
-use nested_presence_matches::nested_presence_matches;
-use nil_matches::nil_matches;
-use present_value_matches::present_value_matches;
 use resource_matches::resource_matches;
 use scan_builders::ScanBuilders;
 use scoped_attribute_tag::scoped_attribute_tag;
@@ -2022,9 +1995,7 @@ use span_matches::span_matches;
 use span_ref::span_ref;
 use status_enum_value::status_enum_value;
 use stored_trace::StoredTrace;
-use string_matches::string_matches;
-use typed_value_parts::typed_value_parts;
 
-use crate::engine::bytes_to_hex::bytes_to_hex;
+use crate::engine::bytes_to_hex;
 
 mod raw_attribute_columns;

@@ -17,6 +17,7 @@ mod parser;
 mod planner;
 mod result;
 mod span_columns;
+mod span_matching;
 mod store;
 pub mod testkit;
 
@@ -24,7 +25,7 @@ pub use ast::{
     Aggregate, ArithmeticOp, ComparisonOp, Field, FieldExpr, Intrinsic, Pipeline, Query,
     ScalarAggregate, ScalarExpr, Scope, SpansetExpr, StructuralOp, Value,
 };
-pub use engine::{EngineOpts, SearchOptions, TraceqlEngine};
+pub use engine::{EngineOpts, SearchOptions, TraceqlEngine, block_row_attrs_where, bytes_to_hex};
 pub use error::TraceqlError;
 pub use in_memory::InMemorySpanStore;
 pub use lexer::{Token, lex};
@@ -42,6 +43,12 @@ pub use span_columns::{
     COL_STATUS_MESSAGE, COL_TRACE_DURATION, COL_TRACE_ID, COL_TRACE_START, EVENT_ATTR_PREFIX,
     INSTRUMENTATION_ATTR_PREFIX, InputSpan, LINK_ATTR_PREFIX, NestedSet, assign_nested_set,
     span_schema, span_schema_with_attrs,
+};
+pub use span_matching::{
+    attr_matches, attr_values_match, bool_matches, collect_event_values, collect_link_values,
+    enum_int_matches, event_matcher_matches_absence, event_matcher_matches_event, float_matches,
+    int_matches, link_matcher_matches_absence, link_matcher_matches_link, nested_presence_matches,
+    nil_matches, present_value_matches, string_matches,
 };
 pub use store::{
     MatchCmp, MatchScope, MatchValue, ScanJob, ScanOptions, ScanResult, SpanMatcher, SpanStore,

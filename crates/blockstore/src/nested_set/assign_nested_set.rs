@@ -1,8 +1,11 @@
-use super::{HashMap, NestedSet, SpanNode};
+use super::{CycleSpans, HashMap, NestedSet, SpanNode};
 
 /// Assigns nested-set intervals by DFS preorder over the trace forest.
+///
+/// Roots are numbered in span order. `cycle_spans` decides what happens to
+/// spans that no root reaches because their parent links form a cycle.
 #[must_use]
-pub fn assign_nested_set(spans: &[SpanNode]) -> Vec<NestedSet> {
+pub fn assign_nested_set(spans: &[SpanNode], cycle_spans: CycleSpans) -> Vec<NestedSet> {
     enum Frame {
         Enter { idx: usize, parent_left: i32 },
         Exit { idx: usize },
@@ -26,27 +29,31 @@ pub fn assign_nested_set(spans: &[SpanNode]) -> Vec<NestedSet> {
     let mut out = vec![
         NestedSet {
             nested_set_left: 0,
-            // -1 is Tempo's no-parent (root) sentinel; left values start at 1 so
-            // it never collides with a real parent's left.
             nested_set_right: 0,
-            parent_id: -1,
+            parent_id: 0,
         };
         spans.len()
     ];
     let mut counter = 1_i32;
     let mut visited = vec![false; spans.len()];
 
-    // DFS from the discovered roots. Then sweep for any span the DFS never
-    // reached — under cyclic/garbage parentage (e.g. A.parent=B, B.parent=A)
-    // a node can be neither a root nor a descendant of one, so it would keep
-    // `{0, 0, 0}` and collide with real roots. Seed each such span as an
-    // additional root so every node gets a valid `left < right` interval.
+    // DFS from the discovered roots. Under cyclic/garbage parentage (e.g.
+    // A.parent=B, B.parent=A) a node can be neither a root nor a descendant of
+    // one, so it would keep `{0, 0, 0}` and collide with real roots. With
+    // `AssignIntervals`, sweep every span afterwards and seed each unreached
+    // one as an additional root so every node gets a valid `left < right`
+    // interval.
+    let cycle_sweep = match cycle_spans {
+        CycleSpans::AssignIntervals => 0..spans.len(),
+        CycleSpans::LeaveUnassigned => 0..0,
+    };
     let mut stack = Vec::new();
-    for root in roots.iter().copied().chain(0..spans.len()) {
+    for root in roots.iter().copied().chain(cycle_sweep) {
         stack.push(Frame::Enter {
             idx: root,
             // Root span, or cycle-orphaned span re-seeded as a root:
-            // nestedSetParent = -1 (Tempo no-parent sentinel).
+            // nestedSetParent = -1 (Tempo's no-parent sentinel; left values
+            // start at 1 so it never collides with a real parent's left).
             parent_left: -1,
         });
         while let Some(frame) = stack.pop() {

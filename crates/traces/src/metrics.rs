@@ -1,7 +1,8 @@
 //! Traces-service Prometheus metrics.
 //!
-//! The metric spec is uniform across the LGTM observability services. It is a
-//! `prometheus-client` [`Registry`] with the prefix `krabka_traces`, wrapped in
+//! The metric spec is uniform across the LGTM observability services, and
+//! [`krabka_observability::service_metrics`] holds the parts they share. It is
+//! a `prometheus-client` registry with the prefix `krabka_traces`, wrapped in
 //! `Arc<Mutex<…>>` so the `/metrics` exporter can lock it. The cheaply
 //! cloneable [`ServiceMetrics`] hands out counter and histogram handles, and
 //! the ingest and query handlers increment those directly. Ingest is the
@@ -10,31 +11,37 @@
 //! `prometheus-client` auto-appends `_total` to counters at encode time, so
 //! counter names are registered WITHOUT the suffix.
 
-use std::sync::Arc;
-
 use krabka_blockstore::{ObjectStoreMetrics, TenantId};
+pub use krabka_observability::service_metrics::{
+    RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel, TenantLabel, metrics_router,
+};
 use krabka_observability::{
-    compaction_metrics::CompactionMetrics, wal_consumer_metrics::WalConsumerMetrics,
+    compaction_metrics::CompactionMetrics,
+    service_metrics::{
+        IngestHelpText, IngestInstruments, IngestRequest, PipelineInstruments, QueryHelpText,
+        QueryInstruments, QueryRequest, RequestOutcome, register_in_new_registry,
+    },
+    wal_consumer_metrics::WalConsumerMetrics,
     wal_produce::WalProduceMetrics,
 };
-use krabka_units::prelude::*;
+use krabka_units::{ByteSize, Time};
 use prometheus_client::{
-    encoding::EncodeLabelSet,
-    metrics::{counter::Counter, family::Family, histogram::Histogram},
+    metrics::{counter::Counter, family::Family},
     registry::Registry,
 };
-use tokio::sync::Mutex;
+
+mod service_metrics;
+
+pub use self::service_metrics::ServiceMetrics;
 
 #[cfg(test)]
 mod tests {
+    use assert2::{assert, check};
+    use krabka_blockstore::ObjectStoreOperation;
+    use krabka_observability::service_metrics::encode_registry;
+    use krabka_units::prelude::*;
 
-    use axum::{
-        body::Body,
-        http::{Request, StatusCode},
-    };
-    use tower::ServiceExt as _;
-
-    use super::*;
+    use super::{RouteStatusLabel, ServiceMetrics, TenantId, TenantLabel};
 
     fn tenant(id: &str) -> TenantId {
         TenantId::new(id).expect("a valid tenant id")
@@ -50,11 +57,13 @@ mod tests {
         m.record_block_flushed();
         m.record_query("search", true, 0.05);
         m.record_query("trace_by_id", false, 0.2);
+        // The shared bundles must land in this signal's registry.
+        m.wal_consumer.record_partition_assigned("__wal", 2);
+        m.wal_produce.record_batch_failure(1, 3);
+        m.compaction.record_output(4);
+        m.object_store.record_retry(ObjectStoreOperation::Get);
 
-        let mut buf = String::new();
-        let r = m.registry.lock().await;
-        prometheus_client::encoding::text::encode(&mut buf, &r).unwrap();
-
+        let buf = encode_registry(&m.registry).await.unwrap();
         for needle in [
             "krabka_traces_ingest_requests_total",
             "krabka_traces_ingest_bytes_total",
@@ -65,30 +74,17 @@ mod tests {
             "krabka_traces_blocks_flushed_total",
             "krabka_traces_query_requests_total",
             "krabka_traces_query_duration_seconds",
+            "krabka_traces_wal_consumer_partition_owned{topic=\"__wal\",partition=\"2\"} 1",
+            "krabka_traces_wal_partial_batch_appends_total 1",
+            "krabka_traces_compaction_blocks_total 4",
+            "krabka_traces_objstore_operation_retries_total{operation=\"get\"} 1",
             "status=\"ok\"",
             "status=\"error\"",
             "route=\"search\"",
             "tenant=\"tenant-a\"",
         ] {
-            assert2::assert!(buf.contains(needle));
+            assert!(buf.contains(needle), "missing {needle} in:\n{buf}");
         }
-    }
-
-    #[test]
-    fn ingest_counters_accumulate() {
-        let m = ServiceMetrics::new();
-        m.record_ingest(true, bytes(100), 3, millis(10));
-        m.record_ingest(true, bytes(50), 2, millis(10));
-        assert2::assert!(m.ingest_bytes.get() == 150);
-        assert2::assert!(m.ingest_items.get() == 5);
-        assert2::assert!(
-            m.ingest_requests
-                .get_or_create(&StatusLabel {
-                    status: "ok".into()
-                })
-                .get()
-                == 2
-        );
     }
 
     #[test]
@@ -96,29 +92,10 @@ mod tests {
         let m = ServiceMetrics::new();
         // A 4xx client error: error outcome, but NOT a WAL failure.
         m.record_ingest(false, ByteSize::ZERO, 0, Time::ZERO);
-        assert2::assert!(m.wal_append_failures.get() == 0);
+        assert!(m.ingest.wal_append_failures.get() == 0);
         // A produce failure: bump explicitly at the WAL error site.
         m.record_wal_append_failure();
-        assert2::assert!(m.wal_append_failures.get() == 1);
-    }
-
-    #[tokio::test]
-    async fn dimensioned_arguments_export_in_prometheus_base_units() {
-        // The instruments hold raw bytes and raw seconds; the quantity seam must
-        // scale a `ByteSize`/`Time` into exactly those units, not pass the
-        // caller's magnitude through unscaled.
-        let m = ServiceMetrics::new();
-        m.record_ingest(true, mebibytes(2), 1, millis(250));
-
-        let mut buf = String::new();
-        let r = m.registry.lock().await;
-        prometheus_client::encoding::text::encode(&mut buf, &r).unwrap();
-        for needle in [
-            "krabka_traces_ingest_bytes_total 2097152",
-            "krabka_traces_ingest_duration_seconds_sum 0.25",
-        ] {
-            assert2::assert!(buf.contains(needle));
-        }
+        assert!(m.ingest.wal_append_failures.get() == 1);
     }
 
     #[test]
@@ -132,41 +109,32 @@ mod tests {
         m.record_block_flushed();
         m.record_block_flushed();
 
-        assert2::assert!(
-            m.ingest_spans
-                .get_or_create(&TenantLabel {
-                    tenant: "tenant-a".into()
-                })
-                .get()
-                == 5
-        );
-        assert2::assert!(
-            m.ingest_spans
-                .get_or_create(&TenantLabel {
-                    tenant: "tenant-b".into()
-                })
-                .get()
-                == 4
-        );
-        assert2::assert!(m.blocks_flushed.get() == 2);
+        for (tenant, want) in [("tenant-a", 5), ("tenant-b", 4)] {
+            check!(
+                m.ingest_spans
+                    .get_or_create(&TenantLabel {
+                        tenant: tenant.into()
+                    })
+                    .get()
+                    == want
+            );
+        }
+        assert!(m.blocks_flushed.get() == 2);
     }
 
+    // `record_query` takes its latency in seconds rather than as a `Time`,
+    // so its outcome mapping is checked here as well as in the shared module.
     #[test]
     fn query_counters_split_by_route_and_status() {
         let m = ServiceMetrics::new();
         m.record_query("search", true, 0.01);
-        m.record_query("search", true, 0.02);
         m.record_query("search", false, 0.03);
-        m.record_query("tags", true, 0.01);
-        for (route, status, want) in [
-            ("search", "ok", 2),
-            ("search", "error", 1),
-            ("tags", "ok", 1),
-        ] {
-            assert2::assert!(
-                m.query_requests
+        for (status, want) in [("ok", 1), ("error", 1)] {
+            check!(
+                m.query
+                    .requests
                     .get_or_create(&RouteStatusLabel {
-                        route: route.into(),
+                        route: "search".into(),
                         status: status.into()
                     })
                     .get()
@@ -174,101 +142,4 @@ mod tests {
             );
         }
     }
-
-    #[tokio::test]
-    async fn metrics_route_returns_openmetrics() {
-        let m = ServiceMetrics::new();
-        m.record_ingest(true, bytes(42), 1, millis(10));
-        let app = metrics_router(m.registry);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/metrics")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert2::assert!(resp.status() == StatusCode::OK);
-        let ct = resp
-            .headers()
-            .get("content-type")
-            .unwrap()
-            .to_str()
-            .unwrap();
-        assert2::assert!(ct.starts_with("application/openmetrics-text"));
-        let body = axum::body::to_bytes(resp.into_body(), 64 * 1024)
-            .await
-            .unwrap();
-        let s = std::str::from_utf8(&body).unwrap();
-        assert2::assert!(s.contains("krabka_traces_ingest_requests_total"));
-        assert2::assert!(s.contains("# EOF"));
-    }
-    /// The shared WAL-consumer, compaction and object-store bundles register
-    /// into this signal's own registry, so their names have to come out under
-    /// this signal's prefix. A bundle wired into the wrong registry, or not
-    /// registered at all, is invisible from the recording call and shows up
-    /// only here.
-    #[tokio::test]
-    async fn shared_instruments_carry_this_signals_prefix() {
-        use krabka_blockstore::ObjectStoreOperation;
-
-        let m = ServiceMetrics::new();
-        m.wal_consumer.record_poll_at(
-            &[krabka_client_consumer::ConsumerRecord {
-                topic: "__wal".into(),
-                partition: 2,
-                offset: 17,
-                leader_epoch: 0,
-                timestamp: 1_000,
-                timestamp_type: krabka_client_consumer::TimestampType::CreateTime,
-                key: None,
-                value: None,
-                headers: Vec::new(),
-            }],
-            3_000,
-        );
-        m.compaction.record_run(true, krabka_units::secs(1));
-        m.compaction.record_output(4);
-        m.object_store
-            .record_operation(ObjectStoreOperation::Get, false, krabka_units::millis(20));
-        m.object_store.record_retry(ObjectStoreOperation::Get);
-
-        let mut buf = String::new();
-        let r = m.registry.lock().await;
-        prometheus_client::encoding::text::encode(&mut buf, &r).unwrap();
-        for needle in [
-            "krabka_traces_wal_consumer_records_total{topic=\"__wal\",partition=\"2\"} 1",
-            "krabka_traces_wal_consumer_last_consumed_offset{topic=\"__wal\",partition=\"2\"} 17",
-            "krabka_traces_wal_consumer_polls_total{outcome=\"records\"} 1",
-            "krabka_traces_wal_consumer_receive_delay_seconds_sum 2.0",
-            "krabka_traces_compaction_runs_total{status=\"ok\"} 1",
-            "krabka_traces_compaction_duration_seconds_count 1",
-            "krabka_traces_compaction_blocks_total 4",
-            "krabka_traces_objstore_operations_total{operation=\"get\"} 1",
-            "krabka_traces_objstore_operation_failures_total{operation=\"get\"} 1",
-            "krabka_traces_objstore_operation_retries_total{operation=\"get\"} 1",
-            "krabka_traces_objstore_operation_duration_seconds_count{operation=\"get\"} 1",
-        ] {
-            assert2::assert!(buf.contains(needle), "missing {needle} in:\n{buf}");
-        }
-    }
 }
-
-mod export;
-mod metrics_router;
-mod route_label;
-mod route_status_label;
-mod service_metrics;
-mod shared_registry;
-mod status_label;
-mod tenant_label;
-
-use export::export;
-pub use metrics_router::metrics_router;
-pub use route_label::RouteLabel;
-pub use route_status_label::RouteStatusLabel;
-pub use service_metrics::ServiceMetrics;
-pub use shared_registry::SharedRegistry;
-pub use status_label::StatusLabel;
-pub use tenant_label::TenantLabel;

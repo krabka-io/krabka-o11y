@@ -688,7 +688,12 @@ pub mod testkit {
         }
     }
 
-    pub(crate) fn metric_to_labels(metric: &str) -> Labels {
+    /// Parses a `.test` series selector such as `http_requests{job="api"}`
+    /// into its label set, with the metric name as `__name__`.
+    ///
+    /// Quoted label values are unescaped; a pair without `=` is skipped.
+    #[must_use]
+    pub fn metric_to_labels(metric: &str) -> Labels {
         let mut labels = Labels::new();
         let Some(open) = metric.find('{') else {
             labels.insert("__name__", metric);

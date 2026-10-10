@@ -15,6 +15,12 @@ crate_library(
 crate_binary(
     name = "krabka-traces",
     crate_root = "src/bin/krabka-traces/main.rs",
+    # Test helpers shared with the other signal binaries, reached with
+    # `#[path]` from //crates/observability.
+    extra_srcs = [
+        "//crates/observability:tests/support/compaction_passes.rs",
+        "//crates/observability:tests/support/wal_fetch_limit_flags.rs",
+    ],
     lib = ":traces",
 )
 
@@ -54,11 +60,14 @@ crate_tests(
             },
         },
     },
-    # The shared lifecycle store, reached with `#[path]` from //crates/blockstore,
-    # and the Jaeger thrift fixture the library's unit tests also use.
+    # The shared lifecycle and hooked stores, reached with `#[path]` from
+    # //crates/blockstore, and the Jaeger thrift fixture the library's unit
+    # tests also use.
     extra_srcs = {
         "block_lifecycle": ["//crates/blockstore:tests/support/lifecycle_store.rs"],
+        "blockbuilder": ["//crates/blockstore:tests/support/hooked_store.rs"],
         "grafana_e2e": ["src/wire/jaeger/thrift_fixture.rs"],
+        "index_shard_publication": ["//crates/blockstore:tests/support/hooked_store.rs"],
         "tempo_deployment": ["//crates/metrics-service:tests/support/container_deployment.rs"],
         "tempo_differential": ["//crates/metrics-service:tests/support/generated_differential.rs"],
     },

@@ -1,4 +1,4 @@
-use super::{ProtoAnyValue, Value, hex_string, proto_any_value};
+use super::{ProtoAnyValue, Value, encode_lower_hex, proto_any_value};
 
 pub(crate) fn proto_value_to_json(value: &ProtoAnyValue) -> Value {
     match value.value.as_ref() {
@@ -8,7 +8,7 @@ pub(crate) fn proto_value_to_json(value: &ProtoAnyValue) -> Value {
         Some(proto_any_value::Value::DoubleValue(value)) => {
             serde_json::Number::from_f64(*value).map_or(Value::Null, Value::Number)
         }
-        Some(proto_any_value::Value::BytesValue(value)) => Value::String(hex_string(value)),
+        Some(proto_any_value::Value::BytesValue(value)) => Value::String(encode_lower_hex(value)),
         Some(proto_any_value::Value::ArrayValue(value)) => {
             Value::Array(value.values.iter().map(proto_value_to_json).collect())
         }

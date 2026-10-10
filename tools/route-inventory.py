@@ -17,10 +17,19 @@ SIGNAL_CRATES = {
     "traces": ("traces",),
     "profiles": ("profiles",),
 }
+# Routers one crate defines and others mount. The last field says how a
+# consumer is recognised: `merge` when it merges the router onto its own, `call`
+# when it builds its listener's router by calling the shared function.
 SHARED_ROUTERS = {
     "readiness_router": (
         "observability",
         "crates/observability/src/readiness/readiness_router.rs",
+        "merge",
+    ),
+    "metrics_router": (
+        "observability",
+        "crates/observability/src/service_metrics/metrics_router.rs",
+        "call",
     ),
 }
 METHODS = ("get", "post", "put", "delete", "patch")
@@ -158,12 +167,23 @@ def merges_router(text, router):
     ) is not None
 
 
+def calls_router(text, router):
+    return re.search(
+        rf"(?<!fn )(?<![\w])(?:[\w:]+::)?{re.escape(router)}\s*\(",
+        without_test_modules(text),
+    ) is not None
+
+
+def mounts_router(text, router, mount):
+    return calls_router(text, router) if mount == "call" else merges_router(text, router)
+
+
 def shared_routes(signal, crates):
-    for router, (provider_crate, provider_source) in SHARED_ROUTERS.items():
+    for router, (provider_crate, provider_source, mount) in SHARED_ROUTERS.items():
         if provider_crate in crates:
             continue
         uses_router = any(
-            router in text and merges_router(text, router)
+            router in text and mounts_router(text, router, mount)
             for crate in crates
             for source in (ROOT / "crates" / crate / "src").rglob("*.rs")
             if source.name != "tests.rs" and "tests" not in source.parts
@@ -362,6 +382,11 @@ mod tests {
         "readiness_router",
     )
     assert not merges_router(sample, "readiness_router")
+    assert calls_router(
+        "let router = krabka_traces::metrics::metrics_router(registry);", "metrics_router"
+    )
+    assert not calls_router("pub fn metrics_router(registry: SharedRegistry)", "metrics_router")
+    assert not calls_router("pub use service_metrics::{SharedRegistry, metrics_router};", "metrics_router")
     proto = proto_definitions(
         """
 package example.v1;

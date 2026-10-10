@@ -363,8 +363,8 @@ impl SpanStore for InMemorySpanStore {
             }
             for (idx, input) in trace.spans.iter().enumerate() {
                 collect_span_intrinsic_values(input, &trace.nested, idx, tag, &mut values);
-                collect_event_values(input, tag, &mut values);
-                collect_link_values(input, tag, &mut values);
+                collect_event_values(&input.events, tag, &mut values);
+                collect_link_values(&input.links, tag, &mut values);
                 if matches!(
                     attr_scope,
                     None | Some(TagScope::Span | TagScope::Instrumentation)

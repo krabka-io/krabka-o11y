@@ -1,8 +1,9 @@
-//! A proptest generator of near-miss queries, shared by the `LogQL` and
-//! `TraceQL` parser property suites.
+//! A proptest generator of near-miss queries, shared by the `LogQL`,
+//! `TraceQL` and `PromQL` parser property suites and the Pyroscope `/ingest`
+//! query-string suite.
 //!
-//! `//crates/traceql` reaches this file with `#[path]`, so it depends only on
-//! `proptest`.
+//! `//crates/traceql`, `//crates/promql` and `//crates/profiles` reach this
+//! file with `#[path]`, so it depends only on `proptest`.
 
 use proptest::prelude::*;
 

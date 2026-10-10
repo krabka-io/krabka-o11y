@@ -591,7 +591,7 @@ mod tests {
             .unwrap();
 
         check!(response.status() == StatusCode::INTERNAL_SERVER_ERROR);
-        check!(metrics.wal_append_failures.get() == 1);
+        check!(metrics.ingest.wal_append_failures.get() == 1);
         check!(metrics.wal_produce.partial_batch_appends() == 1);
         check!(metrics.wal_produce.unappended_records() == 1);
     }
@@ -1136,7 +1136,8 @@ overrides:
     fn ok_ingest_requests(state: &DistributorState) -> u64 {
         state
             .metrics
-            .ingest_requests
+            .ingest
+            .requests
             .get_or_create(&crate::metrics::StatusLabel {
                 status: "ok".into(),
             })

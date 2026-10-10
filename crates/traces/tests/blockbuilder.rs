@@ -1,3 +1,4 @@
+#[path = "../../blockstore/tests/support/hooked_store.rs"]
 mod hooked_store;
 mod span_fixture;
 

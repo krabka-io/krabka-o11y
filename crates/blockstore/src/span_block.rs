@@ -426,7 +426,7 @@ use new_str_list_list::new_str_list_list;
 use promoted_attr_builder::PromotedAttrBuilder;
 use promoted_attr_value::promoted_attr_value;
 pub use span_attr::SpanAttr;
-use span_column_builders::SpanColumnBuilders;
+pub use span_column_builders::SpanColumnBuilders;
 pub use span_event::SpanEvent;
 pub use span_link::SpanLink;
 pub use span_row::SpanRow;

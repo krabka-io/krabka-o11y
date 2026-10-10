@@ -3,15 +3,14 @@ use super::*;
 #[tokio::test]
 pub(crate) async fn exemplars_reads_compacted_exemplar_sidecar_blocks() {
     let series_labels = labels(&[("__name__", "http_requests_total"), ("job", "api")]);
-    let batch = exemplar_batch(
-        series_labels.fingerprint(),
-        10_500,
-        7.0,
-        "abc",
-        "def",
-        "kind",
-        "slow",
-    );
+    let batch = exemplar_batch(ExemplarRow {
+        fingerprint: series_labels.fingerprint(),
+        timestamp_ms: 10_500,
+        value: 7.0,
+        trace_id: Some("abc".to_string()),
+        span_id: Some("def".to_string()),
+        labels: vec![("kind".to_string(), "slow".to_string())],
+    });
     let store = manifest_store(ManifestBlock {
         kind: MetricBlockKind::Exemplars,
         block_key: "metrics/exemplars/0003.parquet",

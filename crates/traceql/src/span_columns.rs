@@ -1,6 +1,6 @@
 //! `TraceQL` span column names and structural interval helpers.
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use krabka_units::Time;

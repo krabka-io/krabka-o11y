@@ -245,6 +245,7 @@ mod tests {
 mod append_f64_list;
 mod append_spans;
 mod bucket_span;
+mod compact_spanned_histogram_counts;
 mod decode_native_histograms;
 mod encode_native_histograms;
 mod f64_list_field;
@@ -263,6 +264,7 @@ mod validate_span_count_consistency;
 use append_f64_list::append_f64_list;
 use append_spans::append_spans;
 pub use bucket_span::BucketSpan;
+pub use compact_spanned_histogram_counts::compact_spanned_histogram_counts;
 pub use decode_native_histograms::decode_native_histograms;
 pub use encode_native_histograms::encode_native_histograms;
 use f64_list_field::f64_list_field;

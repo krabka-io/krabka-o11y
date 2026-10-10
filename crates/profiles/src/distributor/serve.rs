@@ -1,7 +1,6 @@
-use super::{
-    Arc, DistributorState, Future, ServerListener, ServerSecurity, SocketAddr, TcpListener, router,
-    serve_router,
-};
+use krabka_observability::server_security::{RouterServer, spawn_router_server};
+
+use super::{Arc, DistributorState, Future, ServerSecurity, SocketAddr, router};
 
 /// Serves the distributor on `addr` until `shutdown` completes, and returns the bound address.
 ///
@@ -18,14 +17,12 @@ pub async fn serve(
     security: &ServerSecurity,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<SocketAddr> {
-    let listener = ServerListener::bind(TcpListener::bind(addr).await?, security)
-        .map_err(std::io::Error::other)?;
-    let bound = listener.local_addr();
-    let server = serve_router(listener, router(state), security).with_graceful_shutdown(shutdown);
-    tokio::spawn(async move {
-        if let Err(err) = server.await {
-            tracing::warn!(%err, "profiles distributor server stopped with error");
-        }
-    });
-    Ok(bound)
+    spawn_router_server(RouterServer {
+        addr,
+        router: router(state),
+        security,
+        shutdown,
+        server_name: "profiles distributor",
+    })
+    .await
 }

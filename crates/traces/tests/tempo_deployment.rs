@@ -17,12 +17,15 @@ use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt as _,
-    core::{ContainerPort, Mount, WaitFor},
+    core::{ContainerPort, Mount},
 };
 
 #[path = "../../metrics-service/tests/support/container_deployment.rs"]
 mod container_deployment;
-use container_deployment::{TestResult, base_url, image, start, start_broker};
+use container_deployment::{
+    TestResult, base_url, deployment_network, image, start, start_broker, start_minio,
+    wait_until_ready,
+};
 
 const PORT: u16 = 3200;
 const ADMIN: u16 = 9404;
@@ -49,31 +52,9 @@ impl Deployment {
         if let Some(overrides) = overrides {
             std::fs::write(data.path().join("overrides.yaml"), overrides)?;
         }
-        let network = format!(
-            "krabka-traces-{}",
-            broker_data
-                .path()
-                .file_name()
-                .ok_or("directory name")?
-                .to_string_lossy()
-                .trim_start_matches('.')
-                .to_ascii_lowercase()
-        );
+        let network = deployment_network("traces", broker_data.path())?;
         let broker = start_broker(broker_data.path(), &network).await?;
-        let minio = start(
-            image("MINIO")
-                .with_entrypoint("/bin/sh")
-                .with_wait_for(WaitFor::message_on_stderr("API:"))
-                .with_network(&network)
-                .with_container_name(format!("{network}-minio"))
-                .with_env_var("MINIO_ROOT_USER", "krabkatraces")
-                .with_env_var("MINIO_ROOT_PASSWORD", "krabkatraces")
-                .with_cmd([
-                    "-c",
-                    "mkdir -p /data/traces && exec /usr/bin/minio server /data",
-                ]),
-        )
-        .await?;
+        let minio = start_minio(&network, "traces").await?;
         let client = Client::builder().timeout(Duration::from_secs(5)).build()?;
         let distributor = role(&network, data.path(), "distributor", false, &[]).await?;
         let hot = role(&network, data.path(), "querier", true, &[]).await?;
@@ -93,20 +74,7 @@ impl Deployment {
     }
 
     async fn ready(&self, container: &ContainerAsync<GenericImage>) -> TestResult {
-        let url = format!("{}/ready", base_url(container, ADMIN).await?);
-        tokio::time::timeout(TIMEOUT, async {
-            loop {
-                if let Ok(response) = self.client.get(&url).send().await
-                    && response.status() == StatusCode::OK
-                {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        })
-        .await
-        .map_err(|error| format!("{url}: {error}"))?;
-        Ok(())
+        wait_until_ready(&self.client, container, ADMIN).await
     }
 
     async fn role(

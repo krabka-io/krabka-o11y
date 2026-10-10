@@ -6,6 +6,7 @@
 //! and names the rest by the keys the previous generation already used. These
 //! tests pin that, and measure it.
 
+#[path = "../../blockstore/tests/support/hooked_store.rs"]
 mod hooked_store;
 
 use std::{

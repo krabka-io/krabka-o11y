@@ -1,9 +1,22 @@
 use krabka_blockstore::ObjectStoreMetrics;
-use krabka_observability::wal_consumer_metrics::WalConsumerMetrics;
+use krabka_metrics::metrics::{INGEST_HELP, METRICS_PREFIX, metrics_role_registry};
+use krabka_observability::{
+    RoleKind,
+    service_metrics::{
+        IngestInstruments, IngestRequest, QueryHelpText, QueryInstruments, QueryRequest,
+        RequestOutcome, register_for_role, register_in_new_registry,
+    },
+    wal_consumer_metrics::WalConsumerMetrics,
+};
 
 use super::{
-    Arc, ByteSize, ByteSizeExt, Counter, Family, Gauge, Histogram, Mutex, QueryTypeLabel, Registry,
-    RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel, Time, TimeExt,
+    ByteSize, Counter, Family, Gauge, Histogram, QueryTypeLabel, Registry, SharedRegistry, Time,
+    TimeExt as _,
+};
+
+const QUERY_HELP: QueryHelpText = QueryHelpText {
+    requests: "Query requests handled, labelled by route and outcome status.",
+    duration: "Query handler latency in seconds, labelled by route.",
 };
 
 /// Bundle of metric handles that is cheap to clone. Build it one time with
@@ -15,17 +28,14 @@ pub struct ServiceMetrics {
     pub object_store: ObjectStoreMetrics,
     pub wal_consumer: WalConsumerMetrics,
     // INGEST (distributor) role.
-    pub ingest_requests: Family<StatusLabel, Counter>,
-    pub ingest_bytes: Counter,
-    pub ingest_items: Counter,
-    pub ingest_duration: Histogram,
-    pub wal_append_failures: Counter,
+    /// Ingest requests, bytes, items, latency and WAL append failures.
+    pub ingest: IngestInstruments,
     // QUERY (querier) role.
-    pub query_requests: Family<RouteStatusLabel, Counter>,
-    pub query_duration: Family<RouteLabel, Histogram>,
+    /// Query requests and per-route handler latency.
+    pub query: QueryInstruments,
     /// PromQL-engine evaluation latency (parse + plan + execute), labelled by
     /// query `type` (`instant`|`range`). This scope is narrower than
-    /// `query_duration`, which covers the whole HTTP handler: param decode,
+    /// `query.duration`, which covers the whole HTTP handler: param decode,
     /// permit wait, and encode.
     pub query_eval_duration: Family<QueryTypeLabel, Histogram>,
     /// Cumulative engine-eval failures, labelled by query `type`.
@@ -49,41 +59,22 @@ pub struct ServiceMetrics {
 
 impl ServiceMetrics {
     /// Builds a new registry, registers every metric, and returns the bundle.
-    ///
-    /// # Panics
-    /// Panics if its newly created private registry is locked during construction.
     #[must_use]
     pub fn new() -> Self {
-        let shared = Arc::new(Mutex::new(Registry::with_prefix("krabka_metrics")));
-        let mut registry = shared.try_lock().expect("new registry is unlocked");
-        Self::register(&mut registry, Arc::clone(&shared))
+        register_in_new_registry(METRICS_PREFIX, Self::register)
     }
 
     /// Registers this role's instruments in the process registry.
     ///
     /// Each role has a separate prefix. Its gauges do not overwrite another role's gauges.
-    pub async fn for_role(shared: SharedRegistry, role: krabka_observability::RoleKind) -> Self {
-        let mut root = shared.lock().await;
-        let registry = root.sub_registry_with_prefix(format!(
-            "krabka_metrics_{}",
-            role.as_str().replace('-', "_")
-        ));
-        Self::register(registry, Arc::clone(&shared))
+    pub async fn for_role(shared: SharedRegistry, role: RoleKind) -> Self {
+        register_for_role(metrics_role_registry(shared, role), Self::register).await
     }
 
     fn register(registry: &mut Registry, shared: SharedRegistry) -> Self {
-        let ingest_requests: Family<StatusLabel, Counter> = Family::default();
-        let ingest_bytes = Counter::default();
-        let ingest_items = Counter::default();
-        let ingest_duration = Histogram::new([
-            0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
-        ]);
-        let wal_append_failures = Counter::default();
+        let ingest = IngestInstruments::register(registry, &INGEST_HELP);
+        let query = QueryInstruments::register(registry, &QUERY_HELP);
 
-        let query_requests: Family<RouteStatusLabel, Counter> = Family::default();
-        let query_duration: Family<RouteLabel, Histogram> = Family::new_with_constructor(|| {
-            Histogram::new([0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0])
-        });
         let query_eval_duration: Family<QueryTypeLabel, Histogram> =
             Family::new_with_constructor(|| {
                 Histogram::new([0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0])
@@ -98,41 +89,6 @@ impl ServiceMetrics {
         let ruler_lease_renew_failures = Counter::default();
         let ruler_failover_duration_seconds = Gauge::default();
 
-        registry.register(
-            "ingest_requests",
-            "Ingest (push) requests handled, labelled by outcome status.",
-            ingest_requests.clone(),
-        );
-        registry.register(
-            "ingest_bytes",
-            "Cumulative request-body bytes accepted on the ingest path.",
-            ingest_bytes.clone(),
-        );
-        registry.register(
-            "ingest_items",
-            "Cumulative items (series/samples) accepted on the ingest path.",
-            ingest_items.clone(),
-        );
-        registry.register(
-            "ingest_duration_seconds",
-            "Ingest handler latency in seconds.",
-            ingest_duration.clone(),
-        );
-        registry.register(
-            "wal_append_failures",
-            "Cumulative WAL/produce append failures on the ingest path.",
-            wal_append_failures.clone(),
-        );
-        registry.register(
-            "query_requests",
-            "Query requests handled, labelled by route and outcome status.",
-            query_requests.clone(),
-        );
-        registry.register(
-            "query_duration_seconds",
-            "Query handler latency in seconds, labelled by route.",
-            query_duration.clone(),
-        );
         registry.register(
             "query_eval_duration_seconds",
             "PromQL engine evaluation latency in seconds (parse+plan+execute), labelled by query type.",
@@ -190,13 +146,8 @@ impl ServiceMetrics {
             registry: shared,
             object_store,
             wal_consumer,
-            ingest_requests,
-            ingest_bytes,
-            ingest_items,
-            ingest_duration,
-            wal_append_failures,
-            query_requests,
-            query_duration,
+            ingest,
+            query,
             query_eval_duration,
             query_errors,
             active_queries,
@@ -216,33 +167,31 @@ impl ServiceMetrics {
     /// at the WAL or produce error site, so that a 4xx client or validation
     /// error does not inflate the WAL-failure counter.
     pub fn record_ingest(&self, ok: bool, size: ByteSize, items: u64, latency: Time) {
-        let status = if ok { "ok" } else { "error" };
-        self.ingest_requests
-            .get_or_create(&StatusLabel {
-                status: status.into(),
-            })
-            .inc();
-        self.ingest_bytes.inc_by(size.bytes_u64());
-        self.ingest_items.inc_by(items);
-        // Prometheus histograms are in base units, so the latency lands in
-        // seconds no matter what unit the caller measured it in.
-        self.ingest_duration.observe(latency.secs_f64());
+        self.ingest.record(IngestRequest {
+            outcome: if ok {
+                RequestOutcome::Ok
+            } else {
+                RequestOutcome::Error
+            },
+            body: size,
+            items,
+            elapsed: latency,
+        });
     }
 
     /// Records one query request outcome on `route` with its latency.
     pub fn record_query(&self, route: &str, ok: bool, latency: Time) {
-        let status = if ok { "ok" } else { "error" };
-        self.query_requests
-            .get_or_create(&RouteStatusLabel {
-                route: route.into(),
-                status: status.into(),
-            })
-            .inc();
-        self.query_duration
-            .get_or_create(&RouteLabel {
-                route: route.into(),
-            })
-            .observe(latency.secs_f64());
+        self.query.record(QueryRequest {
+            route,
+            outcome: if ok {
+                RequestOutcome::Ok
+            } else {
+                RequestOutcome::Error
+            },
+            // Prometheus histograms are in base units, so the latency lands in
+            // seconds no matter what unit the caller measured it in.
+            elapsed_secs: latency.secs_f64(),
+        });
     }
 
     /// Records one `PromQL` engine evaluation.

@@ -791,27 +791,10 @@ mod tests {
     #[test]
     fn wal_fetch_limits_preserve_defaults_and_reject_invalid_values() {
         let cli = Cli::try_parse_from(["krabka-traces", "--target", "block-builder"]).unwrap();
-        assert_eq!(cli.wal_fetch_max.bytes_i32(), 2_097_152);
-        assert_eq!(cli.wal_fetch_partition_max.bytes_i32(), 262_144);
+        check!(cli.wal_fetch_max.bytes_i32() == 2_097_152);
+        check!(cli.wal_fetch_partition_max.bytes_i32() == 262_144);
 
-        for (flag, invalid) in [
-            ("--wal-fetch-max", "0"),
-            ("--wal-fetch-max", "not-a-number"),
-            ("--wal-fetch-max", "-1B"),
-            ("--wal-fetch-max", "1.5B"),
-            ("--wal-fetch-max", "2147483648B"),
-            ("--wal-fetch-partition-max", "0"),
-            ("--wal-fetch-partition-max", "not-a-number"),
-            ("--wal-fetch-partition-max", "-1B"),
-            ("--wal-fetch-partition-max", "1.5B"),
-            ("--wal-fetch-partition-max", "2147483648B"),
-        ] {
-            assert!(
-                Cli::try_parse_from(["krabka-traces", "--target", "block-builder", flag, invalid,])
-                    .is_err(),
-                "{flag} should reject {invalid:?}"
-            );
-        }
+        wal_fetch_limit_flags::assert_rejects_invalid_wal_fetch_limits::<Cli>("krabka-traces");
     }
 
     #[test]
@@ -2419,6 +2402,12 @@ mod all_in_one_serves_ingest_and_query;
 /// those call `run_compactor` itself, which no integration test can reach.
 #[cfg(test)]
 mod the_compactor_runs_under_supervision;
+
+/// The invalid WAL fetch limits, shared with the other signal binary that
+/// parses them.
+#[cfg(test)]
+#[path = "../../../../observability/tests/support/wal_fetch_limit_flags.rs"]
+mod wal_fetch_limit_flags;
 
 mod all_role_context;
 mod all_role_stage;

@@ -4,3 +4,13 @@ pub struct NestedSet {
     pub right: i32,
     pub parent_id: i32,
 }
+
+impl From<krabka_blockstore::NestedSet> for NestedSet {
+    fn from(block: krabka_blockstore::NestedSet) -> Self {
+        Self {
+            left: block.nested_set_left,
+            right: block.nested_set_right,
+            parent_id: block.parent_id,
+        }
+    }
+}

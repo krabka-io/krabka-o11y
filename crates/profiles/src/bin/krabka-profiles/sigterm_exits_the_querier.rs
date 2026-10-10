@@ -14,6 +14,9 @@
 //! A process a signal killed reports `None`, which is exactly what the
 //! unfixed WAL tail left behind.
 
+#[path = "../../../../observability/tests/support/sigterm_child.rs"]
+mod sigterm_child;
+
 use std::{
     process::Command,
     time::{Duration, Instant},
@@ -23,6 +26,7 @@ use assert2::assert;
 use clap::Parser as _;
 use krabka_broker::{Broker, BrokerConfig};
 
+use self::sigterm_child::terminate_and_wait_for_exit;
 use super::{Cli, run, wal_topic::create_wal_topic};
 
 /// Set on the child re-execution of this test binary, and carries the broker
@@ -78,17 +82,7 @@ fn sigterm_makes_the_querier_process_exit() {
     // would test a tail that never reached its loop.
     wait_for_wal_tail_poll(&runtime, &admin, Duration::from_secs(45));
 
-    // Through `sh` rather than a `kill` binary: the shell builtin is always
-    // there, including inside a Bazel test sandbox, and `unsafe_code` is
-    // forbidden workspace-wide so `libc::kill` is not an option.
-    let signalled = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(format!("kill -TERM {}", child.id()))
-        .status()
-        .expect("send SIGTERM");
-    assert!(signalled.success());
-
-    let status = wait_for_exit(&mut child, Duration::from_secs(30));
+    let status = terminate_and_wait_for_exit(&mut child, Duration::from_secs(30));
 
     // `code()` is `None` for a process a signal killed, which is what a role
     // that never returns from its shutdown leaves an orchestrator holding.
@@ -161,17 +155,4 @@ fn wait_for_wal_tail_poll(runtime: &tokio::runtime::Runtime, admin: &str, within
         std::thread::sleep(Duration::from_millis(100));
     }
     panic!("the querier's WAL tail never polled within {within:?}");
-}
-
-fn wait_for_exit(child: &mut std::process::Child, within: Duration) -> std::process::ExitStatus {
-    let deadline = Instant::now() + within;
-    while Instant::now() < deadline {
-        match child.try_wait().expect("poll the child") {
-            Some(status) => return status,
-            None => std::thread::sleep(Duration::from_millis(20)),
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    panic!("the querier did not exit within {within:?} of SIGTERM");
 }

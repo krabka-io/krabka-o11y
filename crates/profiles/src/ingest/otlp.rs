@@ -533,7 +533,6 @@ mod tests {
 
 mod attribute_label;
 mod decode_otlp;
-mod hex_lower;
 mod intern_string;
 mod otlp_profile_to_pprof;
 mod otlp_sample_links;
@@ -548,8 +547,8 @@ mod value_type;
 
 use attribute_label::attribute_label;
 pub use decode_otlp::decode_otlp;
-use hex_lower::hex_lower;
 use intern_string::intern_string;
+use krabka_blockstore::encode_lower_hex;
 use otlp_profile_to_pprof::otlp_profile_to_pprof;
 use otlp_sample_links::otlp_sample_links;
 use otlp_sample_timestamps::otlp_sample_timestamps;

@@ -2,8 +2,16 @@ load("//bazel:defs.bzl", "crate_binary", "crate_library", "crate_tests")
 
 package(default_visibility = ["//visibility:public"])
 
-# Consumed by `crate.from_cargo` (see //MODULE.bazel).
-exports_files(["Cargo.toml"])
+# Consumed by `crate.from_cargo` (see //MODULE.bazel). The `tests/support`
+# files are the test helpers other packages reach with `#[path]`: the signal
+# binaries' compactor, WAL fetch and `SIGTERM` suites, and the soak's MinIO.
+exports_files([
+    "Cargo.toml",
+    "tests/support/compaction_passes.rs",
+    "tests/support/minio_store.rs",
+    "tests/support/sigterm_child.rs",
+    "tests/support/wal_fetch_limit_flags.rs",
+])
 
 crate_library(
     name = "observability",

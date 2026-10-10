@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use arrow::{
-    array::{ArrayRef, Float64Builder, Int64Builder, MapBuilder, StringBuilder, UInt64Builder},
-    datatypes::{DataType, Field, SchemaRef},
+    array::{ArrayRef, Int64Builder, StringBuilder, UInt64Builder},
+    datatypes::SchemaRef,
     record_batch::RecordBatch,
 };
 use assert2::check;
@@ -12,8 +12,9 @@ use axum::{
 };
 use krabka_blockstore::{BlockStore, Labels};
 use krabka_metrics::{
-    CompactionIndexManifest, CompactionObjectPlan, CompactionSeriesLabels, MetricBlockKind,
-    encode_float_samples, exemplar_schema, float_sample_schema, metadata_schema,
+    CompactionIndexManifest, CompactionObjectPlan, CompactionSeriesLabels, ExemplarRow,
+    MetricBlockKind, encode_exemplar_rows, encode_float_samples, exemplar_schema,
+    float_sample_schema, metadata_schema,
 };
 use krabka_observability::server_security::{ServerSecurity, authenticate_requests};
 use object_store::{
@@ -40,7 +41,6 @@ mod cold_series_labels;
 mod counting_object_store;
 mod deleted_api_block_store;
 mod exemplar_batch;
-mod exemplar_batch_from_rows;
 mod exemplars_answer_around_a_deleted_block_and_warn;
 mod exemplars_include_closed_range_boundaries_and_filter_outside_rows;
 mod exemplars_reads_compacted_exemplar_sidecar_blocks;
@@ -63,7 +63,6 @@ mod write_float_block;
 use counting_object_store::CountingObjectStore;
 use deleted_api_block_store::deleted_api_block_store;
 use exemplar_batch::exemplar_batch;
-use exemplar_batch_from_rows::exemplar_batch_from_rows;
 use expected_stats::expected_stats;
 use labels::labels;
 use manifest_store::{ManifestBlock, api_exemplars, assert_up_is_one, manifest_store};

@@ -94,6 +94,7 @@ mod tests {
         result::{AttrValue, EventRef, LinkRef, TypedValue},
         span_columns::InputSpan,
         store::{MatchScope, ScanResult},
+        testkit::{RootSpanRow, root_span_columns},
     };
 
     fn sp(tid: u8, id: u8, parent: Option<u8>, svc: &str) -> InputSpan {
@@ -999,45 +1000,37 @@ mod tests {
                 true,
             ),
         ]));
-        let mut trace_id = FixedSizeBinaryBuilder::with_capacity(2, 16);
-        trace_id.append_value([1; 16]).unwrap();
-        trace_id.append_value([2; 16]).unwrap();
-        let mut span_id = FixedSizeBinaryBuilder::with_capacity(2, 8);
-        span_id.append_value([1; 8]).unwrap();
-        span_id.append_value([2; 8]).unwrap();
-        let mut parent_span_id = FixedSizeBinaryBuilder::with_capacity(2, 8);
-        parent_span_id.append_null();
-        parent_span_id.append_null();
         let mut methods = StringDictionaryBuilder::<Int32Type>::new();
         methods.append_value("GET");
         methods.append_value("POST");
+        let mut columns = root_span_columns(&[
+            RootSpanRow {
+                trace_id: [1; 16],
+                span_id: [1; 8],
+                root_service_name: "api",
+                root_span_name: "GET /",
+                trace_duration_ns: 10,
+                name: "GET /",
+                kind: 2,
+                duration_ns: 10,
+                ..RootSpanRow::default()
+            },
+            RootSpanRow {
+                trace_id: [2; 16],
+                span_id: [2; 8],
+                root_service_name: "api",
+                root_span_name: "POST /",
+                trace_duration_ns: 20,
+                name: "POST /",
+                kind: 2,
+                start_ns: 10_000,
+                duration_ns: 20,
+                ..RootSpanRow::default()
+            },
+        ]);
+        columns.push(Arc::new(methods.finish()));
 
-        RecordBatch::try_new(
-            schema,
-            vec![
-                Arc::new(trace_id.finish()) as ArrayRef,
-                Arc::new(span_id.finish()),
-                Arc::new(parent_span_id.finish()),
-                Arc::new(Int32Array::from(vec![1, 1])),
-                Arc::new(Int32Array::from(vec![2, 2])),
-                Arc::new(Int32Array::from(vec![0, 0])),
-                Arc::new(Int32Array::from(vec![0, 0])),
-                Arc::new(StringArray::from(vec!["api", "api"])),
-                Arc::new(StringArray::from(vec!["GET /", "POST /"])),
-                Arc::new(Int64Array::from(vec![0, 0])),
-                Arc::new(Int64Array::from(vec![10, 20])),
-                Arc::new(StringArray::from(vec!["GET /", "POST /"])),
-                Arc::new(Int32Array::from(vec![2, 2])),
-                Arc::new(Int64Array::from(vec![0, 10_000])),
-                Arc::new(Int64Array::from(vec![10, 20])),
-                Arc::new(Int32Array::from(vec![0, 0])),
-                Arc::new(StringArray::from(vec!["", ""])),
-                Arc::new(StringArray::from(vec!["tracer", "tracer"])),
-                Arc::new(StringArray::from(vec!["", ""])),
-                Arc::new(methods.finish()),
-            ],
-        )
-        .unwrap()
+        RecordBatch::try_new(schema, columns).unwrap()
     }
 
     #[test]
@@ -5524,7 +5517,7 @@ mod block_row_scoped_attrs;
 mod bool_attr_values;
 mod bool_cmp;
 mod build_compare_series;
-pub(crate) mod bytes_to_hex;
+mod bytes_to_hex;
 mod collect_field_expr_regexes;
 mod collect_planned_batches;
 mod collect_selection_regexes;
@@ -5630,12 +5623,12 @@ use block_attr_value_double::BLOCK_ATTR_VALUE_DOUBLE;
 use block_attr_value_int::BLOCK_ATTR_VALUE_INT;
 use block_attr_values_for_key::block_attr_values_for_key;
 use block_row_attrs::block_row_attrs;
-use block_row_attrs_where::block_row_attrs_where;
+pub use block_row_attrs_where::block_row_attrs_where;
 use block_row_scoped_attrs::block_row_scoped_attrs;
 use bool_attr_values::bool_attr_values;
 use bool_cmp::bool_cmp;
 use build_compare_series::build_compare_series;
-use bytes_to_hex::bytes_to_hex;
+pub use bytes_to_hex::bytes_to_hex;
 use collect_field_expr_regexes::collect_field_expr_regexes;
 use collect_planned_batches::collect_planned_batches;
 use collect_selection_regexes::collect_selection_regexes;

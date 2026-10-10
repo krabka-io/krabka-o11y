@@ -1,6 +1,8 @@
-//! Container startup shared by the logs and metrics deployment suites.
-use std::{os::unix::fs::MetadataExt as _, time::Duration};
+//! Container startup shared by the metrics, logs, traces and profiles
+//! deployment suites.
+use std::{os::unix::fs::MetadataExt as _, path::Path, time::Duration};
 
+use reqwest::{Client, StatusCode};
 use testcontainers::{
     ContainerAsync, ContainerRequest, GenericImage, ImageExt as _,
     core::{Healthcheck, Mount, WaitFor, logs::LogFrame, wait::ExitWaitStrategy},
@@ -8,6 +10,8 @@ use testcontainers::{
 };
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 const START_TIMEOUT: Duration = Duration::from_mins(2);
+/// How long a role has to answer `/ready` once its container has started.
+const READY_TIMEOUT: Duration = Duration::from_secs(45);
 pub fn image(name: &str) -> GenericImage {
     let variable = format!("KRABKA_{name}_IMAGE_REF");
     // The wrapper records Docker's content ID after loading the tarball.
@@ -31,8 +35,42 @@ pub async fn start(
     Ok(tokio::time::timeout(START_TIMEOUT, request.start()).await??)
 }
 
+/// The Docker network a deployment case runs on, `krabka-<signal>-<suffix>`,
+/// unique per case because `directory` is a fresh temporary directory.
+pub fn deployment_network(signal: &str, directory: &Path) -> TestResult<String> {
+    Ok(format!(
+        "krabka-{signal}-{}",
+        directory
+            .file_name()
+            .ok_or("temporary directory has no name")?
+            .to_string_lossy()
+            .trim_start_matches('.')
+            .to_ascii_lowercase()
+    ))
+}
+
+/// Starts `MinIO` on `network` as `<network>-minio`, with a `<signal>` bucket
+/// and `krabka<signal>` as its root user and password.
+pub async fn start_minio(network: &str, signal: &str) -> TestResult<ContainerAsync<GenericImage>> {
+    let credential = format!("krabka{signal}");
+    start(
+        image("MINIO")
+            .with_entrypoint("/bin/sh")
+            .with_wait_for(WaitFor::message_on_stderr("API:"))
+            .with_network(network)
+            .with_container_name(format!("{network}-minio"))
+            .with_env_var("MINIO_ROOT_USER", &credential)
+            .with_env_var("MINIO_ROOT_PASSWORD", credential)
+            .with_cmd([
+                "-c".to_string(),
+                format!("mkdir -p /data/{signal} && exec /usr/bin/minio server /data"),
+            ]),
+    )
+    .await
+}
+
 pub async fn start_broker(
-    directory: &std::path::Path,
+    directory: &Path,
     network: &str,
 ) -> TestResult<ContainerAsync<GenericImage>> {
     let broker_name = format!("{network}-broker");
@@ -108,4 +146,26 @@ pub async fn base_url(container: &ContainerAsync<GenericImage>, port: u16) -> Te
         container.get_host().await?,
         container.get_host_port_ipv4(port).await?
     ))
+}
+
+/// Polls the role's `/ready` on `port` until it answers 200.
+pub async fn wait_until_ready(
+    client: &Client,
+    container: &ContainerAsync<GenericImage>,
+    port: u16,
+) -> TestResult {
+    let url = format!("{}/ready", base_url(container, port).await?);
+    tokio::time::timeout(READY_TIMEOUT, async {
+        loop {
+            if let Ok(response) = client.get(&url).send().await
+                && response.status() == StatusCode::OK
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .map_err(|error| format!("{url}: {error}"))?;
+    Ok(())
 }

@@ -4,12 +4,23 @@ use super::*;
 pub(crate) async fn exemplars_include_closed_range_boundaries_and_filter_outside_rows() {
     let series_labels = labels(&[("__name__", "http_requests_total"), ("job", "api")]);
     let fp = series_labels.fingerprint();
-    let batch = exemplar_batch_from_rows(&[
-        (fp, 9_999, 1.0, "too-low", "s1", "kind", "outside"),
-        (fp, 10_000, 2.0, "start", "s2", "kind", "inside"),
-        (fp, 11_000, 3.0, "end", "s3", "kind", "inside"),
-        (fp, 11_001, 4.0, "too-high", "s4", "kind", "outside"),
-    ]);
+    let rows = [
+        (9_999, 1.0, "too-low", "s1", "outside"),
+        (10_000, 2.0, "start", "s2", "inside"),
+        (11_000, 3.0, "end", "s3", "inside"),
+        (11_001, 4.0, "too-high", "s4", "outside"),
+    ]
+    .map(
+        |(timestamp_ms, value, trace_id, span_id, kind)| ExemplarRow {
+            fingerprint: fp,
+            timestamp_ms,
+            value,
+            trace_id: Some(trace_id.to_string()),
+            span_id: Some(span_id.to_string()),
+            labels: vec![("kind".to_string(), kind.to_string())],
+        },
+    );
+    let batch = encode_exemplar_rows(&rows).unwrap();
     let store = manifest_store(ManifestBlock {
         kind: MetricBlockKind::Exemplars,
         block_key: "metrics/exemplars/0005.parquet",

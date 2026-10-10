@@ -1,7 +1,5 @@
 //! Nested-set interval assignment for one trace's span forest.
 
-use std::collections::HashMap;
-
 use super::Span;
 
 #[cfg(test)]
@@ -91,6 +89,32 @@ mod tests {
         let ns = assign_nested_set(&spans);
         assert2::assert!(ns[0].parent_id == -1);
         assert2::assert!(ns[1].parent_id == -1);
+    }
+
+    /// Spans whose parent links form a cycle are reachable from no root.
+    /// This crate leaves them unassigned at `{0, 0, 0}` rather than seeding
+    /// them as extra roots, so its block writer and live store keep the
+    /// structural columns they have always written for such traces.
+    #[test]
+    fn spans_in_a_parent_cycle_stay_unassigned() {
+        let spans = vec![span(1, None), span(2, Some(3)), span(3, Some(2))];
+        let unassigned = NestedSet {
+            left: 0,
+            right: 0,
+            parent_id: 0,
+        };
+        assert2::assert!(
+            assign_nested_set(&spans)
+                == vec![
+                    NestedSet {
+                        left: 1,
+                        right: 2,
+                        parent_id: -1
+                    },
+                    unassigned,
+                    unassigned,
+                ]
+        );
     }
 
     #[test]

@@ -29,9 +29,7 @@ use krabka_client_consumer::{Consumer, ConsumerRecord};
 use krabka_client_producer::{Header as ProducerHeader, Producer, ProducerRecord};
 use krabka_ids::{Offset, PartitionIndex};
 use krabka_observability::{
-    server_security::{
-        Principal, ServerListener, ServerSecurity, TenantDenied, authorize_tenant, serve_router,
-    },
+    server_security::{Principal, ServerSecurity, TenantDenied, authorize_tenant},
     wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined},
 };
 use krabka_telemetry::propagation::current_trace_headers;
@@ -43,7 +41,6 @@ use opentelemetry_proto::tonic::{
     },
     metrics::v1::MetricsData,
 };
-use tokio::net::TcpListener;
 use tonic::{Request as TonicRequest, Response as TonicResponse, Status};
 use tracing::Instrument as _;
 
@@ -3827,7 +3824,7 @@ overrides:
                 .unwrap();
 
             check!(response.status() == StatusCode::INTERNAL_SERVER_ERROR);
-            check!(metrics.wal_append_failures.get() == 1);
+            check!(metrics.ingest.wal_append_failures.get() == 1);
             check!(metrics.wal_produce.partial_batch_appends() == partial_batch_appends);
             check!(metrics.wal_produce.unappended_records() == unappended_records);
         }

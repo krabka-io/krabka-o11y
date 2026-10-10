@@ -6,7 +6,16 @@ use super::{
 
 /// Decodes a block row's attributes, skipping each key `keep_key` rejects
 /// before its values are read.
-pub(crate) fn block_row_attrs_where(
+///
+/// A key flagged as an array yields one [`AttrValue::Array`]; any other key
+/// yields one pair per value. A row without the `attr_keys` column, or with a
+/// null entry in it, has no attributes.
+///
+/// # Errors
+///
+/// Returns [`TraceqlError::Exec`] when an attribute column has the wrong
+/// Arrow type.
+pub fn block_row_attrs_where(
     batch: &RecordBatch,
     row: usize,
     keep_key: impl Fn(&str) -> bool,
@@ -50,10 +59,12 @@ pub(crate) fn block_row_attrs_where(
         if !keep_key(key) {
             continue;
         }
-        if opaque.is_some_and(|values| attr_idx < values.len() && !values.is_null(attr_idx)) {
+        if let Some(opaque) =
+            opaque.filter(|values| attr_idx < values.len() && !values.is_null(attr_idx))
+        {
             out.push((
                 key.to_string(),
-                AttrValue::Unsupported(opaque.unwrap().value(attr_idx).to_string()),
+                AttrValue::Unsupported(opaque.value(attr_idx).to_string()),
             ));
             continue;
         }

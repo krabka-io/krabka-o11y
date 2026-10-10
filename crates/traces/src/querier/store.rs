@@ -19,9 +19,8 @@ use arrow::{
 };
 use datafusion::{catalog::MemTable, prelude::SessionContext};
 use krabka_blockstore::{
-    BlockIndex, BlockStore, SCOL_ATTR_KEYS, SCOL_ATTR_VALUE, SCOL_ATTR_VALUE_BOOL,
-    SCOL_ATTR_VALUE_DOUBLE, SCOL_ATTR_VALUE_INT, SCOL_EVENTS, SCOL_LINKS, TraceIndex,
-    span_block_schema, span_block_schema_with_promoted_attrs,
+    BlockIndex, BlockStore, SCOL_EVENTS, SCOL_LINKS, TraceIndex, span_block_schema,
+    span_block_schema_with_promoted_attrs,
 };
 use krabka_traceql::{
     ATTR_PREFIX, AttrValue, COL_CHILD_COUNT, COL_DURATION, COL_EVENT_NAME,
@@ -31,7 +30,10 @@ use krabka_traceql::{
     COL_STATUS_CODE, COL_STATUS_MESSAGE, COL_TRACE_DURATION, COL_TRACE_ID, EVENT_ATTR_PREFIX,
     EventRef, INSTRUMENTATION_ATTR_PREFIX, LINK_ATTR_PREFIX, LinkRef, MatchCmp, MatchScope,
     MatchValue, ScanJob, ScanOptions, ScanResult, ScopedTag, SpanMatcher, SpanRef, SpanStore,
-    TagScope, TraceSpans, TraceqlError, TypedValue, span_schema,
+    TagScope, TraceSpans, TraceqlError, TypedValue, attr_values_match, block_row_attrs_where,
+    bytes_to_hex, enum_int_matches, event_matcher_matches_absence, event_matcher_matches_event,
+    int_matches, link_matcher_matches_absence, link_matcher_matches_link, nested_presence_matches,
+    nil_matches, span_schema, string_matches,
 };
 use krabka_units::{
     ByteSize, Time,
@@ -521,13 +523,13 @@ mod tests {
         check!(!super::nil_matches(MatchCmp::Lt, &MatchValue::Nil));
 
         // A value that is present is not nil, and differs from nil.
-        check!(super::present_value_matches(MatchCmp::Eq, &MatchValue::Nil) == Some(false));
-        check!(super::present_value_matches(MatchCmp::Neq, &MatchValue::Nil) == Some(true));
+        check!(present_value_matches(MatchCmp::Eq, &MatchValue::Nil) == Some(false));
+        check!(present_value_matches(MatchCmp::Neq, &MatchValue::Nil) == Some(true));
         check!(
-            super::present_value_matches(MatchCmp::Eq, &MatchValue::Int(1)) == None,
+            present_value_matches(MatchCmp::Eq, &MatchValue::Int(1)) == None,
             "a real comparison is left to the caller"
         );
-        check!(super::present_value_matches(MatchCmp::Lt, &MatchValue::Nil) == None);
+        check!(present_value_matches(MatchCmp::Lt, &MatchValue::Nil) == None);
 
         // A collection answers about itself, so the sense flips with content.
         check!(super::nested_presence_matches(false, MatchCmp::Eq, &MatchValue::Nil) == Some(true));
@@ -581,7 +583,7 @@ mod tests {
     #[test]
     fn float_comparisons_are_exact_and_nan_matches_nothing() {
         let five = MatchValue::Float(5.0);
-        let cmp = |value, op| super::float_matches(value, op, &five);
+        let cmp = |value, op| float_matches(value, op, &five);
 
         check!(cmp(5.0, MatchCmp::Eq));
         check!(!cmp(5.0, MatchCmp::Lt) && cmp(5.0, MatchCmp::Lte));
@@ -598,7 +600,7 @@ mod tests {
         check!(!cmp(f64::NAN, MatchCmp::Lte) && !cmp(f64::NAN, MatchCmp::Gte));
 
         check!(
-            !super::float_matches(5.0, MatchCmp::Eq, &MatchValue::Int(5)),
+            !float_matches(5.0, MatchCmp::Eq, &MatchValue::Int(5)),
             "a float does not compare with an integer"
         );
     }
@@ -609,10 +611,10 @@ mod tests {
     fn booleans_compare_only_for_equality() {
         let yes = MatchValue::Bool(true);
 
-        check!(super::bool_matches(true, MatchCmp::Eq, &yes));
-        check!(!super::bool_matches(false, MatchCmp::Eq, &yes));
-        check!(super::bool_matches(false, MatchCmp::Neq, &yes));
-        check!(!super::bool_matches(true, MatchCmp::Neq, &yes));
+        check!(bool_matches(true, MatchCmp::Eq, &yes));
+        check!(!bool_matches(false, MatchCmp::Eq, &yes));
+        check!(bool_matches(false, MatchCmp::Neq, &yes));
+        check!(!bool_matches(true, MatchCmp::Neq, &yes));
 
         for op in [
             MatchCmp::Lt,
@@ -622,14 +624,11 @@ mod tests {
             MatchCmp::Re,
             MatchCmp::Nre,
         ] {
-            check!(
-                !super::bool_matches(true, op, &yes),
-                "ordering has no meaning"
-            );
+            check!(!bool_matches(true, op, &yes), "ordering has no meaning");
         }
 
         check!(
-            !super::bool_matches(true, MatchCmp::Eq, &MatchValue::Int(1)),
+            !bool_matches(true, MatchCmp::Eq, &MatchValue::Int(1)),
             "a bool does not compare with an integer"
         );
     }
@@ -717,7 +716,9 @@ mod tests {
     };
     use krabka_traceql::{
         COL_CHILD_COUNT, COL_INSTRUMENTATION_NAME, COL_INSTRUMENTATION_VERSION, EngineOpts,
-        EventRef, LinkRef, ScanJob, ScanOptions, TraceqlEngine,
+        EventRef, LinkRef, ScanJob, ScanOptions, TraceqlEngine, bool_matches, float_matches,
+        present_value_matches,
+        testkit::{RootSpanRow, root_span_columns},
     };
     use krabka_units::nanos;
     use object_store::{
@@ -844,42 +845,35 @@ mod tests {
 
     fn batch() -> RecordBatch {
         let schema = test_schema();
-        let mut trace_id = FixedSizeBinaryBuilder::with_capacity(2, 16);
-        trace_id.append_value([7; 16]).unwrap();
-        trace_id.append_value([9; 16]).unwrap();
-        let mut span_id = FixedSizeBinaryBuilder::with_capacity(2, 8);
-        span_id.append_value([1; 8]).unwrap();
-        span_id.append_value([2; 8]).unwrap();
-        let mut parent_id = FixedSizeBinaryBuilder::with_capacity(2, 8);
-        parent_id.append_null();
-        parent_id.append_null();
+        let mut columns = root_span_columns(&[
+            RootSpanRow {
+                trace_id: [7; 16],
+                span_id: [1; 8],
+                root_service_name: "api",
+                root_span_name: "GET /",
+                trace_start_ns: 100,
+                trace_duration_ns: 10,
+                name: "root",
+                start_ns: 100,
+                duration_ns: 10,
+                ..RootSpanRow::default()
+            },
+            RootSpanRow {
+                trace_id: [9; 16],
+                span_id: [2; 8],
+                root_service_name: "web",
+                root_span_name: "GET /x",
+                trace_start_ns: 200,
+                trace_duration_ns: 20,
+                name: "other",
+                start_ns: 200,
+                duration_ns: 20,
+                ..RootSpanRow::default()
+            },
+        ]);
+        columns.push(Arc::new(StringArray::from(vec!["a", "b"])));
 
-        RecordBatch::try_new(
-            schema,
-            vec![
-                Arc::new(trace_id.finish()) as ArrayRef,
-                Arc::new(span_id.finish()),
-                Arc::new(parent_id.finish()),
-                Arc::new(Int32Array::from(vec![1, 1])),
-                Arc::new(Int32Array::from(vec![2, 2])),
-                Arc::new(Int32Array::from(vec![0, 0])),
-                Arc::new(Int32Array::from(vec![0, 0])),
-                Arc::new(StringArray::from(vec!["api", "web"])),
-                Arc::new(StringArray::from(vec!["GET /", "GET /x"])),
-                Arc::new(Int64Array::from(vec![100, 200])),
-                Arc::new(Int64Array::from(vec![10, 20])),
-                Arc::new(StringArray::from(vec!["root", "other"])),
-                Arc::new(Int32Array::from(vec![0, 0])),
-                Arc::new(Int64Array::from(vec![100, 200])),
-                Arc::new(Int64Array::from(vec![10, 20])),
-                Arc::new(Int32Array::from(vec![0, 0])),
-                Arc::new(StringArray::from(vec!["", ""])),
-                Arc::new(StringArray::from(vec!["tracer", "tracer"])),
-                Arc::new(StringArray::from(vec!["", ""])),
-                Arc::new(StringArray::from(vec!["a", "b"])),
-            ],
-        )
-        .unwrap()
+        RecordBatch::try_new(schema, columns).unwrap()
     }
 
     #[test]
@@ -4002,20 +3996,13 @@ mod align_scan_batches_to_schema;
 mod append_nested_attr;
 mod append_nested_event;
 mod append_nested_link;
-mod attr_matches;
 mod attr_values;
-mod attr_values_match;
 mod attr_values_with_resource;
 mod batch_attr_matches;
 mod batch_attr_matches_with_resource;
-mod block_attr_values;
-mod block_attr_values_for_key;
 mod block_err;
 mod block_span_schema;
 mod bool_array_value;
-mod bool_attr_values;
-mod bool_matches;
-mod bytes_to_hex;
 mod cold_attribute_tag_names;
 mod collect_attribute_tag_names;
 mod collect_attribute_tag_values;
@@ -4024,19 +4011,13 @@ mod collect_table;
 mod deduplicate_scan_batches;
 mod deduplicate_trace_spans;
 mod default_scan_concat_max;
-mod enum_int_matches;
-mod event_matcher_matches_absence;
-mod event_matcher_matches_event;
 mod event_tags;
 mod event_values;
-mod f64_attr_values;
 mod filter_batches_by_matchers;
 mod fixed;
 mod fixed_array_value;
 mod fixed_value;
 mod float64_array_value;
-mod float_matches;
-mod i64_attr_values;
 mod insert_i32_value;
 mod insert_i64_value;
 mod insert_string_value;
@@ -4045,7 +4026,6 @@ mod instrumentation_tags;
 mod int32_value;
 mod int64_array_value;
 mod int64_value;
-mod int_matches;
 mod intrinsic_matches;
 mod intrinsic_tags;
 mod intrinsic_values_from_batches;
@@ -4055,8 +4035,6 @@ mod is_link_matcher;
 mod is_nested_intrinsic_tag;
 mod kind_enum_value;
 mod krabka_span_store;
-mod link_matcher_matches_absence;
-mod link_matcher_matches_link;
 mod link_tags;
 mod link_values;
 mod matching_events_for_scan;
@@ -4069,13 +4047,9 @@ mod nested_attr_scope;
 mod nested_event_matchers_match;
 mod nested_intrinsic_rows;
 mod nested_link_matchers_match;
-mod nested_presence_matches;
 mod nested_string_attrs;
-mod nil_matches;
 mod nullable_fixed_value;
 mod optional_list_column;
-mod ordered_matches;
-mod present_value_matches;
 mod recompute_batch_nested_sets;
 mod recompute_scan_nested_sets;
 mod recompute_trace_nested_sets;
@@ -4083,15 +4057,12 @@ mod replace_scan_int32_columns;
 mod resource_attr_values;
 mod resource_matches;
 mod root_service_matches;
-mod row_attr_values;
 mod row_matcher_matches;
 mod row_matches;
 mod scope_order;
 mod shared_trace_index;
 mod status_enum_value;
 mod string_array_value;
-mod string_attr_values;
-mod string_matches;
 mod string_value;
 mod struct_fixed_field;
 mod struct_int64_field;
@@ -4110,21 +4081,14 @@ use align_scan_batches_to_schema::align_scan_batches_to_schema;
 use append_nested_attr::append_nested_attr;
 use append_nested_event::append_nested_event;
 use append_nested_link::append_nested_link;
-use attr_matches::attr_matches;
 use attr_values::attr_values;
-use attr_values_match::attr_values_match;
 use attr_values_with_resource::attr_values_with_resource;
 use batch_attr_matches::batch_attr_matches;
 use batch_attr_matches_with_resource::batch_attr_matches_with_resource;
-use block_attr_values::block_attr_values;
-use block_attr_values_for_key::block_attr_values_for_key;
 use block_err::block_err;
 use block_span_schema::block_span_schema;
 use bool_array_value::bool_array_value;
-use bool_attr_values::bool_attr_values;
-use bool_matches::bool_matches;
-pub(crate) use bytes_to_hex::bytes_to_hex;
-use cold_attribute_tag_names::ColdAttributeTagNames;
+pub(crate) use cold_attribute_tag_names::ColdAttributeTagNames;
 use collect_attribute_tag_names::collect_attribute_tag_names;
 use collect_attribute_tag_values::{RequestedTag, collect_attribute_tag_values};
 use collect_intrinsic_value::collect_intrinsic_value;
@@ -4132,25 +4096,18 @@ use collect_table::collect_table;
 use deduplicate_scan_batches::deduplicate_scan_batches;
 use deduplicate_trace_spans::deduplicate_trace_spans;
 pub use default_scan_concat_max::DEFAULT_SCAN_CONCAT_MAX;
-use enum_int_matches::enum_int_matches;
-use event_matcher_matches_absence::event_matcher_matches_absence;
-use event_matcher_matches_event::event_matcher_matches_event;
 use event_tags::EVENT_TAGS;
 use event_values::event_values;
-use f64_attr_values::f64_attr_values;
 use filter_batches_by_matchers::filter_batches_by_matchers;
 use fixed::fixed;
 use fixed_array_value::fixed_array_value;
 use fixed_value::fixed_value;
-use float_matches::float_matches;
 use float64_array_value::float64_array_value;
-use i64_attr_values::i64_attr_values;
 use insert_i32_value::insert_i32_value;
 use insert_i64_value::insert_i64_value;
 use insert_string_value::insert_string_value;
 use instrumentation_matches::instrumentation_matches;
 use instrumentation_tags::INSTRUMENTATION_TAGS;
-use int_matches::int_matches;
 use int32_value::int32_value;
 use int64_array_value::int64_array_value;
 use int64_value::int64_value;
@@ -4163,8 +4120,6 @@ use is_link_matcher::is_link_matcher;
 use is_nested_intrinsic_tag::is_nested_intrinsic_tag;
 use kind_enum_value::kind_enum_value;
 pub use krabka_span_store::KrabkaSpanStore;
-use link_matcher_matches_absence::link_matcher_matches_absence;
-use link_matcher_matches_link::link_matcher_matches_link;
 use link_tags::LINK_TAGS;
 use link_values::link_values;
 use matching_events_for_scan::matching_events_for_scan;
@@ -4177,13 +4132,9 @@ use nested_attr_scope::NestedAttrScope;
 use nested_event_matchers_match::nested_event_matchers_match;
 use nested_intrinsic_rows::nested_intrinsic_rows;
 use nested_link_matchers_match::nested_link_matchers_match;
-use nested_presence_matches::nested_presence_matches;
 use nested_string_attrs::nested_string_attrs;
-use nil_matches::nil_matches;
 use nullable_fixed_value::nullable_fixed_value;
 use optional_list_column::optional_list_column;
-use ordered_matches::ordered_matches;
-use present_value_matches::present_value_matches;
 use recompute_batch_nested_sets::recompute_batch_nested_sets;
 use recompute_scan_nested_sets::recompute_scan_nested_sets;
 use recompute_trace_nested_sets::recompute_trace_nested_sets;
@@ -4191,15 +4142,12 @@ use replace_scan_int32_columns::replace_scan_int32_columns;
 use resource_attr_values::resource_attr_values;
 use resource_matches::resource_matches;
 use root_service_matches::root_service_matches;
-use row_attr_values::row_attr_values;
 use row_matcher_matches::row_matcher_matches;
 use row_matches::row_matches;
 use scope_order::SCOPE_ORDER;
 pub use shared_trace_index::SharedTraceIndex;
 use status_enum_value::status_enum_value;
 use string_array_value::string_array_value;
-use string_attr_values::string_attr_values;
-use string_matches::string_matches;
 use string_value::string_value;
 use struct_fixed_field::struct_fixed_field;
 use struct_int64_field::struct_int64_field;

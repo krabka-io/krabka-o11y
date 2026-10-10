@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use krabka_blockstore::{SpanNode, assign_nested_set};
+use krabka_blockstore::{CycleSpans, SpanNode, assign_nested_set};
 use proptest::prelude::*;
 
 fn sid(n: u32) -> [u8; 8] {
@@ -40,7 +40,7 @@ proptest! {
 
     #[test]
     fn nested_set_intervals_are_valid(spans in arb_forest()) {
-        let ns = assign_nested_set(&spans);
+        let ns = assign_nested_set(&spans, CycleSpans::AssignIntervals);
         let by_id: HashMap<[u8; 8], usize> =
             spans.iter().enumerate().map(|(i, s)| (s.span_id, i)).collect();
 

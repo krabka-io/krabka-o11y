@@ -308,6 +308,7 @@ use event_tags::EVENT_TAGS;
 use in_time_range::in_time_range;
 pub use ingest_wal_payloads::ingest_wal_payloads;
 use intrinsic_tags::INTRINSIC_TAGS;
+use krabka_traceql::bytes_to_hex;
 use link_ref::link_ref;
 use link_tags::LINK_TAGS;
 pub use live_store::LiveStore;
@@ -320,4 +321,4 @@ use span_ref::span_ref;
 use trace_spans::trace_spans;
 use traceql_attr::traceql_attr;
 
-use crate::{querier::store::bytes_to_hex, span::typed_value_parts::typed_value_parts};
+use crate::span::typed_value_parts::typed_value_parts;

@@ -30,7 +30,7 @@ pub use filters::{
 };
 pub use labels::{
     LabelFormat, LabelFormatAssignment, LabelFormatValue, LabelSelection, LabelSelectionMatcher,
-    LabelSelectionSet, UnwrapConversion, UnwrapExpression,
+    LabelSelectionSet, UnwrapConversion, UnwrapExpression, parse_decimal_sample_literal,
 };
 pub use planner::{PlanError, StreamPlan, plan_stream_query};
 pub use stream::{

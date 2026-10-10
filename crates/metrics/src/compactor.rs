@@ -58,6 +58,10 @@ use crate::{
 };
 
 #[cfg(test)]
+#[path = "../../blockstore/tests/support/flaky_put_store.rs"]
+mod flaky_put_store;
+
+#[cfg(test)]
 mod tests {
     use crate::test_support::{DeliveredRecord, format_headers};
     /// A buffer flushes on either threshold, and on neither when empty. The
@@ -162,6 +166,7 @@ mod tests {
         CompactionLoopContext, CompactionRetentionPhase, ObjectStoreMetrics,
         ObjectStoreRetryPolicy, RetryingObjectStore, ServiceMetrics, compact_wal_records,
         encode_tenant_batches,
+        flaky_put_store::{FlakyPutStore, flaky_put_store},
     };
     use crate::{
         BucketSpan, FloatRow, NativeHistogram, ResetHint,
@@ -1960,64 +1965,6 @@ overrides:
         check!(consumer.committed_offsets[0][0].offset == krabka_ids::Offset(11));
     }
 
-    /// An object store whose first `failures` puts fail with `error`.
-    /// Everything else delegates to an in-memory store, and every attempt is
-    /// counted so a test can tell one try from four.
-    #[derive(Debug)]
-    struct FlakyPutStore {
-        inner: InMemory,
-        /// Puts still to refuse before puts succeed; `usize::MAX` refuses all.
-        remaining_failures: std::sync::atomic::AtomicUsize,
-        attempts: std::sync::atomic::AtomicUsize,
-        error: fn() -> object_store::Error,
-    }
-
-    impl FlakyPutStore {
-        fn new(failures: usize, error: fn() -> object_store::Error) -> Self {
-            Self {
-                inner: InMemory::new(),
-                remaining_failures: std::sync::atomic::AtomicUsize::new(failures),
-                attempts: std::sync::atomic::AtomicUsize::default(),
-                error,
-            }
-        }
-
-        fn attempts(&self) -> usize {
-            self.attempts.load(std::sync::atomic::Ordering::SeqCst)
-        }
-    }
-
-    impl std::fmt::Display for FlakyPutStore {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("FlakyPutStore")
-        }
-    }
-
-    krabka_blockstore::delegate_object_store! {
-        FlakyPutStore => inner;
-        forward [put_multipart_opts, get_opts, list, list_with_delimiter, copy_opts, delete_stream];
-
-        async fn put_opts(
-            &self,
-            location: &object_store::path::Path,
-            payload: object_store::PutPayload,
-            options: object_store::PutOptions,
-        ) -> object_store::Result<object_store::PutResult> {
-            use std::sync::atomic::Ordering;
-            self.attempts.fetch_add(1, Ordering::SeqCst);
-            if self
-                .remaining_failures
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                    (left > 0).then(|| left - 1)
-                })
-                .is_ok()
-            {
-                return Err((self.error)());
-            }
-            self.inner.put_opts(location, payload, options).await
-        }
-    }
-
     fn timed_out() -> object_store::Error {
         object_store::Error::Generic {
             store: "S3",
@@ -2041,7 +1988,7 @@ overrides:
     /// The schedule is injected, so nothing here sleeps.
     #[tokio::test]
     async fn a_flush_rides_out_a_transient_object_store_and_commits_once() {
-        let store = Arc::new(FlakyPutStore::new(2, timed_out));
+        let store = Arc::new(flaky_put_store(2, timed_out));
         let (block_writer, sink) = retrying_flush_targets(&store);
         let mut consumer = poll_and_commit(vec![vec![wal_consumer_record(WalPosition {
             offset: 10,
@@ -2072,7 +2019,7 @@ overrides:
     /// only delay the report.
     #[tokio::test]
     async fn a_flush_refused_by_the_store_fails_at_once_and_commits_nothing() {
-        let store = Arc::new(FlakyPutStore::new(usize::MAX, forbidden));
+        let store = Arc::new(flaky_put_store(usize::MAX, forbidden));
         let (block_writer, sink) = retrying_flush_targets(&store);
         let mut consumer = poll_and_commit(vec![vec![wal_consumer_record(WalPosition {
             offset: 10,
@@ -2989,7 +2936,7 @@ pub use default_flush_max_rows::DEFAULT_FLUSH_MAX_ROWS;
 pub use deferred_block_deletions::DeferredBlockDeletions;
 pub use durable_compaction_consumer::DurableCompactionConsumer;
 use encode_clock_reading_rows::encode_clock_reading_rows;
-use encode_exemplar_rows::encode_exemplar_rows;
+pub use encode_exemplar_rows::encode_exemplar_rows;
 use encode_metadata_rows::encode_metadata_rows;
 pub use encode_tenant_batches::encode_tenant_batches;
 pub use enforce_compaction_retention::enforce_compaction_retention;

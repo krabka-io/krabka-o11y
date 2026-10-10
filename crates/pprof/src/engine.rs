@@ -1323,6 +1323,7 @@ mod tests {
     }
 }
 
+mod call_site_profile_totals;
 mod covering_range;
 mod engine_opts;
 mod flame_engine;
@@ -1335,8 +1336,10 @@ mod sample_selector_sql;
 mod series_buckets_from_stacktrace_selector;
 mod series_buckets_from_totals;
 mod stack_matches_call_sites;
+mod timestamp_total_points;
 mod validate_range;
 
+pub use call_site_profile_totals::call_site_profile_totals;
 use covering_range::covering_range;
 pub use engine_opts::EngineOpts;
 pub use flame_engine::{FlameEngine, ProfileSelection, SpanProfileShards};
@@ -1349,4 +1352,5 @@ use sample_selector_sql::sample_selector_sql;
 use series_buckets_from_stacktrace_selector::series_buckets_from_stacktrace_selector;
 use series_buckets_from_totals::series_buckets_from_totals;
 pub use stack_matches_call_sites::stack_matches_call_sites;
+pub use timestamp_total_points::timestamp_total_points;
 use validate_range::validate_range;

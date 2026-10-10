@@ -588,57 +588,9 @@ pub fn has_literal_at_modifier(expr: &str) -> bool {
 
 /// Splits `metric{label="value",…}` into label pairs, `__name__` included.
 fn metric_to_labels(metric: &str) -> Vec<(String, String)> {
-    let Some(open) = metric.find('{') else {
-        return vec![("__name__".to_string(), metric.to_string())];
-    };
-    let mut labels = Vec::new();
-    let name = &metric[..open];
-    if !name.is_empty() {
-        labels.push(("__name__".to_string(), name.to_string()));
-    }
-    let inside = metric[open + 1..].strip_suffix('}').unwrap_or_default();
-    for pair in split_label_pairs(inside) {
-        if let Some((key, value)) = pair.split_once('=') {
-            labels.push((key.trim().to_string(), unquote_label_value(value.trim())));
-        }
-    }
-    labels.sort_by(|left, right| left.0.cmp(&right.0));
-    labels
-}
-
-fn split_label_pairs(inside: &str) -> Vec<&str> {
-    let mut pairs = Vec::new();
-    let mut start = 0;
-    let mut in_quotes = false;
-    let mut escaped = false;
-    for (index, ch) in inside.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match ch {
-            '\\' if in_quotes => escaped = true,
-            '"' => in_quotes = !in_quotes,
-            ',' if !in_quotes => {
-                pairs.push(inside[start..index].trim());
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    if start < inside.len() {
-        pairs.push(inside[start..].trim());
-    }
-    pairs
-}
-
-fn unquote_label_value(value: &str) -> String {
-    value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(value)
-        .replace("\\\"", "\"")
-        .replace("\\\\", "\\")
+    krabka_promql::testkit::metric_to_labels(metric)
+        .into_iter()
+        .collect()
 }
 
 /// The widest time span one `remote_write` body may cover.

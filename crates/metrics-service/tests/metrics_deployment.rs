@@ -17,12 +17,15 @@ use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use testcontainers::{
     ContainerAsync, ContainerRequest, GenericImage, ImageExt as _,
-    core::{ContainerPort, Mount, WaitFor},
+    core::{ContainerPort, Mount},
 };
 
 #[path = "support/container_deployment.rs"]
 mod container_deployment;
-use container_deployment::{TestResult, base_url, image, start, start_broker};
+use container_deployment::{
+    TestResult, base_url, deployment_network, image, start, start_broker, start_minio,
+    wait_until_ready,
+};
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(45);
 const DATA_PORT: u16 = 4041;
@@ -71,32 +74,10 @@ impl Deployment {
 
     async fn with_overrides(overrides: Option<&str>) -> TestResult<Self> {
         let directory = tempfile::tempdir()?;
-        let network = format!(
-            "krabka-metrics-{}",
-            directory
-                .path()
-                .file_name()
-                .ok_or("temporary directory has no name")?
-                .to_string_lossy()
-                .trim_start_matches('.')
-                .to_ascii_lowercase()
-        );
+        let network = deployment_network("metrics", directory.path())?;
         let broker_name = format!("{network}-broker");
         let broker = start_broker(directory.path(), &network).await?;
-        let minio = start(
-            image("MINIO")
-                .with_entrypoint("/bin/sh")
-                .with_wait_for(WaitFor::message_on_stderr("API:"))
-                .with_network(&network)
-                .with_container_name(format!("{network}-minio"))
-                .with_env_var("MINIO_ROOT_USER", "krabkametrics")
-                .with_env_var("MINIO_ROOT_PASSWORD", "krabkametrics")
-                .with_cmd([
-                    "-c",
-                    "mkdir -p /data/metrics && exec /usr/bin/minio server /data",
-                ]),
-        )
-        .await?;
+        let minio = start_minio(&network, "metrics").await?;
         let mut distributor_request = image("KRABKA")
             .with_exposed_port(ContainerPort::Tcp(DATA_PORT))
             .with_network(&network)
@@ -138,20 +119,7 @@ impl Deployment {
     }
 
     async fn ready(&self, container: &ContainerAsync<GenericImage>, port: u16) -> TestResult {
-        let base = base_url(container, port).await?;
-        tokio::time::timeout(QUERY_TIMEOUT, async {
-            loop {
-                if let Ok(response) = self.client.get(format!("{base}/ready")).send().await
-                    && response.status() == StatusCode::OK
-                {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        })
-        .await
-        .map_err(|error| format!("{base}/ready: {error}"))?;
-        Ok(())
+        wait_until_ready(&self.client, container, port).await
     }
 
     async fn builder(&self) -> TestResult<ContainerAsync<GenericImage>> {

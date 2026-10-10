@@ -7,6 +7,8 @@ exports_files(["Cargo.toml"])
 
 crate_library(
     name = "profiles",
+    # `build.rs` reaches the shared `protoc` lookup with `#[path]`.
+    build_script_compile_data = ["//tools/build_support:protoc_path.rs"],
     # `build.rs` generates prost types from these.
     build_script_data = glob(["proto/**"]),
     # `src/ingest` reaches these with `include_bytes!`, so they are read while
@@ -18,6 +20,13 @@ crate_library(
 crate_binary(
     name = "krabka-profiles",
     crate_root = "src/bin/krabka-profiles/main.rs",
+    # Test helpers shared with the other signal binaries, reached with
+    # `#[path]` from //crates/observability.
+    extra_srcs = [
+        "//crates/observability:tests/support/compaction_passes.rs",
+        "//crates/observability:tests/support/sigterm_child.rs",
+        "//crates/observability:tests/support/wal_fetch_limit_flags.rs",
+    ],
     lib = ":profiles",
 )
 
@@ -46,12 +55,16 @@ crate_tests(
             },
         },
     },
-    # The shared lifecycle store, reached with `#[path]` from //crates/blockstore,
-    # and the fixtures shared with the binary's own suites, reached with `#[path]`
+    # The shared lifecycle and hooked stores, reached with `#[path]` from
+    # //crates/blockstore, and the fixtures shared with the binary's own suites, reached with `#[path]`
     # from `src/bin/krabka-profiles`.
     extra_srcs = {
         "block_builder_drain": ["src/bin/krabka-profiles/wal_topic.rs"],
-        "block_builder_object_store_retry": ["src/bin/krabka-profiles/wal_topic.rs"],
+        "block_builder_object_store_retry": [
+            "//crates/blockstore:tests/support/hooked_store.rs",
+            "src/bin/krabka-profiles/wal_topic.rs",
+        ],
+        "ingest_query_proptest": ["//crates/logql:tests/support/seed_splice.rs"],
         "ingest_roundtrip": [
             "src/bin/krabka-profiles/render_roundtrip.rs",
             "src/bin/krabka-profiles/synthetic_cpu_profile.rs",

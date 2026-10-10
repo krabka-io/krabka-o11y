@@ -7,6 +7,7 @@ exports_files([
     "Cargo.toml",
     "tests/support/seed_splice.rs",
     "tests/support/template_functions.rs",
+    "tests/support/token_salad.rs",
 ])
 
 crate_library(

@@ -1,5 +1,5 @@
 use super::{
-    Labels, ProfilesError, RawProfile, hex_lower, otlp_profile_to_pprof, otlp_sample_links,
+    Labels, ProfilesError, RawProfile, encode_lower_hex, otlp_profile_to_pprof, otlp_sample_links,
     otlp_sample_timestamps, pb, profile_labels, resolve_service_name,
 };
 
@@ -38,7 +38,7 @@ pub fn decode_otlp(
                 let (sample_span_ids, sample_trace_ids) = otlp_sample_links(profile, dict)?;
                 let profile_labels = profile_labels(profile, dict)?;
                 let profile_id =
-                    (!profile.profile_id.is_empty()).then(|| hex_lower(&profile.profile_id));
+                    (!profile.profile_id.is_empty()).then(|| encode_lower_hex(&profile.profile_id));
                 let profile = otlp_profile_to_pprof(profile, dict)?;
                 let mut labels = Labels::new();
                 labels.insert("service_name", service_name.clone());
