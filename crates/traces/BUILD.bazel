@@ -68,7 +68,10 @@ crate_tests(
         "blockbuilder": ["//crates/blockstore:tests/support/hooked_store.rs"],
         "grafana_e2e": ["src/wire/jaeger/thrift_fixture.rs"],
         "index_shard_publication": ["//crates/blockstore:tests/support/hooked_store.rs"],
-        "tempo_deployment": ["//crates/metrics-service:tests/support/container_deployment.rs"],
+        "tempo_deployment": [
+            "//crates/metrics-service:tests/support/container_deployment.rs",
+            "//crates/metrics-service:tests/support/deployment_evidence.rs",
+        ],
         "tempo_differential": ["//crates/metrics-service:tests/support/generated_differential.rs"],
     },
     lib = "traces",

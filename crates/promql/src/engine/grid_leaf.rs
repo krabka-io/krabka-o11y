@@ -29,6 +29,7 @@ use super::{
     query_stats_enabled,
     selector::{apply_selector_time_modifier, label_matcher_sets, selector_duration},
     step_vectors::{GridVectors, LeafLookup, LeafMemo, RANGE_STEP_VECTORS, StepVectorCache},
+    store_scans::{LabeledSeriesScan, StaleMarkers},
 };
 use crate::{
     PromqlLabels as Labels,
@@ -218,13 +219,13 @@ impl<S: MetricStore> PromqlEngine<S> {
         // `InstantManipulate` drops a step whose selected sample is a marker,
         // which suppresses the series rather than revealing an older sample.
         let series = self
-            .labeled_series_sets(
+            .labeled_series_sets(LabeledSeriesScan {
                 tenant,
-                &matcher_sets,
-                plan_grid.start.saturating_sub(lookback_ms),
-                plan_grid.end,
-                false,
-            )
+                matcher_sets: &matcher_sets,
+                after_ms: plan_grid.start.saturating_sub(lookback_ms),
+                through_ms: plan_grid.end,
+                stale_markers: StaleMarkers::Keep,
+            })
             .await?;
         if over_budget(grid, series.len(), budget) {
             return Ok(None);
@@ -258,13 +259,13 @@ impl<S: MetricStore> PromqlEngine<S> {
         let range = selector_duration(selector.range)?;
         let matcher_sets = label_matcher_sets(&selector.vs);
         let series = self
-            .labeled_series_sets(
+            .labeled_series_sets(LabeledSeriesScan {
                 tenant,
-                &matcher_sets,
-                plan_grid.start.saturating_sub(range.millis_i64()),
-                plan_grid.end,
-                true,
-            )
+                matcher_sets: &matcher_sets,
+                after_ms: plan_grid.start.saturating_sub(range.millis_i64()),
+                through_ms: plan_grid.end,
+                stale_markers: StaleMarkers::Drop,
+            })
             .await?;
         if over_budget(grid, series.len(), budget) {
             return Ok(None);

@@ -2,8 +2,8 @@ use tracing::Instrument as _;
 
 use super::{
     ConnectError, DistributorState, HeaderMap, IngestOutcome, Principal, ProfilesError,
-    TenantResolveError, authorize_tenant, connect_error, ingest_request_span, process_raw,
-    record_ingest_outcome, tenant_from_headers,
+    RequestOutcome, TenantResolveError, authorize_tenant, connect_error, ingest_request_span,
+    process_raw, record_ingest_outcome, tenant_from_headers,
 };
 use crate::ingest::RawProfile;
 
@@ -52,7 +52,7 @@ where
         &ingest_span,
         &IngestOutcome {
             tenant: tenant.as_ref().ok(),
-            ok: result.is_ok(),
+            outcome: RequestOutcome::from_result(&result),
             bytes,
             items: *result.as_ref().unwrap_or(&0),
             start,

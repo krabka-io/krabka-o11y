@@ -64,7 +64,7 @@ use remote_read_histogram_deltas::remote_read_histogram_deltas;
 use remote_read_histogram_zero_count::remote_read_histogram_zero_count;
 use remote_read_labels::remote_read_labels;
 use remote_read_matchers::remote_read_matchers;
-use remote_read_reset_hint::remote_read_reset_hint;
+pub use remote_read_reset_hint::remote_read_reset_hint;
 use remote_read_response::remote_read_response;
 use remote_read_series::remote_read_series;
 use require_remote_read_headers::require_remote_read_headers;

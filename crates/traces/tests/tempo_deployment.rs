@@ -13,7 +13,7 @@ use opentelemetry_proto::tonic::{
     trace::v1::{ResourceSpans, ScopeSpans, Span, Status, TracesData},
 };
 use prost::Message as _;
-use reqwest::{Client, StatusCode};
+use reqwest::StatusCode;
 use serde_json::{Value, json};
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt as _,
@@ -22,10 +22,13 @@ use testcontainers::{
 
 #[path = "../../metrics-service/tests/support/container_deployment.rs"]
 mod container_deployment;
+#[path = "../../metrics-service/tests/support/deployment_evidence.rs"]
+mod deployment_evidence;
 use container_deployment::{
-    TestResult, base_url, deployment_network, image, start, start_broker, start_minio,
+    DeploymentInfrastructure, TestResult, base_url, image, start, start_infrastructure,
     wait_until_ready,
 };
+use deployment_evidence::record_evidence;
 
 const PORT: u16 = 3200;
 const ADMIN: u16 = 9404;
@@ -37,36 +40,32 @@ const TENANT: &str = "tenant-a";
 struct Deployment {
     distributor: ContainerAsync<GenericImage>,
     hot: ContainerAsync<GenericImage>,
-    _minio: ContainerAsync<GenericImage>,
-    _broker: ContainerAsync<GenericImage>,
-    data: tempfile::TempDir,
-    _broker_data: tempfile::TempDir,
-    network: String,
-    client: Client,
+    infrastructure: DeploymentInfrastructure,
 }
 
 impl Deployment {
     async fn start(overrides: Option<&str>) -> TestResult<Self> {
-        let broker_data = tempfile::tempdir()?;
-        let data = tempfile::tempdir()?;
-        if let Some(overrides) = overrides {
-            std::fs::write(data.path().join("overrides.yaml"), overrides)?;
-        }
-        let network = deployment_network("traces", broker_data.path())?;
-        let broker = start_broker(broker_data.path(), &network).await?;
-        let minio = start_minio(&network, "traces").await?;
-        let client = Client::builder().timeout(Duration::from_secs(5)).build()?;
-        let distributor = role(&network, data.path(), "distributor", false, &[]).await?;
-        let hot = role(&network, data.path(), "querier", true, &[]).await?;
+        let infrastructure = start_infrastructure("traces", overrides).await?;
+        let distributor = role(
+            &infrastructure.network,
+            infrastructure.data.path(),
+            "distributor",
+            false,
+            &[],
+        )
+        .await?;
+        let hot = role(
+            &infrastructure.network,
+            infrastructure.data.path(),
+            "querier",
+            true,
+            &[],
+        )
+        .await?;
         let deployment = Self {
             distributor,
             hot,
-            _minio: minio,
-            _broker: broker,
-            data,
-            _broker_data: broker_data,
-            network,
-            client,
+            infrastructure,
         };
         deployment.ready(&deployment.distributor).await?;
         deployment.ready(&deployment.hot).await?;
@@ -74,7 +73,7 @@ impl Deployment {
     }
 
     async fn ready(&self, container: &ContainerAsync<GenericImage>) -> TestResult {
-        wait_until_ready(&self.client, container, ADMIN).await
+        wait_until_ready(&self.infrastructure.client, container, ADMIN).await
     }
 
     async fn role(
@@ -82,14 +81,22 @@ impl Deployment {
         target: &str,
         args: &[String],
     ) -> TestResult<ContainerAsync<GenericImage>> {
-        let container = role(&self.network, self.data.path(), target, false, args).await?;
+        let container = role(
+            &self.infrastructure.network,
+            self.infrastructure.data.path(),
+            target,
+            false,
+            args,
+        )
+        .await?;
         self.ready(&container).await?;
         Ok(container)
     }
 
     async fn push(&self, tenant: &str, data: TracesData) -> TestResult {
         accepted(
-            self.client
+            self.infrastructure
+                .client
                 .post(format!(
                     "{}/v1/traces",
                     base_url(&self.distributor, 4318).await?
@@ -113,6 +120,7 @@ impl Deployment {
         let mut url = url::Url::parse(&format!("{}{path}", base_url(container, PORT).await?))?;
         url.query_pairs_mut().extend_pairs(params.iter().copied());
         Ok(self
+            .infrastructure
             .client
             .get(url)
             .header("X-Scope-OrgID", tenant)
@@ -387,6 +395,7 @@ async fn receiver(gzip: bool, grpc: bool) -> TestResult {
     } else {
         let body = data.encode_to_vec();
         let mut request = deployment
+            .infrastructure
             .client
             .post(format!(
                 "{}/v1/traces",
@@ -418,6 +427,7 @@ async fn zipkin_receiver_survives_storage_and_restart() -> TestResult {
     let body = json!([{"traceId":hex::encode([1;16]), "id":hex::encode([1;8]), "name":"checkout", "kind":"SERVER", "timestamp":START/1000, "duration":500_000, "localEndpoint":{"serviceName":"checkout"}, "tags":{"http.route":"/checkout"}}]);
     accepted(
         deployment
+            .infrastructure
             .client
             .post(format!(
                 "{}/api/v2/spans",
@@ -744,20 +754,14 @@ async fn check_trace_queries(
     }
     for (path, query, expected) in cases {
         let result = wait_trace_query(deployment, container, tenant, path, query, &expected).await;
-        evidence.push(
+        record_evidence(
+            evidence,
             json!({"phase":phase, "tenant":tenant, "path":path, "query":query,
             "expected":expected, "actual":result.as_ref().ok(),
             "status":if result.is_ok() {"matched"} else {"mismatch"},
             "error":result.as_ref().err().map(ToString::to_string)}),
-        );
-        if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-            let output = std::path::PathBuf::from(output);
-            std::fs::create_dir_all(&output)?;
-            std::fs::write(
-                output.join(filename),
-                serde_json::to_vec_pretty(&json!({"cases":evidence}))?,
-            )?;
-        }
+            filename,
+        )?;
         result?;
     }
     Ok(())
@@ -934,6 +938,7 @@ async fn otlp_ingest_limit_rejects_a_batch_without_leaking_spans() -> TestResult
     .await?;
     let body = input(9, &[1, 2], "rejected").encode_to_vec();
     let response = deployment
+        .infrastructure
         .client
         .post(format!(
             "{}/v1/traces",
@@ -986,6 +991,7 @@ async fn single_binary_shutdown_drains_an_in_flight_trace_to_storage() -> TestRe
     let cold = deployment.role("querier", &[]).await?;
     accepted(
         deployment
+            .infrastructure
             .client
             .post(format!("{}/v1/traces", base_url(&all, 4318).await?))
             .header("X-Scope-OrgID", TENANT)

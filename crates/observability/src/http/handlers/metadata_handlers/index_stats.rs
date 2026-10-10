@@ -15,6 +15,6 @@ pub(crate) async fn index_stats(
             Ok(value) => json_response(StatusCode::OK, &value),
             Err(error) => error.into_response(),
         };
-    state.record_query("index_stats", resp.status().is_success(), start);
+    state.record_query("index_stats", resp.status(), start);
     resp
 }

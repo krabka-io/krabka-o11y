@@ -70,6 +70,7 @@ use query::{
     query, query_exemplars, query_exemplars_post, query_post, query_range, query_range_post,
 };
 use remote_read::remote_read;
+pub use remote_read::remote_read_reset_hint;
 use request::{
     CardinalityParams, DiscoveryParams, apply_limit, apply_result_limit, check_range_resolution,
     discovery_matchers, discovery_window, duration_param, enforce_query_range_limit,

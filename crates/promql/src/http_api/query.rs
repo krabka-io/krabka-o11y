@@ -21,7 +21,8 @@ use super::{
 };
 use crate::{
     AnnotatedQueryResult, MetricStore,
-    engine::{collect_query_sample_stats, query_stats_step},
+    engine::{PerStepSampleStats, collect_query_sample_stats, query_stats_step},
+    planner::StepGrid,
     query_frontend::{FrontendRangeRequest, execute_range_query_frontend},
 };
 

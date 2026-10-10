@@ -15,7 +15,7 @@ pub(crate) async fn query_range_post(
         Ok(raw_query) => raw_query,
         Err(error) => {
             let resp = error.into_response();
-            state.record_query("query_range", resp.status().is_success(), start);
+            state.record_query("query_range", resp.status(), start);
             return resp;
         }
     };
@@ -27,6 +27,6 @@ pub(crate) async fn query_range_post(
         QueryKind::Range,
     )
     .await;
-    state.record_query("query_range", resp.status().is_success(), start);
+    state.record_query("query_range", resp.status(), start);
     resp
 }

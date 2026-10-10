@@ -41,8 +41,8 @@ use std::{
 };
 
 use assert2::assert;
-use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint, wire::pb};
-use krabka_promql::{SampleSpec, Statement, parse_test_file};
+use krabka_metrics::{BucketSpan, NativeHistogram, wire::pb};
+use krabka_promql::{SampleSpec, Statement, parse_test_file, remote_read_reset_hint};
 use krabka_units::convert::TimeExt;
 use prost::Message;
 use serde_json::Value;
@@ -763,7 +763,7 @@ fn native_histogram_to_pb(histogram: &NativeHistogram, timestamp: i64) -> pb::v1
         zero_threshold: histogram.zero_threshold,
         positive_spans: spans_to_pb(&histogram.positive_spans),
         negative_spans: spans_to_pb(&histogram.negative_spans),
-        reset_hint: reset_hint_to_pb(histogram.reset_hint),
+        reset_hint: remote_read_reset_hint(histogram.reset_hint),
         timestamp,
         custom_values: histogram.custom_values.clone().unwrap_or_default(),
         ..Default::default()
@@ -796,15 +796,6 @@ fn spans_to_pb(spans: &[BucketSpan]) -> Vec<pb::v1::BucketSpan> {
             length: span.length,
         })
         .collect()
-}
-
-fn reset_hint_to_pb(hint: ResetHint) -> i32 {
-    match hint {
-        ResetHint::Unknown => pb::v1::histogram::ResetHint::Unknown as i32,
-        ResetHint::Yes => pb::v1::histogram::ResetHint::Yes as i32,
-        ResetHint::No => pb::v1::histogram::ResetHint::No as i32,
-        ResetHint::Gauge => pb::v1::histogram::ResetHint::Gauge as i32,
-    }
 }
 
 fn counts_to_deltas(counts: &[f64]) -> Vec<i64> {

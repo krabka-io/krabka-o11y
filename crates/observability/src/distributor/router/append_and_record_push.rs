@@ -1,17 +1,16 @@
 use super::{
-    DistributorState, Instant, IntoResponse, RequestSecurity, Response, StatusCode, TenantId,
+    DistributorState, IntoResponse, RequestSecurity, Response, StatusCode, TenantId,
     append_distributor_wal_records, record_ingest_response,
 };
-use crate::{ByteSize, DistributorError, WalLogRecord};
+use crate::{DistributorError, WalLogRecord, service_metrics::IngestPushMeasurement};
 
 /// One authorized push request whose body the distributor has normalized.
 pub(crate) struct NormalizedPush<'a> {
     pub(crate) state: &'a DistributorState,
     pub(crate) security: &'a RequestSecurity,
     pub(crate) tenant: &'a TenantId,
-    pub(crate) body_size: ByteSize,
-    /// When the distributor started handling the request.
-    pub(crate) start: Instant,
+    /// The request's body size and start, before the body decoded.
+    pub(crate) measurement: IngestPushMeasurement,
 }
 
 /// Appends a normalized push's `records` to the WAL and records the response,
@@ -27,8 +26,7 @@ pub(crate) async fn append_and_record_push(
         state,
         security,
         tenant,
-        body_size,
-        start,
+        measurement,
     } = push;
     let items = records.len() as u64;
     tracing::Span::current().record("krabka.ingest.lines", items);
@@ -40,5 +38,5 @@ pub(crate) async fn append_and_record_push(
             error.into_response()
         }
     };
-    record_ingest_response(state, resp, body_size, items, start)
+    record_ingest_response(state, resp, measurement.with_items(items))
 }

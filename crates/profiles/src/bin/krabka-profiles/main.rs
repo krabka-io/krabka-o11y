@@ -38,13 +38,9 @@ use krabka_profiles::{
     query_frontend::FrontendConfig,
 };
 use krabka_telemetry::OtlpConfig;
-use krabka_units::{
-    ByteSize, Time,
-    convert::{ByteSizeExt as _, TimeExt as _},
-    parse,
-};
+use krabka_units::{ByteSize, Time, convert::TimeExt as _, parse};
 #[cfg(test)]
-use krabka_units::{mebibytes, secs};
+use krabka_units::{convert::ByteSizeExt as _, mebibytes, secs};
 use object_store::ObjectStore;
 use tokio_util::sync::CancellationToken;
 
@@ -1147,8 +1143,6 @@ mod parse_positive_time_or_legacy;
 mod parse_positive_time_or_legacy_millis;
 mod parse_positive_time_or_legacy_nanos;
 mod parse_positive_u32;
-mod parse_positive_usize;
-mod parse_positive_whole_byte_size;
 mod process_security;
 mod profile_read_path;
 mod read_path_stage;
@@ -1188,6 +1182,9 @@ use compaction_policy_from_cli::compaction_policy_from_cli;
 use compactor_stage::compactor_stage;
 use configured_object_store::ConfiguredObjectStore;
 use debuginfod_config::debuginfod_config;
+use krabka_observability::cli_value_parsers::{
+    parse_positive_usize, parse_positive_whole_byte_size,
+};
 use load_profiles_limits_overrides_config::load_profiles_limits_overrides_config;
 use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
 use parse_client_frame_max::parse_client_frame_max;
@@ -1198,8 +1195,6 @@ use parse_positive_time_or_legacy::parse_positive_time_or_legacy;
 use parse_positive_time_or_legacy_millis::parse_positive_time_or_legacy_millis;
 use parse_positive_time_or_legacy_nanos::parse_positive_time_or_legacy_nanos;
 use parse_positive_u32::parse_positive_u32;
-use parse_positive_usize::parse_positive_usize;
-use parse_positive_whole_byte_size::parse_positive_whole_byte_size;
 use process_security::ProcessSecurity;
 use profile_read_path::ProfileReadPath;
 use read_path_stage::read_path_stage;

@@ -30,6 +30,7 @@ use krabka_client_producer::{Header as ProducerHeader, Producer, ProducerRecord}
 use krabka_ids::{Offset, PartitionIndex};
 use krabka_observability::{
     server_security::{Principal, ServerSecurity, TenantDenied, authorize_tenant},
+    service_metrics::{IngestRequest, RequestOutcome},
     wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined},
 };
 use krabka_telemetry::propagation::current_trace_headers;

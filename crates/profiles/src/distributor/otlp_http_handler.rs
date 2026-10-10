@@ -50,7 +50,7 @@ pub(crate) async fn otlp_http_handler(
         &ingest_span,
         &IngestOutcome {
             tenant: tenant.as_ref().ok(),
-            ok: result.is_ok(),
+            outcome: RequestOutcome::from_result(&result),
             bytes,
             items,
             start,

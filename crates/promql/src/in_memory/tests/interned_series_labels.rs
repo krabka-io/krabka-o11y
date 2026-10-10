@@ -57,7 +57,7 @@ fn shared_series_summary_keeps_row_keys_and_histogram_owners() {
             fp,
             labels: Arc::clone(labels),
             ts_ms: 15,
-            hist: Arc::new(native_histogram()),
+            hist: Arc::new(count_two_sum_three_histogram()),
         });
     }
     let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];
@@ -187,7 +187,7 @@ fn labels_are_shared_across_records_and_sample_types_within_one_tenant() {
     let labels = lbls(&[("__name__", "up"), ("job", "api")]);
     store.push_float("t", labels.clone(), 100, 1.0);
     store.push_float("t", labels.clone(), 200, 2.0);
-    store.push_histogram("t", labels.clone(), 300, native_histogram());
+    store.push_histogram("t", labels.clone(), 300, count_two_sum_three_histogram());
     store.push_exemplar("t", labels.clone(), Labels::new(), 400, 3.0);
     store.push_float("other", labels, 500, 4.0);
 
@@ -229,7 +229,7 @@ fn live_label_hits_share_the_cache_with_snapshots_but_dead_entries_are_cleaned()
     store.push_float("t", labels.clone(), 100, 1.0);
     let snapshot = store.clone();
     store.push_float("t", labels.clone(), 200, 2.0);
-    store.push_histogram("t", labels.clone(), 300, native_histogram());
+    store.push_histogram("t", labels.clone(), 300, count_two_sum_three_histogram());
     store.push_exemplar("t", labels.clone(), Labels::new(), 400, 3.0);
     assert!(Arc::ptr_eq(
         &store.series_labels["t"],
@@ -337,7 +337,7 @@ fn wal_replay_keeps_byte_labels_tenants_and_snapshots_with_shared_series() {
             store.apply_wal_record(&record);
             record.payload = SamplePayload::Hist {
                 timestamp_ms: 30,
-                hist: native_histogram(),
+                hist: count_two_sum_three_histogram(),
             };
             record.exemplars.clear();
             store.apply_wal_record(&record);
@@ -370,7 +370,7 @@ fn wal_replay_keeps_byte_labels_tenants_and_snapshots_with_shared_series() {
                     histogram.labels.as_ref(),
                     histogram.ts_ms,
                     histogram.hist.as_ref()
-                ) == (fp, &labels, 30, &native_histogram())
+                ) == (fp, &labels, 30, &count_two_sum_three_histogram())
             );
             assert!(
                 (
@@ -626,7 +626,12 @@ async fn eligible_summary_keeps_old_rows_boundaries_raw_counts_and_future_fallba
     }
     hot.push_float("t", boundary.clone(), 8_000, 40.0);
     hot.push_float("t", boundary.clone(), 9_000, 42.0);
-    hot.push_histogram("t", histogram.clone(), 9_000, native_histogram());
+    hot.push_histogram(
+        "t",
+        histogram.clone(),
+        9_000,
+        count_two_sum_three_histogram(),
+    );
     hot.push_float("t", lbls(&[("__name__", "down")]), 13_000, 99.0);
     hot.push_float("other", labels.clone(), 11_000, 99.0);
     let matchers = [LabelMatcher::new("__name__", MatchOp::Eq, "up")];

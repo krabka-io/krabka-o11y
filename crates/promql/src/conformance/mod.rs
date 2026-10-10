@@ -18,7 +18,7 @@ pub mod testkit {
     };
 
     use krabka_blockstore::{Labels, TenantId};
-    use krabka_metrics::{NativeHistogram, ResetHint};
+    use krabka_metrics::{BucketSpan, NativeHistogram, ResetHint};
     use krabka_units::prelude::*;
 
     use super::Result;
@@ -36,6 +36,31 @@ pub mod testkit {
     /// Default relative error for sample values in Prometheus promqltest.
     const FLOAT_TOLERANCE: f64 = 1e-6;
     const STALE_NAN_BITS: u64 = 0x7ff0_0000_0000_0002;
+
+    /// A schema-0 integer histogram with two observations in its first
+    /// positive bucket, summing to 3: the smallest histogram sample a store
+    /// or engine test can write and read back.
+    #[must_use]
+    pub fn count_two_sum_three_histogram() -> NativeHistogram {
+        NativeHistogram {
+            schema: 0,
+            is_float: false,
+            reset_hint: ResetHint::No,
+            zero_threshold: 1e-128,
+            zero_count: 0.0,
+            count: 2.0,
+            sum: 3.0,
+            positive_spans: vec![BucketSpan {
+                offset: 0,
+                length: 1,
+            }],
+            positive_counts: vec![2.0],
+            negative_spans: Vec::new(),
+            negative_counts: Vec::new(),
+            custom_values: None,
+            start_timestamp_ms: None,
+        }
+    }
 
     /// Per-file result for a Prometheus `.test` corpus run.
     #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]

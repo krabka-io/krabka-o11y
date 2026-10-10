@@ -15,7 +15,10 @@ use std::{
 };
 
 use assert2::check;
-use krabka_blockstore::{BlockLevel, ShardedTraceBloom, TraceBlockStats, TraceIndex};
+use krabka_blockstore::{
+    BlockLevel, IndexShardRange, ShardedTraceBloom, TenantSnapshotRangeRead, TraceBlockStats,
+    TraceIndex,
+};
 use object_store::{ObjectStore, PutPayload, memory::InMemory, path::Path};
 
 use self::hooked_store::{HookedStore, StoreHooks};
@@ -132,6 +135,20 @@ fn block(index: i64) -> TraceBlockStats {
 
 /// What the old layout wrote on every flush: the whole index, as one
 /// `serde_json` document of the shape it had.
+/// Loads only `TENANT`'s shards that meet day number `day` of the snapshot
+/// published under `INDEX_KEY`.
+async fn load_tenant_day(store: &Arc<dyn ObjectStore>, day: i64) -> TraceIndex {
+    TraceIndex::load_latest_snapshot_for_range_with_max_bytes(TenantSnapshotRangeRead {
+        store,
+        key: INDEX_KEY,
+        tenant: TENANT,
+        span: IndexShardRange::new(day * DAY_NS, day * DAY_NS + DAY_NS - 1),
+        max_bytes: krabka_blockstore::MAX_INDEX_SNAPSHOT_BYTES,
+    })
+    .await
+    .unwrap()
+}
+
 fn monolithic_snapshot_bytes(blocks: &[TraceBlockStats]) -> usize {
     serde_json::to_vec(&serde_json::json!({
         "tenants": { TENANT: { "blocks": blocks } }
@@ -260,16 +277,7 @@ async fn a_query_about_one_day_reads_one_days_shard() {
 
     recorder.reset();
     let day = 7;
-    let scoped = TraceIndex::load_latest_snapshot_for_range_with_max_bytes(
-        &store,
-        INDEX_KEY,
-        TENANT,
-        day * DAY_NS,
-        day * DAY_NS + DAY_NS - 1,
-        krabka_blockstore::MAX_INDEX_SNAPSHOT_BYTES,
-    )
-    .await
-    .unwrap();
+    let scoped = load_tenant_day(&store, day).await;
     let scoped_reads = recorder.objects_read();
 
     println!("whole_index_objects_read={whole_reads} one_day_objects_read={scoped_reads}");
@@ -324,16 +332,7 @@ async fn a_block_that_straddles_midnight_is_in_both_days_and_reaches_a_reader_on
     );
 
     for day in [0, 1] {
-        let scoped = TraceIndex::load_latest_snapshot_for_range_with_max_bytes(
-            &store,
-            INDEX_KEY,
-            TENANT,
-            day * DAY_NS,
-            day * DAY_NS + DAY_NS - 1,
-            krabka_blockstore::MAX_INDEX_SNAPSHOT_BYTES,
-        )
-        .await
-        .unwrap();
+        let scoped = load_tenant_day(&store, day).await;
 
         let keys = scoped
             .trace_blocks(TENANT)

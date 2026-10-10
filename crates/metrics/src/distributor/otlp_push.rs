@@ -17,12 +17,12 @@ pub(crate) async fn otlp_push(
         .instrument(span)
         .await;
     if let Some(metrics) = &state.metrics {
-        match &result {
-            Ok((_, items, _)) => {
-                metrics.record_ingest(true, body_size, *items, started.elapsed().as_time());
-            }
-            Err(_) => metrics.record_ingest(false, body_size, 0, started.elapsed().as_time()),
-        }
+        metrics.record_ingest(IngestRequest {
+            outcome: RequestOutcome::from_result(&result),
+            body: body_size,
+            items: result.as_ref().map_or(0, |(_, items, _)| *items),
+            elapsed: started.elapsed().as_time(),
+        });
     }
     match result {
         Ok((success, _items, partial_success)) => {

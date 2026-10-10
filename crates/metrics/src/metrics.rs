@@ -16,13 +16,12 @@ use krabka_observability::{
     RoleKind,
     compaction_metrics::CompactionMetrics,
     service_metrics::{
-        IngestHelpText, IngestInstruments, IngestRequest, PipelineInstruments, RequestOutcome,
-        RoleRegistry, register_for_role, register_in_new_registry,
+        IngestHelpText, IngestInstruments, IngestRequest, PipelineInstruments, RoleRegistry,
+        register_for_role, register_in_new_registry,
     },
     wal_consumer_metrics::WalConsumerMetrics,
     wal_produce::WalProduceMetrics,
 };
-use krabka_units::{ByteSize, Time};
 use prometheus_client::{
     metrics::{counter::Counter, family::Family},
     registry::Registry,
@@ -31,17 +30,18 @@ use prometheus_client::{
 mod service_metrics;
 
 pub use self::service_metrics::{
-    INGEST_HELP, METRICS_PREFIX, ServiceMetrics, metrics_role_registry,
+    INGEST_HELP, METRICS_PREFIX, ServiceMetrics, register_metrics_bundle,
+    register_metrics_role_bundle,
 };
 
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
     use krabka_blockstore::ObjectStoreOperation;
-    use krabka_observability::service_metrics::encode_registry;
+    use krabka_observability::service_metrics::{RequestOutcome, encode_registry};
     use krabka_units::prelude::*;
 
-    use super::ServiceMetrics;
+    use super::{IngestRequest, ServiceMetrics};
 
     /// `record_blocks_compacted` skips a zero rather than adding it. The
     /// counter would be unchanged either way, so the skip is only observable
@@ -74,8 +74,18 @@ mod tests {
     #[tokio::test]
     async fn registry_has_metrics_prefix_and_all_metrics() {
         let m = ServiceMetrics::new();
-        m.record_ingest(true, kibibytes(1), 5, millis(12));
-        m.record_ingest(false, ByteSize::ZERO, 0, millis(1));
+        m.record_ingest(IngestRequest {
+            outcome: RequestOutcome::Ok,
+            body: kibibytes(1),
+            items: 5,
+            elapsed: millis(12),
+        });
+        m.record_ingest(IngestRequest {
+            outcome: RequestOutcome::Error,
+            body: ByteSize::ZERO,
+            items: 0,
+            elapsed: millis(1),
+        });
         m.ingest.wal_append_failures.inc();
         m.record_ingest_series("tenant-a", 5);
         m.record_blocks_compacted(3);
@@ -111,7 +121,12 @@ mod tests {
         let m = ServiceMetrics::new();
         // An error outcome must NOT bump wal_append_failures — that is reserved
         // for actual WAL/produce errors, incremented at the append site.
-        m.record_ingest(false, ByteSize::ZERO, 0, Time::ZERO);
+        m.record_ingest(IngestRequest {
+            outcome: RequestOutcome::Error,
+            body: ByteSize::ZERO,
+            items: 0,
+            elapsed: Time::ZERO,
+        });
         assert!(m.ingest.wal_append_failures.get() == 0);
     }
 }

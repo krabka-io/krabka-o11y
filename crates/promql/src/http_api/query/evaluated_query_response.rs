@@ -4,7 +4,7 @@ use super::{
     AnnotatedQueryResult, ApiError, IntoResponse, QueryRequestTiming, QueryResponseStats, Response,
     apply_result_limit, success_response, success_response_with_stats,
 };
-use crate::engine::QuerySampleStats;
+use crate::{engine::QuerySampleStats, http_api::response::QueryPhaseDurations};
 
 /// One evaluated instant or range query, with what its `stats` block reports.
 pub(super) struct EvaluatedQuery {
@@ -42,10 +42,12 @@ pub(super) fn evaluated_query_response(
                     result,
                     QueryResponseStats::new(
                         samples,
-                        preparation,
-                        evaluation,
-                        timing.queue,
-                        timing.started.elapsed(),
+                        QueryPhaseDurations {
+                            preparation,
+                            evaluation,
+                            queue: timing.queue,
+                            total: timing.started.elapsed(),
+                        },
                     ),
                     &annotations,
                 ),

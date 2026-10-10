@@ -42,6 +42,7 @@ use self::querier::metric_eval::{
 };
 
 pub mod audit;
+pub mod cli_value_parsers;
 pub mod compaction_metrics;
 pub mod recovery_cut;
 pub mod server_security;
@@ -456,7 +457,7 @@ pub(crate) use self::{
         },
         blocks::read_planned_log_block,
         metadata::{
-            execute_api_prom_label_names_query, execute_api_prom_series_query,
+            LabelValuesRequest, execute_api_prom_label_names_query, execute_api_prom_series_query,
             execute_label_names_query, execute_label_values_query, execute_series_query,
             parse_series_params, series_data,
         },

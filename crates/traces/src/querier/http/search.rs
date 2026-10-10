@@ -6,8 +6,6 @@ where
 {
     let start = std::time::Instant::now();
     let resp = search_inner(&request).await;
-    request
-        .state
-        .record_query("search", resp.status().is_success(), start);
+    request.state.record_query("search", resp.status(), start);
     resp
 }

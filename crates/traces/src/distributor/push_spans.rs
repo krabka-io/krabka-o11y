@@ -1,3 +1,4 @@
+use krabka_observability::service_metrics::IngestPushMeasurement;
 use krabka_units::convert::ByteSizeExt as _;
 
 use super::{
@@ -36,24 +37,25 @@ where
     } = push;
     let start = std::time::Instant::now();
     let body_size = ByteSize::from_bytes(body.len() as u64);
+    let measurement = IngestPushMeasurement::before_decode(body_size, start);
     let tenant = match state.resolve_tenant(
         principal,
         headers.get(TENANT_HEADER).map(HeaderValue::as_bytes),
     ) {
         Ok(tenant) => tenant,
         Err(err) => {
-            return record_ingest_response(state, error_response(&err), body_size, 0, start);
+            return record_ingest_response(state, error_response(&err), measurement);
         }
     };
     if let Err(err) = require_content_type(headers, content_types) {
-        return record_ingest_response(state, error_response(&err), body_size, 0, start);
+        return record_ingest_response(state, error_response(&err), measurement);
     }
     match decode_body(headers, body, state.max_decompressed).and_then(|body| decode(&body)) {
         Ok(spans) => {
             let items = spans.len() as u64;
             let resp = append_decoded(state, &tenant, spans, StatusCode::ACCEPTED).await;
-            record_ingest_response(state, resp, body_size, items, start)
+            record_ingest_response(state, resp, measurement.with_items(items))
         }
-        Err(err) => record_ingest_response(state, error_response(&err), body_size, 0, start),
+        Err(err) => record_ingest_response(state, error_response(&err), measurement),
     }
 }

@@ -92,7 +92,15 @@ pub(crate) async fn execute_federated_metric_query(
         merge_loki_query_response(&mut response, &value);
     }
     if let Some(labels) = absent_labels {
-        apply_federated_absence(&mut response, labels, time_range, step, kind);
+        apply_federated_absence(
+            &mut response,
+            labels,
+            FederatedEvaluation {
+                time_range,
+                step_ns: step,
+                kind,
+            },
+        );
     }
     if let Some(aggregation) = aggregation {
         match aggregation.op {
@@ -146,16 +154,24 @@ fn add_federated_tenant_labels(value: &mut Value, tenant: &str) {
     }
 }
 
+/// When a federated metric query evaluates.
+#[derive(Clone, Copy)]
+struct FederatedEvaluation {
+    time_range: TimeRange,
+    /// The range-query step, or `None` for the default step.
+    step_ns: Option<i64>,
+    kind: QueryKind,
+}
+
 // Absence is computed after merging real samples from every selected tenant.
 // Synthesizing once per tenant would report an absent series even when another
 // tenant supplied matching data in that same evaluation window.
-fn apply_federated_absence(
-    response: &mut Value,
-    labels: Labels,
-    time_range: TimeRange,
-    step: Option<i64>,
-    kind: QueryKind,
-) {
+fn apply_federated_absence(response: &mut Value, labels: Labels, evaluation: FederatedEvaluation) {
+    let FederatedEvaluation {
+        time_range,
+        step_ns: step,
+        kind,
+    } = evaluation;
     let mut present = std::collections::BTreeSet::new();
     for row in response["data"]["result"]
         .as_array()
@@ -170,7 +186,7 @@ fn apply_federated_absence(
             }
         }
     }
-    let evaluation = if matches!(kind, QueryKind::Instant) {
+    let evaluation_range = if matches!(kind, QueryKind::Instant) {
         TimeRange::new(time_range.end_ns, time_range.end_ns).expect("instant range")
     } else {
         time_range
@@ -180,7 +196,7 @@ fn apply_federated_absence(
     } else {
         step.unwrap_or_else(|| default_metric_range_step(time_range))
     };
-    let points = eval_times(evaluation, step_ns)
+    let points = eval_times(evaluation_range, step_ns)
         .into_iter()
         .filter(|time| {
             !present

@@ -1,4 +1,4 @@
-use krabka_pprof::{ProfileSelection, SpanProfileShards};
+use krabka_pprof::{MillisRange, ProfileSelection, SpanProfileShards};
 use krabka_units::convert::TimeExt as _;
 
 use super::{
@@ -7,10 +7,10 @@ use super::{
     HeatmapSpanExemplarsBySeries, InMemoryProfileStore, IndividualProfile, LabelMatcher, Limits,
     MatchOp, OverridesProvider, PROFILE_ID_LABEL, ProfileError, ProfileStats, ProfileStore,
     QueryExecution, QueryRange, QueryTarget, SampleSelector, Series, SeriesAgg,
-    SeriesExemplarQuery, ServiceMetrics, SpanExemplarsBySeries, StartMs, TenantId, TenantPolicy,
-    Time, heatmap_individual_exemplars_from_scan, heatmap_span_exemplars_from_scan,
-    individual_exemplars_from_scan, parse_label_selector, span_exemplars_from_scan,
-    span_heatmap_points_from_scan, split_inclusive_range,
+    SeriesExemplarQuery, ServiceMetrics, SpanExemplarsBySeries, SpanHeatmapRequest, StartMs,
+    TenantId, TenantPolicy, Time, heatmap_individual_exemplars_from_scan,
+    heatmap_span_exemplars_from_scan, individual_exemplars_from_scan, parse_label_selector,
+    span_exemplars_from_scan, span_heatmap_points_from_scan, split_inclusive_range,
 };
 
 pub struct QuerierState<S: ProfileStore = DefaultStore> {
@@ -657,12 +657,15 @@ impl<S: ProfileStore> QuerierState<S> {
 
     pub(crate) async fn select_span_heatmap_points(
         &self,
-        target: QueryTarget<'_>,
-        group_by: &[String],
-        range: QueryRange,
+        request: SpanHeatmapRequest<'_>,
     ) -> Result<Vec<krabka_pprof::LabeledHeatmapPoints>, ProfileError> {
-        let (tenant, profile_type, label_selector) = target;
-        let (start_ms, end_ms) = range;
+        let SpanHeatmapRequest {
+            tenant,
+            profile_type,
+            label_selector,
+            group_by,
+            range: MillisRange { start_ms, end_ms },
+        } = request;
         self.validate_query_range(tenant, start_ms, end_ms)?;
         let base_matchers = parse_label_selector(label_selector)?;
         let groups = if group_by.is_empty() {

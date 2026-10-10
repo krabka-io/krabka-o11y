@@ -1,17 +1,17 @@
 use krabka_blockstore::ObjectStoreMetrics;
-use krabka_metrics::metrics::{INGEST_HELP, METRICS_PREFIX, metrics_role_registry};
+use krabka_metrics::metrics::{register_metrics_bundle, register_metrics_role_bundle};
 use krabka_observability::{
     RoleKind,
     service_metrics::{
         IngestInstruments, IngestRequest, QueryHelpText, QueryInstruments, QueryRequest,
-        RequestOutcome, register_for_role, register_in_new_registry,
+        RequestOutcome,
     },
     wal_consumer_metrics::WalConsumerMetrics,
 };
 
 use super::{
-    ByteSize, Counter, Family, Gauge, Histogram, QueryTypeLabel, Registry, SharedRegistry, Time,
-    TimeExt as _,
+    Counter, Family, Gauge, Histogram, QueryTypeLabel, Registry, RuleEvaluationOutcome,
+    SharedRegistry, Time, TimeExt as _,
 };
 
 const QUERY_HELP: QueryHelpText = QueryHelpText {
@@ -61,18 +61,20 @@ impl ServiceMetrics {
     /// Builds a new registry, registers every metric, and returns the bundle.
     #[must_use]
     pub fn new() -> Self {
-        register_in_new_registry(METRICS_PREFIX, Self::register)
+        register_metrics_bundle(Self::register)
     }
 
-    /// Registers this role's instruments in the process registry.
-    ///
-    /// Each role has a separate prefix. Its gauges do not overwrite another role's gauges.
+    /// Registers this role's instruments in the process registry, under the
+    /// role's own prefix.
     pub async fn for_role(shared: SharedRegistry, role: RoleKind) -> Self {
-        register_for_role(metrics_role_registry(shared, role), Self::register).await
+        register_metrics_role_bundle(shared, role, Self::register).await
     }
 
-    fn register(registry: &mut Registry, shared: SharedRegistry) -> Self {
-        let ingest = IngestInstruments::register(registry, &INGEST_HELP);
+    fn register(
+        registry: &mut Registry,
+        shared: SharedRegistry,
+        ingest: IngestInstruments,
+    ) -> Self {
         let query = QueryInstruments::register(registry, &QUERY_HELP);
 
         let query_eval_duration: Family<QueryTypeLabel, Histogram> =
@@ -166,46 +168,27 @@ impl ServiceMetrics {
     /// This method does NOT touch `wal_append_failures`. Increment that counter
     /// at the WAL or produce error site, so that a 4xx client or validation
     /// error does not inflate the WAL-failure counter.
-    pub fn record_ingest(&self, ok: bool, size: ByteSize, items: u64, latency: Time) {
-        self.ingest.record(IngestRequest {
-            outcome: if ok {
-                RequestOutcome::Ok
-            } else {
-                RequestOutcome::Error
-            },
-            body: size,
-            items,
-            elapsed: latency,
-        });
+    pub fn record_ingest(&self, request: IngestRequest) {
+        self.ingest.record(request);
     }
 
-    /// Records one query request outcome on `route` with its latency.
-    pub fn record_query(&self, route: &str, ok: bool, latency: Time) {
-        self.query.record(QueryRequest {
-            route,
-            outcome: if ok {
-                RequestOutcome::Ok
-            } else {
-                RequestOutcome::Error
-            },
-            // Prometheus histograms are in base units, so the latency lands in
-            // seconds no matter what unit the caller measured it in.
-            elapsed_secs: latency.secs_f64(),
-        });
+    /// Records one query request outcome on its route with its latency.
+    pub fn record_query(&self, request: QueryRequest<'_>) {
+        self.query.record(request);
     }
 
     /// Records one `PromQL` engine evaluation.
     ///
     /// This method observes `latency` under `query_eval_duration{type}`. When
-    /// `ok` is false, it also increments `query_errors{type}`. `query_type` is
-    /// `"instant"` or `"range"`.
-    pub fn record_eval(&self, query_type: &str, ok: bool, latency: Time) {
+    /// `outcome` is [`RequestOutcome::Error`], it also increments
+    /// `query_errors{type}`. `query_type` is `"instant"` or `"range"`.
+    pub fn record_eval(&self, query_type: &str, outcome: RequestOutcome, latency: Time) {
         self.query_eval_duration
             .get_or_create(&QueryTypeLabel {
                 r#type: query_type.into(),
             })
             .observe(latency.secs_f64());
-        if !ok {
+        if outcome == RequestOutcome::Error {
             self.query_errors
                 .get_or_create(&QueryTypeLabel {
                     r#type: query_type.into(),
@@ -228,8 +211,8 @@ impl ServiceMetrics {
     }
 
     /// Records one rule outcome and its containing group's duration.
-    pub fn record_ruler_rule(&self, ok: bool) {
-        if !ok {
+    pub fn record_ruler_rule(&self, outcome: RuleEvaluationOutcome) {
+        if outcome == RuleEvaluationOutcome::Failed {
             self.rule_evaluation_failures.inc();
         }
     }

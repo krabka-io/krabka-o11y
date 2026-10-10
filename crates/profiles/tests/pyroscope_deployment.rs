@@ -8,7 +8,7 @@ use flate2::{Compression, write::GzEncoder};
 use krabka_pprof::proto;
 use krabka_profiles::wire::pb;
 use prost::Message as _;
-use reqwest::{Client, Method, StatusCode};
+use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use testcontainers::{
     ContainerAsync, GenericImage, ImageExt as _,
@@ -18,7 +18,7 @@ use testcontainers::{
 #[path = "../../metrics-service/tests/support/container_deployment.rs"]
 mod container_deployment;
 use self::container_deployment::{
-    TestResult, base_url, deployment_network, image, start, start_broker, start_minio,
+    DeploymentInfrastructure, TestResult, base_url, image, start, start_infrastructure,
     wait_until_ready,
 };
 
@@ -37,32 +37,30 @@ const QUERY: &str = "/querier.v1.QuerierService";
 struct Deployment {
     distributor: ContainerAsync<GenericImage>,
     hot: ContainerAsync<GenericImage>,
-    _minio: ContainerAsync<GenericImage>,
-    _broker: ContainerAsync<GenericImage>,
-    data: tempfile::TempDir,
-    _broker_data: tempfile::TempDir,
-    network: String,
-    client: Client,
+    infrastructure: DeploymentInfrastructure,
 }
 
 impl Deployment {
     async fn start() -> TestResult<Self> {
-        let broker_data = tempfile::tempdir()?;
-        let data = tempfile::tempdir()?;
-        let network = deployment_network("profiles", broker_data.path())?;
-        let broker = start_broker(broker_data.path(), &network).await?;
-        let minio = start_minio(&network, "profiles").await?;
-        let distributor = role(&network, data.path(), "distributor", false).await?;
-        let hot = role(&network, data.path(), "querier", false).await?;
+        let infrastructure = start_infrastructure("profiles", None).await?;
+        let distributor = role(
+            &infrastructure.network,
+            infrastructure.data.path(),
+            "distributor",
+            false,
+        )
+        .await?;
+        let hot = role(
+            &infrastructure.network,
+            infrastructure.data.path(),
+            "querier",
+            false,
+        )
+        .await?;
         let deployment = Self {
             distributor,
             hot,
-            _minio: minio,
-            _broker: broker,
-            data,
-            _broker_data: broker_data,
-            network,
-            client: Client::builder().timeout(Duration::from_secs(5)).build()?,
+            infrastructure,
         };
         deployment.ready(&deployment.distributor, PORT).await?;
         deployment.ready(&deployment.hot, PORT).await?;
@@ -70,11 +68,17 @@ impl Deployment {
     }
 
     async fn ready(&self, container: &ContainerAsync<GenericImage>, port: u16) -> TestResult {
-        wait_until_ready(&self.client, container, port).await
+        wait_until_ready(&self.infrastructure.client, container, port).await
     }
 
     async fn role(&self, target: &str, cold: bool) -> TestResult<ContainerAsync<GenericImage>> {
-        let container = role(&self.network, self.data.path(), target, cold).await?;
+        let container = role(
+            &self.infrastructure.network,
+            self.infrastructure.data.path(),
+            target,
+            cold,
+        )
+        .await?;
         self.ready(
             &container,
             if target == "block-builder" {
@@ -96,6 +100,7 @@ impl Deployment {
         body: Vec<u8>,
     ) -> TestResult<reqwest::Response> {
         Ok(self
+            .infrastructure
             .client
             .post(format!("{}{path}", base_url(container, PORT).await?))
             .header("X-Scope-OrgID", tenant)
@@ -529,6 +534,7 @@ async fn legacy(format: &str, compressed: bool) -> TestResult {
     ]);
     accepted(
         deployment
+            .infrastructure
             .client
             .post(url)
             .header("X-Scope-OrgID", TENANT)
@@ -597,6 +603,7 @@ async fn otlp(json: bool, compressed: bool, connect: bool) -> TestResult {
         "application/x-protobuf"
     };
     let mut request = deployment
+        .infrastructure
         .client
         .post(format!(
             "{}{path}",
@@ -930,6 +937,7 @@ async fn query_status_codes_match_upstream_cases() -> TestResult {
     ];
     for (method, content_type, body, expected) in cases {
         let response = deployment
+            .infrastructure
             .client
             .request(
                 method.clone(),

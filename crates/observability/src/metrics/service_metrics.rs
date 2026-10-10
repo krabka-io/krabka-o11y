@@ -1,8 +1,8 @@
 use super::{
-    ByteSize, CompactionMetrics, Counter, Family, IngestHelpText, IngestInstruments, IngestRequest,
+    CompactionMetrics, Counter, Family, IngestHelpText, IngestInstruments, IngestRequest,
     ObjectStoreMetrics, PipelineInstruments, QueryHelpText, QueryInstruments, QueryRequest,
-    Registry, RequestOutcome, SharedRegistry, TenantLabel, Time, TimeExt as _, WalConsumerMetrics,
-    WalProduceMetrics, register_in_new_registry,
+    Registry, SharedRegistry, TenantLabel, WalConsumerMetrics, WalProduceMetrics,
+    register_in_new_registry,
 };
 
 const INGEST_HELP: IngestHelpText = IngestHelpText {
@@ -106,22 +106,14 @@ impl ServiceMetrics {
     /// request counter, accumulates bytes and lines, and observes the handler
     /// latency.
     ///
-    /// `ok=false` covers any 4xx or 5xx, that is a validation, rate-limit,
+    /// [`RequestOutcome::Error`](crate::service_metrics::RequestOutcome::Error)
+    /// covers any 4xx or 5xx, that is a validation, rate-limit,
     /// decode, or produce failure. [`Self::record_wal_append_failure`] bumps
     /// the WAL/produce-specific failure counter separately, and only at the
     /// actual produce error site, so a 4xx client error does not inflate
     /// it.
-    pub fn record_ingest(&self, ok: bool, body: ByteSize, items: u64, elapsed: Time) {
-        self.ingest.record(IngestRequest {
-            outcome: if ok {
-                RequestOutcome::Ok
-            } else {
-                RequestOutcome::Error
-            },
-            body,
-            items,
-            elapsed,
-        });
+    pub fn record_ingest(&self, request: IngestRequest) {
+        self.ingest.record(request);
     }
 
     /// Bumps the WAL/produce append-failure counter. Callers call it only
@@ -155,16 +147,8 @@ impl ServiceMetrics {
 
     /// Records one querier request. It bumps the per-(route, status) request
     /// counter and observes the per-route handler latency.
-    pub fn record_query(&self, route: &str, ok: bool, elapsed: Time) {
-        self.query.record(QueryRequest {
-            route,
-            outcome: if ok {
-                RequestOutcome::Ok
-            } else {
-                RequestOutcome::Error
-            },
-            elapsed_secs: elapsed.secs_f64(),
-        });
+    pub fn record_query(&self, request: QueryRequest<'_>) {
+        self.query.record(request);
     }
 }
 

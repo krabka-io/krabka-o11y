@@ -52,7 +52,7 @@ pub use functions::{
 };
 pub use http_api::{
     PrometheusApiState, mimir_alertmanager_router, mimir_ruler_prometheus_router,
-    mimir_ruler_router, prometheus_router,
+    mimir_ruler_router, prometheus_router, remote_read_reset_hint,
 };
 pub use ids::{Offset, PartitionIndex};
 pub use in_memory::{

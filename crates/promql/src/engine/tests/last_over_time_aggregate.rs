@@ -867,10 +867,7 @@ async fn last_over_time_aggregate_reuses_wider_scans_and_initialized_float_windo
         ),
     ] {
         let (actual, stats) = super::super::collect_query_sample_stats(
-            false,
-            3,
-            3,
-            1,
+            super::super::PerStepSampleStats::Omit,
             engine.query_instant_with_annotations(&tenant_id("t"), query, 3),
         )
         .await;

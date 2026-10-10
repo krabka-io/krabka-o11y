@@ -8,6 +8,6 @@ where
     let resp = query_range_inner(&request).await;
     request
         .state
-        .record_query("query_range", resp.status().is_success(), start);
+        .record_query("query_range", resp.status(), start);
     resp
 }

@@ -1,9 +1,7 @@
 use arrow::{array::AsArray, datatypes::Int64Type};
 use assert2::check;
 use krabka_blockstore::MatchOp;
-use krabka_metrics::{
-    BucketSpan, NativeHistogram, ResetHint, SamplePayload, WalExemplar, WalRecord,
-};
+use krabka_metrics::{SamplePayload, WalExemplar, WalRecord};
 
 use super::*;
 use crate::{
@@ -32,7 +30,6 @@ mod float_record;
 mod interned_series_labels;
 mod label_values_returns_distinct_for_name;
 mod lbls;
-mod native_histogram;
 mod offsets_track_low_and_high_water;
 mod prune_counts_partial_histogram_and_exemplar_retention;
 mod prune_drops_old_samples;
@@ -66,5 +63,6 @@ use expected_label_value_count_stats::expected_label_value_count_stats;
 use expected_metric_name_stats::expected_metric_name_stats;
 use float_record::float_record;
 use lbls::lbls;
-use native_histogram::native_histogram;
 use store_with_float_and_hist_series::store_with_float_and_hist_series;
+
+use crate::testkit::count_two_sum_three_histogram;

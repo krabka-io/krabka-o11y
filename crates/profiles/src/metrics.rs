@@ -12,57 +12,68 @@
 //! is `krabka_profiles`, so the `ingest_requests` counter renders on the wire
 //! as `krabka_profiles_ingest_requests_total{status="ok"}`.
 
-use krabka_blockstore::ObjectStoreMetrics;
 pub use krabka_observability::service_metrics::{
     RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel, TenantLabel, metrics_router,
 };
-use krabka_observability::{
-    compaction_metrics::CompactionMetrics,
-    service_metrics::{
-        IngestHelpText, IngestInstruments, IngestRequest, PipelineInstruments, QueryHelpText,
-        QueryInstruments, QueryRequest, RequestOutcome, register_in_new_registry,
-    },
-    wal_consumer_metrics::WalConsumerMetrics,
-    wal_produce::WalProduceMetrics,
-};
-use krabka_units::{
-    ByteSize, Time,
-    convert::{ByteSizeExt, TimeExt},
-};
-use prometheus_client::{
-    metrics::{counter::Counter, family::Family},
-    registry::Registry,
-};
-
-use crate::ids::{IngestBytes, IngestItems};
 
 mod service_metrics;
+mod symbolizer_cache_lookup;
 
-pub use self::service_metrics::ServiceMetrics;
+pub use self::{service_metrics::ServiceMetrics, symbolizer_cache_lookup::SymbolizerCacheLookup};
 
 #[cfg(test)]
 mod tests {
     use assert2::{assert, check};
     use krabka_blockstore::ObjectStoreOperation;
-    use krabka_observability::service_metrics::encode_registry;
-    use krabka_units::millis;
+    use krabka_observability::service_metrics::{
+        IngestRequest, QueryRequest, RequestOutcome, encode_registry,
+    };
+    use krabka_units::{bytes, millis};
 
-    use super::{IngestBytes, IngestItems, ServiceMetrics, StatusLabel};
+    use super::{ServiceMetrics, StatusLabel, SymbolizerCacheLookup};
+
+    /// A one-item, one-byte ingest request with `outcome`. Tests override
+    /// the fields they check with struct update syntax.
+    fn ingest_request(outcome: RequestOutcome) -> IngestRequest {
+        IngestRequest {
+            outcome,
+            body: bytes(1),
+            items: 1,
+            elapsed: millis(1),
+        }
+    }
 
     #[tokio::test]
     async fn registry_has_profiles_prefix_and_all_metrics() {
         let m = ServiceMetrics::new();
-        m.record_ingest(true, IngestBytes(1024), IngestItems(3), millis(12));
-        m.record_ingest(false, IngestBytes(0), IngestItems(0), millis(1));
+        m.record_ingest(IngestRequest {
+            body: bytes(1024),
+            items: 3,
+            elapsed: millis(12),
+            ..ingest_request(RequestOutcome::Ok)
+        });
+        m.record_ingest(IngestRequest {
+            body: bytes(0),
+            items: 0,
+            ..ingest_request(RequestOutcome::Error)
+        });
         m.record_wal_append_failure();
         m.record_ingest_samples("tenant-a", 3);
         m.record_blocks_built(2);
-        m.record_query("select_series", true, millis(500));
-        m.record_query("render", false, millis(100));
+        m.record_query(QueryRequest {
+            route: "select_series",
+            outcome: RequestOutcome::Ok,
+            elapsed: millis(500),
+        });
+        m.record_query(QueryRequest {
+            route: "render",
+            outcome: RequestOutcome::Error,
+            elapsed: millis(100),
+        });
         m.debuginfo_upload_retries.inc();
         m.debuginfo_upload_timeouts.inc();
-        m.record_symbolizer_cache(true);
-        m.record_symbolizer_cache(false);
+        m.record_symbolizer_cache(SymbolizerCacheLookup::Hit);
+        m.record_symbolizer_cache(SymbolizerCacheLookup::Miss);
         // The shared bundles must land in this signal's registry.
         m.wal_consumer.record_partition_assigned("__wal", 2);
         m.wal_produce.record_batch_failure(1, 3);
@@ -105,7 +116,12 @@ mod tests {
     #[test]
     fn record_ingest_adds_positive_bytes_and_items() {
         let m = ServiceMetrics::new();
-        m.record_ingest(true, IngestBytes(1024), IngestItems(3), millis(12));
+        m.record_ingest(IngestRequest {
+            body: bytes(1024),
+            items: 3,
+            elapsed: millis(12),
+            ..ingest_request(RequestOutcome::Ok)
+        });
 
         // A positive body/item count must flow through to the cumulative
         // counters, so a dropped or zeroed `inc_by` leaves these at zero.
@@ -128,12 +144,12 @@ mod tests {
                 .get()
         };
 
-        m.record_ingest(true, IngestBytes(1), IngestItems(1), millis(1));
+        m.record_ingest(ingest_request(RequestOutcome::Ok));
         check!(count("ok") == 1);
         check!(count("error") == 0);
 
-        m.record_ingest(false, IngestBytes(1), IngestItems(1), millis(1));
-        m.record_ingest(false, IngestBytes(1), IngestItems(1), millis(1));
+        m.record_ingest(ingest_request(RequestOutcome::Error));
+        m.record_ingest(ingest_request(RequestOutcome::Error));
         check!(
             count("ok") == 1,
             "a failure must not land on the success series"
@@ -161,8 +177,12 @@ mod tests {
     #[test]
     fn wal_append_failure_is_separate_from_request_outcome() {
         let m = ServiceMetrics::new();
-        // An ok=false request alone must NOT bump wal_append_failures.
-        m.record_ingest(false, IngestBytes(0), IngestItems(0), millis(1));
+        // An error request alone must NOT bump wal_append_failures.
+        m.record_ingest(IngestRequest {
+            body: bytes(0),
+            items: 0,
+            ..ingest_request(RequestOutcome::Error)
+        });
         assert!(m.ingest.wal_append_failures.get() == 0);
         // Only the explicit WAL-failure call does.
         m.record_wal_append_failure();

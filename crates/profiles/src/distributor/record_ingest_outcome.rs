@@ -1,13 +1,16 @@
 use std::time::Instant;
 
-use krabka_units::convert::StdDurationExt as _;
+use krabka_units::{
+    ByteSize,
+    convert::{ByteSizeExt as _, StdDurationExt as _},
+};
 
-use super::{DistributorState, IngestBytes, IngestItems, TenantId};
+use super::{DistributorState, IngestRequest, RequestOutcome, TenantId};
 
 /// What one ingest request did, for its span and the ingest metrics.
 pub(crate) struct IngestOutcome<'a> {
     pub tenant: Option<&'a TenantId>,
-    pub ok: bool,
+    pub outcome: RequestOutcome,
     pub bytes: u64,
     pub items: u64,
     pub start: Instant,
@@ -26,10 +29,10 @@ pub(crate) fn record_ingest_outcome(
             .metrics
             .record_ingest_samples(tenant.as_str(), outcome.items);
     }
-    state.metrics.record_ingest(
-        outcome.ok,
-        IngestBytes(outcome.bytes),
-        IngestItems(outcome.items),
-        outcome.start.elapsed().as_time(),
-    );
+    state.metrics.record_ingest(IngestRequest {
+        outcome: outcome.outcome,
+        body: ByteSize::from_bytes(outcome.bytes),
+        items: outcome.items,
+        elapsed: outcome.start.elapsed().as_time(),
+    });
 }

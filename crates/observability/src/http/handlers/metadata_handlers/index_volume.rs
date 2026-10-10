@@ -22,6 +22,6 @@ pub(crate) async fn index_volume(
         Ok(value) => json_response(StatusCode::OK, &value),
         Err(error) => error.into_response(),
     };
-    state.record_query("index_volume", resp.status().is_success(), start);
+    state.record_query("index_volume", resp.status(), start);
     resp
 }

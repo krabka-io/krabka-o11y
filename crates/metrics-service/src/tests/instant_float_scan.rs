@@ -8,12 +8,11 @@ use std::{
 
 use assert2::assert;
 use krabka_blockstore::{BlockStore, MatchOp, TenantId};
-use krabka_metrics::{
-    BucketSpan, LimitError, NativeHistogram, ObjectStoreCompactionIndexSink, ResetHint,
-};
+use krabka_metrics::{LimitError, ObjectStoreCompactionIndexSink};
 use krabka_promql::{
     EngineOpts, InMemoryMetricStore, MetricStore, PromqlEngine, PromqlError,
     PromqlLabels as Labels, PromqlMatcher as LabelMatcher, QueryResult, WalHead,
+    testkit::count_two_sum_three_histogram,
 };
 use krabka_units::prelude::*;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload, path::Path};
@@ -861,28 +860,6 @@ async fn latest_scan_keeps_retained_history_boundary_labels_and_historical_value
             == BTreeMap::from([(labels().fingerprint(), labels())])
     );
     assert!(cold_fixture.reads.load(Ordering::SeqCst) == 0);
-}
-
-// Two observations in the first positive bucket, summing to 3.
-fn count_two_sum_three_histogram() -> NativeHistogram {
-    NativeHistogram {
-        schema: 0,
-        is_float: false,
-        reset_hint: ResetHint::No,
-        zero_threshold: 1e-128,
-        zero_count: 0.0,
-        count: 2.0,
-        sum: 3.0,
-        positive_spans: vec![BucketSpan {
-            offset: 0,
-            length: 1,
-        }],
-        positive_counts: vec![2.0],
-        negative_spans: Vec::new(),
-        negative_counts: Vec::new(),
-        custom_values: None,
-        start_timestamp_ms: None,
-    }
 }
 
 async fn assert_sum_up_is_one_at_14s<S: MetricStore>(engine: &PromqlEngine<S>, tenant: &TenantId) {

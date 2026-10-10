@@ -35,6 +35,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        TenantSnapshotRangeRead,
         error::BlockStoreError,
         labels::Labels,
         matcher::{LabelMatcher, MatchOp},
@@ -985,16 +986,19 @@ mod tests {
             .unwrap();
 
         let day = 7;
-        let scoped = ProfileIndex::load_latest_snapshot_for_range_with_max_bytes(
-            &store,
-            "index/profiles.json",
-            "t",
-            day * PROFILE_DAY_MS,
-            day * PROFILE_DAY_MS + PROFILE_DAY_MS - 1,
-            crate::DEFAULT_INDEX_SNAPSHOT_MAX,
-        )
-        .await
-        .unwrap();
+        let scoped =
+            ProfileIndex::load_latest_snapshot_for_range_with_max_bytes(TenantSnapshotRangeRead {
+                store: &store,
+                key: "index/profiles.json",
+                tenant: "t",
+                span: IndexShardRange::new(
+                    day * PROFILE_DAY_MS,
+                    day * PROFILE_DAY_MS + PROFILE_DAY_MS - 1,
+                ),
+                max_bytes: crate::DEFAULT_INDEX_SNAPSHOT_MAX,
+            })
+            .await
+            .unwrap();
 
         check!(block_keys(&scoped) == strings(&["blocks/day-7.parquet"]));
         check!(scoped.stacktrace_partitions("blocks/day-7.parquet") == vec![7]);

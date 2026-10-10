@@ -1,7 +1,7 @@
 use super::{
-    ByteSize, CompactionMetrics, Counter, Family, IngestHelpText, IngestInstruments, IngestRequest,
-    ObjectStoreMetrics, PipelineInstruments, Registry, RequestOutcome, RoleKind, RoleRegistry,
-    SharedRegistry, TenantLabel, Time, WalConsumerMetrics, WalProduceMetrics, register_for_role,
+    CompactionMetrics, Counter, Family, IngestHelpText, IngestInstruments, IngestRequest,
+    ObjectStoreMetrics, PipelineInstruments, Registry, RoleKind, RoleRegistry, SharedRegistry,
+    TenantLabel, WalConsumerMetrics, WalProduceMetrics, register_for_role,
     register_in_new_registry,
 };
 
@@ -9,14 +9,45 @@ use super::{
 /// ingest or the query binary.
 pub const METRICS_PREFIX: &str = "krabka_metrics";
 
-/// The sub-registry of `shared` that the metrics subsystem's `role`
-/// registers its instruments in, prefixed `krabka_metrics_<role>`.
-#[must_use]
-pub fn metrics_role_registry(shared: SharedRegistry, role: RoleKind) -> RoleRegistry {
-    RoleRegistry {
+/// Builds a fresh registry prefixed `krabka_metrics`, registers the shared
+/// ingest instruments in it, and then the rest of a metrics-subsystem bundle
+/// with `register`.
+///
+/// Both the ingest and the query binary build their bundle this way, so each
+/// exports the same ingest instruments, first, with the same help text.
+pub fn register_metrics_bundle<T>(
+    register: impl FnOnce(&mut Registry, SharedRegistry, IngestInstruments) -> T,
+) -> T {
+    register_in_new_registry(METRICS_PREFIX, after_ingest_instruments(register))
+}
+
+/// Registers a metrics-subsystem bundle for `role` in the process registry
+/// `shared`, prefixed `krabka_metrics_<role>`: the shared ingest instruments
+/// first, then the rest of the bundle with `register`.
+///
+/// Each role has a separate prefix. Its gauges do not overwrite another
+/// role's gauges.
+pub async fn register_metrics_role_bundle<T>(
+    shared: SharedRegistry,
+    role: RoleKind,
+    register: impl FnOnce(&mut Registry, SharedRegistry, IngestInstruments) -> T,
+) -> T {
+    let role_registry = RoleRegistry {
         shared,
         signal_prefix: METRICS_PREFIX,
         role,
+    };
+    register_for_role(role_registry, after_ingest_instruments(register)).await
+}
+
+/// Wraps `register` so that it runs after the shared ingest instruments are
+/// registered, and receives them.
+fn after_ingest_instruments<T>(
+    register: impl FnOnce(&mut Registry, SharedRegistry, IngestInstruments) -> T,
+) -> impl FnOnce(&mut Registry, SharedRegistry) -> T {
+    |registry, shared| {
+        let ingest = IngestInstruments::register(registry, &INGEST_HELP);
+        register(registry, shared, ingest)
     }
 }
 
@@ -67,18 +98,20 @@ impl ServiceMetrics {
     /// bundle.
     #[must_use]
     pub fn new() -> Self {
-        register_in_new_registry(METRICS_PREFIX, Self::register)
+        register_metrics_bundle(Self::register)
     }
 
-    /// Registers this role's instruments in the process registry.
-    ///
-    /// Each role has a separate prefix. Its gauges do not overwrite another role's gauges.
+    /// Registers this role's instruments in the process registry. See
+    /// [`register_metrics_role_bundle`].
     pub async fn for_role(shared: SharedRegistry, role: RoleKind) -> Self {
-        register_for_role(metrics_role_registry(shared, role), Self::register).await
+        register_metrics_role_bundle(shared, role, Self::register).await
     }
 
-    fn register(registry: &mut Registry, shared: SharedRegistry) -> Self {
-        let ingest = IngestInstruments::register(registry, &INGEST_HELP);
+    fn register(
+        registry: &mut Registry,
+        shared: SharedRegistry,
+        ingest: IngestInstruments,
+    ) -> Self {
         let ingest_series: Family<TenantLabel, Counter> = Family::default();
         registry.register(
             "ingest_series",
@@ -114,21 +147,8 @@ impl ServiceMetrics {
     /// `wal_append_failures`. Increment that counter separately at the real WAL
     /// or produce error site, so a 4xx client or validation error does not
     /// inflate the WAL-failure counter.
-    ///
-    /// `body` is the request-body size and `elapsed` is the handler latency.
-    /// This method converts both to the raw units the Prometheus instruments
-    /// hold, so a caller never spells out `_bytes` or `_secs`.
-    pub fn record_ingest(&self, ok: bool, body: ByteSize, items: u64, elapsed: Time) {
-        self.ingest.record(IngestRequest {
-            outcome: if ok {
-                RequestOutcome::Ok
-            } else {
-                RequestOutcome::Error
-            },
-            body,
-            items,
-            elapsed,
-        });
+    pub fn record_ingest(&self, request: IngestRequest) {
+        self.ingest.record(request);
     }
 
     /// Records `series` accepted series for `tenant` on the ingest path. The

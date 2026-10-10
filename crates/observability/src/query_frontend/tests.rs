@@ -70,9 +70,11 @@ fn stream_merge_groups_labels_deduplicates_and_applies_one_global_limit() {
 
     let merged = merge_frontend_results(
         vec![first, second],
-        LokiDirection::Backward,
-        Some(3),
-        None,
+        LokiStreamOptions {
+            direction: LokiDirection::Backward,
+            limit: Some(3),
+            interval: None,
+        },
         40,
     );
 
@@ -101,9 +103,11 @@ fn matrix_merge_groups_labels_orders_samples_and_deduplicates_boundaries() {
 
     let merged = merge_frontend_results(
         vec![first, second],
-        LokiDirection::Forward,
-        None,
-        None,
+        LokiStreamOptions {
+            direction: LokiDirection::Forward,
+            limit: None,
+            interval: None,
+        },
         i64::MAX,
     );
 

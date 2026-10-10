@@ -25,11 +25,29 @@ pub struct ProfileSelection<'q> {
     pub label_selector: &'q str,
 }
 
-/// A time range in Unix milliseconds.
-#[derive(Clone, Copy)]
-struct MillisRange {
-    start_ms: i64,
-    end_ms: i64,
+/// An inclusive time range in Unix milliseconds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MillisRange {
+    pub start_ms: i64,
+    pub end_ms: i64,
+}
+
+/// How many buckets a heatmap bins its points into on each axis.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeatmapGrid {
+    /// Buckets along the time axis.
+    pub time_buckets: usize,
+    /// Buckets along the value axis.
+    pub value_buckets: usize,
+}
+
+/// One heatmap query: the profiles it selects, the range it covers, and the
+/// grid it bins them into.
+#[derive(Clone, Copy, Debug)]
+pub struct HeatmapQuery<'q> {
+    pub selection: ProfileSelection<'q>,
+    pub range: MillisRange,
+    pub grid: HeatmapGrid,
 }
 
 /// One `group_by` group of a query: its label values, and the matchers that
@@ -1114,16 +1132,14 @@ impl<S: ProfileStore> FlameEngine<S> {
 
     /// # Errors
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
-    pub async fn select_heatmap(
-        &self,
-        query: (&str, &str, &str),
-        range: (i64, i64),
-        time_buckets: usize,
-        value_buckets: usize,
-    ) -> Result<Heatmap, ProfileError> {
-        let (start_ms, end_ms) = range;
+    pub async fn select_heatmap(&self, query: HeatmapQuery<'_>) -> Result<Heatmap, ProfileError> {
+        let MillisRange { start_ms, end_ms } = query.range;
+        let HeatmapGrid {
+            time_buckets,
+            value_buckets,
+        } = query.grid;
         Ok(self
-            .select_heatmaps(query, &[], range, time_buckets, value_buckets)
+            .select_heatmaps(query, &[])
             .await?
             .into_iter()
             .next()
@@ -1137,18 +1153,32 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error when the query is invalid, required profile data is malformed, or the backing profile store cannot satisfy the request.
     pub async fn select_heatmaps(
         &self,
-        query: (&str, &str, &str),
+        query: HeatmapQuery<'_>,
         group_by: &[String],
-        range: (i64, i64),
-        time_buckets: usize,
-        value_buckets: usize,
     ) -> Result<Vec<LabeledHeatmap>, ProfileError> {
-        let points = self.select_heatmap_points(query, group_by, range).await?;
+        let HeatmapQuery {
+            selection,
+            range,
+            grid:
+                HeatmapGrid {
+                    time_buckets,
+                    value_buckets,
+                },
+        } = query;
+        let points = self
+            .select_heatmap_points(selection, group_by, range)
+            .await?;
         Ok(points
             .into_iter()
             .map(|(labels, points)| LabeledHeatmap {
                 labels,
-                heatmap: bin_heatmap(&points, range.0, range.1, time_buckets, value_buckets),
+                heatmap: bin_heatmap(
+                    &points,
+                    range.start_ms,
+                    range.end_ms,
+                    time_buckets,
+                    value_buckets,
+                ),
             })
             .collect())
     }
@@ -1160,23 +1190,17 @@ impl<S: ProfileStore> FlameEngine<S> {
     /// Returns an error for invalid selectors or failed profile scans.
     pub async fn select_heatmap_points(
         &self,
-        query: (&str, &str, &str),
+        selection: ProfileSelection<'_>,
         group_by: &[String],
-        range: (i64, i64),
+        range: MillisRange,
     ) -> Result<Vec<crate::LabeledHeatmapPoints>, ProfileError> {
-        let (tenant, profile_type, label_selector) = query;
-        let (start_ms, end_ms) = range;
-        let groups = self
-            .group_selections(
-                ProfileSelection {
-                    tenant,
-                    profile_type,
-                    label_selector,
-                },
-                group_by,
-                MillisRange { start_ms, end_ms },
-            )
-            .await?;
+        let ProfileSelection {
+            tenant,
+            profile_type,
+            ..
+        } = selection;
+        let MillisRange { start_ms, end_ms } = range;
+        let groups = self.group_selections(selection, group_by, range).await?;
 
         let mut out = Vec::new();
         for GroupSelection { labels, matchers } in groups {

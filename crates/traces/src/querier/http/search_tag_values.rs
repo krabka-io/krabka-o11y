@@ -28,6 +28,6 @@ where
         },
     )
     .await;
-    state.record_query("tag_values", resp.status().is_success(), start);
+    state.record_query("tag_values", resp.status(), start);
     resp
 }

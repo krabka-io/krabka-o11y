@@ -1,4 +1,5 @@
 use super::{Arc, BlockStoreError, ByteSize, ObjectStore, ProfileIndex, StorageSignal, TraceIndex};
+use crate::{IndexShardRange, TenantSnapshotRangeRead};
 
 /// The block keys that the snapshot index at `key` names for `tenant`.
 ///
@@ -12,17 +13,17 @@ pub async fn snapshot_tenant_blocks(
     tenant: &str,
     max_bytes: ByteSize,
 ) -> Result<Vec<String>, BlockStoreError> {
+    let whole_tenant = TenantSnapshotRangeRead {
+        store,
+        key,
+        tenant,
+        span: IndexShardRange::new(i64::MIN, i64::MAX),
+        max_bytes,
+    };
     match signal {
         StorageSignal::Traces => {
-            let index = TraceIndex::load_latest_snapshot_for_range_with_max_bytes(
-                store,
-                key,
-                tenant,
-                i64::MIN,
-                i64::MAX,
-                max_bytes,
-            )
-            .await?;
+            let index =
+                TraceIndex::load_latest_snapshot_for_range_with_max_bytes(whole_tenant).await?;
             Ok(index
                 .trace_blocks(tenant)
                 .iter()
@@ -30,15 +31,8 @@ pub async fn snapshot_tenant_blocks(
                 .collect())
         }
         StorageSignal::Profiles => {
-            let index = ProfileIndex::load_latest_snapshot_for_range_with_max_bytes(
-                store,
-                key,
-                tenant,
-                i64::MIN,
-                i64::MAX,
-                max_bytes,
-            )
-            .await?;
+            let index =
+                ProfileIndex::load_latest_snapshot_for_range_with_max_bytes(whole_tenant).await?;
             Ok(index
                 .all_blocks()
                 .into_iter()

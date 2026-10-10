@@ -22,10 +22,13 @@ use testcontainers::{
 
 #[path = "support/container_deployment.rs"]
 mod container_deployment;
+#[path = "support/deployment_evidence.rs"]
+mod deployment_evidence;
 use container_deployment::{
-    TestResult, base_url, deployment_network, image, start, start_broker, start_minio,
+    DeploymentInfrastructure, TestResult, base_url, image, start, start_infrastructure,
     wait_until_ready,
 };
+use deployment_evidence::record_evidence;
 
 const QUERY_TIMEOUT: Duration = Duration::from_secs(45);
 const DATA_PORT: u16 = 4041;
@@ -55,16 +58,12 @@ async fn remote_write_v2_survives_the_hot_to_block_transition_and_restart() -> T
     deployment_roundtrip(RemoteWrite::V2).await
 }
 
-/// Containers hold the network alive; the directory outlives the broker's
-/// bind mount. Field drop order removes the containers before their data.
+/// Containers hold the network alive; the directories outlive the broker's
+/// bind mount. Field drop order removes the roles before the infrastructure.
 struct Deployment {
     distributor: ContainerAsync<GenericImage>,
     hot: ContainerAsync<GenericImage>,
-    minio: ContainerAsync<GenericImage>,
-    broker: ContainerAsync<GenericImage>,
-    directory: tempfile::TempDir,
-    network: String,
-    client: Client,
+    infrastructure: DeploymentInfrastructure,
 }
 
 impl Deployment {
@@ -73,29 +72,26 @@ impl Deployment {
     }
 
     async fn with_overrides(overrides: Option<&str>) -> TestResult<Self> {
-        let directory = tempfile::tempdir()?;
-        let network = deployment_network("metrics", directory.path())?;
+        let infrastructure = Box::pin(start_infrastructure("metrics", overrides)).await?;
+        let network = &infrastructure.network;
         let broker_name = format!("{network}-broker");
-        let broker = start_broker(directory.path(), &network).await?;
-        let minio = start_minio(&network, "metrics").await?;
         let mut distributor_request = image("KRABKA")
             .with_exposed_port(ContainerPort::Tcp(DATA_PORT))
-            .with_network(&network)
+            .with_network(network)
             .with_cmd([
                 "krabka-metrics".to_string(),
                 "--target=distributor".to_string(),
                 format!("--listen=0.0.0.0:{DATA_PORT}"),
                 format!("--bootstrap={broker_name}:9092"),
             ]);
-        if let Some(overrides) = overrides {
-            let path = directory.path().join("overrides.yaml");
-            std::fs::write(&path, overrides)?;
+        if overrides.is_some() {
+            let path = infrastructure.data.path().join("overrides.yaml");
             distributor_request = distributor_request
                 .with_mount(Mount::bind_mount(path.to_string_lossy(), "/overrides.yaml"))
                 .with_env_var("KRABKA_METRICS_RUNTIME_OVERRIDES", "/overrides.yaml");
         }
         let distributor = start(distributor_request).await?;
-        let hot = start(query_role(&network).with_cmd([
+        let hot = start(query_role(network).with_cmd([
             "krabka-metrics-service".to_string(),
             "--target=querier".to_string(),
             format!("--listen=0.0.0.0:{DATA_PORT}"),
@@ -107,11 +103,7 @@ impl Deployment {
         let deployment = Self {
             distributor,
             hot,
-            minio,
-            broker,
-            directory,
-            network,
-            client: Client::builder().timeout(Duration::from_secs(5)).build()?,
+            infrastructure,
         };
         deployment.ready(&deployment.distributor, DATA_PORT).await?;
         deployment.ready(&deployment.hot, DATA_PORT).await?;
@@ -119,7 +111,7 @@ impl Deployment {
     }
 
     async fn ready(&self, container: &ContainerAsync<GenericImage>, port: u16) -> TestResult {
-        wait_until_ready(&self.client, container, port).await
+        wait_until_ready(&self.infrastructure.client, container, port).await
     }
 
     async fn builder(&self) -> TestResult<ContainerAsync<GenericImage>> {
@@ -128,10 +120,10 @@ impl Deployment {
     }
 
     async fn builder_with_rows(&self, rows: usize) -> TestResult<ContainerAsync<GenericImage>> {
-        let builder = start(s3_role(&self.network, ADMIN_PORT).with_cmd([
+        let builder = start(s3_role(&self.infrastructure.network, ADMIN_PORT).with_cmd([
             "krabka-metrics".to_string(),
             "--target=block-builder".to_string(),
-            format!("--bootstrap={}-broker:9092", self.network),
+            format!("--bootstrap={}-broker:9092", self.infrastructure.network),
             "--object-store-url=s3://metrics".to_string(),
             "--block-builder-poll-timeout=100ms".to_string(),
             "--block-builder-flush-max-age=100ms".to_string(),
@@ -143,7 +135,7 @@ impl Deployment {
     }
 
     async fn cold(&self) -> TestResult<ContainerAsync<GenericImage>> {
-        let cold = start(query_role(&self.network).with_cmd([
+        let cold = start(query_role(&self.infrastructure.network).with_cmd([
             "krabka-metrics-service",
             "--target=querier",
             "--listen=0.0.0.0:4041",
@@ -325,18 +317,14 @@ async fn check_compound_queries(
         (format!(r#"sum({METRIC}{{site="missing"}})"#), json!([])),
     ] {
         let result = wait_range_query(client, base, tenant, &query, &expected).await;
-        evidence.push(json!({"phase":phase, "tenant":tenant, "query":query,
+        record_evidence(
+            evidence,
+            json!({"phase":phase, "tenant":tenant, "query":query,
             "expected":expected, "actual":result.as_ref().ok(),
             "status":if result.is_ok() {"matched"} else {"mismatch"},
-            "error":result.as_ref().err().map(ToString::to_string)}));
-        if let Some(output) = std::env::var_os("TEST_UNDECLARED_OUTPUTS_DIR") {
-            let output = std::path::PathBuf::from(output);
-            std::fs::create_dir_all(&output)?;
-            std::fs::write(
-                output.join(filename),
-                serde_json::to_vec_pretty(&json!({"cases":evidence}))?,
-            )?;
-        }
+            "error":result.as_ref().err().map(ToString::to_string)}),
+            filename,
+        )?;
         result?;
     }
     Ok(())
@@ -349,19 +337,20 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
         RemoteWrite::V2 => "metrics-v2-query-transitions.json",
     };
     let deployment = Deployment::start().await?;
+    let client = &deployment.infrastructure.client;
     let write = base_url(&deployment.distributor, DATA_PORT).await?;
     let hot = base_url(&deployment.hot, DATA_PORT).await?;
     let cold = deployment.cold().await?;
     let cold_url = base_url(&cold, DATA_PORT).await?;
     for (tenant, value) in [("tenant-a", 7.0), ("tenant-b", 19.0)] {
-        push(&deployment.client, &write, version, tenant, value).await?;
+        push(client, &write, version, tenant, value).await?;
     }
     // No builder is running yet. This answer can only come from the WAL head.
     for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-        wait_samples(&deployment.client, &hot, tenant, &expected(value)).await?;
-        assert!(range(&deployment.client, &cold_url, tenant).await? == json!([]));
+        wait_samples(client, &hot, tenant, &expected(value)).await?;
+        assert!(range(client, &cold_url, tenant).await? == json!([]));
         check_compound_queries(
-            &deployment.client,
+            client,
             &hot,
             tenant,
             Some(value),
@@ -371,7 +360,7 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
         )
         .await?;
         check_compound_queries(
-            &deployment.client,
+            client,
             &cold_url,
             tenant,
             None,
@@ -381,9 +370,9 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
         )
         .await?;
     }
-    assert!(range(&deployment.client, &hot, "tenant-empty").await? == json!([]));
+    assert!(range(client, &hot, "tenant-empty").await? == json!([]));
     check_compound_queries(
-        &deployment.client,
+        client,
         &hot,
         "tenant-empty",
         None,
@@ -394,13 +383,13 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
     .await?;
     let builder = deployment.builder().await?;
     for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-        wait_samples(&deployment.client, &cold_url, tenant, &expected(value)).await?;
+        wait_samples(client, &cold_url, tenant, &expected(value)).await?;
         // Expire the hot querier's pre-publication cold snapshot.
         tokio::time::sleep(Duration::from_millis(100)).await;
         // The hot and stored copies must not create duplicate query samples.
-        assert!(range(&deployment.client, &hot, tenant).await? == expected(value));
+        assert!(range(client, &hot, tenant).await? == expected(value));
         check_compound_queries(
-            &deployment.client,
+            client,
             &hot,
             tenant,
             Some(value),
@@ -410,7 +399,7 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
         )
         .await?;
         check_compound_queries(
-            &deployment.client,
+            client,
             &cold_url,
             tenant,
             Some(value),
@@ -430,9 +419,8 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
     let reopened = deployment.cold().await?;
     let reopened_url = base_url(&reopened, DATA_PORT).await?;
     // The restarted writer must also consume records after its committed cut.
-    push(&deployment.client, &write, version, "tenant-c", 31.0).await?;
-    let restart_result =
-        wait_samples(&deployment.client, &reopened_url, "tenant-c", &expected(31)).await;
+    push(client, &write, version, "tenant-c", 31.0).await?;
+    let restart_result = wait_samples(client, &reopened_url, "tenant-c", &expected(31)).await;
     // The original log consumer ends at stop and start does not reattach it.
     // Read a finite snapshot after the query wait, preserving its timing and
     // result even if diagnostics fail. This includes both writer lifetimes.
@@ -449,6 +437,7 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
         let admin = base_url(&builder, ADMIN_PORT).await?;
         for path in ["/ready", "/status/recovery"] {
             let response = deployment
+                .infrastructure
                 .client
                 .get(format!("{admin}{path}"))
                 .send()
@@ -466,7 +455,7 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
     }
     restart_result?;
     check_compound_queries(
-        &deployment.client,
+        client,
         &reopened_url,
         "tenant-c",
         Some(31),
@@ -476,9 +465,9 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
     )
     .await?;
     for (tenant, value) in [("tenant-a", 7), ("tenant-b", 19)] {
-        wait_samples(&deployment.client, &reopened_url, tenant, &expected(value)).await?;
+        wait_samples(client, &reopened_url, tenant, &expected(value)).await?;
         check_compound_queries(
-            &deployment.client,
+            client,
             &reopened_url,
             tenant,
             Some(value),
@@ -488,9 +477,9 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
         )
         .await?;
     }
-    assert!(range(&deployment.client, &reopened_url, "tenant-empty").await? == json!([]));
+    assert!(range(client, &reopened_url, "tenant-empty").await? == json!([]));
     check_compound_queries(
-        &deployment.client,
+        client,
         &reopened_url,
         "tenant-empty",
         None,
@@ -504,9 +493,7 @@ async fn deployment_roundtrip(version: RemoteWrite) -> TestResult {
     builder.rm().await?;
     deployment.distributor.rm().await?;
     deployment.hot.rm().await?;
-    deployment.minio.rm().await?;
-    deployment.broker.rm().await?;
-    drop(deployment.directory);
+    drop(deployment.infrastructure);
     Ok(())
 }
 

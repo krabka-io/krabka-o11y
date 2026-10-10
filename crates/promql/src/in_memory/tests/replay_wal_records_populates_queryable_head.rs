@@ -28,7 +28,7 @@ pub(crate) async fn replay_wal_records_populates_queryable_head() {
         ],
         payload: SamplePayload::Hist {
             timestamp_ms: 10_000,
-            hist: native_histogram(),
+            hist: count_two_sum_three_histogram(),
         },
         exemplars: Vec::new(),
     });

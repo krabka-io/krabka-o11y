@@ -1,3 +1,5 @@
+use krabka_observability::service_metrics::IngestPushMeasurement;
+
 use super::*;
 
 pub(crate) async fn otlp_push(request: PushRequest) -> Response {
@@ -9,6 +11,7 @@ pub(crate) async fn otlp_push(request: PushRequest) -> Response {
     } = request;
     let start = std::time::Instant::now();
     let body_size = ByteSize::from_bytes(body.len() as u64);
+    let measurement = IngestPushMeasurement::before_decode(body_size, start);
     // One ingest span per request (NOT per span-record). The tenant and the
     // accepted-span count are only known after resolve and decode, so both are
     // declared `Empty` and recorded below; this span becomes the local parent
@@ -31,7 +34,7 @@ pub(crate) async fn otlp_push(request: PushRequest) -> Response {
         ) {
             Ok(tenant) => tenant,
             Err(err) => {
-                return record_ingest_response(&state, error_response(&err), body_size, 0, start);
+                return record_ingest_response(&state, error_response(&err), measurement);
             }
         };
         tracing::Span::current().record("krabka.tenant", tenant.as_str());
@@ -39,7 +42,7 @@ pub(crate) async fn otlp_push(request: PushRequest) -> Response {
             &headers,
             &["application/x-protobuf", "application/protobuf"],
         ) {
-            return record_ingest_response(&state, error_response(&err), body_size, 0, start);
+            return record_ingest_response(&state, error_response(&err), measurement);
         }
         match decode_body(&headers, &body, state.max_decompressed)
             .and_then(|body| {
@@ -53,9 +56,9 @@ pub(crate) async fn otlp_push(request: PushRequest) -> Response {
                 tracing::Span::current().record("krabka.ingest.spans", items);
                 let resp =
                     append_decoded_response(&state, &tenant, spans, otlp_success_response()).await;
-                record_ingest_response(&state, resp, body_size, items, start)
+                record_ingest_response(&state, resp, measurement.with_items(items))
             }
-            Err(err) => record_ingest_response(&state, error_response(&err), body_size, 0, start),
+            Err(err) => record_ingest_response(&state, error_response(&err), measurement),
         }
     }
     .instrument(span)

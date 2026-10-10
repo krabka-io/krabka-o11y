@@ -33,6 +33,7 @@ use crate::{
 };
 
 mod ingest_instruments;
+mod ingest_push_measurement;
 mod metrics_router;
 mod pipeline_instruments;
 mod query_instruments;
@@ -46,6 +47,7 @@ mod tenant_label;
 
 pub use self::{
     ingest_instruments::{IngestHelpText, IngestInstruments, IngestRequest},
+    ingest_push_measurement::IngestPushMeasurement,
     metrics_router::{encode_registry, metrics_router},
     pipeline_instruments::PipelineInstruments,
     query_instruments::{QueryHelpText, QueryInstruments, QueryRequest},
@@ -140,7 +142,7 @@ mod tests {
             query.record(QueryRequest {
                 route,
                 outcome,
-                elapsed_secs: 0.01,
+                elapsed: millis(10),
             });
         }
         for (route, status, want) in [

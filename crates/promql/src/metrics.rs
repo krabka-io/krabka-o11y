@@ -16,7 +16,7 @@
 pub use krabka_observability::service_metrics::{
     RouteLabel, RouteStatusLabel, SharedRegistry, StatusLabel, metrics_router,
 };
-use krabka_units::{ByteSize, Time, convert::TimeExt};
+use krabka_units::{Time, convert::TimeExt};
 use prometheus_client::{
     encoding::EncodeLabelSet,
     metrics::{counter::Counter, family::Family, gauge::Gauge, histogram::Histogram},
@@ -25,10 +25,12 @@ use prometheus_client::{
 
 #[cfg(test)]
 mod tests {
-    use krabka_observability::service_metrics::encode_registry;
+    use krabka_observability::service_metrics::{
+        IngestRequest, QueryRequest, RequestOutcome, encode_registry,
+    };
     use krabka_units::prelude::*;
 
-    use super::ServiceMetrics;
+    use super::{RuleEvaluationOutcome, ServiceMetrics};
 
     #[tokio::test]
     async fn registry_has_metrics_prefix_and_all_metrics() {
@@ -36,21 +38,34 @@ mod tests {
         // Exercise the ingest helpers too so every counter family materializes
         // a sample line (an empty Family emits only # HELP/# TYPE metadata,
         // which carry the name WITHOUT the `_total` suffix).
-        m.record_ingest(true, kibibytes(1), 5, millis(12));
+        m.record_ingest(IngestRequest {
+            outcome: RequestOutcome::Ok,
+            body: kibibytes(1),
+            items: 5,
+            elapsed: millis(12),
+        });
         m.ingest.wal_append_failures.inc();
-        m.record_query("query", true, millis(50));
-        m.record_query("query_range", false, millis(1500));
-        m.record_query("series", true, millis(200));
-        m.record_query("labels", true, millis(100));
-        m.record_query("label_values", true, millis(100));
+        for (route, outcome, elapsed) in [
+            ("query", RequestOutcome::Ok, millis(50)),
+            ("query_range", RequestOutcome::Error, millis(1500)),
+            ("series", RequestOutcome::Ok, millis(200)),
+            ("labels", RequestOutcome::Ok, millis(100)),
+            ("label_values", RequestOutcome::Ok, millis(100)),
+        ] {
+            m.record_query(QueryRequest {
+                route,
+                outcome,
+                elapsed,
+            });
+        }
         // Engine-eval metrics: an instant success, a range failure, and some
         // in-flight tracking so every new metric materializes a sample line.
-        m.record_eval("instant", true, millis(20));
-        m.record_eval("range", false, millis(1200));
+        m.record_eval("instant", RequestOutcome::Ok, millis(20));
+        m.record_eval("range", RequestOutcome::Error, millis(1200));
         m.query_started();
         m.query_started();
         m.query_finished();
-        m.record_ruler_rule(false);
+        m.record_ruler_rule(RuleEvaluationOutcome::Failed);
         m.record_ruler_group(0.25);
         m.ruler_owner.set(1);
         m.ruler_producer_id.set(42);
@@ -97,6 +112,10 @@ mod tests {
 }
 
 mod query_type_label;
+mod rule_evaluation_outcome;
 mod service_metrics;
 
-pub use self::{query_type_label::QueryTypeLabel, service_metrics::ServiceMetrics};
+pub use self::{
+    query_type_label::QueryTypeLabel, rule_evaluation_outcome::RuleEvaluationOutcome,
+    service_metrics::ServiceMetrics,
+};

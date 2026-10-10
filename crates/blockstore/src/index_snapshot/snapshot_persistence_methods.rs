@@ -33,10 +33,12 @@ macro_rules! snapshot_persistence_methods {
             retain: $crate::index_snapshot::IndexSnapshotRetain,
         ) -> $crate::error::Result<String> {
             self.save_latest_snapshot_with_retain_and_max_bytes(
-                store,
-                key,
-                retain,
-                $crate::index_snapshot::DEFAULT_INDEX_SNAPSHOT_MAX,
+                $crate::index_snapshot::IndexSnapshotPublish {
+                    store,
+                    key,
+                    retain,
+                    max_bytes: $crate::index_snapshot::DEFAULT_INDEX_SNAPSHOT_MAX,
+                },
             )
             .await
         }
@@ -45,11 +47,14 @@ macro_rules! snapshot_persistence_methods {
         /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
         pub async fn save_latest_snapshot_with_retain_and_max_bytes(
             &self,
-            store: &::std::sync::Arc<dyn ::object_store::ObjectStore>,
-            key: &str,
-            retain: $crate::index_snapshot::IndexSnapshotRetain,
-            max_bytes: ::krabka_units::ByteSize,
+            publish: $crate::index_snapshot::IndexSnapshotPublish<'_>,
         ) -> $crate::error::Result<String> {
+            let $crate::index_snapshot::IndexSnapshotPublish {
+                store,
+                key,
+                retain,
+                max_bytes,
+            } = publish;
             let removals = self.pending_removals.pending();
             let additions = self.pending_additions.pending();
             let snapshot_key = $crate::index_snapshot::put_manifest_snapshot(
@@ -124,7 +129,8 @@ macro_rules! snapshot_persistence_methods {
             .await
         }
 
-        /// Loads only the shards of one tenant that meet `[min_ts, max_ts]`.
+        /// Loads only the shards of `read.tenant` that meet the inclusive
+        /// `read.span`.
         ///
         /// A shard's span is in the manifest, so the loader decides from the
         /// manifest alone which payloads it has to fetch and never touches the
@@ -134,21 +140,16 @@ macro_rules! snapshot_persistence_methods {
         /// # Errors
         /// Returns an error when object-store I/O fails, persisted metadata is malformed, or a block cannot be encoded or decoded.
         pub async fn load_latest_snapshot_for_range_with_max_bytes(
-            store: &::std::sync::Arc<dyn ::object_store::ObjectStore>,
-            key: &str,
-            tenant: &str,
-            min_ts: i64,
-            max_ts: i64,
-            max_bytes: ::krabka_units::ByteSize,
+            read: $crate::index_snapshot::TenantSnapshotRangeRead<'_>,
         ) -> $crate::error::Result<Self> {
             Self::load_latest_snapshot_read($crate::index_snapshot::LatestSnapshotRead {
-                store,
-                key,
+                store: read.store,
+                key: read.key,
                 window: Some($crate::index_snapshot::ShardWindow {
-                    tenant,
-                    span: $crate::IndexShardRange::new(min_ts, max_ts),
+                    tenant: read.tenant,
+                    span: read.span,
                 }),
-                max_bytes,
+                max_bytes: read.max_bytes,
             })
             .await
         }

@@ -1,8 +1,10 @@
+use krabka_observability::service_metrics::RequestOutcome;
+
 use super::{
     AnnotatedQueryResult, ApiError, Arc, ERASURE_REQUEST_PREFIX, EvaluatedQuery,
-    FrontendRangeRequest, HeaderMap, IntoResponse, MetricStore, Principal, PrometheusApiState,
-    QueryRequestTiming, RangeQueryParams, Response, StdDurationExt, TimeExt,
-    authorized_tenant_from_headers, check_range_resolution, collect_query_sample_stats,
+    FrontendRangeRequest, HeaderMap, IntoResponse, MetricStore, PerStepSampleStats, Principal,
+    PrometheusApiState, QueryRequestTiming, RangeQueryParams, Response, StdDurationExt, StepGrid,
+    TimeExt, authorized_tenant_from_headers, check_range_resolution, collect_query_sample_stats,
     duration_param, enforce_query_range_limit, evaluated_query_response,
     execute_range_query_frontend, has_erasure_requests, timestamp_ms, validate_timestamp_range,
 };
@@ -96,20 +98,26 @@ pub(crate) async fn query_range_dispatch<S: MetricStore>(
         }
     };
     let (result, samples) = if stats_requested {
-        let (result, samples) = collect_query_sample_stats(
-            per_step_stats,
-            start_ms,
-            end_ms,
-            step.millis_i64(),
-            evaluate,
-        )
-        .await;
+        let per_step = if per_step_stats {
+            PerStepSampleStats::Include(StepGrid {
+                start: start_ms,
+                end: end_ms,
+                step: step.millis_i64(),
+            })
+        } else {
+            PerStepSampleStats::Omit
+        };
+        let (result, samples) = collect_query_sample_stats(per_step, evaluate).await;
         (result, Some(samples))
     } else {
         (evaluate.await, None)
     };
     let evaluation = eval_started.elapsed();
-    state.record_eval("range", result.is_ok(), evaluation.as_time());
+    state.record_eval(
+        "range",
+        RequestOutcome::from_result(&result),
+        evaluation.as_time(),
+    );
 
     evaluated_query_response(
         EvaluatedQuery {

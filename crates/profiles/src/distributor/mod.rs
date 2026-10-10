@@ -24,6 +24,7 @@ use krabka_blockstore::{TenantId, TenantPolicy, TenantResolveError};
 use krabka_client_producer::{Header, Producer, ProducerRecord};
 use krabka_observability::{
     server_security::{Principal, ServerListener, ServerSecurity, authorize_tenant, serve_router},
+    service_metrics::{IngestRequest, RequestOutcome},
     wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined},
 };
 use krabka_pprof::PprofProfile;
@@ -41,7 +42,6 @@ use tracing::Instrument as _;
 
 use crate::{
     error::ProfilesError,
-    ids::{IngestBytes, IngestItems},
     ingest::{
         LegacyDecodeLimits, RelabelConfig, apply_relabel, cap_session_id,
         decode_ingest_body_with_limits, decode_otlp, decode_push, enforce_limits, gunzip,

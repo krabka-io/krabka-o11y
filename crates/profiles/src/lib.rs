@@ -33,8 +33,7 @@ pub mod wire;
 pub use blockbuilder::{BuiltSample, build_block, intern_record, object_key, run, samples_batch};
 pub use error::ProfilesError;
 pub use ids::{
-    DefaultMs, EndMs, ExternalPartition, IngestBytes, IngestItems, LocalPartition, MaxValue,
-    MinValue, NowMs, StartMs,
+    DefaultMs, EndMs, ExternalPartition, LocalPartition, MaxValue, MinValue, NowMs, StartMs,
 };
 pub use limits::{LimitError, Limits, OverridesError, OverridesProvider};
 pub use wal::{

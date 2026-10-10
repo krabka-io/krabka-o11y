@@ -7,25 +7,25 @@ pub(crate) async fn scan_filters_histograms_by_matcher_tenant_and_time() {
         "t",
         lbls(&[("__name__", "latency_seconds"), ("job", "api")]),
         1_000,
-        native_histogram(),
+        count_two_sum_three_histogram(),
     );
     store.push_histogram(
         "t",
         lbls(&[("__name__", "latency_seconds"), ("job", "api")]),
         5_000,
-        native_histogram(),
+        count_two_sum_three_histogram(),
     );
     store.push_histogram(
         "t",
         lbls(&[("__name__", "latency_seconds"), ("job", "worker")]),
         1_000,
-        native_histogram(),
+        count_two_sum_three_histogram(),
     );
     store.push_histogram(
         "other",
         lbls(&[("__name__", "latency_seconds"), ("job", "api")]),
         1_000,
-        native_histogram(),
+        count_two_sum_three_histogram(),
     );
 
     let matchers = [

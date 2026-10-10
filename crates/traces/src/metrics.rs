@@ -19,12 +19,11 @@ use krabka_observability::{
     compaction_metrics::CompactionMetrics,
     service_metrics::{
         IngestHelpText, IngestInstruments, IngestRequest, PipelineInstruments, QueryHelpText,
-        QueryInstruments, QueryRequest, RequestOutcome, register_in_new_registry,
+        QueryInstruments, QueryRequest, register_in_new_registry,
     },
     wal_consumer_metrics::WalConsumerMetrics,
     wal_produce::WalProduceMetrics,
 };
-use krabka_units::{ByteSize, Time};
 use prometheus_client::{
     metrics::{counter::Counter, family::Family},
     registry::Registry,
@@ -38,10 +37,12 @@ pub use self::service_metrics::ServiceMetrics;
 mod tests {
     use assert2::{assert, check};
     use krabka_blockstore::ObjectStoreOperation;
-    use krabka_observability::service_metrics::encode_registry;
+    use krabka_observability::service_metrics::{RequestOutcome, encode_registry};
     use krabka_units::prelude::*;
 
-    use super::{RouteStatusLabel, ServiceMetrics, TenantId, TenantLabel};
+    use super::{
+        IngestRequest, QueryRequest, RouteStatusLabel, ServiceMetrics, TenantId, TenantLabel,
+    };
 
     fn tenant(id: &str) -> TenantId {
         TenantId::new(id).expect("a valid tenant id")
@@ -50,13 +51,31 @@ mod tests {
     #[tokio::test]
     async fn registry_has_traces_prefix_and_all_metrics() {
         let m = ServiceMetrics::new();
-        m.record_ingest(true, kibibytes(1), 7, millis(10));
-        m.record_ingest(false, ByteSize::ZERO, 0, millis(2));
+        m.record_ingest(IngestRequest {
+            outcome: RequestOutcome::Ok,
+            body: kibibytes(1),
+            items: 7,
+            elapsed: millis(10),
+        });
+        m.record_ingest(IngestRequest {
+            outcome: RequestOutcome::Error,
+            body: ByteSize::ZERO,
+            items: 0,
+            elapsed: millis(2),
+        });
         m.record_wal_append_failure();
         m.record_ingest_spans(&tenant("tenant-a"), 7);
         m.record_block_flushed();
-        m.record_query("search", true, 0.05);
-        m.record_query("trace_by_id", false, 0.2);
+        m.record_query(QueryRequest {
+            route: "search",
+            outcome: RequestOutcome::Ok,
+            elapsed: millis(50),
+        });
+        m.record_query(QueryRequest {
+            route: "trace_by_id",
+            outcome: RequestOutcome::Error,
+            elapsed: millis(200),
+        });
         // The shared bundles must land in this signal's registry.
         m.wal_consumer.record_partition_assigned("__wal", 2);
         m.wal_produce.record_batch_failure(1, 3);
@@ -91,7 +110,12 @@ mod tests {
     fn wal_append_failure_is_separate_from_request_outcome() {
         let m = ServiceMetrics::new();
         // A 4xx client error: error outcome, but NOT a WAL failure.
-        m.record_ingest(false, ByteSize::ZERO, 0, Time::ZERO);
+        m.record_ingest(IngestRequest {
+            outcome: RequestOutcome::Error,
+            body: ByteSize::ZERO,
+            items: 0,
+            elapsed: Time::ZERO,
+        });
         assert!(m.ingest.wal_append_failures.get() == 0);
         // A produce failure: bump explicitly at the WAL error site.
         m.record_wal_append_failure();
@@ -122,13 +146,21 @@ mod tests {
         assert!(m.blocks_flushed.get() == 2);
     }
 
-    // `record_query` takes its latency in seconds rather than as a `Time`,
-    // so its outcome mapping is checked here as well as in the shared module.
+    // The traces bundle wires its own query instruments, so its outcome
+    // mapping is checked here as well as in the shared module.
     #[test]
     fn query_counters_split_by_route_and_status() {
         let m = ServiceMetrics::new();
-        m.record_query("search", true, 0.01);
-        m.record_query("search", false, 0.03);
+        for (outcome, elapsed) in [
+            (RequestOutcome::Ok, millis(10)),
+            (RequestOutcome::Error, millis(30)),
+        ] {
+            m.record_query(QueryRequest {
+                route: "search",
+                outcome,
+                elapsed,
+            });
+        }
         for (status, want) in [("ok", 1), ("error", 1)] {
             check!(
                 m.query

@@ -8,6 +8,7 @@ use super::{
     label_matcher_sets,
     matrix_selector_at::MatrixSelectorAt,
     selector_duration,
+    store_scans::{LabeledSeriesScan, StaleMarkers},
 };
 use crate::{
     error::Result,
@@ -65,8 +66,14 @@ impl<S: MetricStore> PromqlEngine<S> {
         let mut samples = match latest {
             Some(samples) => samples,
             None => {
-                self.labeled_series_sets(tenant, &matcher_sets, start_ms, eval_time_ms, false)
-                    .await?
+                self.labeled_series_sets(LabeledSeriesScan {
+                    tenant,
+                    matcher_sets: &matcher_sets,
+                    after_ms: start_ms,
+                    through_ms: eval_time_ms,
+                    stale_markers: StaleMarkers::Keep,
+                })
+                .await?
             }
         };
         // This plan evaluates one instant. Earlier samples cannot affect its
@@ -182,7 +189,13 @@ impl<S: MetricStore> PromqlEngine<S> {
         // `eval_matrix_selector`; genuine NaN is carried through (the operator
         // chain does not filter NaN), as the interpreter does.
         let samples = self
-            .labeled_series_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms, true)
+            .labeled_series_sets(LabeledSeriesScan {
+                tenant,
+                matcher_sets: &matcher_sets,
+                after_ms: range_start_ms,
+                through_ms: eval_end_ms,
+                stale_markers: StaleMarkers::Drop,
+            })
             .await?;
 
         if matches!(kind, RateUdfKind::Rate | RateUdfKind::Increase) {
@@ -248,7 +261,13 @@ impl<S: MetricStore> PromqlEngine<S> {
         // `eval_matrix_selector`; genuine NaN is carried through, as the
         // interpreter does.
         let samples = self
-            .labeled_series_sets(tenant, &matcher_sets, range_start_ms, eval_end_ms, true)
+            .labeled_series_sets(LabeledSeriesScan {
+                tenant,
+                matcher_sets: &matcher_sets,
+                after_ms: range_start_ms,
+                through_ms: eval_end_ms,
+                stale_markers: StaleMarkers::Drop,
+            })
             .await?;
 
         let OverTimeRangePlan {

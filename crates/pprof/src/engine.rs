@@ -507,7 +507,21 @@ mod tests {
         let engine = FlameEngine::new(Arc::new(store), EngineOpts::default());
 
         let heatmap = engine
-            .select_heatmap(("tenant-a", PT, "{}"), (0, 100), 2, 2)
+            .select_heatmap(HeatmapQuery {
+                selection: ProfileSelection {
+                    tenant: "tenant-a",
+                    profile_type: PT,
+                    label_selector: "{}",
+                },
+                range: MillisRange {
+                    start_ms: 0,
+                    end_ms: 100,
+                },
+                grid: HeatmapGrid {
+                    time_buckets: 2,
+                    value_buckets: 2,
+                },
+            })
             .await
             .unwrap();
 
@@ -994,11 +1008,22 @@ mod tests {
 
         let got = engine
             .select_heatmaps(
-                ("tenant-a", PT, "{}"),
+                HeatmapQuery {
+                    selection: ProfileSelection {
+                        tenant: "tenant-a",
+                        profile_type: PT,
+                        label_selector: "{}",
+                    },
+                    range: MillisRange {
+                        start_ms: 0,
+                        end_ms: 60_000,
+                    },
+                    grid: HeatmapGrid {
+                        time_buckets: 2,
+                        value_buckets: 2,
+                    },
+                },
                 &["service".to_string()],
-                (0, 60_000),
-                2,
-                2,
             )
             .await
             .unwrap();
@@ -1342,7 +1367,9 @@ mod validate_range;
 pub use call_site_profile_totals::call_site_profile_totals;
 use covering_range::covering_range;
 pub use engine_opts::EngineOpts;
-pub use flame_engine::{FlameEngine, ProfileSelection, SpanProfileShards};
+pub use flame_engine::{
+    FlameEngine, HeatmapGrid, HeatmapQuery, MillisRange, ProfileSelection, SpanProfileShards,
+};
 use group_frame_name::group_frame_name;
 use heatmap_points_from_totals::heatmap_points_from_totals;
 use merge_scan_to_pprof::merge_scan_to_pprof;

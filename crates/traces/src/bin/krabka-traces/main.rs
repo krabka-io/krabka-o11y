@@ -2451,8 +2451,6 @@ mod parse_positive_time_or_nanos;
 mod parse_positive_time_or_nanos_f64;
 mod parse_positive_time_or_secs;
 mod parse_positive_u32;
-mod parse_positive_usize;
-mod parse_positive_whole_byte_size;
 mod parse_promoted_attr;
 mod parse_querier_addrs;
 mod parse_scan_concat_max;
@@ -2506,6 +2504,9 @@ use f64_from_usize::f64_from_usize;
 use frontend_config_from_cli::frontend_config_from_cli;
 use indexed_live_source::IndexedLiveSource;
 use ingest_rate_from_cli::ingest_rate_from_cli;
+use krabka_observability::cli_value_parsers::{
+    parse_positive_usize, parse_positive_whole_byte_size,
+};
 use limits_from_cli::limits_from_cli;
 use listening_role::ListeningRole;
 use live_i64_param::live_i64_param;
@@ -2526,8 +2527,6 @@ use parse_positive_time_or_nanos::parse_positive_time_or_nanos;
 use parse_positive_time_or_nanos_f64::parse_positive_time_or_nanos_f64;
 use parse_positive_time_or_secs::parse_positive_time_or_secs;
 use parse_positive_u32::parse_positive_u32;
-use parse_positive_usize::parse_positive_usize;
-use parse_positive_whole_byte_size::parse_positive_whole_byte_size;
 use parse_promoted_attr::parse_promoted_attr;
 use parse_querier_addrs::parse_querier_addrs;
 use parse_scan_concat_max::parse_scan_concat_max;

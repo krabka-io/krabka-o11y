@@ -1,10 +1,19 @@
-use super::{
-    ByteSize, ByteSizeExt as _, CompactionMetrics, Counter, Family, IngestBytes, IngestHelpText,
-    IngestInstruments, IngestItems, IngestRequest, ObjectStoreMetrics, PipelineInstruments,
-    QueryHelpText, QueryInstruments, QueryRequest, Registry, RequestOutcome, SharedRegistry,
-    StatusLabel, TenantLabel, Time, TimeExt as _, WalConsumerMetrics, WalProduceMetrics,
-    register_in_new_registry,
+use krabka_blockstore::ObjectStoreMetrics;
+use krabka_observability::{
+    compaction_metrics::CompactionMetrics,
+    service_metrics::{
+        IngestHelpText, IngestInstruments, IngestRequest, PipelineInstruments, QueryHelpText,
+        QueryInstruments, QueryRequest, register_in_new_registry,
+    },
+    wal_consumer_metrics::WalConsumerMetrics,
+    wal_produce::WalProduceMetrics,
 };
+use prometheus_client::{
+    metrics::{counter::Counter, family::Family},
+    registry::Registry,
+};
+
+use super::{SharedRegistry, StatusLabel, SymbolizerCacheLookup, TenantLabel};
 
 const INGEST_HELP: IngestHelpText = IngestHelpText {
     requests: "Ingest requests handled, labelled by outcome (ok/error).",
@@ -137,18 +146,12 @@ impl ServiceMetrics {
     ///
     /// This method does NOT touch `wal_append_failures`. Increment that counter
     /// separately at the WAL or produce error site. A 4xx client or validation
-    /// error is an `ok=false` request, but it is not a WAL failure.
-    pub fn record_ingest(&self, ok: bool, bytes: IngestBytes, items: IngestItems, elapsed: Time) {
-        self.ingest.record(IngestRequest {
-            outcome: if ok {
-                RequestOutcome::Ok
-            } else {
-                RequestOutcome::Error
-            },
-            body: ByteSize::from_bytes(bytes.0),
-            items: items.0,
-            elapsed,
-        });
+    /// error is a
+    /// [`RequestOutcome::Error`](krabka_observability::service_metrics::RequestOutcome::Error)
+    /// request, but it is not a WAL
+    /// failure.
+    pub fn record_ingest(&self, request: IngestRequest) {
+        self.ingest.record(request);
     }
 
     /// Record one WAL or produce append failure, that is, a failed durable write
@@ -187,23 +190,15 @@ impl ServiceMetrics {
 
     /// Record one query request outcome on `route`: bump the per-route+status
     /// request counter and observe the per-route latency.
-    pub fn record_query(&self, route: &str, ok: bool, elapsed: Time) {
-        self.query.record(QueryRequest {
-            route,
-            outcome: if ok {
-                RequestOutcome::Ok
-            } else {
-                RequestOutcome::Error
-            },
-            elapsed_secs: elapsed.secs_f64(),
-        });
+    pub fn record_query(&self, request: QueryRequest<'_>) {
+        self.query.record(request);
     }
 
     /// Record one lookup in the per-pass uploaded-symbol cache.
-    pub fn record_symbolizer_cache(&self, hit: bool) {
+    pub fn record_symbolizer_cache(&self, lookup: SymbolizerCacheLookup) {
         self.symbolizer_cache_requests
             .get_or_create(&StatusLabel {
-                status: if hit { "hit" } else { "miss" }.into(),
+                status: lookup.status().into(),
             })
             .inc();
     }

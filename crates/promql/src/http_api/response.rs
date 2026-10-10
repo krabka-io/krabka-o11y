@@ -70,7 +70,9 @@ use result_json::result_json;
 pub(super) use sample_string::sample_string;
 pub(super) use success_data_response::success_data_response;
 pub(super) use success_response::success_response;
-pub(super) use success_response_with_stats::{QueryResponseStats, success_response_with_stats};
+pub(super) use success_response_with_stats::{
+    QueryPhaseDurations, QueryResponseStats, success_response_with_stats,
+};
 use timestamp_seconds::timestamp_seconds;
 
 use crate::engine::standard_histogram_bound;

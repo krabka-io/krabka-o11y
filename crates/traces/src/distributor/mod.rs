@@ -20,11 +20,7 @@ use krabka_observability::{
     },
     wal_produce::{ProduceWindow, WalBatchError, write_batch_pipelined},
 };
-use krabka_units::{
-    ByteSize,
-    convert::{ByteSizeExt as _, StdDurationExt as _},
-    mebibytes,
-};
+use krabka_units::{ByteSize, convert::ByteSizeExt as _, mebibytes};
 use opentelemetry_proto::tonic::{
     collector::trace::v1::{
         ExportTraceServiceRequest, ExportTraceServiceResponse,

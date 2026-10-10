@@ -949,7 +949,6 @@ mod load_runtime_overrides;
 mod parse_client_dispatch_queue_capacity;
 mod parse_client_frame_max;
 mod parse_external_label;
-mod parse_positive_usize;
 mod parse_remote_read_max_body;
 mod query_engine_opts;
 mod require_role_topics;
@@ -971,11 +970,11 @@ mod target;
 // reads -- which is a warning, not a link to the allocator.
 
 use cli::Cli;
+use krabka_observability::cli_value_parsers::parse_positive_usize;
 use load_runtime_overrides::load_runtime_overrides;
 use parse_client_dispatch_queue_capacity::parse_client_dispatch_queue_capacity;
 use parse_client_frame_max::parse_client_frame_max;
 use parse_external_label::{ExternalLabels, parse_external_label, parse_external_labels_env};
-use parse_positive_usize::parse_positive_usize;
 use parse_remote_read_max_body::parse_remote_read_max_body;
 use query_engine_opts::query_engine_opts;
 use require_role_topics::require_role_topics;

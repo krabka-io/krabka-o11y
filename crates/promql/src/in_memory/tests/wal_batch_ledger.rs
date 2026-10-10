@@ -36,7 +36,7 @@ fn wal_batch_preserves_rows_snapshots_and_watermarks() {
                 &labels,
                 SamplePayload::Hist {
                     timestamp_ms: 200,
-                    hist: native_histogram(),
+                    hist: count_two_sum_three_histogram(),
                 },
                 Vec::new(),
             ),
@@ -140,7 +140,12 @@ fn wal_batch_preserves_rows_snapshots_and_watermarks() {
             hist.labels.as_ref(),
             hist.ts_ms,
             hist.hist.as_ref()
-        ) == (0xd1e5_33a9_4f60_f896, &labels, 200, &native_histogram())
+        ) == (
+            0xd1e5_33a9_4f60_f896,
+            &labels,
+            200,
+            &count_two_sum_three_histogram()
+        )
     );
     assert2::assert!(Arc::ptr_eq(&first.labels, &hist.labels));
     assert2::assert!(after.exemplars.len() == 1 && after.exemplars["t"].len() == 1);

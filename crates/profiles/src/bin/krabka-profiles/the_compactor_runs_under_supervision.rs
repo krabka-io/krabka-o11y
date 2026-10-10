@@ -19,7 +19,9 @@ use krabka_units::secs;
 use object_store::memory::InMemory;
 use tokio::sync::oneshot;
 
-use self::compaction_passes::{AFTER_THE_STOP, COMPACTION_INTERVAL, passes, passes_reach};
+use self::compaction_passes::{
+    COMPACTION_INTERVAL, assert_no_pass_after_the_stop, passes, passes_reach,
+};
 use super::{CancellationToken, Cli, ObjectStore, ServiceMetrics, compactor_stage, run_compactor};
 
 fn compactor_cli() -> Cli {
@@ -74,12 +76,11 @@ async fn a_cancelled_compactor_returns_and_leaves_no_loop_behind() {
 
     check!(outcome.is_ok());
     check!(readiness.is_ready(), "{:?}", readiness.pending());
-    let stopped_at = passes(&metrics.compaction);
-    tokio::time::sleep(AFTER_THE_STOP).await;
-    check!(
-        passes(&metrics.compaction) == stopped_at,
-        "a compaction loop was still running after the role returned"
-    );
+    assert_no_pass_after_the_stop(
+        &metrics.compaction,
+        "a compaction loop was still running after the role returned",
+    )
+    .await;
 }
 
 /// A role started with its token already cancelled stops without a pass, and
@@ -139,10 +140,9 @@ async fn the_compactor_stage_of_target_all_stops_within_its_drain_budget() {
 
     check!(overran.is_empty(), "the compactor stage overran its budget");
     check!(stopped_rx.await.is_ok(), "the compactor stage returned");
-    let stopped_at = passes(&metrics.compaction);
-    tokio::time::sleep(AFTER_THE_STOP).await;
-    check!(
-        passes(&metrics.compaction) == stopped_at,
-        "a compaction loop outlived the stage that owned it"
-    );
+    assert_no_pass_after_the_stop(
+        &metrics.compaction,
+        "a compaction loop outlived the stage that owned it",
+    )
+    .await;
 }

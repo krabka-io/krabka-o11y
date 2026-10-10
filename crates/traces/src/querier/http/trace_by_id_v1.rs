@@ -39,6 +39,6 @@ where
         },
     )
     .await;
-    state.record_query("trace_by_id", resp.status().is_success(), start);
+    state.record_query("trace_by_id", resp.status(), start);
     resp
 }

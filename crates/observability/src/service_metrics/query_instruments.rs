@@ -1,4 +1,7 @@
-use super::{Counter, Family, Histogram, Registry, RequestOutcome, RouteLabel, RouteStatusLabel};
+use super::{
+    Counter, Family, Histogram, Registry, RequestOutcome, RouteLabel, RouteStatusLabel, Time,
+    TimeExt as _,
+};
 
 /// Latency buckets, in seconds, of the `query_duration_seconds` histogram.
 const QUERY_DURATION_BUCKETS: [f64; 10] = [0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0];
@@ -25,8 +28,8 @@ pub struct QueryHelpText {
 pub struct QueryRequest<'a> {
     pub route: &'a str,
     pub outcome: RequestOutcome,
-    /// Handler latency in seconds.
-    pub elapsed_secs: f64,
+    /// Handler latency.
+    pub elapsed: Time,
 }
 
 impl QueryInstruments {
@@ -52,6 +55,9 @@ impl QueryInstruments {
 
     /// Records one query request. It bumps the per-(route, status) request
     /// counter and observes the per-route handler latency.
+    ///
+    /// It converts the latency to the raw seconds the Prometheus histogram
+    /// holds, so a caller never spells out `_secs`.
     pub fn record(&self, request: QueryRequest<'_>) {
         self.requests
             .get_or_create(&RouteStatusLabel {
@@ -63,6 +69,6 @@ impl QueryInstruments {
             .get_or_create(&RouteLabel {
                 route: request.route.into(),
             })
-            .observe(request.elapsed_secs);
+            .observe(request.elapsed.secs_f64());
     }
 }

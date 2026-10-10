@@ -393,6 +393,7 @@ mod snapshot_key_for_generation;
 mod snapshot_manifest;
 mod snapshot_manifest_version;
 mod snapshot_persistence_methods;
+mod snapshot_persistence_requests;
 mod snapshot_sweep_interval;
 mod sweep_orphan_shard_payloads;
 mod tenant_shard_merge;
@@ -428,6 +429,7 @@ pub(crate) use shard_payload_sweep_grace::{
     SHARD_PAYLOAD_PUBLISH_TIMEOUT, SHARD_PAYLOAD_SWEEP_GRACE,
 };
 pub(crate) use shard_range_of_slot::shard_range_of_slot;
+pub use snapshot_persistence_requests::{IndexSnapshotPublish, TenantSnapshotRangeRead};
 
 /// Counts every object under the snapshot prefix of `key`, whatever its kind.
 #[cfg(test)]

@@ -24,6 +24,6 @@ where
         },
     )
     .await;
-    state.record_query("tags", resp.status().is_success(), start);
+    state.record_query("tags", resp.status(), start);
     resp
 }

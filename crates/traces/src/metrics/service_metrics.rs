@@ -1,8 +1,8 @@
 use super::{
-    ByteSize, CompactionMetrics, Counter, Family, IngestHelpText, IngestInstruments, IngestRequest,
+    CompactionMetrics, Counter, Family, IngestHelpText, IngestInstruments, IngestRequest,
     ObjectStoreMetrics, PipelineInstruments, QueryHelpText, QueryInstruments, QueryRequest,
-    Registry, RequestOutcome, SharedRegistry, TenantId, TenantLabel, Time, WalConsumerMetrics,
-    WalProduceMetrics, register_in_new_registry,
+    Registry, SharedRegistry, TenantId, TenantLabel, WalConsumerMetrics, WalProduceMetrics,
+    register_in_new_registry,
 };
 
 const INGEST_HELP: IngestHelpText = IngestHelpText {
@@ -100,26 +100,14 @@ impl ServiceMetrics {
     /// Record one trace-ingest request outcome.
     ///
     /// This bumps the per-status request counter, accumulates bytes and spans,
-    /// and observes the handler latency. `ok=false` covers any 4xx or 5xx: a
-    /// validation, rate-limit, decode, or produce failure.
+    /// and observes the handler latency. [`RequestOutcome::Error`](krabka_observability::service_metrics::RequestOutcome::Error)
+    /// covers any
+    /// 4xx or 5xx: a validation, rate-limit, decode, or produce failure.
     /// [`Self::record_wal_append_failure`] bumps the WAL/produce-specific
     /// failure counter separately, only at the actual produce error site, so a
     /// 4xx client error does not inflate it.
-    ///
-    /// `body` is the request-body size and `elapsed` is the handler latency.
-    /// `items` is a plain span count. It is dimensionless, so it stays an
-    /// integer.
-    pub fn record_ingest(&self, ok: bool, body: ByteSize, items: u64, elapsed: Time) {
-        self.ingest.record(IngestRequest {
-            outcome: if ok {
-                RequestOutcome::Ok
-            } else {
-                RequestOutcome::Error
-            },
-            body,
-            items,
-            elapsed,
-        });
+    pub fn record_ingest(&self, request: IngestRequest) {
+        self.ingest.record(request);
     }
 
     /// Bump the WAL/produce append-failure counter.
@@ -154,16 +142,8 @@ impl ServiceMetrics {
 
     /// Record one querier request. This bumps the per-(route, status) request
     /// counter and observes the per-route handler latency.
-    pub fn record_query(&self, route: &str, ok: bool, secs: f64) {
-        self.query.record(QueryRequest {
-            route,
-            outcome: if ok {
-                RequestOutcome::Ok
-            } else {
-                RequestOutcome::Error
-            },
-            elapsed_secs: secs,
-        });
+    pub fn record_query(&self, request: QueryRequest<'_>) {
+        self.query.record(request);
     }
 }
 

@@ -3,6 +3,7 @@
 use std::{os::unix::fs::MetadataExt as _, path::Path, time::Duration};
 
 use reqwest::{Client, StatusCode};
+use tempfile::TempDir;
 use testcontainers::{
     ContainerAsync, ContainerRequest, GenericImage, ImageExt as _,
     core::{Healthcheck, Mount, WaitFor, logs::LogFrame, wait::ExitWaitStrategy},
@@ -37,7 +38,7 @@ pub async fn start(
 
 /// The Docker network a deployment case runs on, `krabka-<signal>-<suffix>`,
 /// unique per case because `directory` is a fresh temporary directory.
-pub fn deployment_network(signal: &str, directory: &Path) -> TestResult<String> {
+fn deployment_network(signal: &str, directory: &Path) -> TestResult<String> {
     Ok(format!(
         "krabka-{signal}-{}",
         directory
@@ -51,7 +52,7 @@ pub fn deployment_network(signal: &str, directory: &Path) -> TestResult<String> 
 
 /// Starts `MinIO` on `network` as `<network>-minio`, with a `<signal>` bucket
 /// and `krabka<signal>` as its root user and password.
-pub async fn start_minio(network: &str, signal: &str) -> TestResult<ContainerAsync<GenericImage>> {
+async fn start_minio(network: &str, signal: &str) -> TestResult<ContainerAsync<GenericImage>> {
     let credential = format!("krabka{signal}");
     start(
         image("MINIO")
@@ -69,10 +70,49 @@ pub async fn start_minio(network: &str, signal: &str) -> TestResult<ContainerAsy
     .await
 }
 
-pub async fn start_broker(
-    directory: &Path,
-    network: &str,
-) -> TestResult<ContainerAsync<GenericImage>> {
+/// The broker, `MinIO`, directories and client that one deployment case runs
+/// its roles against.
+///
+/// Fields drop in declaration order, so the containers are removed before the
+/// directories that hold their bind mounts.
+pub struct DeploymentInfrastructure {
+    _minio: ContainerAsync<GenericImage>,
+    _broker: ContainerAsync<GenericImage>,
+    /// The roles' data directory. It holds `overrides.yaml` when the case
+    /// starts with runtime overrides.
+    pub data: TempDir,
+    _broker_data: TempDir,
+    /// The case's Docker network, from [`deployment_network`].
+    pub network: String,
+    /// An HTTP client with a five-second request timeout.
+    pub client: Client,
+}
+
+/// Starts the broker and `MinIO` for a `signal` case on a fresh network, and
+/// writes `overrides`, when given, to `overrides.yaml` in the data directory.
+pub async fn start_infrastructure(
+    signal: &str,
+    overrides: Option<&str>,
+) -> TestResult<DeploymentInfrastructure> {
+    let broker_data = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    if let Some(overrides) = overrides {
+        std::fs::write(data.path().join("overrides.yaml"), overrides)?;
+    }
+    let network = deployment_network(signal, broker_data.path())?;
+    let broker = start_broker(broker_data.path(), &network).await?;
+    let minio = start_minio(&network, signal).await?;
+    Ok(DeploymentInfrastructure {
+        _minio: minio,
+        _broker: broker,
+        data,
+        _broker_data: broker_data,
+        network,
+        client: Client::builder().timeout(Duration::from_secs(5)).build()?,
+    })
+}
+
+async fn start_broker(directory: &Path, network: &str) -> TestResult<ContainerAsync<GenericImage>> {
     let broker_name = format!("{network}-broker");
     let metadata = directory.metadata()?;
     // The formatter and broker write as the directory owner, so a failed

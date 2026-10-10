@@ -1,5 +1,10 @@
+use axum::http::StatusCode;
+
 use super::*;
-use crate::{ByteSize, Time, WalLogRecord};
+use crate::{
+    ByteSize, Time, WalLogRecord,
+    service_metrics::{QueryRequest, RequestOutcome},
+};
 
 struct SnapshotLogHotTail(Vec<Arc<WalLogRecord>>);
 
@@ -68,9 +73,16 @@ impl QuerierState {
     /// Records one querier request outcome, that is the per-route count and
     /// latency, on the shared bundle. It is a no-op when metrics are not
     /// wired, as in test routers.
-    pub(crate) fn record_query(&self, route: &str, ok: bool, start: Instant) {
+    ///
+    /// A 2xx `status` counts as `status="ok"`, anything else as
+    /// `status="error"`.
+    pub(crate) fn record_query(&self, route: &str, status: StatusCode, start: Instant) {
         if let Some(metrics) = &self.metrics {
-            metrics.record_query(route, ok, start.elapsed().as_time());
+            metrics.record_query(QueryRequest {
+                route,
+                outcome: RequestOutcome::from_success_status(status),
+                elapsed: start.elapsed().as_time(),
+            });
         }
     }
 

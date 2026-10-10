@@ -12,7 +12,6 @@
 //! counter names are registered WITHOUT the suffix.
 
 use krabka_blockstore::ObjectStoreMetrics;
-use krabka_units::{ByteSize, Time, convert::TimeExt};
 use prometheus_client::{
     metrics::{counter::Counter, family::Family},
     registry::Registry,
@@ -25,7 +24,7 @@ use crate::{
     compaction_metrics::CompactionMetrics,
     service_metrics::{
         IngestHelpText, IngestInstruments, IngestRequest, PipelineInstruments, QueryHelpText,
-        QueryInstruments, QueryRequest, RequestOutcome, register_in_new_registry,
+        QueryInstruments, QueryRequest, register_in_new_registry,
     },
     wal_consumer_metrics::WalConsumerMetrics,
     wal_produce::WalProduceMetrics,
@@ -41,19 +40,37 @@ mod tests {
     use krabka_blockstore::ObjectStoreOperation;
     use krabka_units::{bytes, millis};
 
-    use super::{ServiceMetrics, TenantLabel};
-    use crate::service_metrics::encode_registry;
+    use super::{IngestRequest, QueryRequest, ServiceMetrics, TenantLabel};
+    use crate::service_metrics::{RequestOutcome, encode_registry};
 
     #[tokio::test]
     async fn registry_has_logs_prefix_and_all_metrics() {
         let m = ServiceMetrics::new();
-        m.record_ingest(true, bytes(1_024), 7, millis(10));
-        m.record_ingest(false, bytes(0), 0, millis(2));
+        m.record_ingest(IngestRequest {
+            outcome: RequestOutcome::Ok,
+            body: bytes(1_024),
+            items: 7,
+            elapsed: millis(10),
+        });
+        m.record_ingest(IngestRequest {
+            outcome: RequestOutcome::Error,
+            body: bytes(0),
+            items: 0,
+            elapsed: millis(2),
+        });
         m.record_wal_append_failure();
         m.record_ingest_lines("demo", 7);
         m.record_block_written();
-        m.record_query("query", true, millis(50));
-        m.record_query("query_range", false, millis(200));
+        m.record_query(QueryRequest {
+            route: "query",
+            outcome: RequestOutcome::Ok,
+            elapsed: millis(50),
+        });
+        m.record_query(QueryRequest {
+            route: "query_range",
+            outcome: RequestOutcome::Error,
+            elapsed: millis(200),
+        });
         // The shared bundles must land in this signal's registry.
         m.wal_consumer.record_partition_assigned("__wal", 2);
         m.wal_produce.record_batch_failure(1, 3);

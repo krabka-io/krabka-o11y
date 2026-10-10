@@ -13,8 +13,9 @@ use crate::{
     log_level, log_level_post, measured_size, memberlist_status, normalize_loki_http_push,
     normalize_otlp_http_logs, normalize_otlp_proto_logs_for_tenant, otlp_http_error_response, post,
     ready, record_ingest_response, require_org_id, resolve_single_tenant, role_config,
-    role_metrics, role_ring, role_services, set_prepare_shutdown, shutdown_ingester,
-    tenant_error_response, tenant_header_value, unset_prepare_shutdown, validate_ingest_body_limit,
+    role_metrics, role_ring, role_services, service_metrics::IngestPushMeasurement,
+    set_prepare_shutdown, shutdown_ingester, tenant_error_response, tenant_header_value,
+    unset_prepare_shutdown, validate_ingest_body_limit,
 };
 
 mod all_ops;

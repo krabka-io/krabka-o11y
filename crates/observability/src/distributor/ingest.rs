@@ -1,12 +1,12 @@
 use std::io::Read as _;
 
 use axum::response::IntoResponse;
-use krabka_units::convert::{ByteSizeExt, StdDurationExt, TimeExt};
+use krabka_units::convert::{ByteSizeExt, TimeExt};
 use prost::Message;
 
 use crate::{
     ByteSize, CONTENT_ENCODING, DeflateDecoder, DistributorError, DistributorState, GzDecoder,
-    HeaderMap, Instant, Limits, LogIngestLimiter, LokiProtoPushRequest, LokiPushRequest,
+    HeaderMap, Limits, LogIngestLimiter, LokiProtoPushRequest, LokiPushRequest,
     LokiTypedPushRequest, ProtoExportLogsServiceRequest, RequestSecurity, Response, SnappyDecoder,
     StatusCode, TenantId, Value, WalLogRecord, is_loki_json_content_type, is_protobuf_content_type,
     loki_json_timestamp_value_parse_error, normalize_loki_proto_push, normalize_loki_push,

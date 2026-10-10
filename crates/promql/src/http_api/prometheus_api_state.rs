@@ -1,3 +1,5 @@
+use krabka_observability::service_metrics::{QueryRequest, RequestOutcome};
+
 use super::{
     ActiveQueryGuard, AlertStateKey, Arc, AuditHandle, BTreeMap, ByteSize, EngineOpts, Limits,
     MetricStore, OverridesProvider, PromqlEngine, QueryFrontendCache, QueryFrontendOptions,
@@ -5,7 +7,10 @@ use super::{
     RulerAlertStateStore, RulerGroupState, RulerGroupStateRecord, RulerRuleStore, RwLock,
     Semaphore, ServiceMetrics, SystemTime, TenantId, Time, WalHead, mebibytes, minutes,
 };
-use crate::{RulerEvaluationReport, RulerGroupEvaluationStatus, RulerRuleEvaluationStatus};
+use crate::{
+    RulerEvaluationReport, RulerGroupEvaluationStatus, RulerRuleEvaluationStatus,
+    metrics::RuleEvaluationOutcome,
+};
 
 /// Shared state for the Prometheus HTTP query API.
 pub struct PrometheusApiState<S: MetricStore> {
@@ -161,23 +166,23 @@ impl<S: MetricStore> PrometheusApiState<S> {
         self
     }
 
-    /// Records one query request outcome on `route`.
+    /// Records one query request outcome.
     ///
     /// This method does nothing when no metrics bundle is configured.
-    pub(crate) fn record_query(&self, route: &str, ok: bool, latency: Time) {
+    pub(crate) fn record_query(&self, request: QueryRequest<'_>) {
         if let Some(metrics) = &self.metrics {
-            metrics.record_query(route, ok, latency);
+            metrics.record_query(request);
         }
     }
 
     /// Records one `PromQL` engine evaluation and its latency.
     ///
-    /// `query_type` is `"instant"` or `"range"`. When `ok` is false, this method
-    /// also increments the error count. The method does nothing when no metrics
-    /// bundle is configured.
-    pub(crate) fn record_eval(&self, query_type: &str, ok: bool, latency: Time) {
+    /// `query_type` is `"instant"` or `"range"`. When `outcome` is
+    /// [`RequestOutcome::Error`], this method also increments the error count.
+    /// The method does nothing when no metrics bundle is configured.
+    pub(crate) fn record_eval(&self, query_type: &str, outcome: RequestOutcome, latency: Time) {
         if let Some(metrics) = &self.metrics {
-            metrics.record_eval(query_type, ok, latency);
+            metrics.record_eval(query_type, outcome, latency);
         }
     }
 
@@ -343,7 +348,11 @@ impl<S: MetricStore> PrometheusApiState<S> {
         if let Ok(mut statuses) = self.ruler_rule_status.write() {
             for status in &report.rules {
                 if let Some(metrics) = &self.metrics {
-                    metrics.record_ruler_rule(status.last_error.is_empty());
+                    metrics.record_ruler_rule(if status.last_error.is_empty() {
+                        RuleEvaluationOutcome::Succeeded
+                    } else {
+                        RuleEvaluationOutcome::Failed
+                    });
                 }
                 statuses.insert(
                     (

@@ -1,8 +1,8 @@
 use super::{
     Arc, BTreeMap, ConnectError, ConnectRequest, ConnectResponse, EndMs, Extension, HeaderMap,
-    HeatmapSlotsMillis, Principal, ProfileStore, QuerierState, StartMs, TimeExt, authorize_tenant,
-    connect_error, heatmap_from_points, heatmap_time_buckets, limit, pb, step_from_secs,
-    tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
+    HeatmapSlotsMillis, Principal, ProfileStore, QuerierState, SpanHeatmapRequest, StartMs,
+    TimeExt, authorize_tenant, connect_error, heatmap_from_points, heatmap_time_buckets, limit, pb,
+    step_from_secs, tenant_connect_error, tenant_denied_connect_error, tenant_from_headers,
 };
 
 pub(crate) async fn select_heatmap_inner<S>(
@@ -65,19 +65,31 @@ where
     };
     let heatmaps = if req.query_type == pb::querier::v1::HeatmapQueryType::Span as i32 {
         state
-            .select_span_heatmap_points(
-                (&tenant, &req.profile_type_id, &req.label_selector),
-                &req.group_by,
-                (scan_start, req.end),
-            )
+            .select_span_heatmap_points(SpanHeatmapRequest {
+                tenant: &tenant,
+                profile_type: &req.profile_type_id,
+                label_selector: &req.label_selector,
+                group_by: &req.group_by,
+                range: krabka_pprof::MillisRange {
+                    start_ms: scan_start,
+                    end_ms: req.end,
+                },
+            })
             .await
     } else {
         state
             .engine
             .select_heatmap_points(
-                (tenant.as_str(), &req.profile_type_id, &req.label_selector),
+                krabka_pprof::ProfileSelection {
+                    tenant: tenant.as_str(),
+                    profile_type: &req.profile_type_id,
+                    label_selector: &req.label_selector,
+                },
                 &req.group_by,
-                (scan_start, req.end),
+                krabka_pprof::MillisRange {
+                    start_ms: scan_start,
+                    end_ms: req.end,
+                },
             )
             .await
     }

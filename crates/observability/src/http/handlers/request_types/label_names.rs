@@ -17,6 +17,6 @@ pub(crate) async fn label_names(
         },
         Err(error) => error.into_response(),
     };
-    state.record_query("labels", resp.status().is_success(), start);
+    state.record_query("labels", resp.status(), start);
     resp
 }

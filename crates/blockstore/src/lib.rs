@@ -67,8 +67,9 @@ pub use index::{
     index_shards_prefix_for_key, index_unbound_series_object_key,
 };
 pub use index_snapshot::{
-    DEFAULT_INDEX_SNAPSHOT_MAX, DEFAULT_INDEX_SNAPSHOT_RETAIN, IndexSnapshotRetain,
-    index_snapshot_prefix_for_key, list_index_object_keys,
+    DEFAULT_INDEX_SNAPSHOT_MAX, DEFAULT_INDEX_SNAPSHOT_RETAIN, IndexSnapshotPublish,
+    IndexSnapshotRetain, TenantSnapshotRangeRead, index_snapshot_prefix_for_key,
+    list_index_object_keys,
 };
 pub use labels::{Labels, SeriesFingerprint};
 pub use lifecycle::{

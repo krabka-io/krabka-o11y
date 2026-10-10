@@ -17,7 +17,7 @@ pub const COMPACTION_INTERVAL: &str = "20ms";
 
 /// Long enough for ten ticks of [`COMPACTION_INTERVAL`], so a loop that was
 /// left running has recorded passes by the time the check reads the counter.
-pub const AFTER_THE_STOP: Duration = Duration::from_millis(200);
+const AFTER_THE_STOP: Duration = Duration::from_millis(200);
 
 /// Passes the role has finished, whatever each one made of the store.
 pub fn passes(compaction: &CompactionMetrics) -> u64 {
@@ -38,4 +38,16 @@ pub async fn passes_reach(compaction: &CompactionMetrics, wanted: u64) {
         "the compactor finished {} passes, and the test waited for {wanted}",
         passes(compaction)
     );
+}
+
+/// Asserts that the role finishes no further pass during [`AFTER_THE_STOP`],
+/// starting now.
+///
+/// A test calls this once its role or stage has returned. A loop that
+/// outlived its owner would still be ticking and raising the run counter, and
+/// the test then fails with `outlived_message`.
+pub async fn assert_no_pass_after_the_stop(compaction: &CompactionMetrics, outlived_message: &str) {
+    let stopped_at = passes(compaction);
+    tokio::time::sleep(AFTER_THE_STOP).await;
+    assert2::assert!(passes(compaction) == stopped_at, "{outlived_message}");
 }

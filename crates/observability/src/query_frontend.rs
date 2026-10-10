@@ -172,9 +172,11 @@ impl QueryFrontendAdapter for LogsQueryFrontendAdapter<'_> {
     ) -> Result<Self::Response, Self::Error> {
         Ok(merge_frontend_results(
             results,
-            loki_direction(request.direction.as_deref())?,
-            request.limit,
-            request.interval,
+            LokiStreamOptions {
+                direction: loki_direction(request.direction.as_deref())?,
+                limit: request.limit,
+                interval: request.interval,
+            },
             self.time_range.end_ns,
         ))
     }
@@ -423,13 +425,20 @@ fn state_for_bounds(state: &QuerierState, tenant: &str, bounds: FingerprintBound
     state
 }
 
+/// Merges the planned sub-queries' `results` into one Loki response.
+///
+/// `stream_options.limit` caps the merged response as a whole, not each
+/// sub-query, and `end_exclusive_ns` is the exclusive end of the whole query.
 pub(crate) fn merge_frontend_results(
     results: Vec<Value>,
-    direction: LokiDirection,
-    limit: Option<usize>,
-    interval: Option<i64>,
-    end_exclusive: i64,
+    stream_options: LokiStreamOptions,
+    end_exclusive_ns: i64,
 ) -> Value {
+    let LokiStreamOptions {
+        direction,
+        limit,
+        interval,
+    } = stream_options;
     let mut results = results.into_iter();
     let Some(mut merged) = results.next() else {
         return json!({"status":"success","data":{"resultType":"streams","result":[]}});
@@ -445,7 +454,7 @@ pub(crate) fn merge_frontend_results(
             limit: None,
             interval,
         },
-        Some(end_exclusive),
+        Some(end_exclusive_ns),
     );
     apply_global_stream_limit(&mut merged, direction, limit);
     deduplicate_warnings(&mut merged);

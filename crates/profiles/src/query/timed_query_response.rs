@@ -1,3 +1,5 @@
+use krabka_observability::service_metrics::{QueryRequest, RequestOutcome};
+
 use super::*;
 
 /// Times `fut`, a raw axum handler body, and records the outcome on `route`.
@@ -11,7 +13,16 @@ pub(crate) async fn timed_query_response(
 ) -> Response {
     let start = std::time::Instant::now();
     let response = fut.await;
-    let ok = response.status().is_success() || response.status().is_redirection();
-    metrics.record_query(route, ok, start.elapsed().as_time());
+    let status = response.status();
+    let outcome = if status.is_success() || status.is_redirection() {
+        RequestOutcome::Ok
+    } else {
+        RequestOutcome::Error
+    };
+    metrics.record_query(QueryRequest {
+        route,
+        outcome,
+        elapsed: start.elapsed().as_time(),
+    });
     response
 }
