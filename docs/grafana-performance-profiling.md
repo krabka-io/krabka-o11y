@@ -1852,11 +1852,18 @@ but those percentages are not normalized pipeline CPU measurements. The first
 serializer version removes 218,900 of 3,539,681 allocation calls in the
 20,000-row finite-limit capture. Its categorized capture adds 440 temporary
 allocations; production now dispatches serialization directly to the integer
-or text value, and a targeted allocation repeat remains pending. Peak heap
-changes are small; no general memory improvement is qualified.
+or text value. A targeted repeat verifies complete payloads and removes those
+extra temporaries: both variants have 642 temporary allocations. It removes
+220,000 of 11,766,918 total calls with unchanged 87.08 MB peak heap. Compilation
+runs concurrently with this allocation-only repeat; its timings and RSS do not
+qualify an advantage. No general memory improvement is qualified.
 
-Managed formatting and standalone exact-wire/identity checks pass. Production
-build, scoped crate tests, strict lint and complete HTTP validation remain
-pending in this draft snapshot. Native Loki has not been rerun because this
-VM lacks the existing WAL disk headroom. Benchmark budgets and disk guards
-are unchanged; this progress does not establish a native performance ratio.
+Managed formatting, standalone exact-wire/identity checks and the actual
+production build pass. All 589 scoped unit/integration tests and strict Clippy
+on production and full unit-test source pass using the captured cached build
+graph. Complete HTTP validation remains pending. Native Loki has not been
+rerun because this VM lacks the existing WAL disk headroom. Benchmark budgets
+and disk guards are unchanged; this progress does not establish a native
+performance ratio. The local raw progress snapshot has a checksum manifest;
+component executables are retained, while the production build library stays
+in volatile RAM and requires rebuilding after a VM restart.
