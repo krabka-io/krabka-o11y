@@ -91,6 +91,7 @@ import tempfile
 import time
 
 from ratchet_annotations import annotate, keep_stdout_for_json
+from ratchet_baseline import baseline_fields
 
 UNSEEDED = "unseeded"
 
@@ -217,14 +218,7 @@ def read_estimate(name, path):
 def read_baseline(path):
     """Benchmark id to allowed nanoseconds, where `unseeded` reads as None."""
     baseline = {}
-    for number, line in enumerate(pathlib.Path(path).read_text().splitlines(), 1):
-        stripped = line.split("#", 1)[0].strip()
-        if not stripped:
-            continue
-        fields = stripped.split()
-        if len(fields) != 2:
-            raise UsageError(f"{path}:{number}: expected `<benchmark> <ns>`: {line}")
-        name, allowed = fields
+    for number, line, name, allowed in baseline_fields(path, "<benchmark> <ns>", UsageError):
         if name in baseline:
             raise UsageError(f"{path}:{number}: {name} is listed twice")
         if allowed == UNSEEDED:
