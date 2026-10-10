@@ -226,24 +226,31 @@ async fn status_ring_aliases_return_loki_ring_pages() {
     }
 }
 
+/// Reads `/metrics` from `app` and checks that it carries Loki's build and
+/// compactor series and the service-up series of `component`.
+async fn check_metrics_page_for_component(app: &axum::Router, component: &str) {
+    let response = send_bare(app, Method::GET, "/metrics").await;
+
+    assert!(response.status() == StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = std::str::from_utf8(&body).unwrap();
+    let component_label = format!(r#"component="{component}""#);
+    for needle in [
+        "loki_build_info",
+        "loki_boltdb_shipper_compactor_running",
+        "krabka_observability_service_up",
+        component_label.as_str(),
+    ] {
+        check!(body.contains(needle));
+    }
+}
+
 #[tokio::test]
 async fn status_metrics_endpoint_returns_prometheus_text_for_loki_router() {
     let state = fixture();
     let app = loki_router(state);
 
-    let response = send_bare(&app, Method::GET, "/metrics").await;
-
-    assert!(response.status() == StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let body = std::str::from_utf8(&body).unwrap();
-    for needle in [
-        "loki_build_info",
-        "loki_boltdb_shipper_compactor_running",
-        "krabka_observability_service_up",
-        r#"component="querier""#,
-    ] {
-        check!(body.contains(needle));
-    }
+    check_metrics_page_for_component(&app, "querier").await;
 }
 
 #[tokio::test]
@@ -251,19 +258,7 @@ async fn status_metrics_endpoint_returns_prometheus_text_for_distributor_router(
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink);
 
-    let response = send_bare(&app, Method::GET, "/metrics").await;
-
-    assert!(response.status() == StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let body = std::str::from_utf8(&body).unwrap();
-    for needle in [
-        "loki_build_info",
-        "loki_boltdb_shipper_compactor_running",
-        "krabka_observability_service_up",
-        r#"component="distributor""#,
-    ] {
-        check!(body.contains(needle));
-    }
+    check_metrics_page_for_component(&app, "distributor").await;
 }
 
 #[tokio::test]

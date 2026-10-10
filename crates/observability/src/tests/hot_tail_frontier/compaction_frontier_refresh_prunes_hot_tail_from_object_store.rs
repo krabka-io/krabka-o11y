@@ -29,19 +29,19 @@ pub(crate) async fn compaction_frontier_refresh_prunes_hot_tail_from_object_stor
         .await
         .unwrap();
 
-    assert_eq!(pruned, 1);
-    assert_eq!(frontier.snapshot(), CompactionFrontier::new(2_000));
-    assert_eq!(hot_tail.records(), vec![fresh]);
+    assert!(pruned == 1);
+    assert!(frontier.snapshot() == CompactionFrontier::new(2_000));
+    assert!(hot_tail.records() == vec![fresh]);
 }
 
 #[tokio::test]
 async fn refreshed_frontier_keeps_newly_published_rows_visible_with_a_cached_index() {
-    assert_rows_survive_handoff(false).await;
+    assert_rows_survive_handoff(FirstIndexLoad::CompletesBeforeHandoff).await;
 }
 
 #[tokio::test]
 async fn an_old_blocked_index_load_cannot_refill_the_new_frontier_cache() {
-    assert_rows_survive_handoff(true).await;
+    assert_rows_survive_handoff(FirstIndexLoad::BlockedAcrossHandoff).await;
 }
 
 #[tokio::test]
@@ -276,7 +276,18 @@ async fn stream_response(state: &QuerierState) -> serde_json::Value {
     response
 }
 
-async fn assert_rows_survive_handoff(blocked_load: bool) {
+/// When the query that first loads the tenant index finishes, relative to the
+/// compaction handoff that advances the frontier.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FirstIndexLoad {
+    /// The load finishes and caches the index before the handoff.
+    CompletesBeforeHandoff,
+    /// The load blocks on its shard fetch until after the handoff.
+    BlockedAcrossHandoff,
+}
+
+async fn assert_rows_survive_handoff(first_load: FirstIndexLoad) {
+    let blocked_load = first_load == FirstIndexLoad::BlockedAcrossHandoff;
     let entered = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Semaphore::new(0));
     let store = RecordingObjectStore::new();

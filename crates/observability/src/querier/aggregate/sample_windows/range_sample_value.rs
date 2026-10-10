@@ -5,10 +5,10 @@ pub(crate) fn range_sample_value(value: MetricSampleState, query: &MetricQuery) 
         RangeAggregation::CountOverTime
         | RangeAggregation::BytesOverTime
         | RangeAggregation::AbsentOverTime
-        | RangeAggregation::SumOverTime => value.sum,
+        | RangeAggregation::SumOverTime => value.summary.sum,
         RangeAggregation::PresentOverTime => MetricValue::integer(1),
         RangeAggregation::Rate | RangeAggregation::BytesRate => {
-            rate_metric_value(value.sum, query.range_ns.0)
+            rate_metric_value(value.summary.sum, query.range_ns.0)
         }
         RangeAggregation::RateCounter => {
             rate_metric_value(value.counter_increase(), query.range_ns.0)
@@ -17,8 +17,8 @@ pub(crate) fn range_sample_value(value: MetricSampleState, query: &MetricQuery) 
         RangeAggregation::StdvarOverTime => value.stdvar(),
         RangeAggregation::StddevOverTime => value.stddev(),
         RangeAggregation::QuantileOverTime(quantile) => value.quantile(quantile),
-        RangeAggregation::MinOverTime => value.min.unwrap_or_else(MetricValue::zero),
-        RangeAggregation::MaxOverTime => value.max.unwrap_or_else(MetricValue::zero),
+        RangeAggregation::MinOverTime => value.summary.min.unwrap_or_else(MetricValue::zero),
+        RangeAggregation::MaxOverTime => value.summary.max.unwrap_or_else(MetricValue::zero),
         RangeAggregation::FirstOverTime => value
             .first
             .map_or_else(MetricValue::zero, |(_, value)| value),

@@ -41,6 +41,7 @@ mod format_metric_vector_matching_text;
 mod formatted_metric_vector_matching;
 mod label_join_format_query_error;
 mod logql_expression_contains_label_join;
+mod merge_posted_query_params;
 mod parse_format_query_param;
 mod post_query_params;
 mod post_query_params_body_first;
@@ -73,6 +74,7 @@ pub(crate) use format_metric_vector_matching_text::format_metric_vector_matching
 pub(crate) use formatted_metric_vector_matching::FormattedMetricVectorMatching;
 pub(crate) use label_join_format_query_error::label_join_format_query_error;
 use logql_expression_contains_label_join::logql_expression_contains_label_join;
+use merge_posted_query_params::{PostedQueryParamsOrder, merge_posted_query_params};
 pub(crate) use parse_format_query_param::parse_format_query_param;
 pub(crate) use post_query_params::post_query_params;
 pub(crate) use post_query_params_body_first::{

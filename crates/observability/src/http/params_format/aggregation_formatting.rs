@@ -4,12 +4,13 @@ mod apply_approx_metric_selection;
 pub(crate) use apply_approx_metric_selection::apply_approx_metric_selection;
 
 use crate::{
-    Quantile, RangeAggregation, ScalarSample, ScalarVectorExpressionResult, VectorAggregation,
-    VectorAggregationOp, VectorGrouping, format_logql_quoted_string,
+    ComparisonResult, Quantile, RangeAggregation, ScalarSample, ScalarVectorExpressionResult,
+    VectorAggregation, VectorAggregationOp, VectorGrouping, format_logql_quoted_string,
     parse_formatted_vector_function, parse_scalar_sample, parse_vector_arithmetic_operator,
     scalar_vector_expression_result,
 };
 
+mod format_label_replace_arguments;
 mod format_loki_decimal_unit;
 mod format_loki_duration_ns;
 mod format_loki_offset_duration_ns;
@@ -20,6 +21,7 @@ mod format_scalar_vector_expression;
 mod format_vector_aggregation_query;
 mod format_vector_arithmetic_expression;
 mod format_vector_comparison_expression;
+mod format_vector_comparison_text;
 mod format_vector_function_text;
 mod format_vector_grouping;
 mod format_vector_label_replace_function;
@@ -33,6 +35,7 @@ mod parse_vector_group_modifier;
 mod parse_vector_matching_modifier;
 mod split_logql_function_arguments;
 
+pub(crate) use format_label_replace_arguments::format_label_replace_arguments;
 pub(crate) use format_loki_decimal_unit::format_loki_decimal_unit;
 pub(crate) use format_loki_duration_ns::format_loki_duration_ns;
 pub(crate) use format_loki_offset_duration_ns::format_loki_offset_duration_ns;
@@ -43,6 +46,9 @@ pub(crate) use format_scalar_vector_expression::format_scalar_vector_expression;
 pub(crate) use format_vector_aggregation_query::format_vector_aggregation_query;
 pub(crate) use format_vector_arithmetic_expression::format_vector_arithmetic_expression;
 pub(crate) use format_vector_comparison_expression::format_vector_comparison_expression;
+pub(crate) use format_vector_comparison_text::{
+    VectorComparisonText, format_vector_comparison_text,
+};
 pub(crate) use format_vector_function_text::format_vector_function_text;
 pub(crate) use format_vector_grouping::format_vector_grouping;
 pub(crate) use format_vector_label_replace_function::format_vector_label_replace_function;

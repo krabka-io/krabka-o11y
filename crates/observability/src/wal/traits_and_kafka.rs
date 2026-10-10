@@ -40,6 +40,7 @@ mod matches_acl_topic_pattern;
 mod producer_byte_rate_quota_key;
 mod swappable_query_authorizer;
 mod tenant_lru;
+mod tenant_wal_acl_refusal;
 mod unavailable_query_authorizer;
 mod wal_topic_acl_filters;
 
@@ -72,5 +73,6 @@ pub(crate) use matches_acl_topic_pattern::matches_acl_topic_pattern;
 pub(crate) use producer_byte_rate_quota_key::PRODUCER_BYTE_RATE_QUOTA_KEY;
 pub(crate) use swappable_query_authorizer::SwappableQueryAuthorizer;
 pub(crate) use tenant_lru::TenantLru;
+use tenant_wal_acl_refusal::{TenantWalAclCheck, WalTopicAccess, tenant_wal_acl_refusal};
 pub(crate) use unavailable_query_authorizer::UnavailableQueryAuthorizer;
 pub(crate) use wal_topic_acl_filters::wal_topic_acl_filters;

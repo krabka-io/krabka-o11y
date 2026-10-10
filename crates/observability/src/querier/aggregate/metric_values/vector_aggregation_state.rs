@@ -1,4 +1,4 @@
-use super::{MetricValue, VectorAggregationOp};
+use super::{MetricValue, Ordering, VectorAggregationOp};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct VectorAggregationState {
@@ -16,6 +16,32 @@ impl VectorAggregationState {
         self.sum_squares = self.sum_squares.add(value.multiply(value));
         self.min = Some(self.min.map_or(value, |min| value.lesser_of(min)));
         self.max = Some(self.max.map_or(value, |max| value.greater_of(max)));
+    }
+
+    /// Folds in another partial state. A tie on an extreme keeps the value
+    /// already held.
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.count = self.count.saturating_add(other.count);
+        self.sum = self.sum.add(other.sum);
+        self.sum_squares = self.sum_squares.add(other.sum_squares);
+        if let Some(min) = other.min {
+            self.min = Some(self.min.map_or(min, |current| {
+                if min.cmp_value(current) == Ordering::Less {
+                    min
+                } else {
+                    current
+                }
+            }));
+        }
+        if let Some(max) = other.max {
+            self.max = Some(self.max.map_or(max, |current| {
+                if max.cmp_value(current) == Ordering::Greater {
+                    max
+                } else {
+                    current
+                }
+            }));
+        }
     }
 
     pub(crate) fn finish(self, op: &VectorAggregationOp) -> MetricValue {

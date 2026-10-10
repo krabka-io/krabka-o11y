@@ -92,7 +92,7 @@ fn detected_field_rows(api: u64) -> Vec<LogRow> {
 }
 
 /// A querier over one tenant-a block at offsets 10-20 that holds `rows`.
-fn detected_fields_app(label_index: LabelIndex, rows: Vec<LogRow>) -> Router {
+fn block_rows_app(label_index: LabelIndex, rows: Vec<LogRow>) -> Router {
     let dir = tempfile::tempdir().unwrap().keep();
     let block = write_log_block(
         &dir,
@@ -817,7 +817,7 @@ async fn patterns_endpoint_returns_loki_error_for_invalid_logql() {
 async fn detected_fields_stops_scanning_at_the_line_limit() {
     let mut label_index = LabelIndex::default();
     let api = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
-    let app = detected_fields_app(label_index, detected_field_rows(api));
+    let app = block_rows_app(label_index, detected_field_rows(api));
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&limit=10&line_limit=1").await;
 
@@ -872,7 +872,7 @@ async fn detected_fields_endpoint_discovers_json_logfmt_and_structured_metadata(
         r#"{"status":200,"worker_field":"ignored"}"#,
         BTreeMap::new(),
     ));
-    let app = detected_fields_app(label_index, rows);
+    let app = block_rows_app(label_index, rows);
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_fields?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&limit=10").await;
 
@@ -935,27 +935,20 @@ async fn detected_fields_endpoint_discovers_json_logfmt_and_structured_metadata(
 
 #[tokio::test]
 async fn detected_labels_endpoint_reports_stream_label_cardinality() {
-    let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
     let api_prod = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
     let api_stage =
         label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "stage")]));
     let worker =
         label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
-    let block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 20, TimeRange::new(10, 20).unwrap()),
+    let app = block_rows_app(
+        label_index,
         vec![
             LogRow::new(api_prod, 10, "api prod", BTreeMap::new()),
             LogRow::new(api_stage, 11, "api stage", BTreeMap::new()),
             LogRow::new(worker, 12, "worker ignored", BTreeMap::new()),
         ],
-    )
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    );
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_labels?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&limit=10").await;
 
@@ -996,24 +989,17 @@ async fn detected_labels_endpoint_returns_empty_object_without_matches() {
 
 #[tokio::test]
 async fn detected_labels_endpoint_defaults_missing_query_to_all_streams() {
-    let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
     let api_prod = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
     let worker =
         label_index.insert_series("tenant-a", labels([("app", "worker"), ("env", "prod")]));
-    let block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 20, TimeRange::new(10, 20).unwrap()),
+    let app = block_rows_app(
+        label_index,
         vec![
             LogRow::new(api_prod, 10, "api prod", BTreeMap::new()),
             LogRow::new(worker, 11, "worker prod", BTreeMap::new()),
         ],
-    )
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    );
 
     let response = Tenant("tenant-a")
         .get(
@@ -1042,24 +1028,17 @@ async fn detected_labels_endpoint_defaults_missing_query_to_all_streams() {
 
 #[tokio::test]
 async fn detected_labels_endpoint_ignores_malformed_step_and_limit_like_loki() {
-    let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
     let api_prod = label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "prod")]));
     let api_stage =
         label_index.insert_series("tenant-a", labels([("app", "api"), ("env", "stage")]));
-    let block = write_log_block(
-        &dir,
-        &BlockKey::new("tenant-a", 0, 10, 20, TimeRange::new(10, 20).unwrap()),
+    let app = block_rows_app(
+        label_index,
         vec![
             LogRow::new(api_prod, 10, "api prod", BTreeMap::new()),
             LogRow::new(api_stage, 11, "api stage", BTreeMap::new()),
         ],
-    )
-    .unwrap();
-    let mut block_index = BlockIndex::default();
-    block_index.insert(block);
-    let state = QuerierState::new(dir, label_index, block_index);
-    let app = loki_router(state);
+    );
 
     let response = Tenant("tenant-a").get(&app, "/loki/api/v1/detected_labels?query=%7Bapp%3D%22api%22%7D&start=0.000000010&end=0.000000020&step=not-a-duration&limit=not-a-limit").await;
 

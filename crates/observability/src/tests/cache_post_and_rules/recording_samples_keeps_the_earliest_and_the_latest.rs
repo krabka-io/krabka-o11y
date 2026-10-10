@@ -19,7 +19,7 @@ pub(crate) fn recording_samples_keeps_the_earliest_and_the_latest() {
     state.record(10, value(3));
     state.record(5, value(4));
 
-    check!(state.count == 4);
+    check!(state.summary.count == 4);
     check!(
         state.first == Some((5, value(2))),
         "the earliest timestamp, from the first record that reached it"

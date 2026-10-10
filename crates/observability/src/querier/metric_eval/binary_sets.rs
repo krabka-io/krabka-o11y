@@ -4,7 +4,7 @@ use crate::{
     ActiveLogDeleteFilter, Arc, BTreeSet, ColdBlockScan, ComparisonOp, HttpQueryError, Labels,
     MetricBinarySetOp, MetricQuery, MetricScalarArithmeticOp, MetricValue,
     MetricVectorGroupModifier, MetricVectorMatching, Ordering, ParseError, QuerierState,
-    QueryHotTail, StreamPlan, TimeRange, Value,
+    QueryHotTail, SampleOrder, StreamPlan, TimeRange, Value,
     execute_metric_query_range_from_object_store_with_hot_tail_frontier_and_deletes,
     execute_metric_query_range_with_deletes,
     execute_metric_query_range_with_hot_tail_frontier_and_deletes, format_metric_value,

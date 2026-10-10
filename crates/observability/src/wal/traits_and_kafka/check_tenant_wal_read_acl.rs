@@ -1,6 +1,6 @@
 use super::{
-    AclSet, PermissionType, Principal, QueryAuthorizationError, TenantId,
-    acl_matches_tenant_wal_read,
+    AclSet, Principal, QueryAuthorizationError, TenantId, TenantWalAclCheck, WalTopicAccess,
+    tenant_wal_acl_refusal,
 };
 
 /// Allows `principal` to read the data of `tenant` from the WAL topic when the
@@ -26,38 +26,17 @@ pub(crate) fn check_tenant_wal_read_acl(
     wal_topic: &str,
     acls: &AclSet,
 ) -> Result<(), QueryAuthorizationError> {
-    let entries = match acls {
-        AclSet::SecurityDisabled => return Ok(()),
-        AclSet::Configured(entries)
-            if entries.is_empty() && matches!(principal, Principal::Unauthenticated) =>
-        {
-            return Ok(());
-        }
-        AclSet::Configured(entries) => entries,
-    };
-    let acl_principal = principal.acl_principal(tenant);
-    let mut allowed = false;
-    for acl in entries {
-        if !acl_matches_tenant_wal_read(acl, &acl_principal, wal_topic) {
-            continue;
-        }
-        match acl.permission_type {
-            PermissionType::Deny => {
-                return Err(QueryAuthorizationError::Unauthorized {
-                    tenant: tenant.to_string(),
-                    reason: format!("tenant read ACL denied for WAL topic `{wal_topic}`"),
-                });
-            }
-            PermissionType::Allow => allowed = true,
-        }
-    }
-
-    if allowed {
-        Ok(())
-    } else {
+    let refusal = tenant_wal_acl_refusal(&TenantWalAclCheck {
+        principal,
+        tenant,
+        wal_topic,
+        acls,
+        access: WalTopicAccess::Read,
+    });
+    refusal.map_or(Ok(()), |reason| {
         Err(QueryAuthorizationError::Unauthorized {
             tenant: tenant.to_string(),
-            reason: format!("missing tenant read ACL for WAL topic `{wal_topic}`"),
+            reason,
         })
-    }
+    })
 }

@@ -2,15 +2,15 @@ use num_traits::ToPrimitive as _;
 
 use super::{apply_grouped_metric_selection, apply_nested_vector_aggregation};
 use crate::{
-    HttpQueryError, Labels, MetricQuery, PipelineStage, QuerierState, QueryKind, RangeAggregation,
-    TimeRange, Value, VectorAggregationOp, add_loki_query_stats, default_metric_range_step,
-    eval_times,
+    HttpMetricQuery, HttpQueryError, Labels, PipelineStage, QuerierState, QueryKind,
+    RangeAggregation, TimeRange, Value, VectorAggregationOp, add_loki_query_stats,
+    default_metric_range_step, eval_times,
     http::params_format::aggregation_formatting::apply_approx_metric_selection,
     json, loki_matrix_response, loki_vector_response_from_matrix, merge_loki_query_response,
     metric_scan_range,
     querier::{
         aggregate::sample_windows::absent_metric_labels,
-        metric_eval::scalar_samples::execute_http_metric_query_with_scan_range,
+        metric_eval::scalar_samples::execute_http_metric_query,
     },
 };
 
@@ -19,12 +19,15 @@ use crate::{
 // merge: it would lose contributions from another tenant or shard.
 pub(crate) async fn execute_federated_metric_query(
     state: &QuerierState,
-    time_range: TimeRange,
-    step: Option<i64>,
-    kind: QueryKind,
-    mut query: MetricQuery,
-    scan_range: Option<TimeRange>,
+    metric_query: HttpMetricQuery,
 ) -> Result<Value, HttpQueryError> {
+    let HttpMetricQuery {
+        time_range,
+        step,
+        kind,
+        mut query,
+        common_scan_range: scan_range,
+    } = metric_query;
     let aggregation = query.vector_aggregation.take();
     let absent_labels = matches!(query.aggregation, RangeAggregation::AbsentOverTime)
         .then(|| absent_metric_labels(&query));
@@ -73,14 +76,16 @@ pub(crate) async fn execute_federated_metric_query(
         let mut tenant_state = state.clone();
         tenant_state.federated_metric_tenants = None;
         tenant_state = tenant_state.with_tenant_limits(tenant);
-        let mut value = execute_http_metric_query_with_scan_range(
+        let mut value = execute_http_metric_query(
             &tenant_state,
             tenant.as_str(),
-            time_range,
-            step,
-            kind,
-            query,
-            Some(scan_range),
+            HttpMetricQuery {
+                time_range,
+                step,
+                kind,
+                query,
+                common_scan_range: Some(scan_range),
+            },
         )
         .await?;
         add_federated_tenant_labels(&mut value, tenant.as_str());

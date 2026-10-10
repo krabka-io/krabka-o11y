@@ -4,12 +4,19 @@ use super::{
     apply_metric_binary_arithmetic_to_series_with_left_operand,
 };
 
+/// A vector-to-vector arithmetic operator and its matching modifiers.
+#[derive(Clone, Copy)]
+pub(crate) struct VectorArithmetic<'a> {
+    pub(crate) op: MetricScalarArithmeticOp,
+    pub(crate) matching: Option<&'a MetricVectorMatching>,
+}
+
 pub(crate) fn apply_metric_binary_arithmetic_to_loki_result(
     left: &mut Value,
     right: &Value,
-    op: MetricScalarArithmeticOp,
-    matching: Option<&MetricVectorMatching>,
+    vector_arithmetic: VectorArithmetic<'_>,
 ) {
+    let VectorArithmetic { op, matching } = vector_arithmetic;
     MetricBinaryOperator {
         matching,
         apply_series: |left_series: &mut Value, right_series: &Value| {

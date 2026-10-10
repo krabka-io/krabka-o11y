@@ -1,8 +1,9 @@
 use super::{
-    ComparisonResult, HttpQueryError, HttpQueryScope, HttpStreamQuery, LogqlExpr,
-    LokiStreamEncoding, LokiStreamOptions, MetricComparison, QueryKind, ScalarArithmetic,
-    ScalarComparison, ScalarLiteral, ScalarSide, ScalarVectorExpressionResult, TimeRange, Value,
-    VariantsDefinition, VectorComparison, add_loki_query_stats, apply_label_join_fields,
+    ComparisonResult, HttpMetricQuery, HttpQueryError, HttpQueryScope, HttpStreamQuery,
+    LabelReplaceArguments, LogqlExpr, LokiStreamEncoding, LokiStreamOptions, MetricComparison,
+    QueryKind, SampleOrder, ScalarArithmetic, ScalarComparison, ScalarLiteral, ScalarSide,
+    ScalarVectorExpressionResult, TimeRange, Value, VariantsDefinition, VectorArithmetic,
+    VectorComparison, add_loki_query_stats, apply_label_join_fields,
     apply_label_replace_to_loki_result, apply_metric_binary_arithmetic_to_loki_result,
     apply_metric_binary_comparison_to_loki_result, apply_metric_binary_set_to_loki_result,
     apply_metric_selection, apply_nested_vector_aggregation,
@@ -89,18 +90,17 @@ pub(crate) async fn execute_http_logql_expr(
             .await
         }
         LogqlExpr::Metric { query, .. } => {
+            let metric_query = HttpMetricQuery {
+                time_range,
+                step,
+                kind,
+                query: query.clone(),
+                common_scan_range: None,
+            };
             if state.federated_metric_tenants.is_some() {
-                return execute_federated_metric_query(
-                    state,
-                    time_range,
-                    step,
-                    kind,
-                    query.clone(),
-                    None,
-                )
-                .await;
+                return execute_federated_metric_query(state, metric_query).await;
             }
-            execute_http_metric_query(state, tenant, time_range, step, kind, query.clone()).await
+            execute_http_metric_query(state, tenant, metric_query).await
         }
         LogqlExpr::Scalar(_) | LogqlExpr::Vector(_) => {
             let result =
@@ -120,7 +120,12 @@ pub(crate) async fn execute_http_logql_expr(
         }
         LogqlExpr::Sort { expr, descending } => {
             let mut value = scope.execute(expr).await?;
-            sort_loki_vector_result(&mut value, *descending);
+            let order = if *descending {
+                SampleOrder::Descending
+            } else {
+                SampleOrder::Ascending
+            };
+            sort_loki_vector_result(&mut value, order);
             Ok(value)
         }
         LogqlExpr::Aggregation {
@@ -177,7 +182,12 @@ pub(crate) async fn execute_http_logql_expr(
                     state.max_count_min_sketch_heap_size,
                 );
             } else {
-                apply_metric_selection(&mut value, limit, *largest);
+                let order = if *largest {
+                    SampleOrder::Descending
+                } else {
+                    SampleOrder::Ascending
+                };
+                apply_metric_selection(&mut value, limit, order);
             }
             Ok(value)
         }
@@ -191,10 +201,12 @@ pub(crate) async fn execute_http_logql_expr(
             let mut value = scope.execute(expr).await?;
             apply_label_replace_to_loki_result(
                 &mut value,
-                destination_label,
-                replacement,
-                source_label,
-                pattern,
+                LabelReplaceArguments {
+                    destination_label,
+                    replacement,
+                    source_label,
+                    pattern,
+                },
                 full_query,
             )?;
             Ok(value)
@@ -240,8 +252,10 @@ pub(crate) async fn execute_http_logql_expr(
             apply_metric_binary_arithmetic_to_loki_result(
                 &mut left,
                 &right,
-                *op,
-                matching.as_ref(),
+                VectorArithmetic {
+                    op: *op,
+                    matching: matching.as_ref(),
+                },
             );
             if left_is_vector || right_is_vector {
                 retain_metric_binary_on_labels(&mut left, matching.as_ref());

@@ -7,8 +7,8 @@ pub(crate) fn a_sample_state_has_samples_from_the_first_one() {
     let mut state = super::super::prelude::MetricSampleState::default();
     check!(!state.has_samples(), "an empty state has none");
 
-    state.count = 1;
+    state.summary.count = 1;
     check!(state.has_samples(), "one sample is enough");
-    state.count = 100;
+    state.summary.count = 100;
     check!(state.has_samples());
 }

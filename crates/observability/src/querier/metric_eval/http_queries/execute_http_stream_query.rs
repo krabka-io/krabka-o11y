@@ -38,16 +38,11 @@ pub(crate) async fn execute_http_stream_query(
         query,
         tenant,
         time_range,
-        options:
-            LokiStreamOptions {
-                direction,
-                limit,
-                interval,
-            },
+        options,
         end_exclusive,
         encoding,
     } = stream_query;
-    validate_loki_interval(interval)?;
+    validate_loki_interval(options.interval)?;
     let query = parse_query(query)?;
     let state = state.with_request_tenant_index(tenant, time_range).await?;
     let plan = plan_stream_query(
@@ -72,14 +67,13 @@ pub(crate) async fn execute_http_stream_query(
                 frontier: &frontier,
                 delete_filters: &delete_filters,
             },
-            StreamScanOptions::from_stream_options(direction, limit, interval, end_exclusive)
+            StreamScanOptions::from_stream_options(options, end_exclusive)
                 .with_block_fetch_concurrency(state.cold_block_fetch_concurrency)
                 .with_encoding(encoding),
         )
         .await
         .map_err(HttpQueryError::from)?;
-        let response =
-            apply_loki_stream_options(scan.value, direction, limit, interval, end_exclusive);
+        let response = apply_loki_stream_options(scan.value, options, end_exclusive);
         return Ok(add_loki_query_stats_for_stream_blocks_with_hot_tail(
             response,
             &scan.scanned_blocks,
@@ -104,8 +98,7 @@ pub(crate) async fn execute_http_stream_query(
         )
         .await
         .map_err(HttpQueryError::from)?;
-        let response =
-            apply_loki_stream_options(response, direction, limit, interval, end_exclusive);
+        let response = apply_loki_stream_options(response, options, end_exclusive);
         return Ok(add_loki_query_stats_for_stream_plan_with_hot_tail(
             response, &plan, &records, &frontier,
         ));
@@ -119,6 +112,6 @@ pub(crate) async fn execute_http_stream_query(
     )
     .await
     .map_err(HttpQueryError::from)?;
-    let response = apply_loki_stream_options(response, direction, limit, interval, end_exclusive);
+    let response = apply_loki_stream_options(response, options, end_exclusive);
     Ok(add_loki_query_stats_for_stream_plan(response, &plan))
 }

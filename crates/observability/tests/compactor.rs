@@ -8,7 +8,6 @@ mod support;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
-    ops::Range,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -51,7 +50,6 @@ use object_store::{
     ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, local::LocalFileSystem,
     path::Path as ObjectPath,
 };
-use prost::bytes::Bytes;
 use support::{LogEntry, kafka_wal_record, log_entry};
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
@@ -63,13 +61,43 @@ use self::lifecycle_store::{LifecycleStep, LifecycleStore};
 
 #[derive(Clone)]
 struct RecordingObjectStore {
-    inner: Arc<object_store::memory::InMemory>,
+    inner: Arc<dyn ObjectStore>,
     get_paths: Arc<std::sync::Mutex<Vec<String>>>,
     put_paths: Arc<std::sync::Mutex<Vec<(String, usize)>>>,
     /// Every put and every delete in the order the store saw them. The two
     /// path lists above cannot say which came first, and the retention sweep's
     /// contract is exactly an order: the index before the object.
     writes: Arc<std::sync::Mutex<Vec<ObjectStoreWrite>>>,
+    put_failures: Arc<PutFailures>,
+}
+
+/// Which `put`s a [`RecordingObjectStore`] refuses with a transient error,
+/// and how many it has refused.
+#[derive(Debug, Default)]
+struct PutFailures {
+    remaining: std::sync::Mutex<usize>,
+    failed: std::sync::atomic::AtomicUsize,
+    /// Only a put whose path contains this fails; `None` matches every put.
+    matching_path: Option<String>,
+}
+
+impl PutFailures {
+    /// Whether the put to `location` fails, counting the failure when it does.
+    fn take_failure(&self, location: &ObjectPath) -> bool {
+        let mut remaining = self.remaining.lock().unwrap();
+        let matches_path = self
+            .matching_path
+            .as_ref()
+            .is_none_or(|matching_path| location.as_ref().contains(matching_path));
+        if *remaining > 0 && matches_path {
+            *remaining -= 1;
+            self.failed
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// One mutating call a [`RecordingObjectStore`] served.
@@ -81,12 +109,65 @@ enum ObjectStoreWrite {
 
 impl RecordingObjectStore {
     fn new() -> Self {
+        Self::over(
+            object_store::memory::InMemory::new(),
+            PutFailures::default(),
+        )
+    }
+
+    fn over(inner: impl ObjectStore, put_failures: PutFailures) -> Self {
         Self {
-            inner: Arc::new(object_store::memory::InMemory::new()),
+            inner: Arc::new(inner),
             get_paths: Arc::new(std::sync::Mutex::new(Vec::new())),
             put_paths: Arc::new(std::sync::Mutex::new(Vec::new())),
             writes: Arc::new(std::sync::Mutex::new(Vec::new())),
+            put_failures: Arc::new(put_failures),
         }
+    }
+
+    /// Fails the first `put` to `inner` once, as a transient error.
+    fn fail_first_put(inner: impl ObjectStore) -> Self {
+        Self::over(
+            inner,
+            PutFailures {
+                remaining: std::sync::Mutex::new(1),
+                ..PutFailures::default()
+            },
+        )
+    }
+
+    /// Fails the first `put` whose path contains `matching_path` once.
+    fn fail_first_matching_put(inner: impl ObjectStore, matching_path: &str) -> Self {
+        Self::over(
+            inner,
+            PutFailures {
+                remaining: std::sync::Mutex::new(1),
+                matching_path: Some(matching_path.to_string()),
+                ..PutFailures::default()
+            },
+        )
+    }
+
+    /// Fails every matching `put`, not just the first.
+    ///
+    /// `fail_first_matching_put` models a transient error that a retry rides
+    /// out. This models the write never landing at all, which is how a run
+    /// interrupted at that write looks to everything downstream of it.
+    fn fail_every_matching_put(inner: impl ObjectStore, matching_path: &str) -> Self {
+        Self::over(
+            inner,
+            PutFailures {
+                remaining: std::sync::Mutex::new(usize::MAX),
+                matching_path: Some(matching_path.to_string()),
+                ..PutFailures::default()
+            },
+        )
+    }
+
+    fn failed_put_count(&self) -> usize {
+        self.put_failures
+            .failed
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn get_paths(&self) -> Vec<String> {
@@ -136,6 +217,12 @@ impl ObjectStore for RecordingObjectStore {
         payload: PutPayload,
         opts: PutOptions,
     ) -> object_store::Result<PutResult> {
+        if self.put_failures.take_failure(location) {
+            return Err(object_store::Error::Generic {
+                store: "failing-put",
+                source: "transient put failure".into(),
+            });
+        }
         self.put_paths
             .lock()
             .unwrap()
@@ -1223,9 +1310,8 @@ async fn compactor_runtime_keeps_polling_after_idle_until_shutdown() {
 #[tokio::test]
 async fn compactor_runtime_retries_object_store_errors_before_committing_offsets() {
     let dir = tempfile::tempdir().unwrap();
-    let store = FailingPutObjectStore::fail_first_put(
-        LocalFileSystem::new_with_prefix(dir.path()).unwrap(),
-    );
+    let store =
+        RecordingObjectStore::fail_first_put(LocalFileSystem::new_with_prefix(dir.path()).unwrap());
     compact_one_record_through_one_failed_put(&store).await;
     let key = BlockKey::new("tenant-a", 6, 42, 42, TimeRange::new(10, 10).unwrap());
     let rows =
@@ -1238,7 +1324,7 @@ async fn compactor_runtime_retries_object_store_errors_before_committing_offsets
 #[tokio::test]
 async fn compactor_runtime_retries_shard_manifest_write_errors_before_committing_offsets() {
     let dir = tempfile::tempdir().unwrap();
-    let store = FailingPutObjectStore::fail_first_matching_put(
+    let store = RecordingObjectStore::fail_first_matching_put(
         LocalFileSystem::new_with_prefix(dir.path()).unwrap(),
         "shards/time=10-10/manifest/snapshots/",
     );
@@ -1261,7 +1347,7 @@ async fn compactor_runtime_retries_shard_manifest_write_errors_before_committing
 #[tokio::test]
 async fn compactor_runtime_retries_compaction_frontier_write_errors_after_committing_offsets() {
     let dir = tempfile::tempdir().unwrap();
-    let store = FailingPutObjectStore::fail_first_matching_put(
+    let store = RecordingObjectStore::fail_first_matching_put(
         LocalFileSystem::new_with_prefix(dir.path()).unwrap(),
         "compaction-frontier.json",
     );
@@ -1571,7 +1657,7 @@ async fn compaction_interrupted_between_block_write_and_index_save_loses_nothing
     // The compactor writes the output block first and the tenant's shard
     // manifest second. Failing every write of that manifest cuts the run in
     // exactly the gap between the two: the block is durable, nothing names it.
-    let interrupted_store = FailingPutObjectStore::fail_every_matching_put(
+    let interrupted_store = RecordingObjectStore::fail_every_matching_put(
         LocalFileSystem::new_with_prefix(dir.path()).unwrap(),
         "shards/time=10-10/manifest/snapshots/",
     );
@@ -1750,154 +1836,6 @@ async fn get_ready(addr: std::net::SocketAddr) -> String {
     let mut response = String::new();
     stream.read_to_string(&mut response).await.unwrap();
     response
-}
-
-#[derive(Debug)]
-struct FailingPutObjectStore<S> {
-    inner: Arc<S>,
-    failed_puts_remaining: std::sync::Mutex<usize>,
-    failed_puts: std::sync::atomic::AtomicUsize,
-    matching_path: Option<String>,
-}
-
-impl<S> FailingPutObjectStore<S> {
-    fn fail_first_put(inner: S) -> Self {
-        Self {
-            inner: Arc::new(inner),
-            failed_puts_remaining: std::sync::Mutex::new(1),
-            failed_puts: std::sync::atomic::AtomicUsize::new(0),
-            matching_path: None,
-        }
-    }
-
-    fn fail_first_matching_put(inner: S, matching_path: &str) -> Self {
-        Self {
-            inner: Arc::new(inner),
-            failed_puts_remaining: std::sync::Mutex::new(1),
-            failed_puts: std::sync::atomic::AtomicUsize::new(0),
-            matching_path: Some(matching_path.to_string()),
-        }
-    }
-
-    /// Fails every matching `put`, not just the first.
-    ///
-    /// `fail_first_matching_put` models a transient error that a retry rides
-    /// out. This models the write never landing at all, which is how a run
-    /// interrupted at that write looks to everything downstream of it.
-    fn fail_every_matching_put(inner: S, matching_path: &str) -> Self {
-        Self {
-            failed_puts_remaining: std::sync::Mutex::new(usize::MAX),
-            ..Self::fail_first_matching_put(inner, matching_path)
-        }
-    }
-
-    fn failed_put_count(&self) -> usize {
-        self.failed_puts.load(std::sync::atomic::Ordering::SeqCst)
-    }
-}
-
-impl<S> fmt::Display for FailingPutObjectStore<S> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FailingPutObjectStore")
-    }
-}
-
-#[async_trait]
-impl<S> ObjectStore for FailingPutObjectStore<S>
-where
-    S: ObjectStore,
-{
-    async fn put_opts(
-        &self,
-        location: &ObjectPath,
-        payload: PutPayload,
-        opts: PutOptions,
-    ) -> object_store::Result<PutResult> {
-        let should_fail = {
-            let mut remaining = self.failed_puts_remaining.lock().unwrap();
-            let matches_path = self
-                .matching_path
-                .as_ref()
-                .is_none_or(|matching_path| location.as_ref().contains(matching_path));
-            if *remaining > 0 && matches_path {
-                *remaining -= 1;
-                true
-            } else {
-                false
-            }
-        };
-        if should_fail {
-            self.failed_puts
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            return Err(object_store::Error::Generic {
-                store: "failing-put",
-                source: "transient put failure".into(),
-            });
-        }
-        self.inner.put_opts(location, payload, opts).await
-    }
-
-    async fn put_multipart_opts(
-        &self,
-        location: &ObjectPath,
-        opts: PutMultipartOptions,
-    ) -> object_store::Result<Box<dyn MultipartUpload>> {
-        self.inner.put_multipart_opts(location, opts).await
-    }
-
-    async fn get_opts(
-        &self,
-        location: &ObjectPath,
-        options: GetOptions,
-    ) -> object_store::Result<GetResult> {
-        self.inner.get_opts(location, options).await
-    }
-
-    async fn get_ranges(
-        &self,
-        location: &ObjectPath,
-        ranges: &[Range<u64>],
-    ) -> object_store::Result<Vec<Bytes>> {
-        self.inner.get_ranges(location, ranges).await
-    }
-
-    fn delete_stream(
-        &self,
-        locations: BoxStream<'static, object_store::Result<ObjectPath>>,
-    ) -> BoxStream<'static, object_store::Result<ObjectPath>> {
-        self.inner.delete_stream(locations)
-    }
-
-    fn list(
-        &self,
-        prefix: Option<&ObjectPath>,
-    ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list(prefix)
-    }
-
-    fn list_with_offset(
-        &self,
-        prefix: Option<&ObjectPath>,
-        offset: &ObjectPath,
-    ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
-        self.inner.list_with_offset(prefix, offset)
-    }
-
-    async fn list_with_delimiter(
-        &self,
-        prefix: Option<&ObjectPath>,
-    ) -> object_store::Result<ListResult> {
-        self.inner.list_with_delimiter(prefix).await
-    }
-
-    async fn copy_opts(
-        &self,
-        from: &ObjectPath,
-        to: &ObjectPath,
-        options: CopyOptions,
-    ) -> object_store::Result<()> {
-        self.inner.copy_opts(from, to, options).await
-    }
 }
 
 #[derive(Default)]
@@ -2720,7 +2658,7 @@ async fn compact_ok_then_error_runs(
 
 /// Runs the compactor for 250 ms over one "api ok" record on partition 6, and
 /// checks that it wrote one block after `store` refused exactly one put.
-async fn compact_one_record_through_one_failed_put(store: &FailingPutObjectStore<LocalFileSystem>) {
+async fn compact_one_record_through_one_failed_put(store: &RecordingObjectStore) {
     let config = compactor_config("observability/logs");
     let dependencies = polls(
         PartitionIndex(6),

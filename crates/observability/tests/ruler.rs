@@ -368,21 +368,7 @@ rules:
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert!(text_body(response).await == "unable to decoded rule group\n");
 
-    let namespace_response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/rules/default")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert!(namespace_response.status() == StatusCode::BAD_REQUEST);
-    assert!(
-        text_body(namespace_response).await
-            == "error parsing /loki/rules/tenant-a/default: /loki/rules/tenant-a/default: open /loki/rules/tenant-a/default: no such file or directory\n"
-    );
+    assert_tenant_a_default_namespace_is_missing(app).await;
 }
 
 #[tokio::test]
@@ -660,6 +646,26 @@ async fn a_refused_tenant_can_neither_read_nor_create_nor_delete_its_rule_groups
     )
     .await;
     check!(status == StatusCode::ACCEPTED);
+}
+
+/// Reads tenant-a's `default` rule namespace and checks that Loki's
+/// missing-namespace error comes back.
+async fn assert_tenant_a_default_namespace_is_missing(app: axum::Router) {
+    let namespace_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/loki/api/v1/rules/default")
+                .header("X-Scope-OrgID", "tenant-a")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(namespace_response.status() == StatusCode::BAD_REQUEST);
+    assert!(
+        text_body(namespace_response).await
+            == "error parsing /loki/rules/tenant-a/default: /loki/rules/tenant-a/default: open /loki/rules/tenant-a/default: no such file or directory\n"
+    );
 }
 
 async fn post_loki_rule_group_for_test(app: &axum::Router, namespace: &str, rule_group: &str) {
@@ -1434,22 +1440,7 @@ rules:
         .unwrap();
     assert!(delete_response.status() == StatusCode::ACCEPTED);
 
-    let namespace_response = app
-        .oneshot(
-            Request::builder()
-                .uri("/loki/api/v1/rules/default")
-                .header("X-Scope-OrgID", "tenant-a")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert!(namespace_response.status() == StatusCode::BAD_REQUEST);
-    assert!(
-        text_body(namespace_response).await
-            == "error parsing /loki/rules/tenant-a/default: /loki/rules/tenant-a/default: open /loki/rules/tenant-a/default: no such file or directory\n"
-    );
+    assert_tenant_a_default_namespace_is_missing(app).await;
 }
 
 #[tokio::test]

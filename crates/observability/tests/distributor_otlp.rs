@@ -43,6 +43,38 @@ fn checkout_record(metadata: LogLabels) -> WalLogRecord {
     }
 }
 
+/// An OTLP/JSON logs export from the `checkout` service whose one scope holds
+/// `log_records`.
+fn checkout_json_export(log_records: &serde_json::Value) -> serde_json::Value {
+    json!({
+        "resourceLogs": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "checkout"}}
+                    ]
+                },
+                "scopeLogs": [{"logRecords": log_records}]
+            }
+        ]
+    })
+}
+
+async fn post_json(
+    app: &axum::Router,
+    uri: &str,
+    payload: &serde_json::Value,
+) -> axum::response::Response {
+    send(
+        app,
+        tenant_a_post(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(payload.to_string()))
+            .unwrap(),
+    )
+    .await
+}
+
 async fn post_protobuf(
     app: &axum::Router,
     uri: &str,
@@ -112,40 +144,20 @@ async fn otlp_logs_endpoint_preserves_severity_fields_as_structured_metadata() {
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = send(
+    let response = post_json(
         &app,
-        tenant_a_post("/v1/logs")
-            .header("content-type", "application/json")
-            .body(Body::from(
-                json!({
-                    "resourceLogs": [
-                        {
-                            "resource": {
-                                "attributes": [
-                                    {"key": "service.name", "value": {"stringValue": "checkout"}}
-                                ]
-                            },
-                            "scopeLogs": [
-                                {
-                                    "logRecords": [
-                                        {
-                                            "timeUnixNano": "19",
-                                            "severityText": "ERROR",
-                                            "severityNumber": 17,
-                                            "traceId": "0102030405060708090a0b0c0d0e0f10",
-                                            "spanId": "1112131415161718",
-                                            "body": {"stringValue": "api error"},
-                                            "attributes": []
-                                        }
-                                    ]
-                                }
-                            ]
-                        }
-                    ]
-                })
-                .to_string(),
-            ))
-            .unwrap(),
+        "/v1/logs",
+        &checkout_json_export(&json!([
+            {
+                "timeUnixNano": "19",
+                "severityText": "ERROR",
+                "severityNumber": 17,
+                "traceId": "0102030405060708090a0b0c0d0e0f10",
+                "spanId": "1112131415161718",
+                "body": {"stringValue": "api error"},
+                "attributes": []
+            }
+        ])),
     )
     .await;
 
@@ -171,35 +183,15 @@ async fn otlp_logs_endpoint_preserves_severity_fields_as_structured_metadata() {
 async fn otlp_logs_endpoint_returns_server_error_when_wal_append_fails() {
     let app = distributor_router(FailingWalSink);
 
-    let response = send(
+    let response = post_json(
         &app,
-        tenant_a_post("/v1/logs")
-            .header("content-type", "application/json")
-            .body(Body::from(
-                json!({
-                    "resourceLogs": [
-                        {
-                            "resource": {
-                                "attributes": [
-                                    {"key": "service.name", "value": {"stringValue": "checkout"}}
-                                ]
-                            },
-                            "scopeLogs": [
-                                {
-                                    "logRecords": [
-                                        {
-                                            "timeUnixNano": "19",
-                                            "body": {"stringValue": "api error"}
-                                        }
-                                    ]
-                                }
-                            ]
-                        }
-                    ]
-                })
-                .to_string(),
-            ))
-            .unwrap(),
+        "/v1/logs",
+        &checkout_json_export(&json!([
+            {
+                "timeUnixNano": "19",
+                "body": {"stringValue": "api error"}
+            }
+        ])),
     )
     .await;
 
@@ -314,32 +306,21 @@ async fn otlp_logs_endpoint_rejects_duplicate_normalized_log_attributes_without_
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = send(&app, tenant_a_post("/v1/logs").header("content-type", "application/json").body(Body::from(json!({
-                        "resourceLogs": [
-                            {
-                                "resource": {
-                                    "attributes": [
-                                        {"key": "service.name", "value": {"stringValue": "checkout"}}
-                                    ]
-                                },
-                                "scopeLogs": [
-                                    {
-                                        "logRecords": [
-                                            {
-                                                "timeUnixNano": "19",
-                                                "body": {"stringValue": "api error"},
-                                                "attributes": [
-                                                    {"key": "trace.id", "value": {"stringValue": "abc"}},
-                                                    {"key": "trace_id", "value": {"stringValue": "def"}}
-                                                ]
-                                            }
-                                        ]
-                                    }
-                                ]
-                            }
-                        ]
-                    })
-                    .to_string())).unwrap()).await;
+    let response = post_json(
+        &app,
+        "/v1/logs",
+        &checkout_json_export(&json!([
+            {
+                "timeUnixNano": "19",
+                "body": {"stringValue": "api error"},
+                "attributes": [
+                    {"key": "trace.id", "value": {"stringValue": "abc"}},
+                    {"key": "trace_id", "value": {"stringValue": "def"}}
+                ]
+            }
+        ])),
+    )
+    .await;
 
     assert!(response.status() == StatusCode::BAD_REQUEST);
     assert_loki_error(&json_body(response).await, "bad_data", "OTLP attribute");
@@ -431,35 +412,15 @@ async fn otlp_logs_endpoint_rejects_invalid_timestamp_without_wal_append() {
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = send(
+    let response = post_json(
         &app,
-        tenant_a_post("/v1/logs")
-            .header("content-type", "application/json")
-            .body(Body::from(
-                json!({
-                    "resourceLogs": [
-                        {
-                            "resource": {
-                                "attributes": [
-                                    {"key": "service.name", "value": {"stringValue": "checkout"}}
-                                ]
-                            },
-                            "scopeLogs": [
-                                {
-                                    "logRecords": [
-                                        {
-                                            "timeUnixNano": "not-a-timestamp",
-                                            "body": {"stringValue": "api error"}
-                                        }
-                                    ]
-                                }
-                            ]
-                        }
-                    ]
-                })
-                .to_string(),
-            ))
-            .unwrap(),
+        "/v1/logs",
+        &checkout_json_export(&json!([
+            {
+                "timeUnixNano": "not-a-timestamp",
+                "body": {"stringValue": "api error"}
+            }
+        ])),
     )
     .await;
 
@@ -472,35 +433,15 @@ async fn otlp_logs_endpoint_rejects_negative_timestamp_without_wal_append() {
     let sink = InMemoryWalSink::default();
     let app = distributor_router(sink.clone());
 
-    let response = send(
+    let response = post_json(
         &app,
-        tenant_a_post("/v1/logs")
-            .header("content-type", "application/json")
-            .body(Body::from(
-                json!({
-                    "resourceLogs": [
-                        {
-                            "resource": {
-                                "attributes": [
-                                    {"key": "service.name", "value": {"stringValue": "checkout"}}
-                                ]
-                            },
-                            "scopeLogs": [
-                                {
-                                    "logRecords": [
-                                        {
-                                            "timeUnixNano": "-1",
-                                            "body": {"stringValue": "api error"}
-                                        }
-                                    ]
-                                }
-                            ]
-                        }
-                    ]
-                })
-                .to_string(),
-            ))
-            .unwrap(),
+        "/v1/logs",
+        &checkout_json_export(&json!([
+            {
+                "timeUnixNano": "-1",
+                "body": {"stringValue": "api error"}
+            }
+        ])),
     )
     .await;
 

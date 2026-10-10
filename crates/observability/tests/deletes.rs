@@ -41,16 +41,13 @@ async fn compactor_delete_endpoint_tracks_and_cancels_delete_requests() {
     let create_response = Tenant("tenant-a").send(&app, Method::POST, "/loki/api/v1/delete?query=%7Bapp%3D%22api%22%7D%20%7C%3D%20%22secret%22&start=1591616227&end=1591619692").await;
     assert!(create_response.status() == StatusCode::NO_CONTENT);
 
-    let list_response = Tenant("tenant-a").get(&app, "/loki/api/v1/delete").await;
-    assert!(list_response.status() == StatusCode::OK);
-    let body = json_body(list_response).await;
-    check!(body.as_array().unwrap().len() == 1);
-    check!(body[0]["request_id"] == "delete-1");
-    check!(body[0]["query"] == "{app=\"api\"} |= \"secret\"");
-    check!(body[0]["start_time"] == 1_591_616_227_i64);
-    check!(body[0]["end_time"] == 1_591_619_692_i64);
-    check!(body[0]["status"] == "received");
-    check!(body[0]["created_at"].as_i64().is_some());
+    let body = only_tenant_a_delete_request(&app).await;
+    check!(body["request_id"] == "delete-1");
+    check!(body["query"] == "{app=\"api\"} |= \"secret\"");
+    check!(body["start_time"] == 1_591_616_227_i64);
+    check!(body["end_time"] == 1_591_619_692_i64);
+    check!(body["status"] == "received");
+    check!(body["created_at"].as_i64().is_some());
 
     let other_tenant_response = Tenant("tenant-b").get(&app, "/loki/api/v1/delete").await;
     assert!(json_body(other_tenant_response).await == json!([]));
@@ -88,13 +85,10 @@ async fn compactor_delete_endpoint_accepts_form_post_query_with_raw_ampersand() 
     .await;
     assert!(create_response.status() == StatusCode::NO_CONTENT);
 
-    let list_response = Tenant("tenant-a").get(&app, "/loki/api/v1/delete").await;
-    assert!(list_response.status() == StatusCode::OK);
-    let body = json_body(list_response).await;
-    check!(body.as_array().unwrap().len() == 1);
-    check!(body[0]["query"] == r#"{app="api&edge"} |= "secret""#);
-    check!(body[0]["start_time"] == 1_591_616_227_i64);
-    check!(body[0]["end_time"] == 1_591_619_692_i64);
+    let body = only_tenant_a_delete_request(&app).await;
+    check!(body["query"] == r#"{app="api&edge"} |= "secret""#);
+    check!(body["start_time"] == 1_591_616_227_i64);
+    check!(body["end_time"] == 1_591_619_692_i64);
 }
 
 #[tokio::test]
@@ -381,6 +375,16 @@ async fn compactor_delete_requests_filter_querier_detected_fields_results() {
                 "limit": 10
             })
     );
+}
+
+/// Lists tenant-a's delete requests and returns them, after checking that the
+/// list holds exactly one.
+async fn only_tenant_a_delete_request(app: &axum::Router) -> Value {
+    let list_response = Tenant("tenant-a").get(app, "/loki/api/v1/delete").await;
+    assert!(list_response.status() == StatusCode::OK);
+    let body = json_body(list_response).await;
+    check!(body.as_array().unwrap().len() == 1);
+    body[0].clone()
 }
 
 /// Sends one delete-request call as `tenant` and gives back the status and

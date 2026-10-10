@@ -26,24 +26,17 @@ pub(crate) async fn querier_state_lists_full_shard_prefix_and_filters_before_fet
         BTreeSet::from([api]),
     );
     block_index.insert(matching_block.clone());
-    krabka_blockstore::write_tenant_log_index_shards_to_object_store(
+    let state = querier_state_over_index_shards(
         &store,
-        &prefix,
-        tenant,
-        &[old_shard_range, matching_shard_range],
-        &labels_index,
-        &block_index,
+        TenantIndexShards {
+            prefix: &prefix,
+            tenant,
+            shard_ranges: &[old_shard_range, matching_shard_range],
+            labels_index: &labels_index,
+            block_index: &block_index,
+        },
     )
-    .await
-    .unwrap();
-    store.clear_recorded_paths();
-
-    let state = QuerierState::new(
-        tempfile::tempdir().unwrap().keep(),
-        LabelIndex::default(),
-        BlockIndex::default(),
-    )
-    .with_dynamic_tenant_object_store_shards(Arc::new(store.clone()), prefix.clone());
+    .await;
 
     let state = state
         .with_request_tenant_index(tenant, query_range)
@@ -54,36 +47,21 @@ pub(crate) async fn querier_state_lists_full_shard_prefix_and_filters_before_fet
     expected_blocks.insert(matching_block);
     assert!(state.label_index == labels_index && state.block_index == expected_blocks);
 
-    let shard_prefix =
-        krabka_blockstore::log_tenant_index_shards_object_prefix(&prefix, tenant).to_string();
-    let snapshot_paths = [old_shard_range, matching_shard_range].map(|range| {
-        let key =
-            krabka_blockstore::log_tenant_index_shard_manifest_object_path(&prefix, tenant, range);
-        format!(
-            "{}/00000000000000000000.json",
-            krabka_blockstore::index_snapshot_prefix_for_key(key.as_ref())
-        )
-    });
-    let gets = store.get_paths();
+    let [old_shard_gets, matching_shard_gets] =
+        [old_shard_range, matching_shard_range].map(|shard_range| {
+            shard_snapshot_get_count(
+                &store,
+                TenantIndexShard {
+                    prefix: &prefix,
+                    tenant,
+                    shard_range,
+                },
+            )
+        });
+    assert!(old_shard_gets == 0);
+    assert!(matching_shard_gets == 1);
     assert!(
-        gets.iter()
-            .filter(|path| *path == &snapshot_paths[0])
-            .count()
-            == 0
-    );
-    assert!(
-        gets.iter()
-            .filter(|path| *path == &snapshot_paths[1])
-            .count()
-            == 1
-    );
-    assert!(
-        store
-            .list_prefixes()
-            .iter()
-            .filter(|prefix| *prefix == &shard_prefix)
-            .count()
-            == 1,
+        shard_prefix_list_count(&store, &prefix, tenant) == 1,
         "list the complete tenant prefix once"
     );
     assert!(

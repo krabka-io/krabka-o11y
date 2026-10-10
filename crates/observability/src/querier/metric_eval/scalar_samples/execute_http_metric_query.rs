@@ -13,28 +13,30 @@ use crate::{
     loki_vector_response_from_matrix,
 };
 
+/// One metric query, as the HTTP query API evaluates it.
+pub(crate) struct HttpMetricQuery {
+    pub(crate) time_range: TimeRange,
+    pub(crate) step: Option<i64>,
+    pub(crate) kind: QueryKind,
+    pub(crate) query: MetricQuery,
+    /// The log range every read covers, or `None` to derive it from `query`.
+    /// Variants use the common log range for reads and their own ranges for
+    /// evaluation.
+    pub(crate) common_scan_range: Option<TimeRange>,
+}
+
 pub(crate) async fn execute_http_metric_query(
     state: &QuerierState,
     tenant: &str,
-    time_range: TimeRange,
-    step: Option<i64>,
-    kind: QueryKind,
-    query: MetricQuery,
+    metric_query: HttpMetricQuery,
 ) -> Result<Value, HttpQueryError> {
-    execute_http_metric_query_with_scan_range(state, tenant, time_range, step, kind, query, None)
-        .await
-}
-
-/// Variants use the common log range for reads and their own ranges for evaluation.
-pub(crate) async fn execute_http_metric_query_with_scan_range(
-    state: &QuerierState,
-    tenant: &str,
-    time_range: TimeRange,
-    step: Option<i64>,
-    kind: QueryKind,
-    mut query: MetricQuery,
-    common_scan_range: Option<TimeRange>,
-) -> Result<Value, HttpQueryError> {
+    let HttpMetricQuery {
+        time_range,
+        step,
+        kind,
+        mut query,
+        common_scan_range,
+    } = metric_query;
     let approximate_limit = take_approximate_limit(state, kind, &mut query)?;
     if metric_query_uses_count_values(&query) {
         return Err(HttpQueryError::CountValuesQuery);

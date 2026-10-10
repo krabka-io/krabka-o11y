@@ -1,13 +1,27 @@
 use super::{HttpQueryError, ParseError, Regex, Value, json};
 
+/// The arguments of `label_replace` after its vector operand.
+#[derive(Clone, Copy)]
+pub(crate) struct LabelReplaceArguments<'a> {
+    pub(crate) destination_label: &'a str,
+    pub(crate) replacement: &'a str,
+    pub(crate) source_label: &'a str,
+    pub(crate) pattern: &'a str,
+}
+
+/// Applies `label_replace` to every series of `value`. `query` is the full
+/// query text that an invalid `pattern` is reported against.
 pub(crate) fn apply_label_replace_to_loki_result(
     value: &mut Value,
-    destination_label: &str,
-    replacement: &str,
-    source_label: &str,
-    pattern: &str,
+    arguments: LabelReplaceArguments<'_>,
     query: &str,
 ) -> Result<(), HttpQueryError> {
+    let LabelReplaceArguments {
+        destination_label,
+        replacement,
+        source_label,
+        pattern,
+    } = arguments;
     let regex = Regex::new(pattern).map_err(|error| HttpQueryError::LokiParse {
         query: query.to_string(),
         source: ParseError::Syntax {

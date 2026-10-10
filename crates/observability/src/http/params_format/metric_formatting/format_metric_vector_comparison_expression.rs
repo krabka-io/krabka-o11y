@@ -1,5 +1,6 @@
 use super::{
-    OperandTexts, format_metric_and_vector_operands, split_leading_vector_binary_modifiers,
+    ComparisonResult, OperandTexts, VectorComparisonText, format_metric_and_vector_operands,
+    format_vector_comparison_text, split_leading_vector_binary_modifiers,
     split_top_level_comparison_query,
 };
 
@@ -17,16 +18,11 @@ pub(crate) fn format_metric_vector_comparison_expression(query: &str) -> Option<
         right: right_text,
     })?;
 
-    match (bool_modifier, modifiers) {
-        (true, Some(modifiers)) => Some(format!(
-            "({left} {operator} bool {}{}{right})",
-            modifiers.text, modifiers.right_separator
-        )),
-        (true, None) => Some(format!("({left} {operator} bool {right})")),
-        (false, Some(modifiers)) => Some(format!(
-            "({left} {operator} {}{}{right})",
-            modifiers.text, modifiers.right_separator
-        )),
-        (false, None) => Some(format!("({left} {operator} {right})")),
-    }
+    Some(format_vector_comparison_text(VectorComparisonText {
+        left: &left,
+        operator,
+        comparison_result: ComparisonResult::from_bool_modifier(bool_modifier),
+        modifiers,
+        right: &right,
+    }))
 }

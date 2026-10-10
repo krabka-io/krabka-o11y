@@ -27,6 +27,11 @@ mod object_store_stream_query_batches_cold_block_reads;
 mod querier_state_with_request_tenant_index_caches_shard_indexes_for_repeated_range;
 mod querier_state_with_request_tenant_index_lists_shards_from_query_window_offset;
 mod querier_state_with_request_tenant_index_reuses_shard_indexes_for_moving_ranges;
+mod tenant_index_shards;
 
 pub(crate) use acl_entry::acl_entry;
 pub(crate) use four_cold_api_blocks::FourColdApiBlocks;
+pub(crate) use tenant_index_shards::{
+    TenantIndexShard, TenantIndexShards, querier_state_over_index_shards, shard_prefix_list_count,
+    shard_snapshot_get_count,
+};

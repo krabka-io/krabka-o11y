@@ -188,18 +188,30 @@ async fn the_defaults_block_caps_a_tenant_with_no_entry_of_its_own() {
     assert!(served.status() == StatusCode::OK);
 }
 
-/// `--logs-limits-overrides-config` is what an operator actually sets, so
-/// the file has to reach the router the service builds and not only the
-/// provider a test constructs by hand.
-#[tokio::test]
-async fn the_overrides_config_flag_reaches_the_service_router() {
+/// A querier config over a fresh data root whose local manifest indexes one
+/// `{app="api"}` stream for each of tenant-a and tenant-b.
+fn two_tenant_querier_config() -> ServiceConfig {
     let dir = tempfile::tempdir().unwrap().keep();
     let mut label_index = LabelIndex::default();
     label_index.insert_series("tenant-a", labels([("app", "api")]));
     label_index.insert_series("tenant-b", labels([("app", "api")]));
     write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
+    ServiceConfig {
+        target: Role::Querier,
+        listen_addr: "127.0.0.1:0".parse().unwrap(),
+        data_root: dir,
+        querier_index_source: QuerierIndexSource::LocalManifest,
+        ..ServiceConfig::default()
+    }
+}
 
-    let overrides_path = dir.join("logs-limits.yaml");
+/// `--logs-limits-overrides-config` is what an operator actually sets, so
+/// the file has to reach the router the service builds and not only the
+/// provider a test constructs by hand.
+#[tokio::test]
+async fn the_overrides_config_flag_reaches_the_service_router() {
+    let querier = two_tenant_querier_config();
+    let overrides_path = querier.data_root.join("logs-limits.yaml");
     std::fs::write(
         &overrides_path,
         "overrides:\n  tenant-a:\n    max_query_string_bytes: \"1B\"\n",
@@ -207,12 +219,8 @@ async fn the_overrides_config_flag_reaches_the_service_router() {
     .unwrap();
 
     let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        data_root: dir,
-        querier_index_source: QuerierIndexSource::LocalManifest,
         logs_limits_overrides_config: Some(overrides_path),
-        ..ServiceConfig::default()
+        ..querier
     };
     let app = build_service_router(&config, ServiceDependencies::default(), None)
         .await
@@ -280,19 +288,9 @@ async fn an_unreadable_overrides_config_stops_the_service() {
 /// tenant gets.
 #[tokio::test]
 async fn the_scalar_limit_flags_cap_every_tenant_when_no_file_is_set() {
-    let dir = tempfile::tempdir().unwrap().keep();
-    let mut label_index = LabelIndex::default();
-    label_index.insert_series("tenant-a", labels([("app", "api")]));
-    label_index.insert_series("tenant-b", labels([("app", "api")]));
-    write_log_index_manifest(&dir, &label_index, &BlockIndex::default()).unwrap();
-
     let config = ServiceConfig {
-        target: Role::Querier,
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        data_root: dir,
-        querier_index_source: QuerierIndexSource::LocalManifest,
         max_query_string_bytes: Some(krabka_units::bytes(1)),
-        ..ServiceConfig::default()
+        ..two_tenant_querier_config()
     };
     let app = build_service_router(&config, ServiceDependencies::default(), None)
         .await

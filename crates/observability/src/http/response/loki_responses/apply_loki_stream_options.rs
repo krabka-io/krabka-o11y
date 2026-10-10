@@ -1,17 +1,22 @@
 use std::collections::HashSet;
 
 use super::{
-    LokiDirection, Value, apply_loki_stream_end_bound, apply_loki_stream_interval,
-    apply_loki_stream_limit,
+    LokiDirection, LokiStreamOptions, Value, apply_loki_stream_end_bound,
+    apply_loki_stream_interval, apply_loki_stream_limit,
 };
 
+/// Applies a log query's `options` to a `streams` response, keeping only
+/// entries before `end_exclusive` when it is set.
 pub(crate) fn apply_loki_stream_options(
     mut value: Value,
-    direction: LokiDirection,
-    limit: Option<usize>,
-    interval: Option<i64>,
+    options: LokiStreamOptions,
     end_exclusive: Option<i64>,
 ) -> Value {
+    let LokiStreamOptions {
+        direction,
+        limit,
+        interval,
+    } = options;
     if value.pointer("/data/resultType").and_then(Value::as_str) != Some("streams") {
         return value;
     }

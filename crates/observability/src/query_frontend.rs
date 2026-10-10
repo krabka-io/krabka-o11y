@@ -1,10 +1,11 @@
 use crate::{
     Arc, BTreeMap, BTreeSet, BlockDescriptor, ByteSizeExt, CacheKey, HttpQueryError, LabelIndex,
-    LokiDirection, LokiStreamEncoding, PlannedQuery, QuerierState, QueryFrontend,
-    QueryFrontendAdapter, QueryFrontendError, QueryKind, QueryParams, SeriesFingerprint, TenantId,
-    TimeRange, Value, apply_loki_stream_options, execute_http_query_for_tenant_inner, json,
-    loki_direction, merge_loki_query_stats, parse_query, plan_stream_query, planned_block_bytes,
-    populate_loki_query_execution_stats, transient_object_store_error, validate_loki_interval,
+    LokiDirection, LokiStreamEncoding, LokiStreamOptions, PlannedQuery, QuerierState,
+    QueryFrontend, QueryFrontendAdapter, QueryFrontendError, QueryKind, QueryParams,
+    SeriesFingerprint, TenantId, TimeRange, Value, apply_loki_stream_options,
+    execute_http_query_for_tenant_inner, json, loki_direction, merge_loki_query_stats, parse_query,
+    plan_stream_query, planned_block_bytes, populate_loki_query_execution_stats,
+    transient_object_store_error, validate_loki_interval,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -437,8 +438,15 @@ pub(crate) fn merge_frontend_results(
         merge_one_result(&mut merged, source);
     }
     normalize_merged_series(&mut merged);
-    let mut merged =
-        apply_loki_stream_options(merged, direction, None, interval, Some(end_exclusive));
+    let mut merged = apply_loki_stream_options(
+        merged,
+        LokiStreamOptions {
+            direction,
+            limit: None,
+            interval,
+        },
+        Some(end_exclusive),
+    );
     apply_global_stream_limit(&mut merged, direction, limit);
     deduplicate_warnings(&mut merged);
     merged

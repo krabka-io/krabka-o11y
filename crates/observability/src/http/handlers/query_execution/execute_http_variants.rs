@@ -15,7 +15,7 @@ use crate::{
     json, merge_loki_query_stats, metric_scan_range,
     querier::{
         aggregate::sample_windows::absent_metric_labels,
-        metric_eval::scalar_samples::execute_http_metric_query_with_scan_range,
+        metric_eval::scalar_samples::{HttpMetricQuery, execute_http_metric_query},
     },
 };
 
@@ -80,20 +80,17 @@ pub(crate) async fn execute_http_variants(
         common_query.range_ns = range_ns;
         common_query.offset_ns = offset_ns;
         let scan_range = metric_scan_range(&common_query, time_range)?;
+        let metric_query = HttpMetricQuery {
+            time_range,
+            step,
+            kind,
+            query,
+            common_scan_range: Some(scan_range),
+        };
         let mut value = if state.federated_metric_tenants.is_some() {
-            execute_federated_metric_query(state, time_range, step, kind, query, Some(scan_range))
-                .await?
+            execute_federated_metric_query(state, metric_query).await?
         } else {
-            execute_http_metric_query_with_scan_range(
-                state,
-                tenant,
-                time_range,
-                step,
-                kind,
-                query,
-                Some(scan_range),
-            )
-            .await?
+            execute_http_metric_query(state, tenant, metric_query).await?
         };
         let variant = index.to_string();
         if let Some(rows) = value["data"]["result"].as_array_mut() {
